@@ -266,6 +266,29 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
+    void decoderFilterStateSurvivesAFullTopicQueueAndPrecedesNewGenerationRows() throws Exception
+    {
+        int decodeMessageTopic = 4;
+        RecordingOutputStream recording = new RecordingOutputStream(2);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+
+        for(int index = 0; index < 128; index++)
+        {
+            output.offerEvent(decodeMessageTopic, new byte[]{1});
+        }
+
+        output.offerRecovery(decodeMessageTopic, new byte[]{2});
+        output.offerEvent(decodeMessageTopic, new byte[]{3});
+        output.start();
+
+        assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+        output.close();
+        assertEquals(List.of((byte)2), bytes(recording.mEnvelopes.get(0)));
+        assertEquals(List.of((byte)3), bytes(recording.mEnvelopes.get(1)));
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 1));
+    }
+
+    @Test
     void recoveryCannotRaceSelectionAndFollowAPostRecoveryDelta() throws Exception
     {
         CountDownLatch emptyStateObserved = new CountDownLatch(1);
@@ -378,7 +401,10 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("reportStatelessGaps(output)"));
         assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
-        assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"source_change\""));
+        assertTrue(source.contains(
+            "writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, \"source_change\""));
+        assertTrue(source.contains(
+            "writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, \"filter_catalog\""));
         assertFalse(source.contains("TOPIC_DECODE_EVENTS, \"snapshot\""));
         assertFalse(source.contains("TOPIC_DECODE_MESSAGES, \"snapshot\""));
         assertTrue(source.contains("output.eventDrops(topic) != mObservedOutputDrops[topic]"));

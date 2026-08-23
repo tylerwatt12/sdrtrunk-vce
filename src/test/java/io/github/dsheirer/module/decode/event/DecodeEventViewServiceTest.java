@@ -11,9 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -26,6 +30,33 @@ class DecodeEventViewServiceTest
 {
     private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000001";
     private static final long FREQUENCY = 851_012_500L;
+
+    @Test
+    void filterCatalogIsCompleteStableAndGloballyUniqueBeforeAnyEventsArrive()
+    {
+        FilterCatalog catalog = DecodeEventViewService.filterCatalog();
+        FilterCatalog secondRead = DecodeEventViewService.filterCatalog();
+        List<String> expectedGroups = List.of("Voice Calls", "Voice Calls - Encrypted", "Data Calls",
+            "Commands", "Registrations", "Other");
+        List<FilterCatalog.Node> leaves = catalog.groups().stream().flatMap(group -> group.children().stream())
+            .toList();
+        List<String> allKeys = catalog.groups().stream()
+            .flatMap(group -> java.util.stream.Stream.concat(java.util.stream.Stream.of(group.key()),
+                group.children().stream().map(FilterCatalog.Node::key)))
+            .toList();
+
+        assertEquals(expectedGroups, catalog.groups().stream().map(FilterCatalog.Node::label).toList());
+        assertEquals(catalog, secondRead);
+        assertEquals(Set.of(), new HashSet<>(catalog.timeslots()));
+        assertEquals(allKeys.size(), new HashSet<>(allKeys).size());
+        assertEquals(Arrays.stream(DecodeEventType.values()).map(Enum::name).collect(java.util.stream.Collectors.toSet()),
+            leaves.stream().map(FilterCatalog.Node::key).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(DecodeEventType.values().length, leaves.size());
+        assertTrue(leaves.stream().allMatch(leaf -> leaf.children().isEmpty()));
+        assertTrue(leaves.stream().anyMatch(leaf -> leaf.key().equals("COMMAND") &&
+            leaf.label().equals(DecodeEventType.COMMAND.getLabel())));
+        assertTrue(catalog.groups().stream().allMatch(group -> group.key().startsWith("event-group/")));
+    }
 
     @Test
     void keepsStableIdentityWhileProjectingEventUpdates()

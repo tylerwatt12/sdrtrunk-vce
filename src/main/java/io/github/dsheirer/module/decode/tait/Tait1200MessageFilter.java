@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.tait;
 
 import io.github.dsheirer.filter.Filter;
+import io.github.dsheirer.filter.FilterElement;
 import io.github.dsheirer.message.IMessage;
 import java.util.function.Function;
 
@@ -36,12 +37,14 @@ public class Tait1200MessageFilter extends Filter<IMessage,String>
     public Tait1200MessageFilter()
     {
         super("Tait-1200 Messages");
+        add(new FilterElement<>(TAIT1200_KEY));
     }
 
     @Override
     public boolean canProcess(IMessage message)
     {
-        return message instanceof Tait1200GPSMessage;
+        return (message instanceof Tait1200GPSMessage || message instanceof Tait1200ANIMessage) &&
+            super.canProcess(message);
     }
 
     @Override

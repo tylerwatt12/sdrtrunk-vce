@@ -12,6 +12,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -22,8 +23,10 @@ import io.github.dsheirer.source.Source;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -47,6 +50,7 @@ public class DecodeEventViewService implements AutoCloseable
     private static final int PARTY_MAXIMUM_IDENTIFIERS = 32;
     private static final int TEXT_MAXIMUM_LENGTH = 512;
     private static final long DEFAULT_CLOSE_TIMEOUT_MILLISECONDS = 2_000;
+    private static final FilterCatalog FILTER_CATALOG = createFilterCatalog();
     private final ChannelProcessingManager mChannelProcessingManager;
     private final AliasModel mAliasModel;
     private final Broadcaster<EventView> mBroadcaster = new Broadcaster<>();
@@ -273,6 +277,33 @@ public class DecodeEventViewService implements AutoCloseable
     public long getDroppedObservationCount()
     {
         return mDroppedObservations.get();
+    }
+
+    /** Stable Java-style filter choices for each live-only browser subscription. */
+    public static FilterCatalog filterCatalog()
+    {
+        return FILTER_CATALOG;
+    }
+
+    private static FilterCatalog createFilterCatalog()
+    {
+        return FilterCatalog.create(List.of(
+            eventGroup("event-group/VOICE", "Voice Calls", DecodeEventType.VOICE_CALLS),
+            eventGroup("event-group/ENCRYPTED_VOICE", "Voice Calls - Encrypted",
+                DecodeEventType.VOICE_CALLS_ENCRYPTED),
+            eventGroup("event-group/DATA", "Data Calls", DecodeEventType.DATA_CALLS),
+            eventGroup("event-group/COMMAND", "Commands", DecodeEventType.COMMANDS),
+            eventGroup("event-group/REGISTRATION", "Registrations", DecodeEventType.REGISTRATION),
+            eventGroup("event-group/OTHER", "Other", DecodeEventType.OTHERS)), List.of());
+    }
+
+    private static FilterCatalog.Node eventGroup(String key, String label, Set<DecodeEventType> types)
+    {
+        List<FilterCatalog.Node> children = types.stream()
+            .sorted(Comparator.comparing(DecodeEventType::getLabel).thenComparing(Enum::name))
+            .map(type -> new FilterCatalog.Node(type.name(), type.getLabel(), List.of()))
+            .toList();
+        return new FilterCatalog.Node(key, label, children);
     }
 
     int getPendingObservationCount()

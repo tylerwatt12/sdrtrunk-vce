@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase2.message.filter;
 
 import io.github.dsheirer.filter.FilterSet;
+import io.github.dsheirer.filter.SyncLossMessageFilter;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.P25P2Message;
@@ -36,6 +37,7 @@ public class P25P2MessageFilterSet extends FilterSet<IMessage>
         addFilter(new MacOpcodeMessageFilterSet());
         addFilter(new VoiceMessageFilter());
         addFilter(new P25P2OtherMessageFilter());
+        addFilter(new SyncLossMessageFilter());
     }
 
     /**

@@ -7705,51 +7705,371 @@ function liveDetailText(value) {
   return String(value ?? '').trim().toLowerCase();
 }
 
-function liveDetailSelect(label, values) {
-  const field = node('label', 'live-detail-filter');
-  field.append(node('span', '', label));
-  const select = node('select');
-  values.forEach(([value, textValue]) => {
-    const option = node('option', '', textValue);
-    option.value = value;
-    select.append(option);
-  });
-  field.append(select);
-  return { field, select };
+function liveDetailFilterCatalog(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.groups) || !Array.isArray(value.timeslots)) return null;
+  const keys = new Set();
+  const leafKeys = [];
+  let invalid = false;
+  const normalizeNode = (candidate) => {
+    const key = String(candidate?.key || '').trim();
+    const label = String(candidate?.label || '').trim();
+    if (!candidate || typeof candidate !== 'object' || !key || !label || keys.has(key) ||
+        !Array.isArray(candidate.children)) {
+      invalid = true;
+      return null;
+    }
+    keys.add(key);
+    const children = candidate.children.map(normalizeNode).filter(Boolean);
+    if (!children.length) leafKeys.push(key);
+    return { key, label, children };
+  };
+  const groups = value.groups.map(normalizeNode).filter(Boolean);
+  if (invalid || !groups.length || !leafKeys.length) return null;
+  const timeslots = [...new Set(value.timeslots.map((timeslot) => String(timeslot ?? '').trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const suppliedSignature = String(value.signature || '').trim();
+  const signature = suppliedSignature || JSON.stringify({ groups, timeslots });
+  return { signature, groups, timeslots, leafKeys };
 }
 
-function liveDetailObservedValue(value) {
-  return String(value || '').trim();
+let liveDetailFilterSequence = 0;
+
+function liveDetailFilterModel(options = {}) {
+  let catalog = null;
+  let enabledLeafKeys = new Set();
+  let enabledTimeslots = new Set();
+  let enabledValidity = new Set(['valid', 'invalid']);
+  let searchText = '';
+  const allLeafKeysEnabled = () => Boolean(catalog) && enabledLeafKeys.size === catalog.leafKeys.length;
+  const allTimeslotsEnabled = () => !catalog?.timeslots.length ||
+    enabledTimeslots.size === catalog.timeslots.length;
+  const resetFilters = () => {
+    if (!catalog) return;
+    enabledLeafKeys = new Set(catalog.leafKeys);
+    enabledTimeslots = new Set(catalog.timeslots);
+    enabledValidity = new Set(['valid', 'invalid']);
+    searchText = '';
+  };
+  const leafSelection = (filterNode) => {
+    const leafKeys = filterNode.children.length ? filterNode.children.flatMap((child) =>
+      leafSelection(child).leafKeys) : [filterNode.key];
+    return { leafKeys, selected: leafKeys.filter((key) => enabledLeafKeys.has(key)).length };
+  };
+  return {
+    catalog: () => catalog,
+    setCatalog(value) {
+      const next = liveDetailFilterCatalog(value);
+      if (!next) return 'ignored';
+      if (catalog?.signature === next.signature) return 'same';
+      const state = catalog ? 'changed' : 'initial';
+      catalog = next;
+      resetFilters();
+      return state;
+    },
+    resetForSelection() {
+      catalog = null;
+      enabledLeafKeys.clear();
+      enabledTimeslots.clear();
+      enabledValidity = new Set(['valid', 'invalid']);
+      searchText = '';
+    },
+    resetFilters,
+    leafSelection,
+    setLeaves(leafKeys, enabled) {
+      leafKeys.forEach((key) => {
+        if (enabled) enabledLeafKeys.add(key);
+        else enabledLeafKeys.delete(key);
+      });
+    },
+    setTimeslot(value, enabled) {
+      const key = String(value ?? '').trim();
+      if (enabled) enabledTimeslots.add(key);
+      else enabledTimeslots.delete(key);
+    },
+    setValidity(value, enabled) {
+      if (enabled) enabledValidity.add(value);
+      else enabledValidity.delete(value);
+    },
+    setSearch(value) { searchText = liveDetailText(value); },
+    enabledLeafCount: () => enabledLeafKeys.size,
+    enabledTimeslotCount: () => enabledTimeslots.size,
+    enabledValidityCount: () => enabledValidity.size,
+    isLeafEnabled: (key) => enabledLeafKeys.has(key),
+    isTimeslotEnabled: (value) => enabledTimeslots.has(String(value ?? '').trim()),
+    isValidityEnabled: (value) => enabledValidity.has(value),
+    allLeafKeysEnabled,
+    allTimeslotsEnabled,
+    matchesLeaf(value) {
+      if (!catalog || allLeafKeysEnabled()) return true;
+      return enabledLeafKeys.has(String(value || '').trim());
+    },
+    matchesTimeslot(value) {
+      if (!options.timeslots || !catalog?.timeslots.length || allTimeslotsEnabled()) return true;
+      return enabledTimeslots.has(String(value ?? '').trim());
+    },
+    matchesValidity(value) {
+      if (!options.validity || enabledValidity.size === 2) return true;
+      return enabledValidity.has(value === true ? 'valid' : 'invalid');
+    },
+    query: () => searchText
+  };
 }
 
-function liveDetailAdjustObserved(counts, value, adjustment) {
-  const observed = liveDetailObservedValue(value);
-  if (!observed) return false;
-  const previous = counts.get(observed) || 0;
-  const next = Math.max(0, previous + adjustment);
-  if (next) counts.set(observed, next);
-  else counts.delete(observed);
-  return (previous === 0) !== (next === 0);
-}
+function liveDetailFilterController(options) {
+  const model = liveDetailFilterModel(options);
+  let expandedKeys = new Set();
+  let modalApi = null;
+  const triggerId = `live-detail-filter-trigger-${++liveDetailFilterSequence}`;
+  const container = node('div', 'live-detail-filter-summary');
+  const trigger = node('button', 'button secondary live-detail-filter-trigger', 'Filters');
+  trigger.id = triggerId;
+  trigger.type = 'button';
+  trigger.disabled = true;
+  trigger.setAttribute('aria-haspopup', 'dialog');
+  const summary = node('span', 'live-detail-filter-state', `Waiting for ${options.noun} types`);
+  summary.setAttribute('aria-live', 'polite');
+  container.append(trigger, summary);
 
-function liveDetailSynchronizeObservedSelect(select, counts, allLabel) {
-  const current = select.value;
-  const values = [...counts.keys()].sort((left, right) => left.localeCompare(right));
-  const all = node('option', '', allLabel);
-  all.value = '';
-  select.replaceChildren(all, ...values.map((value) => {
-    const option = node('option', '', value.replaceAll('_', ' '));
-    option.value = value;
-    return option;
-  }));
-  if (values.includes(current)) select.value = current;
+  const updateCompactSummary = () => {
+    const catalog = model.catalog();
+    trigger.disabled = !catalog;
+    if (!catalog) {
+      summary.textContent = `Waiting for ${options.noun} types`;
+      trigger.title = summary.textContent;
+      return;
+    }
+    const active = [];
+    if (!model.allLeafKeysEnabled()) active.push(`${model.enabledLeafCount()}/${catalog.leafKeys.length} types`);
+    if (options.timeslots && !model.allTimeslotsEnabled()) {
+      active.push(`${model.enabledTimeslotCount()}/${catalog.timeslots.length} timeslots`);
+    }
+    if (options.validity && model.enabledValidityCount() !== 2) active.push('validity');
+    if (model.query()) active.push('search');
+    summary.textContent = active.length ? active.join(' · ') : `All ${options.noun}`;
+    trigger.title = active.length ? `Active filters: ${active.join(', ')}` : `Showing all ${options.noun}`;
+  };
+
+  const notifyChange = () => {
+    updateCompactSummary();
+    options.onChange?.();
+  };
+
+  const closeModal = () => {
+    if (modalApi?.state === activeReadOnlyModal) modalApi.close();
+    modalApi = null;
+  };
+
+  const resetFilters = () => {
+    model.resetFilters();
+    notifyChange();
+  };
+
+  const openFilterModal = () => {
+    const catalog = model.catalog();
+    if (!catalog) return;
+    const modalBody = node('div', 'live-filter-editor');
+    modalBody.append(node('p', 'modal-lead',
+      `Choose which ${options.noun} appear. New items are filtered in this browser only.`));
+    const typeSection = node('section', 'live-filter-section');
+    typeSection.append(node('h3', '', options.typeHeading || 'Types'));
+    const typeActions = node('div', 'live-filter-type-actions');
+    const showAll = node('button', 'button secondary', 'Show all types');
+    const hideAll = node('button', 'button secondary', 'Hide all types');
+    showAll.type = 'button';
+    hideAll.type = 'button';
+    typeActions.append(showAll, hideAll);
+    typeSection.append(typeActions);
+    const tree = node('div', 'live-filter-tree');
+    tree.setAttribute('role', 'tree');
+    tree.setAttribute('aria-label', options.typeHeading || `${options.noun} types`);
+    typeSection.append(tree);
+    modalBody.append(typeSection);
+
+    const selectionInputs = [];
+    let treeNodeSequence = 0;
+    const updateTreeSelection = () => {
+      selectionInputs.forEach(({ input, count, leafKeys }) => {
+        const selected = leafKeys.filter((key) => model.isLeafEnabled(key)).length;
+        input.checked = selected === leafKeys.length;
+        input.indeterminate = selected > 0 && selected < leafKeys.length;
+        if (count) count.textContent = `${selected}/${leafKeys.length}`;
+      });
+    };
+    const appendFilterNode = (filterNode, parent, depth) => {
+      const branch = filterNode.children.length > 0;
+      const { leafKeys } = model.leafSelection(filterNode);
+      const item = node('div', `live-filter-tree-item${branch ? ' branch' : ' leaf'}`);
+      item.setAttribute('role', 'treeitem');
+      item.setAttribute('aria-level', String(depth + 1));
+      const row = node('div', 'live-filter-node-row');
+      row.style.setProperty('--filter-indent', `${6 + depth * 18}px`);
+      let children = null;
+      if (branch) {
+        const expand = node('button', 'live-filter-expand', expandedKeys.has(filterNode.key) ? '−' : '+');
+        expand.type = 'button';
+        expand.setAttribute('aria-label', `${expandedKeys.has(filterNode.key) ? 'Collapse' : 'Expand'} ${filterNode.label}`);
+        expand.setAttribute('aria-expanded', String(expandedKeys.has(filterNode.key)));
+        row.append(expand);
+        children = node('div', 'live-filter-tree-children');
+        children.id = `${triggerId}-tree-${++treeNodeSequence}`;
+        children.setAttribute('role', 'group');
+        children.hidden = !expandedKeys.has(filterNode.key);
+        expand.setAttribute('aria-controls', children.id);
+        expand.addEventListener('click', () => {
+          const opening = children.hidden;
+          children.hidden = !opening;
+          expand.textContent = opening ? '−' : '+';
+          expand.setAttribute('aria-expanded', String(opening));
+          expand.setAttribute('aria-label', `${opening ? 'Collapse' : 'Expand'} ${filterNode.label}`);
+          if (opening) expandedKeys.add(filterNode.key);
+          else expandedKeys.delete(filterNode.key);
+        });
+      } else {
+        const spacer = node('span', 'live-filter-expand-spacer');
+        spacer.setAttribute('aria-hidden', 'true');
+        row.append(spacer);
+      }
+      const label = node('label', 'live-filter-node-label');
+      const input = node('input');
+      input.type = 'checkbox';
+      const text = node('span', '', filterNode.label);
+      const count = branch ? node('span', 'live-filter-node-count') : null;
+      label.append(input, text);
+      if (count) label.append(count);
+      row.append(label);
+      item.append(row);
+      selectionInputs.push({ input, count, leafKeys });
+      input.addEventListener('change', () => {
+        model.setLeaves(leafKeys, input.checked);
+        updateTreeSelection();
+        notifyChange();
+      });
+      if (children) {
+        filterNode.children.forEach((child) => appendFilterNode(child, children, depth + 1));
+        item.append(children);
+      }
+      parent.append(item);
+    };
+    catalog.groups.forEach((group) => appendFilterNode(group, tree, 0));
+    updateTreeSelection();
+    showAll.addEventListener('click', () => {
+      model.setLeaves(catalog.leafKeys, true);
+      updateTreeSelection();
+      notifyChange();
+    });
+    hideAll.addEventListener('click', () => {
+      model.setLeaves(catalog.leafKeys, false);
+      updateTreeSelection();
+      notifyChange();
+    });
+
+    const settings = node('div', 'live-filter-settings');
+    if (options.timeslots && catalog.timeslots.length) {
+      const timeslots = node('fieldset', 'live-filter-choice-group');
+      timeslots.append(node('legend', '', 'Timeslots'));
+      catalog.timeslots.forEach((value) => {
+        const label = node('label');
+        const input = node('input');
+        input.type = 'checkbox';
+        input.checked = model.isTimeslotEnabled(value);
+        input.addEventListener('change', () => {
+          model.setTimeslot(value, input.checked);
+          notifyChange();
+        });
+        label.append(input, node('span', '', `Timeslot ${value}`));
+        timeslots.append(label);
+      });
+      settings.append(timeslots);
+    }
+    if (options.validity) {
+      const validity = node('fieldset', 'live-filter-choice-group');
+      validity.append(node('legend', '', 'Validity'));
+      [['valid', 'Valid messages'], ['invalid', 'Invalid messages']].forEach(([value, textValue]) => {
+        const label = node('label');
+        const input = node('input');
+        input.type = 'checkbox';
+        input.checked = model.isValidityEnabled(value);
+        input.addEventListener('change', () => {
+          model.setValidity(value, input.checked);
+          notifyChange();
+        });
+        label.append(input, node('span', '', textValue));
+        validity.append(label);
+      });
+      settings.append(validity);
+    }
+    const searchField = node('label', 'live-filter-search');
+    searchField.append(node('span', '', 'Search'));
+    const search = node('input');
+    search.type = 'search';
+    search.value = model.query();
+    search.placeholder = options.searchPlaceholder || `Search ${options.noun}`;
+    search.addEventListener('input', () => {
+      model.setSearch(search.value);
+      notifyChange();
+    });
+    searchField.append(search);
+    settings.append(searchField);
+    modalBody.append(settings);
+
+    const footer = node('div', 'live-filter-footer');
+    const reset = node('button', 'button secondary', 'Reset filters');
+    const done = node('button', 'button', 'Done');
+    reset.type = 'button';
+    done.type = 'button';
+    reset.addEventListener('click', () => {
+      resetFilters();
+      selectionInputs.forEach(({ input }) => { input.checked = true; });
+      updateTreeSelection();
+      modalBody.querySelectorAll('.live-filter-choice-group input').forEach((input) => { input.checked = true; });
+      search.value = '';
+    });
+    done.addEventListener('click', () => modalApi?.close());
+    footer.append(reset, done);
+    modalBody.append(footer);
+
+    let openedModal = null;
+    openedModal = openReadOnlyModal(options.title || `${options.noun} filters`, modalBody, {
+      id: `${options.noun}-filters`,
+      className: 'live-filter-modal',
+      returnFocusSelector: `#${triggerId}`,
+      cleanup: () => {
+        if (modalApi === openedModal) modalApi = null;
+      }
+    });
+    modalApi = openedModal;
+  };
+
+  trigger.addEventListener('click', openFilterModal);
+  updateCompactSummary();
+  return {
+    element: container,
+    setCatalog(value) {
+      const state = model.setCatalog(value);
+      if (state === 'ignored' || state === 'same') return state;
+      closeModal();
+      const catalog = model.catalog();
+      expandedKeys = new Set(catalog.groups.length <= 2 ? catalog.groups.map((group) => group.key) : []);
+      updateCompactSummary();
+      return state;
+    },
+    resetForSelection() {
+      closeModal();
+      model.resetForSelection();
+      expandedKeys.clear();
+      updateCompactSummary();
+    },
+    matchesLeaf: model.matchesLeaf,
+    matchesTimeslot: model.matchesTimeslot,
+    matchesValidity: model.matchesValidity,
+    query: model.query,
+    close: closeModal
+  };
 }
 
 function liveMessagesPane() {
   const messages = new Map();
   const order = [];
-  const observedProtocols = new Map();
-  const observedTypes = new Map();
   let selection = null;
   let active = false;
   let collapsed = false;
@@ -7758,24 +8078,23 @@ function liveMessagesPane() {
   let streamEpoch = 0;
   let renderTimer = null;
   let lastRenderAt = 0;
-  let observedFiltersDirty = true;
   let missed = 0;
   let possibleGap = false;
+  let scheduleRender = () => {};
 
   const pane = node('div', 'live-details-pane live-messages-pane');
   const toolbar = node('div', 'live-messages-toolbar live-detail-toolbar');
   const selectionLabel = node('strong', 'live-message-selection', 'Select a live row above');
-  const protocol = liveDetailSelect('Protocol', [['', 'All protocols']]);
-  const type = liveDetailSelect('Type', [['', 'All message types']]);
-  const timeslot = liveDetailSelect('Timeslot', [['', 'All timeslots'], ['1', 'Timeslot 1'], ['2', 'Timeslot 2']]);
-  const validity = liveDetailSelect('Validity', [['', 'All'], ['valid', 'Valid'], ['invalid', 'Invalid']]);
-  const searchField = node('label', 'live-detail-filter live-detail-search');
-  const search = node('input');
-  search.type = 'search';
-  search.placeholder = 'Filter message text';
-  search.setAttribute('aria-label', 'Filter message text');
-  searchField.append(node('span', '', 'Search'), search);
-  toolbar.append(selectionLabel, protocol.field, type.field, timeslot.field, validity.field, searchField);
+  const filters = liveDetailFilterController({
+    noun: 'messages',
+    title: 'Message filters',
+    typeHeading: 'Message types',
+    searchPlaceholder: 'Search message text',
+    timeslots: true,
+    validity: true,
+    onChange: () => scheduleRender()
+  });
+  toolbar.append(selectionLabel, filters.element);
   const gap = node('div', 'live-detail-gap');
   gap.hidden = true;
   gap.setAttribute('role', 'status');
@@ -7790,28 +8109,12 @@ function liveMessagesPane() {
   scroll.append(table);
   pane.append(toolbar, gap, scroll);
 
-  const updateObservedFilters = () => {
-    liveDetailSynchronizeObservedSelect(protocol.select, observedProtocols, 'All protocols');
-    liveDetailSynchronizeObservedSelect(type.select, observedTypes, 'All message types');
-    observedFiltersDirty = false;
-  };
-
-  const adjustObservedFilters = (message, adjustment) => {
-    const protocolChanged = liveDetailAdjustObserved(observedProtocols,
-      message?.filter_group || message?.protocol, adjustment);
-    const typeChanged = liveDetailAdjustObserved(observedTypes, message?.filter_type, adjustment);
-    observedFiltersDirty = observedFiltersDirty || protocolChanged || typeChanged;
-  };
-
   const matches = (message) => {
-    const protocolValue = String(message.filter_group || message.protocol || '');
-    if (protocol.select.value && protocolValue !== protocol.select.value) return false;
-    if (type.select.value && String(message.filter_type || '') !== type.select.value) return false;
-    if (timeslot.select.value && String(message.timeslot ?? '') !== timeslot.select.value) return false;
-    if (validity.select.value === 'valid' && message.valid !== true) return false;
-    if (validity.select.value === 'invalid' && message.valid !== false) return false;
-    const query = liveDetailText(search.value);
-    return !query || [message.text, message.protocol, message.filter_group, message.filter_type]
+    if (!filters.matchesLeaf(message.filter_key)) return false;
+    if (!filters.matchesTimeslot(message.timeslot)) return false;
+    if (!filters.matchesValidity(message.valid)) return false;
+    const query = filters.query();
+    return !query || [message.text, message.protocol, message.filter_label]
       .some((value) => liveDetailText(value).includes(query));
   };
 
@@ -7841,19 +8144,18 @@ function liveMessagesPane() {
       if (timeText) time.title = exactDateTime(message.timestamp_ms);
       const detail = node('td', 'live-message-text', message.text || '');
       detail.title = message.text || '';
-      row.append(time, node('td', '', message.protocol || message.filter_group || ''),
+      row.append(time, node('td', '', message.protocol || ''),
         node('td', '', message.timeslot == null ? '' : String(message.timeslot)), detail);
       body.append(row);
     });
   };
 
-  const scheduleRender = () => {
+  scheduleRender = () => {
     if (renderTimer !== null || paused) return;
     const delay = Math.max(0, LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS - (Date.now() - lastRenderAt));
     renderTimer = window.setTimeout(() => {
       renderTimer = null;
       lastRenderAt = Date.now();
-      if (observedFiltersDirty) updateObservedFilters();
       render();
     }, delay);
   };
@@ -7869,9 +8171,6 @@ function liveMessagesPane() {
   const clearSession = () => {
     messages.clear();
     order.length = 0;
-    observedProtocols.clear();
-    observedTypes.clear();
-    observedFiltersDirty = true;
     missed = 0;
     possibleGap = false;
     updateGapNotice();
@@ -7887,15 +8186,10 @@ function liveMessagesPane() {
   };
   const addMessage = (message) => {
     if (!message?.message_id) return;
-    const previous = messages.get(message.message_id);
-    if (!previous) order.unshift(message.message_id);
-    else adjustObservedFilters(previous, -1);
+    if (!messages.has(message.message_id)) order.unshift(message.message_id);
     messages.set(message.message_id, message);
-    adjustObservedFilters(message, 1);
     while (order.length > liveDetailCaptureLimit()) {
       const removedId = order.pop();
-      const removed = messages.get(removedId);
-      if (removed) adjustObservedFilters(removed, -1);
       messages.delete(removedId);
     }
     scheduleRender();
@@ -7936,6 +8230,8 @@ function liveMessagesPane() {
     stream.addEventListener('source_change', (event) => {
       if (epoch !== streamEpoch) return;
       const change = JSON.parse(event.data);
+      const catalogState = filters.setCatalog(change?.filter_catalog);
+      if (catalogState === 'changed') clearSession();
       const bound = change?.bound === true;
       if (!sourceStatusSeen) {
         sourceStatusSeen = true;
@@ -7955,13 +8251,11 @@ function liveMessagesPane() {
     selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
     if (nextKey !== currentKey) {
       closeStream();
+      filters.resetForSelection();
       clearSession();
     }
     sync();
   };
-  [protocol.select, type.select, timeslot.select, validity.select].forEach((control) =>
-    control.addEventListener('change', scheduleRender));
-  search.addEventListener('input', scheduleRender);
   render();
   return {
     element: pane,
@@ -7983,8 +8277,7 @@ function liveMessagesPane() {
       renderTimer = null;
       messages.clear();
       order.length = 0;
-      observedProtocols.clear();
-      observedTypes.clear();
+      filters.close();
     }
   };
 }
@@ -10480,8 +10773,6 @@ function tunerSpectrumPanel() {
 function liveEventsPanel(onCollapse) {
   const events = new Map();
   const order = [];
-  const observedEventTypes = new Map();
-  const observedProtocols = new Map();
   let selection = null;
   let paused = false;
   let eventsActive = true;
@@ -10490,9 +10781,9 @@ function liveEventsPanel(onCollapse) {
   let streamEpoch = 0;
   let renderTimer = null;
   let lastRenderAt = 0;
-  let observedFiltersDirty = true;
   let missed = 0;
   let possibleGap = false;
+  let scheduleRender = () => {};
 
   const panel = node('section', 'section live-details');
   const header = node('div', 'live-details-header');
@@ -10514,24 +10805,14 @@ function liveEventsPanel(onCollapse) {
   const eventPane = node('div', 'live-details-pane live-events-pane');
   const eventToolbar = node('div', 'live-events-toolbar live-detail-toolbar');
   const selectionLabel = node('strong', 'live-event-selection', 'Select a live row above');
-  const category = liveDetailSelect('Category', [
-    ['', 'All events'],
-    ['VOICE', 'Voice'],
-    ['ENCRYPTED_VOICE', 'Encrypted voice'],
-    ['DATA', 'Data'],
-    ['COMMAND', 'Commands'],
-    ['REGISTRATION', 'Registrations'],
-    ['OTHER', 'Other']
-  ]);
-  const eventTypeFilter = liveDetailSelect('Type', [['', 'All event types']]);
-  const protocolFilter = liveDetailSelect('Protocol', [['', 'All protocols']]);
-  const searchField = node('label', 'live-detail-filter live-detail-search');
-  const search = node('input');
-  search.type = 'search';
-  search.placeholder = 'Search parties or details';
-  search.setAttribute('aria-label', 'Search event parties or details');
-  searchField.append(node('span', '', 'Search'), search);
-  eventToolbar.append(selectionLabel, category.field, eventTypeFilter.field, protocolFilter.field, searchField);
+  const filters = liveDetailFilterController({
+    noun: 'events',
+    title: 'Event filters',
+    typeHeading: 'Event types',
+    searchPlaceholder: 'Search parties or details',
+    onChange: () => scheduleRender()
+  });
+  eventToolbar.append(selectionLabel, filters.element);
   const eventGap = node('div', 'live-detail-gap');
   eventGap.hidden = true;
   eventGap.setAttribute('role', 'status');
@@ -10555,23 +10836,9 @@ function liveEventsPanel(onCollapse) {
   body.append(eventPane, messagesPane, channelPane);
   panel.append(header, body);
 
-  const updateObservedFilters = () => {
-    liveDetailSynchronizeObservedSelect(eventTypeFilter.select, observedEventTypes, 'All event types');
-    liveDetailSynchronizeObservedSelect(protocolFilter.select, observedProtocols, 'All protocols');
-    observedFiltersDirty = false;
-  };
-
-  const adjustObservedFilters = (event, adjustment) => {
-    const eventTypeChanged = liveDetailAdjustObserved(observedEventTypes, event?.event_type, adjustment);
-    const protocolChanged = liveDetailAdjustObserved(observedProtocols, event?.protocol, adjustment);
-    observedFiltersDirty = observedFiltersDirty || eventTypeChanged || protocolChanged;
-  };
-
   const eventMatches = (event) => {
-    if (category.select.value && String(event.category || '') !== category.select.value) return false;
-    if (eventTypeFilter.select.value && String(event.event_type || '') !== eventTypeFilter.select.value) return false;
-    if (protocolFilter.select.value && String(event.protocol || '') !== protocolFilter.select.value) return false;
-    const query = liveDetailText(search.value);
+    if (!filters.matchesLeaf(event.event_type)) return false;
+    const query = filters.query();
     return !query || [event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
       event.to_aliases, event.to_identifiers, event.channel, event.details]
       .some((value) => liveDetailText(value).includes(query));
@@ -10628,13 +10895,12 @@ function liveEventsPanel(onCollapse) {
     });
   };
 
-  const scheduleRender = () => {
+  scheduleRender = () => {
     if (renderTimer !== null || paused) return;
     const delay = Math.max(0, LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS - (Date.now() - lastRenderAt));
     renderTimer = window.setTimeout(() => {
       renderTimer = null;
       lastRenderAt = Date.now();
-      if (observedFiltersDirty) updateObservedFilters();
       renderEvents();
     }, delay);
   };
@@ -10660,15 +10926,10 @@ function liveEventsPanel(onCollapse) {
 
   const addEvent = (event) => {
     if (!event?.event_id) return;
-    const previous = events.get(event.event_id);
-    if (!previous) order.unshift(event.event_id);
-    else adjustObservedFilters(previous, -1);
+    if (!events.has(event.event_id)) order.unshift(event.event_id);
     events.set(event.event_id, event);
-    adjustObservedFilters(event, 1);
     while (order.length > liveDetailCaptureLimit()) {
       const removedId = order.pop();
-      const removed = events.get(removedId);
-      if (removed) adjustObservedFilters(removed, -1);
       events.delete(removedId);
     }
     scheduleRender();
@@ -10677,9 +10938,6 @@ function liveEventsPanel(onCollapse) {
   const clearSession = () => {
     events.clear();
     order.length = 0;
-    observedEventTypes.clear();
-    observedProtocols.clear();
-    observedFiltersDirty = true;
     missed = 0;
     possibleGap = false;
     updateGapNotice();
@@ -10716,6 +10974,11 @@ function liveEventsPanel(onCollapse) {
     stream.addEventListener('decode_event', (event) => {
       if (epoch === streamEpoch) addEvent(JSON.parse(event.data));
     });
+    stream.addEventListener('filter_catalog', (event) => {
+      if (epoch !== streamEpoch) return;
+      const catalogState = filters.setCatalog(JSON.parse(event.data));
+      if (catalogState === 'changed') clearSession();
+    });
     stream.addEventListener('live_gap', (event) => {
       if (epoch === streamEpoch) addGap(JSON.parse(event.data));
     });
@@ -10736,6 +10999,7 @@ function liveEventsPanel(onCollapse) {
     }
     closeStream();
     selection = nextSelection;
+    filters.resetForSelection();
     clearSession();
     selectionLabel.textContent = selection?.label || 'Select a live row above';
     scheduleRender();
@@ -10787,9 +11051,6 @@ function liveEventsPanel(onCollapse) {
     messagesController.setPaused(paused);
     channelController.setPaused(paused);
   });
-  [category.select, eventTypeFilter.select, protocolFilter.select].forEach((control) =>
-    control.addEventListener('change', scheduleRender));
-  search.addEventListener('input', scheduleRender);
   renderEvents();
   return {
     element: panel,
@@ -10800,8 +11061,7 @@ function liveEventsPanel(onCollapse) {
       renderTimer = null;
       events.clear();
       order.length = 0;
-      observedEventTypes.clear();
-      observedProtocols.clear();
+      filters.close();
       messagesController.close();
       channelController.close();
     }
@@ -11326,6 +11586,8 @@ function liveSystemsSection(onSelectionChange) {
       title.replaceChildren(liveSystemTabTitle(value, label, siteTarget, () => showTable(value.table_id)));
     }
     const quality = tab.querySelector('.systems-tab-quality');
+    const qualityLinksToSite = value.table_id !== 'conventional' && value.guid &&
+      capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS);
     const currentControl = currentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
@@ -11356,6 +11618,8 @@ function liveSystemsSection(onSelectionChange) {
       tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
       select.setAttribute('aria-label', `Open ${label} channel quality, ${signalLabel}, ${qualityLabel}`);
     }
+    quality.classList.toggle('quality-link', Boolean(qualityLinksToSite));
+    select.classList.toggle('quality-link', Boolean(qualityLinksToSite));
     const stopped = value.table_id !== 'conventional' && value.channel_running === false;
     tab.classList.toggle('stopped', stopped);
     const close = tab.querySelector('.systems-tab-close');

@@ -2663,15 +2663,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             if(mDecodeMessages != null && now - mLastMessagePoll >= TimeUnit.MILLISECONDS.toNanos(100))
             {
                 mLastMessagePoll = now;
-                long generation = mDecodeMessages.generation();
+                DecodeMessageViewService.SourceState sourceState = mDecodeMessages.sourceState();
 
-                if(generation != mDecodeMessageGeneration)
+                if(sourceState.generation() != mDecodeMessageGeneration)
                 {
-                    mDecodeMessageGeneration = generation;
-                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "source_change", Map.of(
-                        "generation", generation,
-                        "bound", mDecodeMessages.isBound(),
-                        "frequency_hz", mDecodeMessages.getScope().frequencyHz()));
+                    mDecodeMessageGeneration = sourceState.generation();
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change", sourceState);
                     wrote = true;
                 }
 
@@ -2985,6 +2982,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     requiredSubscription(mDecodeEvents, topic);
                     mDecodeEventDrops = 0;
                     mDecodeEventIngressDrops = ingressDropBaseline;
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "filter_catalog",
+                        DecodeEventViewService.filterCatalog());
                     observeOutputDrops(output, TOPIC_DECODE_EVENTS);
                 }
                 case "decode_messages" -> {
@@ -2997,11 +2996,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     mDecodeMessages = mDecodeMessageViewService.openSession(decodeMessageScope(uri));
                     mDecodeMessageDrops = 0;
                     observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
-                    mDecodeMessageGeneration = mDecodeMessages.generation();
-                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "source_change", Map.of(
-                        "generation", mDecodeMessageGeneration,
-                        "bound", mDecodeMessages.isBound(),
-                        "frequency_hz", mDecodeMessages.getScope().frequencyHz()));
+                    DecodeMessageViewService.SourceState sourceState = mDecodeMessages.sourceState();
+                    mDecodeMessageGeneration = sourceState.generation();
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change", sourceState);
                 }
                 case "channel_diagnostics" -> openChannelDiagnostics(uri, output);
                 case "tuner_diagnostics" -> openTunerDiagnostics(uri, output);

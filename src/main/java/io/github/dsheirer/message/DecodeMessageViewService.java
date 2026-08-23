@@ -7,6 +7,7 @@ package io.github.dsheirer.message;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -45,7 +46,6 @@ public class DecodeMessageViewService implements AutoCloseable
     private static final int MAXIMUM_DRAIN_PER_PRODUCER = 512;
     private static final int TEXT_MAXIMUM_LENGTH = 2_048;
     private static final int PROTOCOL_MAXIMUM_LENGTH = 64;
-    private static final int FILTER_MAXIMUM_LENGTH = 128;
     private static final long REBIND_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(500);
     private static final long MAINTENANCE_INTERVAL_MILLISECONDS = 10;
     private static final long DEFAULT_CLOSE_TIMEOUT_MILLISECONDS = 2_000;
@@ -315,6 +315,12 @@ public class DecodeMessageViewService implements AutoCloseable
         void addListener(Listener<IMessage> listener);
         void removeListener(Listener<IMessage> listener);
         boolean matches(Scope scope);
+
+        /** Built on the observer worker when this source becomes the active binding. */
+        default MessageFilterCatalog.Classifier messageFilterClassifier()
+        {
+            return MessageFilterCatalog.fallback();
+        }
     }
 
     /** Exact active-channel selection. Configuration identifiers are normalized UUID strings. */
@@ -345,7 +351,12 @@ public class DecodeMessageViewService implements AutoCloseable
 
     /** Safe, bounded fields needed by the web message table and its browser-owned filters. */
     public record MessageView(String messageId, long timestampMs, String protocol, int timeslot, boolean valid,
-                              String filterGroup, String filterType, String text)
+                              String filterKey, String filterLabel, String text)
+    {
+    }
+
+    /** One coherent lifecycle snapshot used for each browser source-change event. */
+    public record SourceState(long generation, boolean bound, long frequencyHz, FilterCatalog filterCatalog)
     {
     }
 
@@ -382,12 +393,22 @@ public class DecodeMessageViewService implements AutoCloseable
 
         public boolean isBound()
         {
-            return mProducer.mBinding != null && !mClosed.get() && !mService.mClosed.get();
+            return sourceState().bound();
         }
 
         public long generation()
         {
-            return mProducer.mGeneration;
+            return sourceState().generation();
+        }
+
+        public FilterCatalog filterCatalog()
+        {
+            return sourceState().filterCatalog();
+        }
+
+        public SourceState sourceState()
+        {
+            return mProducer.sourceState(!mClosed.get() && !mService.mClosed.get());
         }
 
         /** Monotonic count of shared ingress and this session's bounded output drops. */
@@ -519,6 +540,14 @@ public class DecodeMessageViewService implements AutoCloseable
             mNextRefreshNanos = 0;
         }
 
+        private synchronized SourceState sourceState(boolean sessionActive)
+        {
+            Binding binding = mBinding;
+            boolean bound = sessionActive && binding != null && binding.mSource.matches(mScope);
+            return new SourceState(mGeneration, bound, mScope.frequencyHz(),
+                bound ? binding.mClassifier.catalog() : null);
+        }
+
         private void refreshIfDue()
         {
             long now = System.nanoTime();
@@ -565,7 +594,6 @@ public class DecodeMessageViewService implements AutoCloseable
                 mBinding = null;
                 mIngressStamp = null;
                 mIngress.clear();
-                mGeneration++;
 
                 for(Session session: mSessions)
                 {
@@ -576,7 +604,20 @@ public class DecodeMessageViewService implements AutoCloseable
                 {
                     Object token = new Object();
                     Listener<IMessage> listener = message -> receive(token, message);
-                    Binding next = new Binding(nextSource, listener, token);
+                    MessageFilterCatalog.Classifier classifier;
+
+                    try
+                    {
+                        classifier = nextSource.messageFilterClassifier();
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        mLog.warn("Unable to build decoder-message filter catalog for {}; using fallback",
+                            mScope, exception);
+                        classifier = MessageFilterCatalog.fallback();
+                    }
+
+                    Binding next = new Binding(nextSource, listener, token, classifier);
                     mBinding = next;
                     mIngressStamp = new IngressStamp(token, mAudienceEpoch);
 
@@ -589,16 +630,20 @@ public class DecodeMessageViewService implements AutoCloseable
                             nextSource.removeListener(listener);
                             mBinding = null;
                             mIngressStamp = null;
-                            mGeneration++;
                         }
                     }
                     catch(RuntimeException exception)
                     {
                         mBinding = null;
                         mIngressStamp = null;
+                        mGeneration++;
                         throw exception;
                     }
                 }
+
+                //Publish the generation only after the binding and catalog snapshot are complete.  A reader that
+                //observes this volatile write cannot see the new generation with the preceding unbound state.
+                mGeneration++;
             }
         }
 
@@ -652,7 +697,7 @@ public class DecodeMessageViewService implements AutoCloseable
                     continue;
                 }
 
-                MessageView projected = view(observation.second());
+                MessageView projected = view(observation.second(), binding.mClassifier);
 
                 //A DMR REST handoff can change the chain's functional channel while projection is in progress.
                 if(projected != null && !mClosed.get() && mBinding == binding &&
@@ -710,7 +755,7 @@ public class DecodeMessageViewService implements AutoCloseable
         }
     }
 
-    private static MessageView view(IMessage message)
+    private static MessageView view(IMessage message, MessageFilterCatalog.Classifier classifier)
     {
         if(message == null || message instanceof StuffBitsMessage)
         {
@@ -719,8 +764,10 @@ public class DecodeMessageViewService implements AutoCloseable
 
         long timestamp = timestamp(message);
         ProtocolInfo protocol = protocol(message);
+        MessageFilterCatalog.Match match = classifier.classify(message);
         return new MessageView(messageId(message, timestamp), timestamp, protocol.display(), timeslot(message),
-            valid(message), protocol.filterGroup(), filterType(message), text(message));
+            valid(message), match != null ? match.filterKey() : "", match != null ? match.filterLabel() : "Unknown",
+            text(message));
     }
 
     private static String messageId(IMessage message, long timestamp)
@@ -746,8 +793,8 @@ public class DecodeMessageViewService implements AutoCloseable
         try
         {
             Protocol protocol = message.getProtocol();
-            return protocol != null ? new ProtocolInfo(bounded(protocol.toString(), PROTOCOL_MAXIMUM_LENGTH),
-                bounded(protocol.name(), FILTER_MAXIMUM_LENGTH)) : ProtocolInfo.UNKNOWN;
+            return protocol != null ? new ProtocolInfo(bounded(protocol.toString(), PROTOCOL_MAXIMUM_LENGTH)) :
+                ProtocolInfo.UNKNOWN;
         }
         catch(RuntimeException _)
         {
@@ -776,19 +823,6 @@ public class DecodeMessageViewService implements AutoCloseable
         catch(RuntimeException _)
         {
             return false;
-        }
-    }
-
-    private static String filterType(IMessage message)
-    {
-        try
-        {
-            String type = bounded(message.getClass().getSimpleName(), FILTER_MAXIMUM_LENGTH);
-            return !type.isBlank() ? type : "UnknownMessage";
-        }
-        catch(RuntimeException _)
-        {
-            return "UnknownMessage";
         }
     }
 
@@ -839,9 +873,19 @@ public class DecodeMessageViewService implements AutoCloseable
                 scope.configurationId().equals(channel.getConfigurationId()) &&
                 source.getFrequency() == scope.frequencyHz();
         }
+
+        @Override
+        public MessageFilterCatalog.Classifier messageFilterClassifier()
+        {
+            Channel channel = mChain.getCurrentChannel();
+            int[] timeslots = channel != null && channel.getDecodeConfiguration() != null ?
+                channel.getDecodeConfiguration().getTimeslots() : new int[0];
+            return MessageFilterCatalog.fromModules(mChain.getModules(), timeslots);
+        }
     }
 
-    private record Binding(MessageSource mSource, Listener<IMessage> mListener, Object mToken)
+    private record Binding(MessageSource mSource, Listener<IMessage> mListener, Object mToken,
+                           MessageFilterCatalog.Classifier mClassifier)
     {
     }
 
@@ -849,8 +893,8 @@ public class DecodeMessageViewService implements AutoCloseable
     {
     }
 
-    private record ProtocolInfo(String display, String filterGroup)
+    private record ProtocolInfo(String display)
     {
-        private static final ProtocolInfo UNKNOWN = new ProtocolInfo("Unknown", "UNKNOWN");
+        private static final ProtocolInfo UNKNOWN = new ProtocolInfo("Unknown");
     }
 }

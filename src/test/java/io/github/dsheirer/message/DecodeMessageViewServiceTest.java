@@ -7,10 +7,16 @@ package io.github.dsheirer.message;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.filter.AllPassFilter;
+import io.github.dsheirer.filter.Filter;
+import io.github.dsheirer.filter.FilterElement;
+import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -22,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
 class DecodeMessageViewServiceTest
@@ -70,8 +77,8 @@ class DecodeMessageViewServiceTest
             assertEquals(2_048, view.text().length());
             assertTrue(view.text().endsWith("…"));
             assertEquals("NXDN", view.protocol());
-            assertEquals("NXDN", view.filterGroup());
-            assertEquals("TestMessage", view.filterType());
+            assertFalse(view.filterKey().isBlank());
+            assertEquals("Other/Unlisted", view.filterLabel());
             assertEquals(1, view.timeslot());
             assertFalse(view.valid());
             assertFalse(decoderThread == projectionThread.get());
@@ -101,6 +108,78 @@ class DecodeMessageViewServiceTest
             second.receive(new TestMessage(3_000L, Protocol.APCO25_PHASE2, 1, true, "replacement"));
             assertEquals("replacement", session.poll(2, TimeUnit.SECONDS).text());
             assertNull(session.poll(0, TimeUnit.MILLISECONDS));
+        }
+    }
+
+    @Test
+    void rebindPublishesTheCompleteSameOrDifferentCatalogWithItsGeneration()
+    {
+        FakeMessageSource first = new FakeMessageSource(classifier("Known Messages", "Known Type"));
+        FakeMessageSource sameCatalog = new FakeMessageSource(classifier("Known Messages", "Known Type"));
+        FakeMessageSource differentCatalog = new FakeMessageSource(classifier("Different Messages", "Rare Type"));
+        AtomicReference<FakeMessageSource> selected = new AtomicReference<>(first);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(scope -> selected.get());
+            DecodeMessageViewService.Session session = service.openSession(scope()))
+        {
+            await(session::isBound);
+            DecodeMessageViewService.SourceState firstState = session.sourceState();
+            assertNotNull(firstState.filterCatalog());
+
+            selected.set(sameCatalog);
+            session.refresh();
+            await(() -> session.generation() > firstState.generation() && session.isBound());
+            DecodeMessageViewService.SourceState sameState = session.sourceState();
+            assertEquals(firstState.filterCatalog().signature(), sameState.filterCatalog().signature());
+
+            selected.set(differentCatalog);
+            session.refresh();
+            await(() -> session.generation() > sameState.generation() && session.isBound());
+            DecodeMessageViewService.SourceState differentState = session.sourceState();
+            assertNotEquals(sameState.filterCatalog().signature(), differentState.filterCatalog().signature());
+            assertEquals(List.of("Rare Type"), differentState.filterCatalog().groups().getFirst().children().stream()
+                .map(io.github.dsheirer.filter.FilterCatalog.Node::label).toList());
+        }
+    }
+
+    @Test
+    void catalogConstructionFailureUsesFallbackWithoutBreakingLiveDelivery() throws InterruptedException
+    {
+        FakeMessageSource source = new FakeMessageSource();
+        source.setThrowClassifier(true);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(scope -> source);
+            DecodeMessageViewService.Session session = service.openSession(scope()))
+        {
+            await(session::isBound);
+            assertEquals(MessageFilterCatalog.fallback().catalog(), session.filterCatalog());
+            source.receive(new TestMessage(1_000L, Protocol.APCO25, 0, true, "delivered"));
+            assertEquals("delivered", session.poll(2, TimeUnit.SECONDS).text());
+        }
+    }
+
+    @Test
+    void failedListenerBindPublishesAnUnboundGenerationWithoutAnOldCatalog()
+    {
+        FakeMessageSource first = new FakeMessageSource(classifier("First", "First Type"));
+        FakeMessageSource failing = new FakeMessageSource(classifier("Second", "Second Type"));
+        AtomicReference<FakeMessageSource> selected = new AtomicReference<>(first);
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(scope -> selected.get());
+            DecodeMessageViewService.Session session = service.openSession(scope()))
+        {
+            await(session::isBound);
+            long generation = session.generation();
+            failing.setThrowOnAdd(true);
+            selected.set(failing);
+            session.refresh();
+            await(() -> session.generation() > generation && !session.isBound());
+            DecodeMessageViewService.SourceState state = session.sourceState();
+            assertFalse(state.bound());
+            assertNull(state.filterCatalog());
+            assertEquals(0, first.listenerCount());
+            selected.set(null);
+            session.refresh();
         }
     }
 
@@ -277,6 +356,44 @@ class DecodeMessageViewServiceTest
     }
 
     @Test
+    void saturationAndBlockedClassificationNeverRunOrWaitOnTheDecoderCallback() throws Exception
+    {
+        CountDownLatch classificationEntered = new CountDownLatch(1);
+        CountDownLatch releaseClassification = new CountDownLatch(1);
+        AtomicReference<Thread> classificationThread = new AtomicReference<>();
+        MessageFilterCatalog.Classifier classifier = blockingClassifier(classificationEntered,
+            releaseClassification, classificationThread);
+        FakeMessageSource source = new FakeMessageSource(classifier);
+        Thread decoderThread = Thread.currentThread();
+
+        try(DecodeMessageViewService service = new DecodeMessageViewService(scope -> source);
+            DecodeMessageViewService.Session session = service.openSession(scope()))
+        {
+            await(session::isBound);
+            source.receive(new TestMessage(1_000L, Protocol.APCO25, 0, true, "blocked classification"));
+            assertTrue(classificationEntered.await(2, TimeUnit.SECONDS));
+            assertFalse(decoderThread == classificationThread.get());
+            long started = System.nanoTime();
+
+            for(int index = 0; index < DecodeMessageViewService.INGRESS_QUEUE_SIZE + 16; index++)
+            {
+                source.receive(new TestMessage(index + 2_000L, Protocol.APCO25, 0, true, "queued"));
+            }
+
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertTrue(elapsedMs < 250, "bounded decoder callback offers took " + elapsedMs + " ms");
+            assertTrue(service.getDroppedObservationCount(scope()) > 0);
+            releaseClassification.countDown();
+            DecodeMessageViewService.MessageView view = session.poll(2, TimeUnit.SECONDS);
+            assertEquals("Observed Type", view.filterLabel());
+        }
+        finally
+        {
+            releaseClassification.countDown();
+        }
+    }
+
+    @Test
     void safelyProjectsMalformedMessages() throws InterruptedException
     {
         FakeMessageSource source = new FakeMessageSource();
@@ -290,8 +407,8 @@ class DecodeMessageViewServiceTest
 
             assertEquals(0L, view.timestampMs());
             assertEquals("Unknown", view.protocol());
-            assertEquals("UNKNOWN", view.filterGroup());
-            assertEquals("BrokenMessage", view.filterType());
+            assertFalse(view.filterKey().isBlank());
+            assertEquals("Other/Unlisted", view.filterLabel());
             assertEquals(0, view.timeslot());
             assertFalse(view.valid());
             assertEquals("MESSAGE ITEM ENCOUNTERED PARSING ERROR", view.text());
@@ -310,6 +427,7 @@ class DecodeMessageViewServiceTest
             await(() -> first.isBound() && second.isBound());
             assertEquals(1, service.getProducerCount());
             assertEquals(1, source.adds());
+            assertEquals(1, source.classifierBuilds());
             assertEquals(1, source.listenerCount());
 
             first.close();
@@ -524,17 +642,54 @@ class DecodeMessageViewServiceTest
         return new DecodeMessageViewService.Scope(SECOND_CONFIGURATION_ID, SECOND_FREQUENCY);
     }
 
+    private static MessageFilterCatalog.Classifier classifier(String group, String type)
+    {
+        FilterSet<IMessage> filters = new FilterSet<>("Messages");
+        filters.addFilter(new StaticFilter(group, type));
+        filters.addFilter(new AllPassFilter<>("All Other Messages"));
+        return MessageFilterCatalog.fromFilterSet(filters, new int[0]);
+    }
+
+    private static MessageFilterCatalog.Classifier blockingClassifier(CountDownLatch entered,
+        CountDownLatch release, AtomicReference<Thread> thread)
+    {
+        FilterSet<IMessage> filters = new FilterSet<>("Messages");
+        filters.addFilter(new BlockingFilter(entered, release, thread));
+        filters.addFilter(new AllPassFilter<>("All Other Messages"));
+        return MessageFilterCatalog.fromFilterSet(filters, new int[0]);
+    }
+
     private static class FakeMessageSource implements DecodeMessageViewService.MessageSource
     {
         private final CopyOnWriteArrayList<Listener<IMessage>> mListeners = new CopyOnWriteArrayList<>();
         private final AtomicBoolean mMatches = new AtomicBoolean(true);
         private final AtomicInteger mAdds = new AtomicInteger();
         private final AtomicInteger mRemoves = new AtomicInteger();
+        private final AtomicInteger mClassifierBuilds = new AtomicInteger();
+        private final MessageFilterCatalog.Classifier mClassifier;
+        private final AtomicBoolean mThrowClassifier = new AtomicBoolean();
+        private final AtomicBoolean mThrowOnAdd = new AtomicBoolean();
+
+        private FakeMessageSource()
+        {
+            this(MessageFilterCatalog.fallback());
+        }
+
+        private FakeMessageSource(MessageFilterCatalog.Classifier classifier)
+        {
+            mClassifier = classifier;
+        }
 
         @Override
         public void addListener(Listener<IMessage> listener)
         {
             mAdds.incrementAndGet();
+
+            if(mThrowOnAdd.get())
+            {
+                throw new IllegalStateException("test listener bind failure");
+            }
+
             mListeners.addIfAbsent(listener);
         }
 
@@ -551,6 +706,19 @@ class DecodeMessageViewServiceTest
             return mMatches.get();
         }
 
+        @Override
+        public MessageFilterCatalog.Classifier messageFilterClassifier()
+        {
+            mClassifierBuilds.incrementAndGet();
+
+            if(mThrowClassifier.get())
+            {
+                throw new IllegalStateException("test catalog failure");
+            }
+
+            return mClassifier;
+        }
+
         void receive(IMessage message)
         {
             for(Listener<IMessage> listener: mListeners)
@@ -562,6 +730,16 @@ class DecodeMessageViewServiceTest
         void setMatches(boolean matches)
         {
             mMatches.set(matches);
+        }
+
+        void setThrowClassifier(boolean throwClassifier)
+        {
+            mThrowClassifier.set(throwClassifier);
+        }
+
+        void setThrowOnAdd(boolean throwOnAdd)
+        {
+            mThrowOnAdd.set(throwOnAdd);
         }
 
         int listenerCount()
@@ -577,6 +755,66 @@ class DecodeMessageViewServiceTest
         int removes()
         {
             return mRemoves.get();
+        }
+
+        int classifierBuilds()
+        {
+            return mClassifierBuilds.get();
+        }
+    }
+
+    private static class StaticFilter extends Filter<IMessage,String>
+    {
+        private final String mType;
+
+        private StaticFilter(String group, String type)
+        {
+            super(group);
+            mType = type;
+            add(new FilterElement<>(type));
+        }
+
+        @Override
+        public Function<IMessage,String> getKeyExtractor()
+        {
+            return message -> mType;
+        }
+    }
+
+    private static class BlockingFilter extends Filter<IMessage,String>
+    {
+        private static final String TYPE = "Observed Type";
+        private final CountDownLatch mEntered;
+        private final CountDownLatch mRelease;
+        private final AtomicReference<Thread> mThread;
+
+        private BlockingFilter(CountDownLatch entered, CountDownLatch release, AtomicReference<Thread> thread)
+        {
+            super("Observed Messages");
+            mEntered = entered;
+            mRelease = release;
+            mThread = thread;
+            add(new FilterElement<>(TYPE));
+        }
+
+        @Override
+        public Function<IMessage,String> getKeyExtractor()
+        {
+            return message -> {
+                mThread.compareAndSet(null, Thread.currentThread());
+                mEntered.countDown();
+
+                try
+                {
+                    mRelease.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return TYPE;
+            };
         }
     }
 

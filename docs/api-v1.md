@@ -207,10 +207,18 @@ applying newer live rows.
 `decode_events` and `decode_messages` are deliberately live-only. Opening either subscription starts empty; the
 server projects each new item on a bounded observer worker, publishes it, and forgets it. It does not preload decoder
 history or retain a replay cache. A bounded queue or connection loss emits `live_gap` with the number of known dropped
-items and then continues with new data. Opening a decoder-message stream emits its initial source status as
-`source_change`, and later source rebinds emit the same event; neither event causes a snapshot. Browser filtering is
-local and does not change the subscription. The browser retains only a bounded
-in-memory capture for the current page and selected channel, renders the newest configured number of matching rows,
+items and then continues with new data. A decoder-event subscription first emits an authoritative `filter_catalog`
+containing every event category and type, including types that have not yet been observed. Opening a decoder-message
+stream emits its initial source status as `source_change`, and later source rebinds emit the same event. A bound source
+state includes `filter_catalog`; an unbound source uses `null`. The catalog contains a deterministic `signature`, an
+ordered tree of `{key, label, children}` nodes, and the source's available `timeslots`. Message rows carry the matching
+stable `filter_key` and friendly `filter_label`. Catalog/source-state frames are coalesced authoritative state and
+clear older queued rows for the same topic, but neither event causes a history snapshot or replay.
+
+Browser filtering is local and does not change the subscription. Filter choices come from the complete source catalog,
+not from rows already received, so an unseen or rare message type can be selected while the table is empty. The browser
+retains only a bounded in-memory capture for the current page and selected channel, applies the selected types,
+timeslots, validity, and text search before the display limit, renders the newest configured number of matching rows,
 and clears that capture on page, tab, or selection change.
 
 The `calls` logical subscription accepts `scan_list_id` as an array of positive IDs. Duplicate IDs are folded

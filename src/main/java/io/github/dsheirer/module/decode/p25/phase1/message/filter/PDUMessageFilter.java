@@ -23,7 +23,6 @@ import io.github.dsheirer.filter.Filter;
 import io.github.dsheirer.filter.FilterElement;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUMessage;
-import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDUMessage;
 import java.util.function.Function;
 
 /**
@@ -52,7 +51,7 @@ public class PDUMessageFilter extends Filter<IMessage,String>
     @Override
     public boolean canProcess(IMessage message)
     {
-        return message instanceof TDUMessage && super.canProcess(message);
+        return message instanceof PDUMessage && super.canProcess(message);
     }
 
     /**

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.filter;
 
 import io.github.dsheirer.filter.Filter;
+import io.github.dsheirer.filter.FilterElement;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.packet.DMRPacketMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.packet.UDTShortMessageService;
@@ -51,12 +52,20 @@ public class DmrPacketSequenceFilter extends Filter<IMessage,String>
     public DmrPacketSequenceFilter()
     {
         super("Packet Sequence Messages");
+        add(new FilterElement<>(KEY_ARS));
+        add(new FilterElement<>(KEY_HYTERA_SMS));
+        add(new FilterElement<>(KEY_HYTERA_UNKNOWN));
+        add(new FilterElement<>(KEY_LRRP));
+        add(new FilterElement<>(KEY_UDT_SMS));
+        add(new FilterElement<>(KEY_XCMP));
+        add(new FilterElement<>(KEY_UNKNOWN));
     }
 
     @Override
     public boolean canProcess(IMessage message)
     {
-        return message instanceof DMRPacketMessage && super.canProcess(message);
+        return (message instanceof DMRPacketMessage || message instanceof UDTShortMessageService) &&
+            super.canProcess(message);
     }
 
     @Override

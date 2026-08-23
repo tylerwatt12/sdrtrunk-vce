@@ -249,7 +249,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"87\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"88\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -566,7 +566,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=69"));
+        assertTrue(html.contains("/assets/app.css?v=70"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -737,6 +737,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("data-view=\"scanner\""));
         assertTrue(html.contains("id=\"playback-bar\""));
         assertTrue(scanner.contains("scanner-player-host"));
+        assertTrue(css.contains(".scanner-player-host .playback-bar {"));
+        assertTrue(css.contains("background: var(--surface);"));
+        assertTrue(css.contains(".scanner-player-host .playback-command {"));
         assertTrue(source.contains("restorePlaybackBarBeforeRender();"));
         assertTrue(function(source, "function placePlaybackBar()")
             .contains("(scannerHost || slot).append(bar)"));
@@ -782,6 +785,11 @@ class StatsWebInteractionUiContractTest
     void batchesLiveOnlyEventAndMessageCaptureBeforeFilteringAndRendering() throws Exception
     {
         String source = source();
+        String css = readText(APP_CSS);
+        String catalog = function(source, "function liveDetailFilterCatalog(value)");
+        String model = function(source, "function liveDetailFilterModel(options = {})");
+        String filters = function(source, "function liveDetailFilterController(options)");
+        String modal = function(source, "function openReadOnlyModal(title, body, options = {})");
         String messages = function(source, "function liveMessagesPane()");
         String events = function(source, "function liveEventsPanel(onCollapse)");
         String addMessage = function(source, "  const addMessage = (message) =>");
@@ -792,17 +800,35 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("window.setTimeout"));
         assertFalse(messages.contains("window.requestAnimationFrame"));
         assertFalse(events.contains("window.requestAnimationFrame"));
-        assertTrue(addMessage.contains("adjustObservedFilters(message, 1)"));
-        assertTrue(addEvent.contains("adjustObservedFilters(event, 1)"));
-        assertFalse(addMessage.contains("updateObservedFilters()"));
-        assertFalse(addEvent.contains("updateObservedFilters()"));
+        assertFalse(source.contains("liveDetailSynchronizeObservedSelect"));
+        assertFalse(messages.contains("observedProtocols"));
+        assertFalse(events.contains("observedEventTypes"));
+        assertFalse(addMessage.contains("replaceChildren"));
+        assertFalse(addEvent.contains("replaceChildren"));
         assertTrue(messages.contains(".filter((message) => message && matches(message))"));
         assertTrue(events.contains(".filter((event) => event && eventMatches(event))"));
         assertTrue(messages.contains(".slice(0, liveDetailMatchingRowLimit())"));
         assertTrue(events.contains(".slice(0, liveDetailMatchingRowLimit())"));
+        assertTrue(catalog.contains("Array.isArray(value.groups)"));
+        assertTrue(catalog.contains("candidate.children"));
+        assertTrue(catalog.contains("value.timeslots"));
+        assertTrue(filters.contains("openReadOnlyModal("));
+        assertTrue(filters.contains("className: 'live-filter-modal'"));
+        assertTrue(filters.contains("returnFocusSelector:"));
+        assertTrue(filters.contains("trigger.setAttribute('aria-haspopup', 'dialog')"));
+        assertTrue(filters.contains("tree.setAttribute('role', 'tree')"));
+        assertTrue(filters.contains("input.indeterminate"));
+        assertTrue(filters.contains("`${selected}/${leafKeys.length}`"));
+        assertTrue(model.contains("catalog?.signature === next.signature"));
+        assertTrue(model.contains("if (!next) return 'ignored'"));
+        assertTrue(messages.contains("message.filter_key"));
+        assertTrue(messages.contains("message.filter_label"));
+        assertTrue(events.contains("filters.matchesLeaf(event.event_type)"));
         assertTrue(messages.contains("addEventListener('live_gap'"));
         assertTrue(events.contains("addEventListener('live_gap'"));
         assertTrue(messages.contains("addEventListener('source_change'"));
+        assertTrue(messages.contains("filters.setCatalog(change?.filter_catalog)"));
+        assertTrue(events.contains("addEventListener('filter_catalog'"));
         assertTrue(messages.contains("stream.onopen = () =>"));
         assertTrue(events.contains("stream.onopen = () =>"));
         assertTrue(messages.contains("additional messages may have been missed"));
@@ -810,6 +836,16 @@ class StatsWebInteractionUiContractTest
         assertFalse(messages.contains("parameters.timeslot"));
         assertFalse(messages.contains("addEventListener('snapshot'"));
         assertFalse(events.contains("addEventListener('snapshot'"));
+        assertFalse(messages.contains("stream.update("));
+        assertFalse(events.contains("stream.update("));
+        assertTrue(css.contains(".read-only-modal.live-filter-modal"));
+        assertTrue(css.contains(".live-filter-tree"));
+        assertTrue(css.contains(".live-filter-settings"));
+        assertTrue(css.contains(".live-filter-tree {\n    max-height: none;"));
+        assertTrue(modal.contains("dialog.setAttribute('aria-modal', 'true')"));
+        assertTrue(modal.contains("if (event.key === 'Escape')"));
+        assertTrue(modal.contains("if (event.target === backdrop) dismiss()"));
+        assertTrue(modal.contains("returnFocusSelector"));
     }
 
     @Test
@@ -856,8 +892,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(upsert.contains("value.channel_running !== true"));
         assertTrue(upsert.contains("current.channel_running !== false"));
         assertTrue(createRow.contains("event.target.closest('a, button')"));
+        assertTrue(upsert.contains("quality.classList.toggle('quality-link'"));
+        assertTrue(upsert.contains("select.classList.toggle('quality-link'"));
         assertTrue(css.contains(".systems-tab-close"));
         assertTrue(css.contains(".systems-live-tab.stopped .systems-tab-quality"));
+        assertTrue(css.contains(".systems-tab-select:hover .systems-tab-quality.quality-link span"));
+        assertTrue(css.contains(".systems-tab-select.quality-link:hover"));
     }
 
     @Test
@@ -886,11 +926,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("parameters.timeslot = selection.timeslot"));
         assertFalse(events.contains("stream.addEventListener('snapshot'"));
         assertTrue(events.contains("stream.addEventListener('decode_event'"));
-        assertTrue(events.contains("if (!previous) order.unshift(event.event_id)"));
+        assertTrue(events.contains("if (!events.has(event.event_id)) order.unshift(event.event_id)"));
         assertTrue(events.contains("while (order.length > liveDetailCaptureLimit())"));
         assertTrue(events.contains("stream.addEventListener('live_gap'"));
-        assertTrue(events.contains("['ENCRYPTED_VOICE', 'Encrypted voice']"));
-        assertTrue(events.contains("['REGISTRATION', 'Registrations']"));
+        assertTrue(events.contains("filters.setCatalog(JSON.parse(event.data))"));
+        assertFalse(events.contains("liveDetailSelect('Protocol'"));
+        assertFalse(messages.contains("liveDetailSelect('Protocol'"));
         assertTrue(events.contains("['Time', 'Duration', 'Event', 'From', 'To', 'Channel', 'Details']"));
         assertTrue(events.contains("node('tr', liveEventCategoryClass(event.category))"));
         assertTrue(events.contains("row.dataset.eventCategory = event.category || 'OTHER'"));

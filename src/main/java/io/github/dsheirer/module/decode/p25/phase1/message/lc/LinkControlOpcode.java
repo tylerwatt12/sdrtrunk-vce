@@ -181,7 +181,7 @@ public enum LinkControlOpcode
     public boolean isGrouped()
     {
         return COMMAND_STATUS_OPCODES.contains(this) || MOTOROLA_OPCODES.contains(this) ||
-                NETWORK_OPCODES.contains(this) || VOICE_OPCODES.contains(this);
+                L3HARRIS_OPCODES.contains(this) || NETWORK_OPCODES.contains(this) || VOICE_OPCODES.contains(this);
     }
 
     /**
