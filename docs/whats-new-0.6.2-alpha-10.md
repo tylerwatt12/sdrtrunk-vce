@@ -67,9 +67,10 @@ v4, and the release retains Alpha 9's portable-storage layout and existing migra
   `0-0`.
 - **Short P25 TDULC candidates are rejected.** Golay correction no longer reads a partial codeword, and link-control
   data assembled without all 12 protected codewords cannot be accepted as valid after zero filling.
-- **Windows Application Control can load the bundled Java runtime.** Windows packaging preserves the BellSoft and
-  Microsoft Authenticode signatures on the Java launcher and native libraries after runtime-image creation. The build
-  verifies every packaged `.exe` and `.dll` against the pinned signed JDK instead of weakening host security policy.
+- **Windows packages retain the bundled Java runtime's vendor signatures.** Packaging restores the BellSoft and
+  Microsoft Authenticode-signed runtime files after jlink image creation. Each Windows archive's runtime `.exe` and
+  `.dll` is verified byte-for-byte against the pinned signed JDK, avoiding unsigned jlink natives without changing
+  host security policy.
 
 ## Removed
 
