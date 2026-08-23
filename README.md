@@ -38,7 +38,7 @@ Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stabi
 - **Encryption details stay with the correct call.** Late algorithm and key information updates the existing P25,
   DMR, or NXDN activity row, and event key IDs display in hexadecimal.
 - **Alias editing preserves the intended row.** New and cloned aliases stay detached until Save, and edits, deletes,
-  moves, sorted-table selection, and numeric talkgroup sorting use stable schema-v4 identities.
+  moves, sorted-table selection, and numeric talkgroup/radio identifier sorting use stable schema-v4 identities.
 - **Dark-themed editors stay covered while loading.** Playlist and Settings render a theme-aware shell before
   constructing their full JavaFX content.
 - **P25 channel handling is safer.** Implicit uplinks resolve from the downlink band, non-autonomous SNDCP messages no
@@ -46,7 +46,7 @@ Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stabi
   manager lock hazard, and stale channelizer work is bounded during overload.
 - **Tuner disable and allocation no longer race.** Decoder-side allocation fails fast while tuner hardware is being
   stopped instead of observing a removed channel manager.
-- **Alpha 9 data carries forward unchanged.** Alpha 10 uses the same database schema and storage formats.
+- **Alpha 8 and Alpha 9 data carry forward unchanged.** Alpha 10 uses the same database schema and storage formats.
 
 Read the complete [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md), including the retained Alpha 7 migration
 compatibility and the scope limits of the receiver-stability fixes.
