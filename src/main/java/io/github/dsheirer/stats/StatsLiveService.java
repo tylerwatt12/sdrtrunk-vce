@@ -8,7 +8,6 @@ package io.github.dsheirer.stats;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
-import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -19,17 +18,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Predicate;
 
 /**
- * Bounded web adapter for the authoritative channel-activity snapshot and committed activity events.
+ * Bounded web adapter for the authoritative channel-activity snapshot.
  * Channel state is owned by {@link ChannelActivityModel}; this class never starts another projection worker or
  * changes receiver-side activity lifetime when browser subscribers connect or disconnect.
  */
@@ -37,7 +29,6 @@ final class StatsLiveService implements AutoCloseable
 {
     private static final int MAXIMUM_LIVE_SUBSCRIBERS = 32;
     private static final int LIVE_SUBSCRIBER_QUEUE_CAPACITY = 256;
-    static final int EVENT_QUEUE_CAPACITY = 64;
     static final int MAXIMUM_LIVE_TABLES = 128;
     static final int MAXIMUM_ROWS_PER_TABLE = 256;
     static final int MAXIMUM_TOTAL_LIVE_ROWS = 2_048;
@@ -47,17 +38,9 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_TAGS = 16;
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
     private static final int MAXIMUM_LIVE_ALIAS_REFERENCES = 8;
-    private final StatsWebDatabase mDatabase;
     private final ChannelActivityModel mActivityModel;
     private final StatsLiveEventHub mSystemsHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
-    private final StatsLiveEventHub mActivityHub =
-        new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
-    private final ExecutorService mActivityCommitExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-        new ArrayBlockingQueue<>(EVENT_QUEUE_CAPACITY), new NamingThreadFactory("stats live events"),
-        new ThreadPoolExecutor.AbortPolicy());
-    private final AtomicBoolean mActivityResetPending = new AtomicBoolean();
-    private final AtomicLong mRunGeneration = new AtomicLong();
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private final Object mLifecycleLock = new Object();
     private final Object mEncodedSnapshotLock = new Object();
@@ -68,9 +51,8 @@ final class StatsLiveService implements AutoCloseable
     private long mStandaloneRevision;
     private volatile EncodedSnapshot mEncodedSystemSnapshot;
 
-    StatsLiveService(StatsWebDatabase database, ChannelProcessingManager channelProcessingManager)
+    StatsLiveService(ChannelProcessingManager channelProcessingManager)
     {
-        mDatabase = database;
         mActivityModel = channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null;
     }
 
@@ -80,8 +62,6 @@ final class StatsLiveService implements AutoCloseable
         {
             if(mRunning.compareAndSet(false, true))
             {
-                mRunGeneration.incrementAndGet();
-
                 if(mActivityModel != null)
                 {
                     mActivityModel.addActivityListener(mChannelActivityListener);
@@ -96,8 +76,6 @@ final class StatsLiveService implements AutoCloseable
         {
             if(mRunning.compareAndSet(true, false))
             {
-                mRunGeneration.incrementAndGet();
-
                 if(mActivityModel != null)
                 {
                     mActivityModel.removeActivityListener(mChannelActivityListener);
@@ -105,45 +83,8 @@ final class StatsLiveService implements AutoCloseable
             }
 
             mSystemsHub.close();
-            mActivityHub.close();
-            mActivityResetPending.set(false);
             mEncodedSystemSnapshot = null;
         }
-    }
-
-    void activityCommitted(List<Long> rowIds)
-    {
-        if(rowIds == null || rowIds.isEmpty() || !mActivityHub.hasSubscribers())
-        {
-            return;
-        }
-
-        List<Long> committed = rowIds.stream().filter(Objects::nonNull).distinct()
-            .limit(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_BATCH).toList();
-
-        if(committed.isEmpty())
-        {
-            return;
-        }
-
-        long generation = mRunGeneration.get();
-        executeActivityCommit(() ->
-        {
-            if(!isCurrentRun(generation))
-            {
-                return;
-            }
-
-            for(Map<String,Object> row: mDatabase.activityByIds(committed))
-            {
-                if(!isCurrentRun(generation))
-                {
-                    return;
-                }
-
-                mActivityHub.publish("activity", row);
-            }
-        });
     }
 
     StatsLiveEventHub.Subscription subscribeSystems()
@@ -151,14 +92,6 @@ final class StatsLiveService implements AutoCloseable
         synchronized(mLifecycleLock)
         {
             return mRunning.get() ? mSystemsHub.subscribe() : null;
-        }
-    }
-
-    StatsLiveEventHub.Subscription subscribeActivity(Predicate<StatsLiveEventHub.LiveEvent> filter)
-    {
-        synchronized(mLifecycleLock)
-        {
-            return mRunning.get() ? mActivityHub.subscribe(filter) : null;
         }
     }
 
@@ -320,31 +253,6 @@ final class StatsLiveService implements AutoCloseable
             return new ChannelActivityModel.SnapshotSet(mStandaloneRevision,
                 List.copyOf(mStandaloneSnapshots.values()));
         }
-    }
-
-    private void executeActivityCommit(Runnable task)
-    {
-        try
-        {
-            mActivityCommitExecutor.execute(() ->
-            {
-                mActivityResetPending.set(false);
-                task.run();
-            });
-        }
-        catch(RejectedExecutionException exception)
-        {
-            if(mRunning.get() && !mActivityCommitExecutor.isShutdown() &&
-                mActivityResetPending.compareAndSet(false, true))
-            {
-                mActivityHub.publish("activity_reset", Map.of("reason", "source_overflow"));
-            }
-        }
-    }
-
-    private boolean isCurrentRun(long generation)
-    {
-        return mRunning.get() && mRunGeneration.get() == generation;
     }
 
     private static PreparedActivityEvent prepare(ChannelActivityEvent event)
@@ -519,7 +427,6 @@ final class StatsLiveService implements AutoCloseable
     public void close()
     {
         stop();
-        mActivityCommitExecutor.shutdownNow();
     }
 
     private record PreparedActivityEvent(ChannelActivityEvent.Operation operation, String tableId,

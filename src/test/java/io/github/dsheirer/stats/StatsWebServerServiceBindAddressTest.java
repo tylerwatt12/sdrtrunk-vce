@@ -184,38 +184,4 @@ class StatsWebServerServiceBindAddressTest
         assertEquals("nosniff", headers.getFirst("X-Content-Type-Options"));
     }
 
-    @Test
-    void streamsPatchEventsToMemberTalkgroupsOnly()
-    {
-        Map<String,Object> patchEvent = Map.of(
-            "scope_token", "p25:BEE00:348",
-            "target_id", 60000L,
-            "target_kind_code", 3L,
-            "member_talkgroup_ids", List.of(56133L, 56134L));
-
-        assertTrue(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=56133"))));
-        assertFalse(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=56135"))));
-        assertTrue(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group"))));
-        assertFalse(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=56133&kind=patch_group"))));
-    }
-
-    @Test
-    void scopedActivitySubscriptionsAlwaysReceiveAuthoritativeResetEvents()
-    {
-        StatsRequest request = StatsRequest.from(URI.create("/multiplex/activity?scope=receiver-a&talkgroup_id=100"));
-        StatsLiveEventHub.LiveEvent reset = new StatsLiveEventHub.LiveEvent("activity_reset",
-            Map.of("reason", "source_overflow"));
-        StatsLiveEventHub.LiveEvent matching = new StatsLiveEventHub.LiveEvent("activity",
-            Map.of("scope_token", "receiver-a", "target_id", 100, "target_kind_code", 1));
-        StatsLiveEventHub.LiveEvent unrelated = new StatsLiveEventHub.LiveEvent("activity",
-            Map.of("scope_token", "receiver-b", "target_id", 200, "target_kind_code", 1));
-
-        assertTrue(StatsWebServerService.matchesActivityEvent(reset, request));
-        assertTrue(StatsWebServerService.matchesActivityEvent(matching, request));
-        assertFalse(StatsWebServerService.matchesActivityEvent(unrelated, request));
-    }
 }

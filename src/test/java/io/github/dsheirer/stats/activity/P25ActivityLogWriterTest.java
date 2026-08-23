@@ -61,7 +61,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
 
@@ -111,9 +111,193 @@ class P25ActivityLogWriterTest
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         writer.start();
         writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        long closeStarted = System.nanoTime();
         writer.close();
 
         assertEquals(1, writer.getWrittenRecords());
+        assertTrue(System.nanoTime() - closeStarted < TimeUnit.SECONDS.toNanos(3));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+        }
+    }
+
+    @Test
+    void closeRetriesLockedWriteWithinGraceAndPersistsAcceptedRecord() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("close-locked-within-grace.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1,
+            TimeUnit.SECONDS.toMillis(10), 25, 750);
+        writer.start();
+        waitForState(writer, P25ActivityLogStatus.State.RUNNING);
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        AtomicReference<Boolean> closeInterrupted = new AtomicReference<>();
+
+        try(Connection blocker = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = blocker.createStatement())
+        {
+            statement.execute("BEGIN IMMEDIATE");
+            writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+            awaitWriterQueueEmpty(writer);
+            Thread.sleep(75);
+
+            Thread closeThread = new Thread(() ->
+            {
+                try
+                {
+                    writer.close();
+                }
+                catch(Throwable throwable)
+                {
+                    closeFailure.set(throwable);
+                }
+
+                closeInterrupted.set(Thread.currentThread().isInterrupted());
+            }, "locked statistics writer close test");
+            closeThread.start();
+            Thread.sleep(100);
+            assertTrue(closeThread.isAlive());
+            closeThread.interrupt();
+            Thread.sleep(50);
+            assertTrue(closeThread.isAlive());
+            statement.execute("ROLLBACK");
+            closeThread.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertFalse(closeThread.isAlive());
+            assertNull(closeFailure.get());
+            assertEquals(Boolean.TRUE, closeInterrupted.get());
+        }
+
+        assertEquals(1, writer.getWrittenRecords());
+        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertTrue(writer.isWorkerTerminatedForTest());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+        }
+    }
+
+    @Test
+    void closeReportsFailureAndTerminatesWhenWriteLockOutlivesGrace() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("close-locked-past-grace.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1,
+            TimeUnit.SECONDS.toMillis(10), 25, 300);
+        writer.start();
+        waitForState(writer, P25ActivityLogStatus.State.RUNNING);
+
+        try(Connection blocker = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = blocker.createStatement())
+        {
+            statement.execute("BEGIN IMMEDIATE");
+            writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+            awaitWriterQueueEmpty(writer);
+            Thread.sleep(75);
+            long closeStarted = System.nanoTime();
+            writer.close();
+            long closeElapsed = System.nanoTime() - closeStarted;
+
+            assertTrue(closeElapsed < TimeUnit.SECONDS.toNanos(2));
+            assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
+            assertTrue(writer.getStatus().lastError() != null && !writer.getStatus().lastError().isBlank());
+            assertTrue(writer.isWorkerTerminatedForTest());
+            assertEquals(0, writer.getWrittenRecords());
+            assertCount(blocker, "p25_activity_event", 0);
+            statement.execute("ROLLBACK");
+        }
+    }
+
+    @Test
+    void closeDrainsAcceptedRecordsAcrossMultipleBatches() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("close-multiple-batches.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 2,
+            TimeUnit.SECONDS.toMillis(10), 25, 1000);
+        writer.start();
+
+        for(int index = 0; index < 5; index++)
+        {
+            writer.enqueue(activity(1_000L + index, P25ActivityLogRecords.Action.GRANT));
+        }
+
+        writer.close();
+
+        assertEquals(5, writer.getWrittenRecords());
+        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertTrue(writer.isWorkerTerminatedForTest());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 5);
+        }
+    }
+
+    @Test
+    void collectsUntilConfiguredBatchDeadline() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("batch-deadline.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 10, 300);
+        writer.start();
+        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+
+        Thread.sleep(100);
+        assertEquals(0, writer.getWrittenRecords());
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(3);
+        while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        assertEquals(1, writer.getWrittenRecords());
+        writer.close();
+    }
+
+    @Test
+    void configuredBatchCapFlushesBeforeDeadline() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("batch-cap.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 3,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(2_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(3_000L, P25ActivityLogRecords.Action.GRANT));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(3);
+        while(writer.getWrittenRecords() < 3 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        assertEquals(3, writer.getWrittenRecords());
+        writer.close();
+    }
+
+    @Test
+    void sparseMaintenanceRequestFlushesCollectingBatch() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("sparse-maintenance-batch.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1250,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(
+            P25ActivityLogMaintenance.Operation.CHECK);
+        writer.submitMaintenance(request);
+
+        P25ActivityLogMaintenance.Result result = request.result().get(3, TimeUnit.SECONDS);
+        assertEquals(P25ActivityLogMaintenance.Operation.CHECK, result.operation());
+        assertEquals(1, writer.getWrittenRecords());
+        writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -126,7 +310,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
             1_000L, 2_000L, "GUID:dmr-writer", "dmr-writer", "DMR Repeater",
             "County DMR", 461_125_000L, 1, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false);
@@ -165,25 +349,24 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void reportsDetailedDmrConventionalActivityOnlyAfterCommit() throws Exception
+    void persistsDetailedDmrConventionalActivity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional-detailed.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AtomicReference<List<Long>> committed = new AtomicReference<>();
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
             1_000L, 2_000L, "GUID:dmr-detailed", "dmr-detailed", "DMR Repeater",
             "County DMR", 461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(committed.get() == null && System.currentTimeMillis() < deadline)
+        while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
         writer.close();
-        assertEquals(List.of(1L), committed.get());
+        assertEquals(1, writer.getWrittenRecords());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -223,12 +406,11 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void reportsDetailedNxdnConventionalActivityOnlyAfterCommit() throws Exception
+    void persistsDetailedNxdnConventionalActivity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("nxdn-conventional-detailed.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AtomicReference<List<Long>> committed = new AtomicReference<>();
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
             1_000L, 2_000L, "GUID:nxdn-detailed", "nxdn-detailed", "NXDN Repeater",
@@ -238,13 +420,13 @@ class P25ActivityLogWriterTest
             List.of(), 101, P25ActivityLogRecords.CallOutput.RECORDED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(committed.get() == null && System.currentTimeMillis() < deadline)
+        while(writer.getWrittenRecords() < 2 && System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
         writer.close();
-        assertEquals(List.of(1L), committed.get());
+        assertEquals(2, writer.getWrittenRecords());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -329,7 +511,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("invalid-dmr.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
             1_000L, 2_000L, "GUID:valid-dmr", "valid-dmr", "Valid DMR", null, 461_125_000L, 1,
@@ -362,7 +544,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("invalid-nxdn.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
             1_000L, 2_000L, "GUID:valid-nxdn", "valid-nxdn", "Valid NXDN", null, 461_125_000L,
@@ -484,23 +666,22 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void reportsDetailedActivityOnlyAfterCommit() throws Exception
+    void persistsDetailedActivity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("committed.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AtomicReference<List<Long>> committed = new AtomicReference<>();
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(committed.get() == null && System.currentTimeMillis() < deadline)
+        while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
         writer.close();
-        assertEquals(List.of(1L), committed.get());
+        assertEquals(1, writer.getWrittenRecords());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
@@ -1693,7 +1874,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("duplicate-site-channels.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(siteSnapshotWithDuplicateChannels(1000L));
 
@@ -2006,7 +2187,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("all-stats.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
         writer.enqueue(siteSnapshot(2000L));
@@ -2037,7 +2218,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("patch-call.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         writer.start();
         writer.enqueue(siteSnapshot(500L));
@@ -2185,7 +2366,6 @@ class P25ActivityLogWriterTest
             assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
 
             assertCount(connection, "p25_activity_event", 1);
-            assertEquals(1L, P25ActivityLogSchema.findDetailedTrunkedCallId(connection, attribution));
             assertEquals(1811524L, scalarLong(connection,
                 "SELECT source_radio_id FROM p25_activity_event"));
             assertEquals(56138L, scalarLong(connection,
@@ -2500,7 +2680,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("overflow.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1, 250, 25);
         writer.start();
 
         for(int x = 0; x < 1000; x++)
@@ -2847,7 +3027,8 @@ class P25ActivityLogWriterTest
                 activity(now - TimeUnit.DAYS.toMillis(2), P25ActivityLogRecords.Action.GRANT), true);
         }
 
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1250,
+            TimeUnit.SECONDS.toMillis(10), 25, 1000);
         writer.start();
         waitForState(writer, P25ActivityLogStatus.State.RUNNING);
 
@@ -2856,25 +3037,36 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_activity_event", 1);
         }
 
-        writer.setRetentionDays(1);
-        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        int remaining = 1;
+        writer.enqueue(activity(now, P25ActivityLogRecords.Action.GRANT));
+        awaitWriterQueueEmpty(writer);
+        Thread.sleep(100);
+        assertEquals(0, writer.getWrittenRecords());
 
-        while(remaining != 0 && System.currentTimeMillis() < deadline)
+        long cleanupStarted = System.nanoTime();
+        writer.setRetentionDays(1);
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(2);
+        int remainingExpired = 1;
+
+        while((remainingExpired != 0 || writer.getWrittenRecords() != 1) &&
+            System.currentTimeMillis() < deadline)
         {
             try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
             {
-                remaining = count(connection, "p25_activity_event");
+                remainingExpired = (int)scalarLong(connection, """
+                    SELECT COUNT(*) FROM p25_activity_event WHERE observed_at_ms < %d
+                    """.formatted(now - TimeUnit.DAYS.toMillis(1)));
             }
 
-            if(remaining != 0)
+            if(remainingExpired != 0 || writer.getWrittenRecords() != 1)
             {
                 Thread.sleep(25);
             }
         }
 
         writer.close();
-        assertEquals(0, remaining);
+        assertEquals(0, remainingExpired);
+        assertEquals(1, writer.getWrittenRecords());
+        assertTrue(System.nanoTime() - cleanupStarted < TimeUnit.SECONDS.toNanos(2));
     }
 
     @Test
@@ -2901,6 +3093,18 @@ class P25ActivityLogWriterTest
         }
 
         assertEquals(expected, writer.getStatus().state());
+    }
+
+    private static void awaitWriterQueueEmpty(P25ActivityLogWriter writer) throws InterruptedException
+    {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(2);
+
+        while(writer.getQueuedRecordCountForTest() != 0 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(10);
+        }
+
+        assertEquals(0, writer.getQueuedRecordCountForTest());
     }
 
     private static void insertTrunkedSite(java.sql.PreparedStatement statement, String guid, int protocol,

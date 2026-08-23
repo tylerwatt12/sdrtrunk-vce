@@ -261,7 +261,6 @@ public class SDRTrunk
             mControlChannelQualityRegistry);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mP25ActivityLogService);
         mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mP25ActivityLogService);
-        mP25ActivityLogService.addActivityCommitListener(mStatsWebServerService);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(new SiteControlChannelLearner(mConfigurationManager));
 
@@ -758,11 +757,6 @@ public class SDRTrunk
         mLog.info("Stopping channels ...");
         if(mStatsWebServerService != null)
         {
-            if(mP25ActivityLogService != null)
-            {
-                mP25ActivityLogService.removeActivityCommitListener(mStatsWebServerService);
-            }
-
             mStatsWebServerService.close();
         }
         if(mControlChannelQualityRegistry != null)

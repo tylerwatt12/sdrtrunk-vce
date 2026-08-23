@@ -644,21 +644,6 @@ public class P25ActivityLogSchema
      * Finds the retained detail row for a one-time trunked call observation.  Frequency is used when the attribution
      * contains it, and timeslot is matched null-safely so simultaneous DMR slots cannot update each other.
      */
-    static Long findDetailedTrunkedCallId(Connection connection,
-                                          P25ActivityLogRecords.TrunkedCallAttribution attribution)
-        throws SQLException
-    {
-        if(attribution == null)
-        {
-            return null;
-        }
-
-        ReceiverContextIdentity context = selectContextIdentity(connection, attribution.contextKey(),
-            attribution.guid());
-        return context != null && context.kindCode() == CONTEXT_TRUNKED_SITE ?
-            findDetailedTrunkedCallId(connection, context.contextId(), attribution) : null;
-    }
-
     private static Long findDetailedTrunkedCallId(Connection connection, int contextId,
                                                    P25ActivityLogRecords.TrunkedCallAttribution attribution)
         throws SQLException

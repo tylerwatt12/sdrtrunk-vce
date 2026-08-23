@@ -2321,8 +2321,6 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(event.get("target_kind_code")));
         assertEquals("Dispatch", event.get("target_alias_name"));
         assertEquals("Engine 1", event.get("source_alias_name"));
-        assertEquals("Dispatch", mDatabase.activityByIds(List.of(number(event.get("id"))))
-            .getFirst().get("target_alias_name"));
 
         Map<String,Object> radioActivity = mDatabase.activity(request(
             "/api/activity?scope=p25:BEE00:348&radio_id=1811332"));
@@ -2382,10 +2380,6 @@ class StatsWebDatabaseTest
         assertEquals(1, patchActivity.size());
         assertEquals(500L, number(patchActivity.getFirst().get("id")));
 
-        Map<String,Object> committedEvent = mDatabase.activityByIds(List.of(500L)).getFirst();
-        assertEquals(List.of(56133L, 56134L), committedEvent.get("member_talkgroup_ids"));
-        assertEquals(2L, number(committedEvent.get("member_talkgroup_ids_total")));
-        assertEquals(Boolean.FALSE, committedEvent.get("member_talkgroup_ids_truncated"));
     }
 
     @Test
@@ -2431,42 +2425,6 @@ class StatsWebDatabaseTest
         assertEquals(StatsWebDatabase.MAXIMUM_PATCH_MEMBERS_PER_GROUP,
             rowsFrom(response, "talkgroups").size());
         assertEquals(Boolean.TRUE, response.get("members_truncated"));
-    }
-
-    @Test
-    void boundsPatchMembersPerCommittedActivityEvent() throws Exception
-    {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
-            Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
-                    id, context_id, observed_at_ms, action_code, event_type_code, source_radio_id,
-                    target_id, target_kind_code, frequency_hz, encrypted
-                ) VALUES (599, 1, 2600, 0, 0, 1811332, 60001, 3, 855612500, 0)
-                """);
-
-            try(PreparedStatement members = connection.prepareStatement("""
-                INSERT INTO activity_event_talkgroup_member(event_id, talkgroup_id) VALUES (599, ?)
-                """))
-            {
-                for(int index = 0; index < StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_MEMBERS + 16; index++)
-                {
-                    members.setInt(1, 70_000 + index);
-                    members.addBatch();
-                }
-
-                members.executeBatch();
-            }
-        }
-
-        Map<String,Object> event = mDatabase.activityByIds(List.of(599L)).getFirst();
-        @SuppressWarnings("unchecked")
-        List<Long> members = (List<Long>)event.get("member_talkgroup_ids");
-        assertEquals(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_MEMBERS, members.size());
-        assertEquals(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_MEMBERS + 16L,
-            number(event.get("member_talkgroup_ids_total")));
-        assertEquals(Boolean.TRUE, event.get("member_talkgroup_ids_truncated"));
     }
 
     @Test
@@ -2788,10 +2746,6 @@ class StatsWebDatabaseTest
             "/api/activity?context=nxdn-encryption"))).getFirst();
         assertEquals("SCRAM K:11", nxdn.get("encryption_display"));
         assertEquals("Scrambler K:11", nxdn.get("encryption_full_display"));
-
-        long p25Id = number(p25.get("id"));
-        assertEquals("BAT-E K:11", mDatabase.activityByIds(List.of(p25Id)).getFirst()
-            .get("encryption_display"));
 
         Map<String,Object> talkgroup = map(mDatabase.talkgroup(request(
             "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=56132")), "group_identity");

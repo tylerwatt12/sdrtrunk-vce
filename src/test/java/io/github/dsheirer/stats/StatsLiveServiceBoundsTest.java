@@ -28,7 +28,7 @@ class StatsLiveServiceBoundsTest
     @Test
     void capsRowsWithinEachActivityTableAndReportsTheOriginalCount()
     {
-        StatsLiveService service = new StatsLiveService(null, null);
+        StatsLiveService service = new StatsLiveService(null);
         int total = StatsLiveService.MAXIMUM_ROWS_PER_TABLE + 17;
         List<ChannelActivitySnapshot.Row> rows = IntStream.range(0, total)
             .mapToObj(index -> activityRow("row-" + index))
@@ -55,7 +55,7 @@ class StatsLiveServiceBoundsTest
     @Test
     void projectsProtocolNeutralHoverDetails()
     {
-        StatsLiveService service = new StatsLiveService(null, null);
+        StatsLiveService service = new StatsLiveService(null);
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
             List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 0L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
@@ -103,7 +103,7 @@ class StatsLiveServiceBoundsTest
     @Test
     void capsTheAuthoritativeSnapshotWithoutBrowserOwnedCache() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null, null);
+        StatsLiveService service = new StatsLiveService(null);
 
         try
         {
@@ -153,7 +153,7 @@ class StatsLiveServiceBoundsTest
     @Test
     void capsAliasReferencesForEachLiveIdentifier()
     {
-        StatsLiveService service = new StatsLiveService(null, null);
+        StatsLiveService service = new StatsLiveService(null);
         List<ChannelActivitySnapshot.AliasReference> aliases = IntStream.range(0, 20)
             .mapToObj(index -> new ChannelActivitySnapshot.AliasReference(index + 1L, 41L,
                 "Alias " + index)).toList();
@@ -177,7 +177,7 @@ class StatsLiveServiceBoundsTest
     @Test
     void enforcesOneGlobalRowAndEncodedByteBudgetAndReusesTheEncodedSnapshot() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null, null);
+        StatsLiveService service = new StatsLiveService(null);
         List<ChannelActivitySnapshot.Row> rows = IntStream.range(0, StatsLiveService.MAXIMUM_ROWS_PER_TABLE)
             .mapToObj(index -> activityRow("x".repeat(2_000) + index))
             .toList();

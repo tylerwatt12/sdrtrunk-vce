@@ -1240,7 +1240,6 @@ class TrunkedIdentitySchemaTest
             assertEquals(0, scalarLong(connection, """
                 SELECT encrypted FROM p25_activity_event WHERE context_id=%d
                 """.formatted(contextId)));
-            assertEquals(1L, P25ActivityLogSchema.findDetailedTrunkedCallId(connection, attribution));
         }
     }
 
@@ -1266,9 +1265,13 @@ class TrunkedIdentitySchemaTest
             P25ActivityLogRecords.TrunkedCallAttribution attribution =
                 new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
                     451_000_000L, 1, 0xFFF0, Form.TALKGROUP.name(), List.of(), 0xFFF1,
-                    true, true, false, false, P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D);
+                    true, true, false, false, P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C);
 
-            assertNull(P25ActivityLogSchema.findDetailedTrunkedCallId(connection, attribution));
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+            assertEquals(2, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_activity_event
+                WHERE source_radio_id IS NULL AND target_id IS NULL AND target_kind_code IS NULL
+                """));
         }
     }
 

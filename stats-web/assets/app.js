@@ -23,6 +23,7 @@ const LIVE_DETAIL_CAPTURE_MULTIPLIER = 25;
 const LIVE_DETAIL_MINIMUM_CAPTURE = 2000;
 const LIVE_DETAIL_MAXIMUM_CAPTURE = 10000;
 const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
+const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000;
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS = 195_000;
 const RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS = 240_000;
@@ -6002,6 +6003,15 @@ function pageInterval(callback, interval) {
   return timer;
 }
 
+function pageTimeout(callback, delay) {
+  const timer = window.setTimeout(() => {
+    pageTimers.delete(timer);
+    callback();
+  }, delay);
+  pageTimers.add(timer);
+  return timer;
+}
+
 function disconnectPageObserversWithin(root) {
   pageObservers.forEach((target, observer) => {
     if (root?.contains(target)) {
@@ -6023,8 +6033,7 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   3: 'decode_events',
   4: 'decode_messages',
   5: 'channel_diagnostics',
-  6: 'tuner_diagnostics',
-  7: 'activity'
+  6: 'tuner_diagnostics'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -6691,7 +6700,10 @@ function closePageConnections() {
   pageConnections.clear();
   pageObservers.forEach((target, observer) => observer.disconnect());
   pageObservers.clear();
-  pageTimers.forEach((timer) => window.clearInterval(timer));
+  pageTimers.forEach((timer) => {
+    window.clearInterval(timer);
+    window.clearTimeout(timer);
+  });
   pageTimers.clear();
 }
 
@@ -12517,100 +12529,139 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   });
   if (!renderIsCurrent(renderContext)) return;
   const columns = activityColumns();
-  const activityTable = table(withoutGrantActions(data.rows), columns, 'No activity recorded',
+  const initialRows = withoutGrantActions(data.rows);
+  const activityTable = table(initialRows, columns, 'No activity recorded',
     { type: 'activity', rowKey: (row) => row.id });
+  activityTable.setAttribute('aria-live', 'off');
   const block = section(title, activityTable);
   const controls = node('div', 'pager');
-  controls.append(route.get('before_id') ? anchor('Newest', currentHref({ before_id: null }), 'button secondary') :
-    node('span', 'button disabled', 'Newest'));
-  controls.append(data.has_more ? anchor('Older', currentHref({ before_id: data.next_before_id }), 'button secondary') :
-    node('span', 'button disabled', 'Older'));
+  let newestControl = null;
+  let olderControl = null;
+  const pagerControl = (current, enabled, label, target) => {
+    if (enabled && current?.tagName === 'A') {
+      current.setAttribute('href', target);
+      return current;
+    }
+    if (!enabled && current?.tagName === 'SPAN' && current.classList.contains('disabled')) return current;
+    return enabled ? anchor(label, target, 'button secondary') : node('span', 'button disabled', label);
+  };
+  const updatePager = (page) => {
+    const nextNewest = pagerControl(newestControl, Boolean(route.get('before_id')), 'Newest',
+      currentHref({ before_id: null }));
+    const nextOlder = pagerControl(olderControl, Boolean(page?.has_more), 'Older',
+      currentHref({ before_id: page?.next_before_id }));
+    if (nextNewest !== newestControl) {
+      if (newestControl) newestControl.replaceWith(nextNewest);
+      else controls.append(nextNewest);
+      newestControl = nextNewest;
+    }
+    if (nextOlder !== olderControl) {
+      if (olderControl) olderControl.replaceWith(nextOlder);
+      else controls.append(nextOlder);
+      olderControl = nextOlder;
+    }
+  };
+  updatePager(data);
   block.append(controls);
   content.append(block);
 
   if (!route.get('before_id')) {
     const titleBar = block.querySelector('.section-title');
-    const pause = node('button', 'button secondary', 'Pause updates');
+    const refreshControls = node('div', 'section-title-actions activity-refresh-controls');
+    const countdown = node('span', 'activity-refresh-countdown');
+    countdown.setAttribute('role', 'timer');
+    countdown.setAttribute('aria-live', 'off');
+    const announcement = node('span', 'visually-hidden');
+    announcement.setAttribute('role', 'status');
+    announcement.setAttribute('aria-live', 'polite');
+    const pause = node('button', 'button secondary', 'Pause refresh');
     pause.type = 'button';
     pause.setAttribute('aria-pressed', 'false');
-    titleBar.append(pause);
+    refreshControls.append(countdown, pause, announcement);
+    titleBar.append(refreshControls);
     let paused = false;
-    let activityResetInFlight = false;
-    let activityResetQueued = false;
-    const pending = new Map();
-    const resetPending = new Map();
-    const activityRowKey = (row) =>
-      row.id !== null && row.id !== undefined ? String(row.id) : Symbol();
-    const updatePauseLabel = () => {
-      pause.textContent = paused ? `Resume${pending.size ? ` (${number(pending.size)})` : ''}` :
-        'Pause updates';
+    let refreshInFlight = false;
+    let refreshFailed = false;
+    let refreshGeneration = 0;
+    let nextRefreshAt = Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS;
+    const activityRowKey = (row) => row?.id === null || row?.id === undefined ? null : String(row.id);
+    const updateRefreshDisplay = () => {
+      const seconds = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+      countdown.textContent = paused ? 'Refresh paused' : refreshInFlight ? 'Refreshing…' :
+        `${refreshFailed ? 'Retry' : 'Refresh'} in ${seconds}s`;
+      countdown.classList.toggle('error', refreshFailed && !refreshInFlight);
+      pause.textContent = paused ? 'Resume refresh' : 'Pause refresh';
       pause.setAttribute('aria-pressed', String(paused));
     };
-    const addActivityRow = (row) => {
-      activityTable.tableController.upsertRow(row, { prepend: true, limit: 200 });
+    const highlightActivityRows = (rowIds) => {
+      if (!rowIds.size) return;
+      const highlighted = [];
+      activityTable.querySelectorAll('tbody tr[data-id]').forEach((row) => {
+        if (rowIds.has(row.dataset.id)) {
+          row.classList.add('activity-row-new');
+          highlighted.push(row);
+        }
+      });
+      pageTimeout(() => highlighted.forEach((row) => row.classList.remove('activity-row-new')), 8_000);
     };
-    const acceptActivityRow = (row) => {
-      if (String(row?.action || '').toUpperCase() === 'GRANT') return;
-      if (!paused) {
-        addActivityRow(row);
-        return;
+    const refreshActivity = async () => {
+      if (paused || refreshInFlight || document.hidden || !renderIsCurrent(renderContext) ||
+          !block.isConnected) return;
+      const generation = refreshGeneration;
+      refreshInFlight = true;
+      updateRefreshDisplay();
+      try {
+        const refreshed = await api('/api/v1/activity', {
+          ...scopeParameters,
+          hide_grants: true,
+          limit: 200
+        });
+        if (generation !== refreshGeneration || paused || document.hidden || !renderIsCurrent(renderContext) ||
+            !block.isConnected) return;
+        const rows = withoutGrantActions(refreshed.rows);
+        const currentRows = activityTable.tableController.rows();
+        const currentIds = new Set(currentRows.map(activityRowKey).filter((key) => key !== null));
+        const newIds = new Set(rows.map(activityRowKey)
+          .filter((key) => key !== null && !currentIds.has(key)));
+        if (JSON.stringify(rows) !== JSON.stringify(currentRows)) {
+          activityTable.tableController.replaceRows(rows);
+          highlightActivityRows(newIds);
+        }
+        updatePager(refreshed);
+        if (newIds.size) {
+          announcement.textContent = `${number(newIds.size)} new activity entr${newIds.size === 1 ? 'y' : 'ies'}.`;
+        } else if (refreshFailed) announcement.textContent = 'Activity refresh recovered.';
+        else announcement.textContent = '';
+        refreshFailed = false;
+      } catch (error) {
+        if (generation !== refreshGeneration || document.hidden || !renderIsCurrent(renderContext) ||
+            !block.isConnected || error?.name === 'AbortError') return;
+        refreshFailed = true;
+        announcement.textContent = 'Activity refresh failed. The current entries were retained; retrying automatically.';
+      } finally {
+        refreshInFlight = false;
+        if (!renderIsCurrent(renderContext) || !block.isConnected) return;
+        nextRefreshAt = generation === refreshGeneration && !paused && !document.hidden ?
+          Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS : Date.now();
+        updateRefreshDisplay();
       }
-      const key = activityRowKey(row);
-      if (pending.has(key)) pending.delete(key);
-      pending.set(key, row);
-      if (pending.size > 200) pending.delete(pending.keys().next().value);
-      updatePauseLabel();
     };
     pause.addEventListener('click', () => {
       paused = !paused;
-      if (!paused && pending.size) {
-        const rows = [...pending.values()].sort((left, right) =>
-          Number(left.observed_at_ms || 0) - Number(right.observed_at_ms || 0) ||
-            Number(left.id || 0) - Number(right.id || 0));
-        pending.clear();
-        rows.forEach(addActivityRow);
-      }
-      updatePauseLabel();
+      refreshGeneration += 1;
+      nextRefreshAt = paused ? nextRefreshAt : Date.now();
+      updateRefreshDisplay();
+      if (!paused && !refreshInFlight) void refreshActivity();
     });
-    const source = liveConnection('activity', scopeParameters);
-    source.addEventListener('activity', (event) => {
-      const row = JSON.parse(event.data);
-      if (activityResetInFlight) {
-        const key = activityRowKey(row);
-        if (resetPending.has(key)) resetPending.delete(key);
-        resetPending.set(key, row);
-        if (resetPending.size > 200) resetPending.delete(resetPending.keys().next().value);
-        return;
+    const refreshTick = () => {
+      if (!renderIsCurrent(renderContext) || !block.isConnected) return;
+      updateRefreshDisplay();
+      if (!paused && !refreshInFlight && !document.hidden && Date.now() >= nextRefreshAt) {
+        void refreshActivity();
       }
-      acceptActivityRow(row);
-    });
-    const refreshAfterActivityGap = () => {
-      if (activityResetInFlight) {
-        activityResetQueued = true;
-        return;
-      }
-      activityResetInFlight = true;
-      activityResetQueued = false;
-      void api('/api/v1/activity', {
-        ...scopeParameters,
-        hide_grants: true,
-        limit: 200
-      }).then((refreshed) => {
-        pending.clear();
-        activityTable.tableController.replaceRows(withoutGrantActions(refreshed.rows));
-        [...resetPending.values()].forEach(acceptActivityRow);
-        resetPending.clear();
-        updatePauseLabel();
-      }).catch(() => {
-        //A later live gap or normal page refresh can retry without disturbing the last complete table.
-        [...resetPending.values()].forEach(acceptActivityRow);
-        resetPending.clear();
-      }).finally(() => {
-        activityResetInFlight = false;
-        if (activityResetQueued) refreshAfterActivityGap();
-      });
     };
-    source.addEventListener('activity_reset', refreshAfterActivityGap);
+    updateRefreshDisplay();
+    pageInterval(refreshTick, 1_000);
   }
 }
 

@@ -24,7 +24,7 @@ class StatsWebPageLifecycleUiContractTest
         String html = readText(INDEX_HTML);
         int lifecycle = html.indexOf("/assets/core/page-lifecycle.js?v=1");
         int systems = html.indexOf("/assets/features/systems-directory.js?v=2");
-        int application = html.indexOf("/assets/app.js?v=108");
+        int application = html.indexOf("/assets/app.js?v=109");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -90,6 +90,8 @@ class StatsWebPageLifecycleUiContractTest
         String siteSignal = function(source, "async function siteSignalHistorySection(site)");
         String talkgroupHistory = function(source, "async function talkgroupActivityHistorySection(scopeParameters)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+        String timeout = function(source, "function pageTimeout(callback, delay)");
+        String close = function(source, "function closePageConnections()");
         String qualityChart = function(source, "function qualityHistoryChart(site, response, metric, domain)");
 
         assertOrdered(signalHealth, "await loadCurrent(true, true);",
@@ -101,7 +103,12 @@ class StatsWebPageLifecycleUiContractTest
         assertOrdered(activity, "const data = await api('/api/v1/activity'",
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(activity, "if (!renderIsCurrent(renderContext)) return;",
-            "liveConnection('activity', scopeParameters)");
+            "pageInterval(refreshTick, 1_000)");
+        assertTrue(activity.contains("!block.isConnected"));
+        assertTrue(activity.contains("document.hidden"));
+        assertTrue(timeout.contains("pageTimers.add(timer)"));
+        assertTrue(timeout.contains("pageTimers.delete(timer)"));
+        assertTrue(close.contains("window.clearTimeout(timer)"));
         assertOrdered(qualityChart, "requestAnimationFrame(() => {", "if (!wrapper.isConnected) return;");
         assertOrdered(qualityChart, "if (!wrapper.isConnected) return;", "pageObservers.set(observer, wrapper)");
     }

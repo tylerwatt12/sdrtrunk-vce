@@ -28,24 +28,17 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 class StatsLiveServiceTest
 {
-    @org.junit.jupiter.api.io.TempDir
-    java.nio.file.Path mTemporaryDirectory;
-
     @Test
     void browserSubscribersDoNotOwnReceiverActivityLifetime() throws Exception
     {
         ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
-        StatsLiveService service = new StatsLiveService(null, manager);
+        StatsLiveService service = new StatsLiveService(manager);
         Channel channel = trunkedDmrChannel();
         assertTrue(manager.getChannelActivityModel().isWorkerAlive());
 
@@ -74,7 +67,7 @@ class StatsLiveServiceTest
     void webAdapterUsesTheCoreSnapshotWithoutASecondProjectionWorker() throws Exception
     {
         ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
-        StatsLiveService service = new StatsLiveService(null, manager);
+        StatsLiveService service = new StatsLiveService(manager);
         Channel channel = trunkedDmrChannel();
 
         try
@@ -103,111 +96,9 @@ class StatsLiveServiceTest
     }
 
     @Test
-    void activityCommitSaturationPublishesAnAuthoritativeReset() throws Exception
-    {
-        CountDownLatch lookupEntered = new CountDownLatch(1);
-        CountDownLatch releaseLookup = new CountDownLatch(1);
-        StatsWebDatabase database = new StatsWebDatabase(new UserPreferences(),
-            mTemporaryDirectory.resolve("activity-reset.sqlite"))
-        {
-            @Override
-            List<Map<String,Object>> activityByIds(List<Long> rowIds)
-            {
-                lookupEntered.countDown();
-
-                try
-                {
-                    releaseLookup.await(5, TimeUnit.SECONDS);
-                }
-                catch(InterruptedException exception)
-                {
-                    Thread.currentThread().interrupt();
-                }
-
-                return List.of(Map.of("id", rowIds.getFirst()));
-            }
-        };
-        StatsLiveService service = new StatsLiveService(database, null);
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribeActivity(event -> true))
-        {
-            assertNotNull(subscription);
-            service.activityCommitted(List.of(1L));
-            assertTrue(lookupEntered.await(2, TimeUnit.SECONDS));
-
-            for(long id = 2; id <= StatsLiveService.EVENT_QUEUE_CAPACITY + 2L; id++)
-            {
-                service.activityCommitted(List.of(id));
-            }
-
-            StatsLiveEventHub.LiveEvent reset = subscription.poll(2, TimeUnit.SECONDS);
-            assertNotNull(reset);
-            assertEquals("activity_reset", reset.name());
-            assertEquals("source_overflow", ((Map<?,?>)reset.data()).get("reason"));
-        }
-        finally
-        {
-            releaseLookup.countDown();
-            service.close();
-        }
-    }
-
-    @Test
-    void racingActivitySubscribeAndStopCannotLeakSubscriptions() throws Exception
-    {
-        StatsLiveService service = new StatsLiveService(null, null);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-
-        try
-        {
-            for(int iteration = 0; iteration < 100; iteration++)
-            {
-                service.start();
-                CountDownLatch start = new CountDownLatch(1);
-                AtomicReference<StatsLiveEventHub.Subscription> opened = new AtomicReference<>();
-                var subscribe = executor.submit(() ->
-                {
-                    start.await();
-                    opened.set(service.subscribeActivity(event -> true));
-                    return null;
-                });
-                var stop = executor.submit(() ->
-                {
-                    start.await();
-                    service.stop();
-                    return null;
-                });
-                start.countDown();
-                subscribe.get(2, TimeUnit.SECONDS);
-                stop.get(2, TimeUnit.SECONDS);
-
-                if(opened.get() != null)
-                {
-                    assertTrue(opened.get().isClosed());
-                }
-
-                service.start();
-
-                try(StatsLiveEventHub.Subscription probe = service.subscribeActivity(event -> true))
-                {
-                    assertNotNull(probe, "a stop race must not consume reusable subscriber capacity");
-                }
-
-                service.stop();
-            }
-        }
-        finally
-        {
-            executor.shutdownNow();
-            service.close();
-        }
-    }
-
-    @Test
     void publishesConventionalStatusChangesWithStableTableIdentity() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null, null);
+        StatsLiveService service = new StatsLiveService(null);
         service.start();
 
         try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())

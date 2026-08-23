@@ -197,17 +197,18 @@ catalog and export are administrator-only.
 `system-radios` CSV exports accept the same `affiliated` and `site_guid` filters as the JSON collection. Nested
 presence is not serialized into CSV; the export retains the scalar affiliation fields.
 
-Each browser document uses one multiplexed live connection:
+Pages that use live receiver features share one multiplexed connection per browser document:
 
 - `GET /api/v1/live/multiplex?client_id={uuid}` opens the framed stream.
 - `POST /api/v1/live/multiplex/control` replaces that client's logical subscriptions using a monotonically increasing
   `revision` and a `subscriptions` object.
 
 Supported subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`,
-`tuner_diagnostics`, `calls`, and `activity`. Their parameters use the same `snake_case` names and validation
+`tuner_diagnostics`, and `calls`. Their parameters use the same `snake_case` names and validation
 as the corresponding REST scopes. `decode_messages` accepts exactly `configuration_id` and required positive
 `frequency_hz`; `timeslot` is available for decoder events and channel diagnostics, but not decoder messages. Tuner
 viewport changes update the existing logical subscription without reconnecting or rebuilding its shared source FFT.
+Historical Activity views use bounded `GET /api/v1/activity` polling and are not multiplex subscriptions.
 Channel-activity table snapshots include protocol-neutral `system_name`, `site_name`, and `channel_name` context plus
 an `identifiers` list of `{group, label, value}` fields learned from the active protocol. Activity rows expose the
 available callsign, source and target forms/IDs/aliases, talker alias, LCN, timeslot, signal level, decoder, and call
@@ -224,8 +225,7 @@ Unchanged subscribers share the cached encoded snapshot. Strings and tags are bo
 capped at 32 browser documents. Metadata uses one bounded FIFO per topic, so a burst cannot evict another topic.
 Dense diagnostic topics use replaceable latest-value slots, and a persistently slow client is disconnected instead of
 accumulating data or applying receiver backpressure. Calls and channel activity retain authoritative recovery
-snapshots. Activity sends `activity_reset`, after which the browser reloads the current bounded REST page before
-applying newer live rows.
+snapshots.
 
 `decode_events` and `decode_messages` are deliberately live-only. Opening either subscription starts empty; the
 server projects each new item on a bounded observer worker, publishes it, and forgets it. It does not preload decoder
@@ -361,4 +361,5 @@ An alias or unmatched-talkgroup policy can reference at most 64 broadcast channe
 
 P25 patch-group pages are limited to 100 groups. They include at most 32 talkgroup and 32 radio members per group and
 512 members of each type across the response, with original counts and explicit truncation metadata. Detailed activity
-loads at most 500 events and 64 patch members per event.
+loads at most 500 events, and talkgroup filters include retained activity whose patch-member table contains the selected
+talkgroup.

@@ -484,6 +484,23 @@ class StatsApiV1HttpContractTest
         }
     }
 
+    @Test
+    void rejectsHistoricalActivityAsAMultiplexSubscription() throws Exception
+    {
+        String body = OBJECT_MAPPER.writeValueAsString(Map.of(
+            "client_id", "00000000-0000-0000-0000-000000000124",
+            "revision", 1,
+            "subscriptions", Map.of("activity", Map.of())));
+        HttpRequest control = HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.LIVE_MULTIPLEX_CONTROL))
+            .timeout(Duration.ofSeconds(10))
+            .header("Origin", mOrigin.toString())
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+
+        assertStructuredError(send(control), 400, "invalid_request", null);
+    }
+
     private static MultiplexFrame readMultiplexFrame(InputStream input) throws Exception
     {
         byte[] headerBytes = input.readNBytes(16);

@@ -2689,6 +2689,22 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: 7px;
 }
 
+.activity-refresh-controls {
+  font-weight: 400;
+}
+
+.activity-refresh-countdown {
+  min-width: 82px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.activity-refresh-countdown.error {
+  color: var(--danger);
+}
+
 .export-csv-action {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -4027,6 +4043,15 @@ tbody tr:hover {
   background: var(--table-hover);
 }
 
+@keyframes activity-row-highlight {
+  from { background-color: var(--accent-soft); }
+  to { background-color: transparent; }
+}
+
+.activity-row-new > td {
+  animation: activity-row-highlight 8s ease-out;
+}
+
 td.numeric,
 th.numeric {
   text-align: right;
@@ -5334,6 +5359,11 @@ th.numeric {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .activity-row-new > td {
+    background: var(--accent-soft);
+    animation: none;
+  }
+
   .dashboard-activity-segment {
     transition: none;
   }

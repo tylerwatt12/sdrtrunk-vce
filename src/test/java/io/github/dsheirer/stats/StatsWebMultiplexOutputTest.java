@@ -127,12 +127,11 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
-    void emitsChannelAndActivityLatestValuesAlongsidePriorityDiagnosticState() throws Exception
+    void emitsChannelLatestValuesAlongsidePriorityDiagnosticState() throws Exception
     {
-        RecordingOutputStream recording = new RecordingOutputStream(3);
+        RecordingOutputStream recording = new RecordingOutputStream(2);
         StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
         output.offerLatest(1, new byte[]{1});
-        output.offerLatest(7, new byte[]{7});
         output.offerState(6, new byte[]{6});
         output.start();
 
@@ -140,7 +139,6 @@ class StatsWebMultiplexOutputTest
         output.close();
         assertEquals(List.of((byte)6), bytes(recording.mEnvelopes.getFirst()));
         assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope.length == 1 && envelope[0] == 1));
-        assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope.length == 1 && envelope[0] == 7));
     }
 
     @Test
@@ -397,7 +395,6 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("metadataGap(output, TOPIC_CALLS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_EVENTS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_MESSAGES"));
-        assertTrue(source.contains("metadataGap(output, TOPIC_ACTIVITY"));
         assertTrue(source.contains("reportStatelessGaps(output)"));
         assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
@@ -433,7 +430,7 @@ class StatsWebMultiplexOutputTest
     {
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
-        assertEquals(4, countOccurrences(source, "var recovery = captureRecovery("),
+        assertEquals(2, countOccurrences(source, "var recovery = captureRecovery("),
             "Only stateful topics should construct recovery snapshots");
         assertEquals(2, countOccurrences(source, "new RecoveryCapture<>(dropBaseline, snapshot)"),
             "Channel activity uses the equivalent explicit ordering because snapshot encoding can throw");
@@ -441,7 +438,6 @@ class StatsWebMultiplexOutputTest
         assertFalse(source.contains("Drops = mCalls.droppedCount();"));
         assertTrue(source.contains("mDecodeEventDrops = 0;"));
         assertTrue(source.contains("mDecodeMessageDrops = 0;"));
-        assertFalse(source.contains("Drops = mActivity.droppedCount();"));
     }
 
     @Test

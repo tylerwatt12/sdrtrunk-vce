@@ -46,7 +46,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -82,7 +81,6 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private final Listener<ControlChannelQualitySnapshot> mQualityListener = this::receiveControlChannelQuality;
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
-    private final List<P25ActivityCommitListener> mCommitListeners = new CopyOnWriteArrayList<>();
     /* One preallocated queue per collection epoch preserves callback order across all observation types. */
     private volatile BoundedMpscPairQueue<Object,Object> mObservationIngress =
         new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
@@ -360,7 +358,6 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
 
         MyEventBus.getGlobalEventBus().unregister(this);
-        mCommitListeners.clear();
         //The observer worker remains the only ingress consumer and owns state cleanup, even when disposal times out.
         mObservationWakeup.release();
         mObservationWorker.shutdown();
@@ -429,8 +426,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private void installInitialWriter(WriterTransition transition)
     {
         P25ActivityLogWriter writer = new P25ActivityLogWriter(transition.databasePath(),
-            transition.retentionDays(), transition.detailedEventHistoryEnabled(),
-            this::notifyActivityCommitted);
+            transition.retentionDays(), transition.detailedEventHistoryEnabled());
         writer.start();
         mCurrentDatabasePath = transition.databasePath();
         mWriter = writer;
@@ -480,8 +476,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
 
         P25ActivityLogWriter nextWriter = new P25ActivityLogWriter(transition.databasePath(),
-            transition.retentionDays(), transition.detailedEventHistoryEnabled(),
-            this::notifyActivityCommitted);
+            transition.retentionDays(), transition.detailedEventHistoryEnabled());
         nextWriter.start();
         beforeWriterActivationForTest();
         boolean installed = false;
@@ -1141,24 +1136,6 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
     }
 
-    public void addActivityCommitListener(P25ActivityCommitListener listener)
-    {
-        if(listener != null && !mDisposed.get())
-        {
-            mCommitListeners.add(listener);
-
-            if(mDisposed.get())
-            {
-                mCommitListeners.remove(listener);
-            }
-        }
-    }
-
-    public void removeActivityCommitListener(P25ActivityCommitListener listener)
-    {
-        mCommitListeners.remove(listener);
-    }
-
     /**
      * Configured preferences and current effective writer health for the web status API and desktop diagnostics.
      */
@@ -1196,22 +1173,6 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             preference.getStatsLoggingRetentionDays(), state,
             P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(), lastSuccessfulWriteMs,
             recordsWritten, recordsDropped, lastError);
-    }
-
-    private void notifyActivityCommitted(List<Long> rowIds)
-    {
-        if(mDisposed.get())
-        {
-            return;
-        }
-
-        for(P25ActivityCommitListener listener: mCommitListeners)
-        {
-            if(!mDisposed.get())
-            {
-                listener.activityCommitted(rowIds);
-            }
-        }
     }
 
     private record WriterTransition(Path databasePath, int retentionDays,

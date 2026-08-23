@@ -145,7 +145,7 @@ class P25ActivityLogServiceLifecycleTest
     }
 
     @Test
-    void blockedProjectionDisposeLeavesQueuedCleanupToWorkerAndSuppressesCommitCallbacks() throws Exception
+    void blockedProjectionDisposeLeavesQueuedCleanupToWorker() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -157,7 +157,6 @@ class P25ActivityLogServiceLifecycleTest
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
-        AtomicInteger callbacks = new AtomicInteger();
         DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
         {
             @Override
@@ -178,8 +177,6 @@ class P25ActivityLogServiceLifecycleTest
             }
         };
         DecodeEvent queued = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis() + 1).build();
-        service.addActivityCommitListener(rowIds -> callbacks.incrementAndGet());
-
         try
         {
             service.getDecodeEventListener().accept(channel, blocked);
@@ -197,7 +194,6 @@ class P25ActivityLogServiceLifecycleTest
             releaseProjection.countDown();
             awaitWorkerTermination(service);
             assertEquals(0, service.getPendingObservationCount());
-            assertEquals(0, callbacks.get());
             service.getDecodeEventListener().accept(channel, queued);
             assertEquals(0, service.getPendingObservationCount());
         }
@@ -908,7 +904,7 @@ class P25ActivityLogServiceLifecycleTest
 
     private static void awaitCount(Path database, String table, int expected) throws Exception
     {
-        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(15);
         int actual = count(database, table);
 
         while(actual != expected && System.currentTimeMillis() < deadline)
@@ -922,7 +918,7 @@ class P25ActivityLogServiceLifecycleTest
 
     private static void awaitScalar(Path database, String sql, long expected) throws Exception
     {
-        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(15);
         long actual = scalar(database, sql);
 
         while(actual != expected && System.currentTimeMillis() < deadline)

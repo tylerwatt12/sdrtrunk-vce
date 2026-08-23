@@ -58,8 +58,6 @@ class StatsWebDatabase
     static final int MAXIMUM_PATCH_GROUP_PAGE = 100;
     static final int MAXIMUM_PATCH_MEMBERS_PER_GROUP = 32;
     static final int MAXIMUM_PATCH_MEMBER_ROWS = 512;
-    static final int MAXIMUM_ACTIVITY_EVENT_BATCH = 500;
-    static final int MAXIMUM_ACTIVITY_EVENT_MEMBERS = 64;
     static final int MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS = 200;
     static final int MAXIMUM_SYSTEM_DIRECTORY_WITH_SITE_PREVIEW = 25;
     static final int MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW = 25;
@@ -1487,124 +1485,6 @@ class StatsWebDatabase
 
             return response;
         });
-    }
-
-    List<Map<String,Object>> activityByIds(List<Long> rowIds)
-    {
-        if(rowIds == null || rowIds.isEmpty())
-        {
-            return List.of();
-        }
-
-        List<Long> boundedRowIds = rowIds.stream()
-            .filter(java.util.Objects::nonNull)
-            .distinct()
-            .limit(MAXIMUM_ACTIVITY_EVENT_BATCH)
-            .toList();
-
-        if(boundedRowIds.isEmpty())
-        {
-            return List.of();
-        }
-
-        return read(connection -> {
-            String placeholders = String.join(",", java.util.Collections.nCopies(boundedRowIds.size(), "?"));
-            List<Map<String,Object>> rows = queryRows(connection, """
-                SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
-                    activity.observed_at_ms, activity.channel_kind,
-                    activity.channel_kind_code,
-                    CASE WHEN activity.protocol_code = 11 THEN 'AM' ELSE activity.protocol END AS protocol,
-                    activity.action, activity.event_type,
-                    activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
-                    activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
-                    activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
-                    activity.resolved_alias_list_name,
-                    coalesce(activity.resolved_alias_list_name, trunked.alias_list_name) AS alias_list_name,
-                    scope.scope_token, scope.identity_domain_code,
-                    activity.resolved_system_key AS system_key, activity.resolved_wacn AS wacn,
-                    activity.resolved_system_id AS system_id, activity.resolved_nac, activity.resolved_rfss,
-                    activity.resolved_site
-                FROM p25_activity_event_resolved activity
-                LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = activity.guid
-                LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = activity.context_id
-                LEFT JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
-                WHERE activity.id IN (%s)
-                ORDER BY activity.id
-                """.formatted(placeholders), boundedRowIds.toArray());
-            mAliasResolver.enrichActivity(connection, rows);
-            enrichActivityEncryption(rows);
-            enrichActivityTalkgroupMembers(connection, rows);
-            return rows;
-        });
-    }
-
-    private static void enrichActivityTalkgroupMembers(Connection connection, List<Map<String,Object>> rows)
-        throws SQLException
-    {
-        if(rows.isEmpty())
-        {
-            return;
-        }
-
-        List<Long> eventIds = rows.stream()
-            .map(row -> row.get("id"))
-            .filter(Number.class::isInstance)
-            .map(Number.class::cast)
-            .map(Number::longValue)
-            .toList();
-
-        if(eventIds.isEmpty())
-        {
-            return;
-        }
-
-        String placeholders = String.join(",", java.util.Collections.nCopies(eventIds.size(), "?"));
-        List<Object> parameters = new ArrayList<>(eventIds);
-        parameters.add(MAXIMUM_ACTIVITY_EVENT_MEMBERS);
-        parameters.add(eventIds.size() * MAXIMUM_ACTIVITY_EVENT_MEMBERS + 1);
-        List<Map<String,Object>> members = queryRows(connection, """
-            WITH ranked AS (
-                SELECT event_id, talkgroup_id,
-                    row_number() OVER (PARTITION BY event_id ORDER BY talkgroup_id) AS member_rank,
-                    count(*) OVER (PARTITION BY event_id) AS member_total
-                FROM activity_event_talkgroup_member
-                WHERE event_id IN (%s)
-            )
-            SELECT event_id, talkgroup_id, member_total
-            FROM ranked
-            WHERE member_rank <= ?
-            ORDER BY event_id, talkgroup_id
-            LIMIT ?
-            """.formatted(placeholders), parameters.toArray());
-        Map<Long,List<Long>> membersByEventId = new LinkedHashMap<>();
-        Map<Long,Long> memberTotalsByEventId = new LinkedHashMap<>();
-
-        for(Map<String,Object> member: members)
-        {
-            if(member.get("event_id") instanceof Number eventId &&
-                member.get("talkgroup_id") instanceof Number talkgroupId)
-            {
-                membersByEventId.computeIfAbsent(eventId.longValue(), ignored -> new ArrayList<>())
-                    .add(talkgroupId.longValue());
-                if(member.get("member_total") instanceof Number total)
-                {
-                    memberTotalsByEventId.put(eventId.longValue(), total.longValue());
-                }
-            }
-        }
-
-        for(Map<String,Object> row: rows)
-        {
-            if(row.get("id") instanceof Number eventId)
-            {
-                List<Long> included = List.copyOf(
-                    membersByEventId.getOrDefault(eventId.longValue(), List.of()));
-                long total = memberTotalsByEventId.getOrDefault(eventId.longValue(), (long)included.size());
-                row.put("member_talkgroup_ids", included);
-                row.put("member_talkgroup_ids_total", total);
-                row.put("member_talkgroup_ids_truncated", total > included.size());
-            }
-        }
     }
 
     Map<String,Object> systemDirectory(StatsRequest request)

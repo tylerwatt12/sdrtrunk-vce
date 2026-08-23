@@ -42,34 +42,58 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void pausesEveryNewestActivityPageWithABoundedQueue() throws Exception
+    void pausesEveryNewestActivityRefreshWithoutQueueingLiveEvents() throws Exception
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
-        assertTrue(activity.contains("'Pause updates'"));
-        assertTrue(activity.contains("`Resume${pending.size"));
-        assertTrue(activity.contains("if (pending.size > 200)"));
-        assertTrue(activity.contains("const pending = new Map()"));
-        assertTrue(activity.contains("pending.delete(pending.keys().next().value)"));
-        assertTrue(activity.contains("rows.forEach(addActivityRow)"));
+        assertTrue(activity.contains("if (!route.get('before_id'))"));
+        assertTrue(activity.contains("'Pause refresh'"));
+        assertTrue(activity.contains("'Resume refresh'"));
+        assertTrue(activity.contains("refreshGeneration += 1"));
+        assertTrue(activity.contains("nextRefreshAt = paused ? nextRefreshAt : Date.now()"));
+        assertFalse(activity.contains("const pending = new Map()"));
+        assertFalse(activity.contains("liveConnection('activity'"));
     }
 
     @Test
-    void refreshesExistingLiveActivityAndKeepsOnlyTheLatestPausedVersion() throws Exception
+    void pollsNewestActivityAndHighlightsStableNewRows() throws Exception
     {
         String source = source();
-        String table = function(source, "function table(rows, columns, emptyText = 'No rows', options = {})");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
-        assertTrue(table.contains("upsertRow(data, settings = {})"));
-        assertTrue(table.contains("dataRows[existingIndex] = data"));
-        assertTrue(table.contains("renderBody()"));
-        assertTrue(activity.contains("activityTable.tableController.upsertRow(row"));
-        assertTrue(activity.contains("row.id !== null && row.id !== undefined ? String(row.id) : Symbol()"));
-        assertTrue(activity.contains("if (pending.has(key)) pending.delete(key)"));
-        assertTrue(activity.contains("pending.set(key, row)"));
-        assertTrue(activity.contains("[...pending.values()].sort"));
-        assertTrue(activity.contains("pending.clear()"));
-        assertFalse(activity.contains("pendingIds"));
-        assertFalse(activity.contains("if (row.id !== null && row.id !== undefined && body.querySelector"));
+        String css = readText(APP_CSS);
+        int topicsStart = source.indexOf("const LIVE_MULTIPLEX_TOPICS");
+        String topics = source.substring(topicsStart, source.indexOf("});", topicsStart));
+
+        assertTrue(source.contains("const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000"));
+        assertTrue(activity.contains("pageInterval(refreshTick, 1_000)"));
+        assertTrue(activity.contains("document.hidden"));
+        assertTrue(activity.contains("refreshInFlight"));
+        assertTrue(activity.contains("renderIsCurrent(renderContext)"));
+        assertTrue(activity.contains("const currentIds = new Set"));
+        assertTrue(activity.contains("const newIds = new Set"));
+        assertTrue(activity.contains("row.classList.add('activity-row-new')"));
+        assertTrue(activity.contains("row.classList.remove('activity-row-new')"));
+        assertTrue(activity.contains("pageTimeout(() => highlighted.forEach"));
+        assertTrue(activity.contains("8_000"));
+        assertTrue(activity.contains("activityTable.tableController.replaceRows(rows)"));
+        assertTrue(activity.contains("updatePager(refreshed)"));
+        assertTrue(activity.contains("page?.next_before_id"));
+        assertTrue(activity.contains("current?.tagName === 'A'"));
+        assertTrue(activity.contains("current.setAttribute('href', target)"));
+        assertFalse(activity.contains("controls.replaceChildren"));
+        assertTrue(activity.contains("paused || document.hidden || !renderIsCurrent(renderContext)"));
+        assertTrue(activity.contains("!paused && !document.hidden ?"));
+        assertTrue(activity.contains("countdown.setAttribute('role', 'timer')"));
+        assertTrue(activity.contains("countdown.setAttribute('aria-live', 'off')"));
+        assertTrue(activity.contains("announcement.setAttribute('role', 'status')"));
+        assertTrue(activity.contains("Activity refresh recovered."));
+        assertTrue(activity.contains("else announcement.textContent = ''"));
+        assertTrue(topics.contains("1: 'channel_activity'"));
+        assertTrue(topics.contains("6: 'tuner_diagnostics'"));
+        assertFalse(topics.contains("7: 'activity'"));
+        assertTrue(css.contains("@keyframes activity-row-highlight"));
+        assertTrue(css.contains(".activity-row-new > td"));
+        assertTrue(css.contains("animation: activity-row-highlight 8s ease-out"));
+        assertTrue(css.contains("@media (prefers-reduced-motion: reduce)"));
     }
 
     @Test
@@ -249,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"88\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"89\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -370,7 +394,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(talkgroup.contains("talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind })"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         assertFalse(activity.contains("scopeParameters.kind === 'patch'"));
-        assertTrue(activity.contains("liveConnection('activity', scopeParameters)"));
+        assertTrue(activity.contains("const refreshed = await api('/api/v1/activity'"));
+        assertTrue(activity.contains("...scopeParameters"));
         assertTrue(links.contains("rowGroupIdentityKind(row, explicitKind) === 'patch_group'"));
         assertTrue(radio.contains("radio.last_talkgroup_kind"));
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
@@ -566,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=71"));
+        assertTrue(html.contains("/assets/app.css?v=72"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -609,7 +634,7 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void consumesCallSnapshotsIdempotentlyAndRefetchesActivityAfterATopicGap() throws Exception
+    void consumesCallSnapshotsIdempotentlyAndRetainsActivityAcrossPollingFailures() throws Exception
     {
         String player = readText(WEB_CALL_PLAYER);
         String ensureConnected = function(player, "  ensureConnected()");
@@ -621,10 +646,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(enqueue.contains("this.seenCallIds.has(normalized._logicalCallId)"));
         assertTrue(enqueue.contains("this.rememberCallId(normalized._logicalCallId)"));
         assertTrue(snapshot.contains("snapshot?.calls"));
-        assertTrue(activity.contains("addEventListener('activity_reset'"));
         assertTrue(activity.contains("api('/api/v1/activity'"));
         assertTrue(activity.contains("tableController.replaceRows"));
-        assertTrue(activity.contains("const resetPending = new Map()"));
+        assertTrue(activity.contains("refreshFailed = true"));
+        assertTrue(activity.contains("The current entries were retained; retrying automatically."));
+        assertFalse(activity.contains("activity_reset"));
     }
 
     @Test
@@ -1397,7 +1423,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("subscription?.close()"));
         assertTrue(live.contains("document.addEventListener('visibilitychange', synchronizeVisibility)"));
         assertTrue(live.contains("document.removeEventListener('visibilitychange', synchronizeVisibility)"));
-        assertTrue(activity.contains("liveConnection('activity', scopeParameters)"));
+        assertFalse(activity.contains("liveConnection('activity'"));
+        assertTrue(activity.contains("pageInterval(refreshTick, 1_000)"));
         assertTrue(source.contains("document.addEventListener('visibilitychange', " +
             "synchronizeLiveChannelActivitySource)"));
     }
