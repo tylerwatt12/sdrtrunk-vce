@@ -396,15 +396,6 @@ public class SDRTrunk
 
         Point location = mUserPreferences.getSwingPreference().getLocation(WINDOW_FRAME_IDENTIFIER);
         Dimension dimension = mUserPreferences.getSwingPreference().getDimension(WINDOW_FRAME_IDENTIFIER);
-
-        if(location != null)
-        {
-            mMainGui.setLocation(location);
-        }
-        else
-        {
-            mMainGui.setLocationRelativeTo(null);
-        }
         mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         mMainGui.addWindowListener(new ShutdownMonitor());
         registerQuitHandler();
@@ -422,15 +413,26 @@ public class SDRTrunk
             }
 
             mMainGui.setSize(dimension);
-
-            if(mUserPreferences.getSwingPreference().getMaximized(WINDOW_FRAME_IDENTIFIER, false))
-            {
-                mMainGui.setExtendedState(Frame.MAXIMIZED_BOTH);
-            }
         }
         else
         {
             mMainGui.setSize(new Dimension(1280, 800));
+        }
+
+        //Center only after the first-use size is known. Centering a zero-sized frame places its upper-left corner at
+        //the screen center and leaves most of the expanded window off-screen.
+        if(location != null)
+        {
+            mMainGui.setLocation(location);
+        }
+        else
+        {
+            mMainGui.setLocationRelativeTo(null);
+        }
+
+        if(dimension != null && mUserPreferences.getSwingPreference().getMaximized(WINDOW_FRAME_IDENTIFIER, false))
+        {
+            mMainGui.setExtendedState(Frame.MAXIMIZED_BOTH);
         }
         mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
         mSplitPane.setDividerSize(5);

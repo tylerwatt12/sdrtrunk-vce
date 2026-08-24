@@ -27,8 +27,10 @@ import java.util.prefs.Preferences;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.ObservableList;
+import javafx.event.EventHandler;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 /**
  * Manages user preferences for JavaFX elements (e.g. stages).
@@ -134,7 +136,7 @@ public class JavaFxPreferences
 
         /**
          * Repositions a stage to the last stored display location if there is currently a monitor that can display
-         * those coordinates.  Otherwise, uses the stage's default coordinates.
+         * those coordinates. Otherwise, centers it once its full decorated size is known on first show.
          *
          * @param stage to reposition
          */
@@ -146,8 +148,6 @@ public class JavaFxPreferences
             double width = mPreferences.getDouble(PREFERENCE_STAGE_WIDTH_PREFIX + mKey, stage.getWidth());
             boolean maximized = mPreferences.getBoolean(PREFERENCE_STAGE_MAXIMIZED, stage.isMaximized());
 
-            //If there is a screen (ie monitor) available to display the stage at these coordinates, then move the
-            // stage, otherwise let the stage display in the default coordinates
             ObservableList<Screen> screens = Screen.getScreensForRectangle(x, y, width, height);
 
             if(!screens.isEmpty())
@@ -157,6 +157,19 @@ public class JavaFxPreferences
                 stage.setHeight(height);
                 stage.setWidth(width);
                 stage.setMaximized(maximized);
+            }
+            else
+            {
+                EventHandler<WindowEvent> centerOnFirstShow = new EventHandler<>()
+                {
+                    @Override
+                    public void handle(WindowEvent event)
+                    {
+                        stage.removeEventHandler(WindowEvent.WINDOW_SHOWN, this);
+                        stage.centerOnScreen();
+                    }
+                };
+                stage.addEventHandler(WindowEvent.WINDOW_SHOWN, centerOnFirstShow);
             }
         }
     }
