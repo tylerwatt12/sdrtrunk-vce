@@ -153,6 +153,7 @@ class WebCallPlayer {
     }
     if (this.events) this.events.update(this.subscriptionParameters());
     else if (!this.paused) this.ensureConnected();
+    else this.setStatus('Ready');
   }
 
   eventPayload(event) {

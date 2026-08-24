@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"96\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"97\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -618,7 +618,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=15"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=16"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -627,6 +627,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(readVolume.contains("stored === null || stored.trim() === ''"));
         assertTrue(readVolume.contains("return 1"));
         assertTrue(readVolume.contains("saved >= 0 && saved <= 1"));
+        assertTrue(function(source, "  synchronizeSubscription()").contains("else this.setStatus('Ready')"));
         assertTrue(ensureAudioContext.contains("this.audioContext.createGain()"));
         assertTrue(ensureAudioContext.contains("this.gainNode.gain.value = this.volume"));
         assertTrue(startCurrent.contains("source.connect(this.gainNode)"));
