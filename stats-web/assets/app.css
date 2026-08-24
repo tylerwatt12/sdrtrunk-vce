@@ -6906,6 +6906,7 @@ th.numeric {
 
   .page-header .scanner-view-modes {
     width: 100%;
+    grid-column: 1 / -1;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     margin: 8px 0 0;
   }
