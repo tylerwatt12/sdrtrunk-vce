@@ -1499,8 +1499,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private void handleScanLists(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, StatsApiV1.SCAN_LISTS) || !requireMethod(exchange, "GET") ||
-            !requireNoQuery(exchange))
+        if(!requireMethod(exchange, "GET") || !requireNoQuery(exchange))
         {
             return;
         }
@@ -1511,6 +1510,64 @@ public class StatsWebServerService implements AutoCloseable
             return;
         }
 
+        if(hasExactPath(exchange.getRequestURI(), StatsApiV1.SCAN_LISTS))
+        {
+            sendScanLists(exchange);
+            return;
+        }
+
+        Long coverageId = scanListCoverageId(exchange.getRequestURI());
+
+        if(coverageId == null || mAliasAdministrationService == null)
+        {
+            sendApiError(exchange, 404, "not_found", "Resource not found");
+            return;
+        }
+
+        try
+        {
+            AliasAdministrationService.ScanListCoverage coverage =
+                mAliasAdministrationService.scanListCoverage(coverageId);
+
+            if(!coverage.scanList().isPublished())
+            {
+                sendApiError(exchange, 404, "not_found", "Scan list not found");
+                return;
+            }
+
+            Map<String,Object> scanList = new LinkedHashMap<>();
+            scanList.put("id", coverage.scanList().getId());
+            scanList.put("name", coverage.scanList().getName());
+            scanList.put("description", coverage.scanList().getDescription());
+            List<Map<String,Object>> aliases = coverage.aliases().stream().map(alias ->
+            {
+                Map<String,Object> row = new LinkedHashMap<>();
+                row.put("alias_id", alias.aliasId());
+                row.put("alias_list_id", alias.aliasListId());
+                row.put("alias_list", alias.aliasListName());
+                row.put("group", alias.group());
+                row.put("name", alias.name());
+                row.put("description", alias.description());
+                row.put("matcher_type", alias.matcherType());
+                row.put("matcher", alias.matcher());
+                return row;
+            }).toList();
+            List<Map<String,Object>> unmatched = coverage.unmatchedAliasLists().stream().map(aliasList ->
+                Map.<String,Object>of("alias_list_id", aliasList.aliasListId(), "name", aliasList.name(),
+                    "family", aliasList.family())).toList();
+            ApiHttpResponse.sendData(exchange, 200, Map.of("scan_list", scanList, "aliases", aliases,
+                "unmatched_alias_lists", unmatched, "alias_count", coverage.aliasCount(),
+                "aliases_truncated", coverage.truncated(), "maximum_aliases",
+                AliasAdministrationService.MAX_SCAN_LIST_COVERAGE_ALIASES));
+        }
+        catch(IllegalArgumentException exception)
+        {
+            sendApiError(exchange, 404, "not_found", "Scan list not found");
+        }
+    }
+
+    private void sendScanLists(HttpExchange exchange) throws IOException
+    {
         List<Map<String,Object>> rows = mScanListModel.configuration().scanLists().stream()
             .filter(ScanList::isPublished).map(scanList -> {
                 Map<String,Object> row = new LinkedHashMap<>();
@@ -1529,6 +1586,34 @@ public class StatsWebServerService implements AutoCloseable
             "maximum_selected_scan_lists", configuration.maximumSelectedScanLists(),
             "waiting_calls_per_listener", configuration.waitingCallsPerListener(),
             "maximum_grouped_calls", 4));
+    }
+
+    static Long scanListCoverageId(URI uri)
+    {
+        String path = uri != null ? uri.getPath() : null;
+        String prefix = StatsApiV1.SCAN_LISTS + "/";
+
+        if(path == null || !path.startsWith(prefix) || !path.endsWith("/coverage"))
+        {
+            return null;
+        }
+
+        String id = path.substring(prefix.length(), path.length() - "/coverage".length());
+
+        if(!id.matches("[1-9][0-9]*"))
+        {
+            return null;
+        }
+
+        try
+        {
+            long value = Long.parseLong(id);
+            return value > 0 ? value : null;
+        }
+        catch(NumberFormatException exception)
+        {
+            return null;
+        }
     }
 
     Set<Long> selectedScanListIds(URI uri)

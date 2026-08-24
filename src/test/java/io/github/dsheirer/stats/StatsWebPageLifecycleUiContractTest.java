@@ -24,7 +24,7 @@ class StatsWebPageLifecycleUiContractTest
         String html = readText(INDEX_HTML);
         int lifecycle = html.indexOf("/assets/core/page-lifecycle.js?v=1");
         int systems = html.indexOf("/assets/features/systems-directory.js?v=2");
-        int application = html.indexOf("/assets/app.js?v=112");
+        int application = html.indexOf("/assets/app.js?v=113");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);

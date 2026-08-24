@@ -47,9 +47,9 @@ import java.util.concurrent.atomic.AtomicLong;
 final class StatsWebCallService implements AutoCloseable
 {
     private static final int EVENT_QUEUE_CAPACITY = 256;
-    static final int MAXIMUM_SNAPSHOT_CALLS = 256;
+    static final int MAXIMUM_SNAPSHOT_CALLS = 128;
     static final int MAXIMUM_METADATA_TEXT_CHARACTERS = 256;
-    /** Maximum encoded size demonstrated for 256 calls when every externally derived field needs JSON escaping. */
+    /** Maximum encoded size demonstrated for 128 calls when every externally derived field needs JSON escaping. */
     static final int MAXIMUM_SNAPSHOT_JSON_BYTES = 4 * 1024 * 1024;
     static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
     static final long MAXIMUM_PENDING_AUDIO_BYTES = MAXIMUM_CALL_AUDIO_BYTES;
@@ -493,20 +493,45 @@ final class StatsWebCallService implements AutoCloseable
         value.put("duration_ms", call.getDuration());
         putText(value, "system", recordingMetadata != null ? recordingMetadata.systemName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
+        putText(value, "system_identity", recordingMetadata != null ? recordingMetadata.systemIdentity() : null);
+        putText(value, "site", recordingMetadata != null ? recordingMetadata.siteName() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY));
+        putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.siteIdentity() : null);
+        putText(value, "site_guid", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID,
+            Role.ANY));
         putText(value, "channel", recordingMetadata != null ? recordingMetadata.channelName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
+        putText(value, "channel_identity", recordingMetadata != null ? recordingMetadata.channelIdentity() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY));
+        putText(value, "configuration_id", identifierValue(identifiers, IdentifierClass.CONFIGURATION,
+            Form.UNIQUE_ID, Role.ANY));
+        putText(value, "alias_list", recordingMetadata != null ? recordingMetadata.aliasListName() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY));
         putText(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE,
             Role.ANY));
         putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
         putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
         putText(value, "source_form", form(source));
+        putText(value, "talker_alias", identifierValue(identifiers, IdentifierClass.USER, Form.TALKER_ALIAS,
+            Role.FROM));
         putText(value, "target_id", recordingMetadata != null ? recordingMetadata.destinationValue() : value(target));
         putText(value, "target_alias", recordingMetadata != null ? recordingMetadata.destinationAlias() : null);
         putText(value, "target_form", form(target));
+        putText(value, "protocol", target != null && target.getProtocol() != null ? target.getProtocol().name() :
+            recordingMetadata != null ? recordingMetadata.destinationProtocol() : null);
         putText(value, "conversation_key", conversationKey(identifiers, target));
         value.put("scan_list_ids", scanListIds != null ? scanListIds.stream()
             .sorted(Comparator.naturalOrder()).toList() : List.of());
         value.put("frequency_hz", longValue(identifiers, Form.CHANNEL_FREQUENCY));
+        putText(value, "lcn", identifierValue(identifiers, IdentifierClass.DECODER, Form.CHANNEL_NAME,
+            Role.BROADCAST));
+        putIdentifierValue(value, "network_id", identifiers, Form.NETWORK);
+        putIdentifierValue(value, "wacn", identifiers, Form.WACN);
+        putIdentifierValue(value, "system_id", identifiers, Form.SYSTEM);
+        putIdentifierValue(value, "nac", identifiers, Form.NETWORK_ACCESS_CODE);
+        putIdentifierValue(value, "rfss_id", identifiers, Form.RF_SUBSYSTEM);
+        putIdentifierValue(value, "site_id", identifiers, Form.SITE);
+        putIdentifierValue(value, "ran", identifiers, Form.RAN);
         value.put("timeslot", snapshot.timeslot());
         value.put("encrypted", snapshot.encrypted());
         if(snapshot.voiceCallQuality() != null && snapshot.voiceCallQuality().hasMeasurements())
@@ -520,6 +545,17 @@ final class StatsWebCallService implements AutoCloseable
             value.put("vc_fec_protected_bits", snapshot.voiceCallQuality().fecProtectedBitCount());
         }
         return Map.copyOf(value);
+    }
+
+    private static void putIdentifierValue(Map<String,Object> values, String key, IdentifierCollection identifiers,
+                                           Form form)
+    {
+        Object identifier = identifierValue(identifiers, IdentifierClass.NETWORK, form, Role.BROADCAST);
+
+        if(identifier != null)
+        {
+            values.put(key, identifier);
+        }
     }
 
     private static String conversationKey(IdentifierCollection identifiers, Identifier<?> target)

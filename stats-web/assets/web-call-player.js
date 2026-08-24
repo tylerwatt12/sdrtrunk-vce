@@ -4,12 +4,19 @@ class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
   static MAXIMUM_SCAN_LISTS = 128;
   static MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4;
+  static MAXIMUM_RECENT_CALLS = 256;
+  static MAXIMUM_RECENT_CALL_AGE_MS = 30 * 60 * 1000;
+  static MAXIMUM_AVOIDS = 256;
 
   constructor(ids) {
     this.ui = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
     this.conversationLanes = new Map();
     this.queuedCount = 0;
-    this.avoids = new Set();
+    this.avoids = new Map();
+    this.recentCalls = [];
+    this.recentReplay = null;
+    this.stateObservers = new Set();
+    this.actions = {};
     this.holdTarget = null;
     this.current = null;
     this.currentBuffer = null;
@@ -55,6 +62,46 @@ class WebCallPlayer {
     this.connectionTopic = url;
     this.connectionFactory = connectionFactory;
     return this.connectionHandle();
+  }
+
+  setActions(actions = {}) {
+    this.actions = actions && typeof actions === 'object' ? actions : {};
+  }
+
+  subscribeState(observer) {
+    if (typeof observer !== 'function') return () => {};
+    this.stateObservers.add(observer);
+    observer(this.viewState());
+    return () => this.stateObservers.delete(observer);
+  }
+
+  notifyStateObservers() {
+    if (!this.stateObservers.size) return;
+    const state = this.viewState();
+    this.stateObservers.forEach((observer) => {
+      try { observer(state); } catch (_) { }
+    });
+  }
+
+  viewState() {
+    this.pruneRecentCalls();
+    return {
+      current: this.current,
+      currentReady: Boolean(this.current && this.currentBuffer),
+      recentReplay: Boolean(this.recentReplay),
+      paused: this.paused,
+      holdTarget: this.holdTarget,
+      queuedCount: this.queuedCount,
+      missedCalls: this.missedCalls,
+      missedCountExact: this.missedCountExact,
+      status: this.ui.status?.textContent || '',
+      avoids: [...this.avoids.values()].reverse(),
+      recentCalls: this.recentCalls.slice(),
+      scanLists: this.scanLists.map((item) => ({ ...item, selected: this.selectedScanListIds.has(item.id) })),
+      scanListCatalogReady: this.scanListCatalogReady,
+      maximumSelectedScanLists: this.maximumSelectedScanLists,
+      volume: this.volume
+    };
   }
 
   connectionHandle() {
@@ -139,6 +186,8 @@ class WebCallPlayer {
     this.paused = true;
     this.clearQueuedCalls('disconnected');
     this.avoids.clear();
+    this.recentCalls = [];
+    this.recentReplay = null;
     this.holdTarget = null;
     this.stopCurrent();
     if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
@@ -380,6 +429,7 @@ class WebCallPlayer {
     if (!normalized || !this.callMatchesSelection(normalized)) return;
     if (this.seenCallIds.has(normalized._logicalCallId)) return;
     this.rememberCallId(normalized._logicalCallId);
+    this.rememberRecentCall(normalized);
     if (!this.isAllowed(normalized)) {
       this.acknowledge(normalized, 'filtered');
       return;
@@ -428,6 +478,26 @@ class WebCallPlayer {
     while (this.seenCallOrder.length > WebCallPlayer.MAXIMUM_SEEN_CALL_IDS) {
       this.seenCallIds.delete(this.seenCallOrder.shift());
     }
+  }
+
+  rememberRecentCall(call) {
+    if (!call?._logicalCallId) return;
+    this.recentCalls = this.recentCalls.filter((item) => item._logicalCallId !== call._logicalCallId);
+    this.recentCalls.push(call);
+    this.recentCalls.sort((first, second) => this.callCompletedAt(second) - this.callCompletedAt(first) ||
+      second._arrivalSequence - first._arrivalSequence);
+    this.pruneRecentCalls();
+  }
+
+  pruneRecentCalls() {
+    const oldest = Date.now() - WebCallPlayer.MAXIMUM_RECENT_CALL_AGE_MS;
+    this.recentCalls = this.recentCalls.filter((call) => this.callCompletedAt(call) >= oldest)
+      .slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS);
+  }
+
+  callCompletedAt(call) {
+    const completed = Number(call?.completed_at_ms ?? call?._startedAtMs);
+    return Number.isFinite(completed) && completed > 0 ? completed : Date.now();
   }
 
   insertQueuedCall(call) {
@@ -521,6 +591,11 @@ class WebCallPlayer {
     this.queuedCount = 0;
   }
 
+  clearQueue() {
+    this.clearQueuedCalls('cleared');
+    this.render();
+  }
+
   filterQueuedCalls(predicate, outcome) {
     this.conversationLanes.forEach((lane, key) => {
       const retained = [];
@@ -552,10 +627,8 @@ class WebCallPlayer {
     this.ui.replay.addEventListener('click', () => this.replayCurrent());
     this.ui.hold.addEventListener('click', () => this.toggleHold());
     this.ui.avoid.addEventListener('click', () => this.avoidCurrent());
-    this.ui.clear.addEventListener('click', () => {
-      this.avoids.clear();
-      this.render();
-    });
+    this.ui.avoidList?.addEventListener('click', () => this.actions.openAvoidList?.(this));
+    this.ui.clearQueue?.addEventListener('click', () => this.clearQueue());
     this.ui.volume.addEventListener('input', () => this.changeVolume());
     const panels = [this.ui.scanListOptions?.closest('details'), this.ui.queueList?.closest('details')]
       .filter(Boolean);
@@ -609,6 +682,7 @@ class WebCallPlayer {
   }
 
   toggleHold() {
+    if (this.recentReplay) return;
     if (this.holdTarget) {
       this.holdTarget = null;
     } else if (this.current && this.currentBuffer) {
@@ -620,9 +694,18 @@ class WebCallPlayer {
   }
 
   avoidCurrent() {
-    if (!this.current || !this.currentBuffer) return;
+    if (!this.current || !this.currentBuffer || this.recentReplay) return;
     const target = this.current._conversationKey;
-    this.avoids.add(target);
+    this.avoids.delete(target);
+    this.avoids.set(target, {
+      key: target,
+      label: this.callLabel(this.current),
+      details: this.callDetails(this.current),
+      addedAtMs: Date.now()
+    });
+    while (this.avoids.size > WebCallPlayer.MAXIMUM_AVOIDS) {
+      this.avoids.delete(this.avoids.keys().next().value);
+    }
     if (this.holdTarget === target) this.holdTarget = null;
     this.filterQueuedCalls((call) => call._conversationKey !== target, 'avoided');
     this.stopCurrent('avoided');
@@ -630,7 +713,17 @@ class WebCallPlayer {
     else this.playNext();
   }
 
+  removeAvoid(key) {
+    if (!this.avoids.delete(String(key || ''))) return false;
+    this.render();
+    return true;
+  }
+
   skip() {
+    if (this.recentReplay) {
+      void this.returnToLive();
+      return;
+    }
     if (this.current) this.stopCurrent('skipped');
     else {
       const skipped = this.takeNextCall();
@@ -659,6 +752,76 @@ class WebCallPlayer {
     this.startCurrent();
   }
 
+  async replayRecent(logicalCallId) {
+    this.pruneRecentCalls();
+    const call = this.recentCalls.find((item) => item._logicalCallId === String(logicalCallId || ''));
+    if (!call || call._audioUnavailable) return false;
+    if (this.current?._logicalCallId === call._logicalCallId && !this.recentReplay) {
+      await this.replayCurrent();
+      return true;
+    }
+    if (this.recentReplay) await this.returnToLive();
+
+    const savedOffset = this.source ? this.getPlaybackPosition() : this.playbackOffset;
+    this.transportToken++;
+    this.loadToken++;
+    this.loadController?.abort();
+    this.loadController = null;
+    this.stopSource();
+    this.recentReplay = {
+      current: this.current,
+      currentBuffer: this.currentBuffer,
+      playbackOffset: savedOffset,
+      paused: this.paused
+    };
+    this.current = call;
+    this.currentBuffer = null;
+    this.playbackOffset = 0;
+    this.paused = false;
+    this.ensureAudioContext();
+    await this.audioContext.resume();
+    if (!this.recentReplay || this.current !== call) return false;
+    this.setStatus('Replaying recent call');
+    this.render();
+    await this.loadCurrent();
+    return true;
+  }
+
+  async returnToLive() {
+    const saved = this.recentReplay;
+    if (!saved) return;
+    this.recentReplay = null;
+    this.transportToken++;
+    this.loadToken++;
+    this.loadController?.abort();
+    this.loadController = null;
+    this.stopSource();
+    this.current = saved.current;
+    this.currentBuffer = saved.currentBuffer;
+    this.playbackOffset = saved.playbackOffset;
+    this.paused = saved.paused;
+
+    if (this.paused) {
+      if (this.audioContext?.state === 'running') await this.audioContext.suspend();
+      this.setStatus(this.currentBuffer ? 'Paused' : 'Ready');
+      this.render();
+      return;
+    }
+
+    if (!this.ensureConnected()) {
+      this.paused = true;
+      this.setStatus('Unavailable');
+      this.render();
+      return;
+    }
+    this.ensureAudioContext();
+    await this.audioContext.resume();
+    if (this.currentBuffer) this.startCurrent();
+    else if (this.current) await this.loadCurrent();
+    else await this.playNext();
+    this.render();
+  }
+
   async playNext() {
     if (this.paused || this.current) return;
 
@@ -676,6 +839,12 @@ class WebCallPlayer {
     this.current = next;
     this.currentBuffer = null;
     this.playbackOffset = 0;
+    await this.loadCurrent();
+  }
+
+  async loadCurrent() {
+    if (!this.current) return;
+    const requested = this.current;
     const token = ++this.loadToken;
     this.loadController?.abort();
     const loadController = new AbortController();
@@ -696,7 +865,7 @@ class WebCallPlayer {
       const buffer = await Promise.race([(async () => {
         const headers = {};
         if (this.listenerToken) headers['X-SDRTrunk-Listener-Token'] = this.listenerToken;
-        const response = await fetch(this.current.audio_url, {
+        const response = await fetch(requested.audio_url, {
           cache: 'no-store', credentials: 'same-origin', headers, signal: loadController.signal
         });
         if (!response.ok) throw new Error(`Audio returned ${response.status}`);
@@ -704,7 +873,7 @@ class WebCallPlayer {
         const data = await response.arrayBuffer();
         return this.audioContext.decodeAudioData(data);
       })(), timeoutFailure]);
-      if (token !== this.loadToken || !this.current) return;
+      if (token !== this.loadToken || this.current !== requested) return;
       this.currentBuffer = buffer;
       if (!this.paused) this.startCurrent();
       else {
@@ -714,6 +883,15 @@ class WebCallPlayer {
     } catch (error) {
       if (error?.name === 'AbortError' && !loadTimedOut) return;
       if (token === this.loadToken) {
+        if (this.recentReplay) {
+          requested._audioUnavailable = true;
+          this.setStatus('Recent call is no longer available');
+          this.render();
+          window.setTimeout(() => {
+            if (this.recentReplay && this.current === requested) void this.returnToLive();
+          }, 150);
+          return;
+        }
         this.recordMissed(1, true, false);
         this.stopCurrent('unavailable');
         this.setStatus('Skipped unavailable call');
@@ -743,6 +921,13 @@ class WebCallPlayer {
     source.connect(this.gainNode);
     source.onended = () => {
       if (token !== this.loadToken || source !== this.source) return;
+      if (this.recentReplay) {
+        source.disconnect();
+        this.stopProgress();
+        this.source = null;
+        void this.returnToLive();
+        return;
+      }
       const completed = this.current;
       source.disconnect();
       this.stopProgress();
@@ -1014,13 +1199,20 @@ class WebCallPlayer {
     this.ui.play.title = this.paused ? 'Play browser call audio' : 'Pause browser call audio';
     this.ui.replay.disabled = !currentReady;
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));
-    this.ui.hold.disabled = !this.holdTarget && !currentReady;
+    this.ui.hold.disabled = Boolean(this.recentReplay) || (!this.holdTarget && !currentReady);
     this.ui.hold.title = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';
-    this.ui.avoid.disabled = !currentReady;
-    this.ui.clear.disabled = !this.avoids.size;
-    this.ui.clear.title = `Clear ${this.avoids.size} browser avoid(s)`;
+    this.ui.avoid.disabled = !currentReady || Boolean(this.recentReplay);
+    if (this.ui.avoidList) {
+      this.ui.avoidList.textContent = this.avoids.size ? `Avoids (${this.avoids.size})` : 'Avoids';
+      this.ui.avoidList.title = `View ${this.avoids.size} browser avoid(s)`;
+    }
+    if (this.ui.clearQueue) {
+      this.ui.clearQueue.disabled = !this.queuedCount;
+      this.ui.clearQueue.title = `Clear ${this.queuedCount} queued browser call(s)`;
+    }
     this.ui.skip.disabled = !this.current && !this.queuedCount;
     this.renderProgress();
+    this.notifyStateObservers();
   }
 }
 

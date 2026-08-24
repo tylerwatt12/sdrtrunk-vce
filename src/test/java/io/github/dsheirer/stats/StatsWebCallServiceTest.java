@@ -28,10 +28,19 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
@@ -109,11 +118,22 @@ class StatsWebCallServiceTest
             @SuppressWarnings("unchecked")
             Map<String,Object> metadata = (Map<String,Object>)event.data();
             assertEquals("Test System", metadata.get("system"));
+            assertEquals("Test Site", metadata.get("site"));
+            assertEquals("00000000-0000-0000-0000-000000000021", metadata.get("site_guid"));
+            assertEquals("00000000-0000-0000-0000-000000000737", metadata.get("channel_identity"));
             assertEquals("4400", metadata.get("target_id"));
             assertEquals("TALKGROUP", metadata.get("target_form"));
             assertEquals("9001", metadata.get("source_id"));
             assertEquals("RADIO", metadata.get("source_form"));
+            assertEquals("CAR 9001", metadata.get("talker_alias"));
+            assertEquals("APCO25", metadata.get("protocol"));
             assertEquals(854_187_500L, metadata.get("frequency_hz"));
+            assertEquals("0-737", metadata.get("lcn"));
+            assertEquals(String.valueOf(0xBEE00), metadata.get("wacn"));
+            assertEquals(String.valueOf(0x4A7), metadata.get("system_id"));
+            assertEquals(String.valueOf(0x4A1), metadata.get("nac"));
+            assertEquals("1", metadata.get("rfss_id"));
+            assertEquals("21", metadata.get("site_id"));
             assertEquals(100L, metadata.get("duration_ms"));
             assertEquals(98.0d, metadata.get("vc_quality_pct"));
             assertEquals(49L, metadata.get("vc_decoded_frames"));
@@ -175,8 +195,9 @@ class StatsWebCallServiceTest
         maximumCall.put("call_id", "z".repeat(16));
         maximumCall.put("audio_url", "/api/v1/calls/" + "z".repeat(16) + "/audio");
 
-        for(String field: List.of("system", "channel", "decoder", "source_id", "source_alias", "target_id",
-            "target_alias"))
+        for(String field: List.of("system", "system_identity", "site", "site_identity", "site_guid", "channel",
+            "channel_identity", "configuration_id", "alias_list", "decoder", "source_id", "source_alias", "talker_alias",
+            "target_id", "target_alias", "protocol", "lcn"))
         {
             maximumCall.put(field, maximallyEscaped);
         }
@@ -658,8 +679,17 @@ class StatsWebCallServiceTest
     {
         List<Identifier> identifiers = new ArrayList<>();
         identifiers.add(SystemConfigurationIdentifier.create(systemName));
+        identifiers.add(SiteConfigurationIdentifier.create("Test Site"));
+        identifiers.add(SiteGuidConfigurationIdentifier.create("00000000-0000-0000-0000-000000000021"));
+        identifiers.add(ChannelConfigurationIdentifier.create("00000000-0000-0000-0000-000000000737"));
         identifiers.add(FrequencyConfigurationIdentifier.create(854_187_500L));
         identifiers.add(APCO25RadioIdentifier.createFrom(9001));
+        identifiers.add(P25TalkerAliasIdentifier.create("CAR 9001"));
+        identifiers.add(APCO25Wacn.create(0xBEE00));
+        identifiers.add(APCO25System.create(0x4A7));
+        identifiers.add(APCO25Nac.create(0x4A1));
+        identifiers.add(APCO25Rfss.create(1));
+        identifiers.add(APCO25Site.create(21));
 
         if(includeTarget)
         {

@@ -32,6 +32,10 @@ class JavaAliasListDefaultsUiContractTest
         assertTrue(dialog.contains("new TitledPane(\"Recording\""));
         assertTrue(dialog.contains("new TitledPane(\"Streaming\""));
         assertTrue(dialog.contains("including sensitive traffic"));
+        assertTrue(dialog.contains("new ScrollPane(content)"));
+        assertTrue(dialog.contains("scroll.setFitToWidth(true)"));
+        assertTrue(dialog.contains("ScrollPane.ScrollBarPolicy.NEVER"));
+        assertTrue(dialog.contains("screenHeight - 220"));
         assertTrue(dialog.contains("event.consume()"));
     }
 }

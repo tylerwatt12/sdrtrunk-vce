@@ -24,6 +24,7 @@ import io.github.dsheirer.scanlist.ScanListModel;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -51,6 +52,7 @@ public final class AliasAdministrationService
     public static final int MAX_BROADCAST_CHANNELS = 64;
     public static final int MAX_BROADCAST_CHANNEL_NAME_LENGTH = 256;
     public static final int MAX_SCAN_LISTS = 100;
+    public static final int MAX_SCAN_LIST_COVERAGE_ALIASES = 5_000;
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
 
@@ -156,6 +158,61 @@ public final class AliasAdministrationService
             Set<Long> unmatchedAliasListIds = ownersFor(configuration.unmatchedAliasListMemberships(), scanListId);
             return new ScanListEntry(revision(), scanList, aliasIds, unmatchedAliasListIds);
         });
+    }
+
+    /**
+     * Returns one bounded, detached listener-facing view of the aliases and unmatched Alias Lists routed to a scan
+     * list.  The result contains display data only and cannot mutate the active Alias model.
+     */
+    public ScanListCoverage scanListCoverage(long scanListId)
+    {
+        return onConfigurationThread(() ->
+        {
+            ScanList scanList = requireScanList(scanListId);
+            ScanListConfiguration configuration = scanListModel().configuration();
+            Set<Long> aliasIds = ownersFor(configuration.aliasMemberships(), scanListId);
+            Set<Long> unmatchedIds = ownersFor(configuration.unmatchedAliasListMemberships(), scanListId);
+            Map<Long,AliasListDefinition> definitions = aliasModel().aliasListDefinitions().stream()
+                .collect(java.util.stream.Collectors.toMap(AliasListDefinition::getId, definition -> definition));
+            List<Alias> matched = new ArrayList<>(Math.min(aliasIds.size(), MAX_SCAN_LIST_COVERAGE_ALIASES));
+            int matchedCount = 0;
+            for(Alias alias : aliasModel().getAliases())
+            {
+                if(aliasIds.contains(alias.getId()))
+                {
+                    matchedCount++;
+                    if(matched.size() < MAX_SCAN_LIST_COVERAGE_ALIASES)
+                    {
+                        matched.add(alias);
+                    }
+                }
+            }
+            matched.sort(Comparator.comparing((Alias alias) -> coverageText(alias.getAliasListName()),
+                    String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(alias -> coverageText(alias.getGroup()), String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(alias -> coverageText(alias.getName()), String.CASE_INSENSITIVE_ORDER)
+                .thenComparingLong(Alias::getId));
+            boolean truncated = matchedCount > MAX_SCAN_LIST_COVERAGE_ALIASES;
+            List<ScanListCoverageAlias> aliases = matched.stream()
+                .map(alias ->
+                {
+                    AliasListDefinition definition = definitions.get(alias.getAliasListId());
+                    AliasID matcher = alias.getMatchIdentifier();
+                    return new ScanListCoverageAlias(alias.getId(), alias.getAliasListId(),
+                        definition != null ? definition.getName() : alias.getAliasListName(), alias.getGroup(),
+                        alias.getName(), alias.getDescription(), matcher != null ? matcher.getType().name() : null,
+                        matcher != null ? matcher.toString() : null);
+                }).toList();
+            List<ScanListCoverageAliasList> unmatched = unmatchedIds.stream().sorted().map(definitions::get)
+                .filter(Objects::nonNull).map(definition -> new ScanListCoverageAliasList(definition.getId(),
+                    definition.getName(), definition.getFamily().name())).toList();
+            return new ScanListCoverage(revision(), scanList, aliases, unmatched, matchedCount, truncated);
+        });
+    }
+
+    private static String coverageText(String value)
+    {
+        return value != null ? value : "";
     }
 
     public ScanListMutationResult createScanList(ScanList scanList, long expectedRevision)
@@ -1624,6 +1681,26 @@ public final class AliasAdministrationService
             aliasIds = Set.copyOf(aliasIds);
             unmatchedAliasListIds = Set.copyOf(unmatchedAliasListIds);
         }
+    }
+
+    public record ScanListCoverage(long revision, ScanList scanList, List<ScanListCoverageAlias> aliases,
+                                   List<ScanListCoverageAliasList> unmatchedAliasLists, int aliasCount,
+                                   boolean truncated)
+    {
+        public ScanListCoverage
+        {
+            aliases = List.copyOf(aliases);
+            unmatchedAliasLists = List.copyOf(unmatchedAliasLists);
+        }
+    }
+
+    public record ScanListCoverageAlias(long aliasId, long aliasListId, String aliasListName, String group,
+                                        String name, String description, String matcherType, String matcher)
+    {
+    }
+
+    public record ScanListCoverageAliasList(long aliasListId, String name, String family)
+    {
     }
 
     public record ScanListMutationResult(long revision, long scanListId, int affected)

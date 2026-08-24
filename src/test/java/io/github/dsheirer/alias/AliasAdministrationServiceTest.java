@@ -261,6 +261,18 @@ class AliasAdministrationServiceTest
             assertEquals(2, southwestSummary.aliasCount());
             assertEquals(1, southwestSummary.unmatchedAliasListCount());
 
+            AliasAdministrationService.ScanListCoverage southwestCoverage =
+                service.scanListCoverage(southwestId);
+            assertEquals(southwestId, southwestCoverage.scanList().getId());
+            assertEquals(2, southwestCoverage.aliasCount());
+            assertFalse(southwestCoverage.truncated());
+            assertEquals(List.of(operationsId, tacticalId), southwestCoverage.aliases().stream()
+                .map(AliasAdministrationService.ScanListCoverageAlias::aliasId).toList());
+            assertTrue(southwestCoverage.aliases().stream().allMatch(alias -> alias.matcherType() != null &&
+                alias.matcher() != null));
+            assertEquals(List.of(countyListId), southwestCoverage.unmatchedAliasLists().stream()
+                .map(AliasAdministrationService.ScanListCoverageAliasList::aliasListId).toList());
+
             ScanListDatabaseStore scanListStore = new ScanListDatabaseStore(database);
             ScanListConfiguration workflowStored = scanListStore.loadConfiguration();
             assertEquals(List.of("Cleveland", "SouthWest"), workflowStored.scanLists().stream()

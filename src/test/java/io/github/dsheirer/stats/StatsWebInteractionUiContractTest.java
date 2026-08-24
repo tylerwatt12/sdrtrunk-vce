@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"90\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"91\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=74"));
+        assertTrue(html.contains("/assets/app.css?v=75"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -617,7 +617,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=13"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=14"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -683,9 +683,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(replayCurrent.contains("this.playbackOffset = 0"));
         assertTrue(replayCurrent.contains("this.startCurrent()"));
         assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
-        assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer) return;"));
-        assertTrue(render.contains("this.ui.hold.disabled = !this.holdTarget && !currentReady"));
-        assertTrue(render.contains("this.ui.avoid.disabled = !currentReady"));
+        assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer || this.recentReplay) return;"));
+        assertTrue(render.contains("Boolean(this.recentReplay) || (!this.holdTarget && !currentReady)"));
+        assertTrue(render.contains("this.ui.avoid.disabled = !currentReady || Boolean(this.recentReplay)"));
         assertTrue(render.contains("this.ui.replay.disabled = !currentReady"));
     }
 
@@ -726,6 +726,11 @@ class StatsWebInteractionUiContractTest
         String synchronize = function(source, "  synchronizeSubscription()");
         String normalize = function(source, "  normalizeCall(value)");
         String schedule = function(source, "  chooseNextLane(lanes, lastKey, consecutive)");
+        String recent = function(source, "  rememberRecentCall(call)");
+        String pruneRecent = function(source, "  pruneRecentCalls()");
+        String replayRecent = function(source, "  async replayRecent(logicalCallId)");
+        String returnLive = function(source, "  async returnToLive()");
+        String subscribeState = function(source, "  subscribeState(observer)");
 
         assertTrue(html.contains("id=\"playback-scan-list-options\""));
         assertTrue(html.contains("id=\"playback-missed\""));
@@ -742,10 +747,20 @@ class StatsWebInteractionUiContractTest
             enqueue.indexOf("rememberCallId(normalized._logicalCallId)"));
         assertTrue(source.contains("MAXIMUM_SEEN_CALL_IDS = 2048"));
         assertTrue(source.contains("MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4"));
+        assertTrue(source.contains("MAXIMUM_RECENT_CALLS = 256"));
+        assertTrue(source.contains("MAXIMUM_RECENT_CALL_AGE_MS = 30 * 60 * 1000"));
+        assertTrue(source.contains("MAXIMUM_AVOIDS = 256"));
         assertTrue(schedule.contains("consecutive < WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS"));
         assertTrue(source.contains("first._startedAtMs - second._startedAtMs"));
         assertTrue(source.contains("events.addEventListener('missed'"));
         assertTrue(source.contains("this.missedCountExact"));
+        assertTrue(recent.contains("this.pruneRecentCalls()"));
+        assertTrue(pruneRecent.contains(".slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS)"));
+        assertTrue(replayRecent.contains("playbackOffset: savedOffset"));
+        assertTrue(replayRecent.contains("paused: this.paused"));
+        assertTrue(returnLive.contains("this.current = saved.current"));
+        assertTrue(returnLive.contains("this.playbackOffset = saved.playbackOffset"));
+        assertTrue(subscribeState.contains("return () => this.stateObservers.delete(observer)"));
     }
 
     @Test
@@ -764,10 +779,32 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("data-nav-group=\"listen\""));
         assertTrue(html.contains("data-view=\"scanner\""));
         assertTrue(html.contains("id=\"playback-bar\""));
+        assertTrue(html.contains("id=\"playback-avoid-list\""));
+        assertTrue(html.contains("id=\"playback-clear-queue\""));
+        assertFalse(html.contains("id=\"playback-clear\""));
         assertTrue(scanner.contains("scanner-player-host"));
-        assertTrue(css.contains(".scanner-player-host .playback-bar {"));
-        assertTrue(css.contains("background: var(--surface);"));
-        assertTrue(css.contains(".scanner-player-host .playback-command {"));
+        assertTrue(scanner.contains("scanner-chassis"));
+        assertTrue(scanner.contains("Simple"));
+        assertTrue(scanner.contains("Normal"));
+        assertTrue(scanner.contains("Advanced"));
+        assertTrue(scanner.contains("Engineer"));
+        assertTrue(scanner.contains("Avoid List"));
+        assertTrue(scanner.contains("Recent Calls"));
+        assertTrue(scanner.contains("Clear Queue"));
+        assertTrue(scanner.contains("View coverage tree"));
+        assertTrue(source.contains("scannerField('Target Alias'"));
+        assertTrue(source.contains("scannerField('Source Alias / Talker Alias'"));
+        assertTrue(source.contains("scannerField('Identifier'"));
+        assertTrue(source.contains("scannerField('Frequency'"));
+        assertTrue(source.contains("scannerField('Modulation'"));
+        assertTrue(source.contains("function scannerVoiceMeter(call)"));
+        assertFalse(scanner.contains("Squelch"));
+        assertFalse(scanner.contains("Tune"));
+        assertFalse(scanner.contains("RF Signal"));
+        assertTrue(css.contains(".scanner-player-host > .playback-bar {"));
+        assertTrue(css.contains(".scanner-chassis {"));
+        assertTrue(css.contains(".scanner-field-grid {"));
+        assertTrue(css.contains(".scanner-quality-meter {"));
         assertTrue(source.contains("restorePlaybackBarBeforeRender();"));
         assertTrue(function(source, "function placePlaybackBar()")
             .contains("(scannerHost || slot).append(bar)"));

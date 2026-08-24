@@ -516,14 +516,12 @@ function accessSessionSignature() {
 
 function updateNavigationAccess() {
   document.querySelectorAll('.primary-nav a[data-view]').forEach((link) => {
-    const allowed = viewAllowed(link.dataset.view);
-    link.hidden = !allowed;
-    link.setAttribute('aria-hidden', String(!allowed));
-  });
-  document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
-    const visibleLinks = [...group.querySelectorAll('a[data-view]')].some((link) => !link.hidden);
-    group.hidden = !visibleLinks;
-    group.setAttribute('aria-hidden', String(!visibleLinks));
+    const locked = !viewAllowed(link.dataset.view);
+    link.classList.toggle('access-locked', locked);
+    const lock = link.querySelector('.nav-lock');
+    if (lock) lock.hidden = !locked;
+    const label = link.querySelector('span')?.textContent?.trim() || routeViewLabel(link.dataset.view);
+    link.title = locked ? `${label}: access required` : '';
   });
 }
 
@@ -698,12 +696,12 @@ function openNavigationGroup(group) {
 
 function firstUsableNavigationControl(navigation) {
   return [...navigation.querySelectorAll('.nav-group > summary, a[href]')]
-    .find((control) => !control.hidden && !control.closest('[hidden]')) || null;
+    .find((control) => !control.hidden) || null;
 }
 
 function drawerNavigationFocusTargets(navigation, toggle) {
   return [toggle, ...navigation.querySelectorAll('.nav-group > summary, a[href]')]
-    .filter((control) => !control.hidden && !control.closest('[hidden]') && control.getClientRects().length > 0);
+    .filter((control) => control.getClientRects().length > 0);
 }
 
 function synchronizeNavigationAccessibility(navigation = document.getElementById('primary-navigation')) {
@@ -6811,6 +6809,7 @@ async function refreshPlaybackScanLists(force = false) {
 
 function synchronizePlaybackAccess(accessChanged = false) {
   if (tableOnly) return;
+  if (accessChanged) scannerSiteCache.clear();
   const allowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
   const bar = document.getElementById('playback-bar');
   const status = document.getElementById('playback-status');
@@ -6836,7 +6835,8 @@ function synchronizePlaybackAccess(accessChanged = false) {
       replay: 'playback-replay',
       hold: 'playback-hold',
       avoid: 'playback-avoid',
-      clear: 'playback-clear',
+      avoidList: 'playback-avoid-list',
+      clearQueue: 'playback-clear-queue',
       volume: 'playback-volume',
       volumeValue: 'playback-volume-value',
       current: 'playback-current',
@@ -6851,6 +6851,11 @@ function synchronizePlaybackAccess(accessChanged = false) {
       capacity: 'playback-capacity'
     });
   }
+  window.sdrtrunkWebPlayer.setActions({
+    openAvoidList: openPlaybackAvoidList,
+    openRecentCalls: openPlaybackRecentCalls,
+    openScanListCoverage: openPlaybackScanListCoverage
+  });
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
   window.sdrtrunkWebPlayer.render();
   window.sdrtrunkWebPlayer.renderScanLists();
@@ -6861,27 +6866,541 @@ function synchronizePlaybackAccess(accessChanged = false) {
   }
 }
 
-function scannerStep(numberValue, title, detail) {
-  const step = node('div', 'scanner-step');
+const SCANNER_DETAIL_LEVELS = Object.freeze({ simple: 0, normal: 1, advanced: 2, engineer: 3 });
+const SCANNER_SITE_CACHE_LIMIT = 64;
+const scannerSiteCache = new Map();
+let scannerDetailMode = 'normal';
+
+function scannerRelativeAge(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return 'Time unavailable';
+  const seconds = Math.max(0, Math.floor((Date.now() - value) / 1000));
+  if (seconds < 5) return 'Just now';
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+}
+
+function scannerSiteMetadata(guid) {
+  const key = String(guid || '').trim();
+  if (!key) return Promise.resolve(null);
+  if (scannerSiteCache.has(key)) return scannerSiteCache.get(key);
+  const request = api(siteApiPath(key), {}, { page: false }).catch(() => null);
+  scannerSiteCache.set(key, request);
+  while (scannerSiteCache.size > SCANNER_SITE_CACHE_LIMIT) {
+    scannerSiteCache.delete(scannerSiteCache.keys().next().value);
+  }
+  return request;
+}
+
+function scannerIdentifierNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : null;
+}
+
+function scannerHex(value, width) {
+  const numeric = scannerIdentifierNumber(value);
+  return numeric === null ? '' : numeric.toString(16).toUpperCase().padStart(width, '0');
+}
+
+function scannerNativeIdentifier(call) {
+  const protocol = String(call?.protocol || call?.decoder || '').toUpperCase();
+  if (protocol.includes('P25') || protocol.includes('APCO25')) {
+    const values = [];
+    const wacn = scannerHex(call?.wacn, 5);
+    const system = scannerHex(call?.system_id, 3);
+    const rfss = scannerIdentifierNumber(call?.rfss_id);
+    const site = scannerIdentifierNumber(call?.site_id);
+    if (wacn) values.push(`WACN ${wacn}`);
+    if (system) values.push(`SYSID ${system}`);
+    if (rfss !== null) values.push(`RFSS ${rfss}`);
+    if (site !== null) values.push(`SITE ${site}`);
+    return values.join(' · ');
+  }
+  const values = [];
+  const network = scannerIdentifierNumber(call?.network_id);
+  const system = scannerIdentifierNumber(call?.system_id);
+  const site = scannerIdentifierNumber(call?.site_id);
+  const ran = scannerIdentifierNumber(call?.ran);
+  if (network !== null) values.push(`Network ${network}`);
+  if (system !== null) values.push(`System ${system}`);
+  if (site !== null) values.push(`Site ${site}`);
+  if (ran !== null) values.push(`RAN ${ran}`);
+  return values.join(' · ');
+}
+
+function scannerTargetLabel(call) {
+  return call?.target_alias || (call?.target_id ? `${identifierTypeLabel(call.target_form)} ${call.target_id}` :
+    call?.channel || 'Waiting for a call');
+}
+
+function identifierTypeLabel(form) {
+  const normalized = String(form || '').toUpperCase();
+  if (normalized === 'PATCH_GROUP') return 'Patch';
+  if (normalized === 'RADIO') return 'Radio';
+  if (normalized === 'TALKGROUP') return 'TGID';
+  return 'ID';
+}
+
+function scannerSourceAlias(call) {
+  const alias = String(call?.source_alias || '').trim();
+  const talker = String(call?.talker_alias || '').trim();
+  if (alias && talker && alias.toLowerCase() !== talker.toLowerCase()) return `${alias} · TA: ${talker}`;
+  return alias || talker || '';
+}
+
+function scannerFrequency(call) {
+  const frequency = Number(call?.frequency_hz);
+  return Number.isFinite(frequency) && frequency > 0 ? `${(frequency / 1_000_000).toFixed(5)} MHz` : '';
+}
+
+function scannerDuration(milliseconds) {
+  const value = Number(milliseconds);
+  return Number.isFinite(value) && value > 0 ? `${(value / 1000).toFixed(1)} sec` : '';
+}
+
+function scannerField(label, value, level, action, wide = false) {
+  if (level > SCANNER_DETAIL_LEVELS[scannerDetailMode]) return null;
+  const field = node('div', `scanner-field${wide ? ' wide' : ''}`);
+  field.append(node('span', 'scanner-field-label', label));
+  const text = value === null || value === undefined || String(value).trim() === '' ? '—' : String(value);
+  if (action && text !== '—') {
+    const link = node('button', 'scanner-field-link', text);
+    link.type = 'button';
+    link.addEventListener('click', action);
+    field.append(link);
+  } else {
+    field.append(node('strong', 'scanner-field-value', text));
+  }
+  return field;
+}
+
+async function scannerNavigate(call, destination, knownSite = null) {
+  const guid = String(call?.site_guid || '').trim();
+  const site = knownSite || (guid ? await scannerSiteMetadata(guid) : null);
+  const scopeToken = site?.scope_token || '';
+  const configurationId = String(call?.configuration_id || '').trim();
+  let target = null;
+
+  if (destination === 'system' && scopeToken) {
+    target = href('system', { scope: scopeToken, tab: 'info' });
+  } else if ((destination === 'target' || destination === 'target-alias') && scopeToken && call?.target_id) {
+    if (String(call.target_form || '').toUpperCase() === 'RADIO') {
+      target = href('radio', { scope: scopeToken, id: call.target_id, tab: 'info' });
+    } else {
+      target = href('talkgroup', { scope: scopeToken, id: call.target_id,
+        kind: String(call.target_form || '').toUpperCase() === 'PATCH_GROUP' ? 'patch_group' : null, tab: 'info' });
+    }
+  } else if ((destination === 'source' || destination === 'source-alias') && scopeToken && call?.source_id) {
+    target = href('radio', { scope: scopeToken, id: call.source_id, tab: 'info' });
+  } else if (guid) {
+    const tab = ['channel', 'frequency', 'lcn'].includes(destination) ? 'channels' : 'info';
+    target = href('site', { guid, tab });
+  } else if (configurationId) {
+    target = href('conventional-detail', { context: configurationId, tab: 'info' });
+  }
+
+  if (!target) {
+    openReadOnlyModal('Details unavailable', node('p', '',
+      'This completed call does not include a stable destination for that detail page.'),
+      { id: 'scanner-navigation' });
+    return;
+  }
+  window.history.pushState({}, '', target);
+  route = new URLSearchParams(new URL(target, window.location.href).search);
+  await render();
+}
+
+function scannerVoiceMeter(call) {
+  const quality = Number(call?.vc_quality_pct);
+  const measured = Number.isFinite(quality) && quality >= 0;
+  const meter = node('div', 'scanner-quality-meter');
+  const heading = node('div', 'scanner-quality-heading');
+  heading.append(node('span', '', 'Voice Quality'), node('strong', '', measured ? `${Math.round(quality)}%` : '—'));
+  const track = node('div', 'scanner-quality-track');
+  const fill = node('span', 'scanner-quality-fill');
+  fill.style.width = measured ? `${Math.max(0, Math.min(100, quality))}%` : '0%';
+  track.append(fill);
+  meter.append(heading, track, node('small', '', measured ? 'Measured from decoded voice frames' :
+    'Not measured for this call'));
+  return meter;
+}
+
+function renderScannerCall(host, state, site) {
+  const call = state.current;
+  host.replaceChildren();
+  if (!call) {
+    const idle = node('div', 'scanner-idle');
+    idle.append(node('strong', '', state.paused ? 'Ready to listen' : 'Scanning selected lists'),
+      node('span', '', state.paused ? 'Press Play to receive completed calls.' :
+        'The next matching completed call will appear here.'));
+    host.append(idle);
+    return;
+  }
+
+  const intro = node('div', 'scanner-call-intro');
   const copy = node('div');
-  copy.append(node('strong', '', title), node('span', '', detail));
-  step.append(node('span', 'scanner-step-number', numberValue), copy);
-  return step;
+  copy.append(node('span', 'scanner-call-kind', `${call.decoder || call.protocol || 'Call'}${call.encrypted ?
+    ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call)),
+    node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
+  const wave = node('div', `scanner-audio-wave${state.paused || !state.currentReady ? ' paused' : ''}`);
+  for (let index = 0; index < 5; index++) wave.append(node('i'));
+  wave.setAttribute('aria-label', state.paused ? 'Audio paused' : 'Audio playing');
+  intro.append(copy, wave);
+
+  const fields = node('div', 'scanner-field-grid');
+  const open = (destination) => () => void scannerNavigate(call, destination, site);
+  const nativeIdentifier = scannerNativeIdentifier(call);
+  const nac = scannerHex(call.nac, 3) || (scannerIdentifierNumber(call.ran) !== null ? String(call.ran) : '');
+  const modulation = site?.p25_decoder_mode || call.modulation || '';
+  [
+    scannerField('Target Alias', call.target_alias, 0, open('target-alias'), true),
+    scannerField('Target', call.target_id, 1, open('target')),
+    scannerField('Source', call.source_id, 1, open('source')),
+    scannerField('Source Alias / Talker Alias', scannerSourceAlias(call), 1, open('source-alias'), true),
+    scannerField('System', call.system, 0, open('system')),
+    scannerField('Site', call.site, 0, open('site')),
+    scannerField('Channel', call.channel, 1, open('channel'), true),
+    scannerField('Identifier', nativeIdentifier, 2, open('identifier'), true),
+    scannerField(call.ran !== null && call.ran !== undefined ? 'RAN' : 'NAC', nac, 2, open('identifier')),
+    scannerField('Frequency', scannerFrequency(call), 1, open('frequency')),
+    scannerField('LCN', call.lcn, 2, open('lcn')),
+    scannerField('Decoder', call.decoder, 1, open('decoder')),
+    scannerField('Modulation', modulation ? `${modulation} · configured` : '', 2, open('decoder'))
+  ].filter(Boolean).forEach((field) => fields.append(field));
+
+  const quality = scannerVoiceMeter(call);
+  const engineer = node('div', 'scanner-engineer-grid');
+  if (scannerDetailMode === 'engineer') {
+    const values = [
+      ['Call ID', call.call_id], ['Protocol', call.protocol],
+      ['Started', exactDateTime(call.started_at_ms)], ['Completed', exactDateTime(call.completed_at_ms)],
+      ['Duration', scannerDuration(call.duration_ms)], ['Timeslot', call.timeslot],
+      ['Encryption', call.encrypted ? 'Encrypted' : 'Clear'], ['Alias List', call.alias_list],
+      ['Decoded Frames', call.vc_decoded_frames], ['Repeated Frames', call.vc_repeated_frames],
+      ['Concealed Frames', call.vc_concealed_frames], ['Missing Frames', call.vc_missing_frames],
+      ['FEC Errors', call.vc_fec_errors], ['FEC Protected Bits', call.vc_fec_protected_bits],
+      ['Configuration ID', call.configuration_id], ['Site GUID', call.site_guid]
+    ];
+    values.forEach(([label, value]) => {
+      const item = node('div', 'scanner-engineer-item');
+      item.append(node('span', '', label), node('strong', '', value === null || value === undefined || value === '' ?
+        '—' : String(value)));
+      engineer.append(item);
+    });
+  }
+  host.append(intro, fields, quality);
+  if (engineer.childNodes.length) host.append(engineer);
+}
+
+function scannerControl(label, action, className = '') {
+  const button = node('button', `scanner-key ${className}`.trim(), label);
+  button.type = 'button';
+  button.addEventListener('click', action);
+  return button;
+}
+
+function openPlaybackAvoidList(player = window.sdrtrunkWebPlayer) {
+  if (!player) return;
+  const body = node('div', 'scanner-modal-list');
+  const renderRows = () => {
+    body.replaceChildren();
+    const avoids = player.viewState().avoids;
+    if (!avoids.length) {
+      body.append(node('div', 'empty', 'No browser avoids are active.'));
+      return;
+    }
+    avoids.forEach((avoid) => {
+      const row = node('div', 'scanner-modal-row');
+      const copy = node('div');
+      copy.append(node('strong', '', avoid.label || 'Avoided target'),
+        node('span', '', `${avoid.details || avoid.key} · ${scannerRelativeAge(avoid.addedAtMs)}`));
+      const remove = node('button', 'secondary', 'Remove');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        player.removeAvoid(avoid.key);
+        renderRows();
+      });
+      row.append(copy, remove);
+      body.append(row);
+    });
+  };
+  renderRows();
+  openReadOnlyModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
+}
+
+function openPlaybackRecentCalls(player = window.sdrtrunkWebPlayer) {
+  if (!player) return;
+  const body = node('div', 'scanner-modal-list');
+  const calls = player.viewState().recentCalls;
+  if (!calls.length) body.append(node('div', 'empty', 'No recent calls are available in this browser session.'));
+  calls.forEach((call) => {
+    const row = node('div', 'scanner-modal-row');
+    const copy = node('div');
+    copy.append(node('strong', '', player.callLabel(call)), node('span', '',
+      `${scannerRelativeAge(call.completed_at_ms)}${call.duration_ms ? ` · ${scannerDuration(call.duration_ms)}` : ''}`));
+    const replay = node('button', call._audioUnavailable ? 'secondary' : '',
+      call._audioUnavailable ? 'Unavailable' : 'Replay');
+    replay.type = 'button';
+    replay.disabled = Boolean(call._audioUnavailable);
+    replay.addEventListener('click', async () => {
+      replay.disabled = true;
+      const started = await player.replayRecent(call._logicalCallId);
+      if (started) closeReadOnlyModal(true, true);
+      else replay.disabled = false;
+    });
+    row.append(copy, replay);
+    body.append(row);
+  });
+  body.append(node('p', 'scanner-modal-note',
+    'Recent audio is session-only and remains replayable only while retained in the receiver cache (up to 30 minutes).'));
+  openReadOnlyModal('Recent Calls', body, { id: 'scanner-recent', className: 'scanner-list-modal' });
+}
+
+function scanListCoverageTree(coverage) {
+  const host = node('div', 'scanner-coverage-tree');
+  const aliases = Array.isArray(coverage?.aliases) ? coverage.aliases : [];
+  const lists = new Map();
+  aliases.forEach((alias) => {
+    const listKey = String(alias.alias_list_id ?? alias.alias_list ?? 'unknown');
+    if (!lists.has(listKey)) lists.set(listKey, { name: alias.alias_list || 'Alias List', groups: new Map() });
+    const list = lists.get(listKey);
+    const groupName = String(alias.group || 'Ungrouped');
+    if (!list.groups.has(groupName)) list.groups.set(groupName, []);
+    list.groups.get(groupName).push(alias);
+  });
+  if (!lists.size && !(coverage?.unmatched_alias_lists || []).length) {
+    host.append(node('div', 'empty', 'This scan list has no members.'));
+    return host;
+  }
+  lists.forEach((list) => {
+    const listDetails = node('details', 'scanner-coverage-list');
+    listDetails.open = true;
+    listDetails.append(node('summary', '', `${list.name} · ${[...list.groups.values()]
+      .reduce((count, rows) => count + rows.length, 0)} aliases`));
+    list.groups.forEach((rows, groupName) => {
+      const group = node('details', 'scanner-coverage-group');
+      group.open = true;
+      group.append(node('summary', '', `${groupName} · ${rows.length}`));
+      const values = node('ul');
+      rows.forEach((alias) => {
+        const item = node('li');
+        item.append(node('strong', '', alias.name || 'Unnamed alias'));
+        if (alias.matcher) item.append(node('span', '', alias.matcher));
+        values.append(item);
+      });
+      group.append(values);
+      listDetails.append(group);
+    });
+    host.append(listDetails);
+  });
+  const unmatched = Array.isArray(coverage?.unmatched_alias_lists) ? coverage.unmatched_alias_lists : [];
+  if (unmatched.length) {
+    const rules = node('div', 'scanner-unmatched-rules');
+    rules.append(node('strong', '', 'Unmatched talkgroups'));
+    unmatched.forEach((item) => rules.append(node('span', '', `${item.name} · ${semanticLabel(item.family)}`)));
+    host.append(rules);
+  }
+  if (coverage?.aliases_truncated) host.append(node('div', 'warning',
+    `Showing the first ${number(coverage.maximum_aliases)} of ${number(coverage.alias_count)} aliases.`));
+  return host;
+}
+
+function openPlaybackScanListCoverage(player = window.sdrtrunkWebPlayer, preferredId = null) {
+  if (!player) return;
+  const available = player.viewState().scanLists.filter((item) => item.enabled);
+  const selected = available.filter((item) => item.selected);
+  const choices = selected.length ? selected : available;
+  const body = node('div', 'scanner-coverage-modal');
+  const chooser = node('div', 'scanner-coverage-choices');
+  const contentHost = node('div', 'scanner-coverage-content');
+  body.append(chooser, contentHost);
+  let controller = null;
+  const modal = openReadOnlyModal('Scan List Coverage', body, {
+    id: 'scanner-coverage', className: 'scanner-list-modal scanner-coverage-modal-shell',
+    cleanup: () => controller?.abort()
+  });
+  if (!modal) return;
+  if (!choices.length) {
+    contentHost.append(node('div', 'empty', 'No scan lists are available.'));
+    return;
+  }
+
+  const load = async (scanList) => {
+    controller?.abort();
+    controller = new AbortController();
+    chooser.querySelectorAll('button').forEach((button) =>
+      button.classList.toggle('active', button.dataset.id === scanList.id));
+    contentHost.replaceChildren(node('div', 'loading', 'Loading coverage'));
+    try {
+      const coverage = await api(`/api/v1/scan-lists/${encodeURIComponent(scanList.id)}/coverage`, {},
+        { signal: controller.signal, page: false });
+      if (!modal.dialog.isConnected) return;
+      contentHost.replaceChildren(scanListCoverageTree(coverage));
+    } catch (error) {
+      if (error?.name !== 'AbortError' && modal.dialog.isConnected) {
+        contentHost.replaceChildren(node('div', 'error', error.message || 'Unable to load scan-list coverage.'));
+      }
+    }
+  };
+  choices.forEach((scanList) => {
+    const button = node('button', 'secondary', scanList.name);
+    button.type = 'button';
+    button.dataset.id = scanList.id;
+    button.addEventListener('click', () => void load(scanList));
+    chooser.append(button);
+  });
+  const initial = choices.find((item) => item.id === String(preferredId || '')) || choices[0];
+  void load(initial);
 }
 
 function renderScanner() {
   const renderContext = captureRenderContext();
-  const introduction = node('div', 'scanner-introduction');
-  introduction.append(
-    scannerStep('1', 'Choose scan lists', 'Select the groups of calls you want this browser to receive.'),
-    scannerStep('2', 'Start listening', 'Press Play once. Matching completed calls arrive automatically.'),
-    scannerStep('3', 'Use the controls', 'Skip, replay, hold, or avoid calls without changing the receiver.'));
+  const player = window.sdrtrunkWebPlayer;
+  const page = node('div', 'scanner-page');
+  if (!player) {
+    page.append(node('div', 'error', 'Browser call playback is unavailable.'));
+    beginPage(renderContext, pageHeader('Scanner', 'Listen to completed calls from this receiver'), page);
+    return;
+  }
+
+  const modeBar = node('div', 'scanner-view-modes');
+  Object.entries({ simple: 'Simple', normal: 'Normal', advanced: 'Advanced', engineer: 'Engineer' })
+    .forEach(([id, label]) => {
+      const button = node('button', scannerDetailMode === id ? 'active' : '', label);
+      button.type = 'button';
+      button.dataset.mode = id;
+      modeBar.append(button);
+    });
+  const chassis = node('section', 'scanner-chassis');
+  const statusBar = node('div', 'scanner-status-bar');
+  const playbackStatus = node('strong', 'scanner-live-status', 'Ready');
+  const age = node('output', 'scanner-relative-age', 'Time unavailable');
+  statusBar.append(playbackStatus, age);
+  const displayShell = node('div', 'scanner-display-shell');
+  const display = node('div', 'scanner-display');
+  displayShell.append(display);
+  const replayBanner = node('div', 'scanner-replay-banner');
+  const replayCopy = node('span', '', 'Replaying a recent call. Live playback is paused at its saved position.');
+  const returnLive = node('button', '', 'Return to live');
+  returnLive.type = 'button';
+  returnLive.addEventListener('click', () => void player.returnToLive());
+  replayBanner.append(replayCopy, returnLive);
+  replayBanner.hidden = true;
+
+  const controls = node('div', 'scanner-controls');
+  const play = scannerControl('Play', () => void player.togglePlayback(), 'primary');
+  const replay = scannerControl('Replay Call', () => void player.replayCurrent());
+  const skip = scannerControl('Skip', () => player.skip());
+  const hold = scannerControl('Hold', () => player.toggleHold());
+  const avoid = scannerControl('Avoid', () => player.avoidCurrent(), 'danger');
+  const avoidList = scannerControl('Avoid List', () => openPlaybackAvoidList(player));
+  avoidList.dataset.scannerAction = 'avoid-list';
+  const recent = scannerControl('Recent Calls', () => openPlaybackRecentCalls(player));
+  const clearQueue = scannerControl('Clear Queue', () => player.clearQueue());
+  controls.append(play, replay, skip, hold, avoid, avoidList, recent, clearQueue);
+
+  const utility = node('div', 'scanner-utility-row');
+  const volume = node('input');
+  volume.type = 'range';
+  volume.min = '0';
+  volume.max = '1';
+  volume.step = '0.05';
+  volume.value = String(player.volume);
+  volume.setAttribute('aria-label', 'Browser playback volume');
+  volume.addEventListener('input', () => {
+    player.ui.volume.value = volume.value;
+    player.changeVolume();
+  });
+  utility.append(node('span', '', 'Browser volume'), volume);
+
+  const scanPanel = node('section', 'scanner-scan-lists');
+  const scanHeading = node('div', 'scanner-scan-heading');
+  const scanCopy = node('div');
+  scanCopy.append(node('strong', '', 'Scan Lists'), node('span', 'scanner-scan-summary', 'Loading'));
+  const coverage = node('button', 'secondary', 'View coverage tree');
+  coverage.type = 'button';
+  coverage.addEventListener('click', () => openPlaybackScanListCoverage(player));
+  scanHeading.append(scanCopy, coverage);
+  const scanButtons = node('div', 'scanner-scan-buttons');
+  scanPanel.append(scanHeading, scanButtons);
+
+  chassis.append(statusBar, displayShell, replayBanner, controls, utility);
+  page.append(chassis, scanPanel);
+  const heading = pageHeader('Scanner', 'Choose scan lists and listen to completed calls from this receiver');
+  heading.append(modeBar);
   const host = node('div', 'scanner-player-host');
-  const body = node('div', 'scanner-page');
-  body.append(introduction, section('Listen in this browser', host));
-  if (!beginPage(renderContext, pageHeader('Scanner',
-    'Choose scan lists and listen to completed calls from this receiver'), body)) return;
+  host.append(page);
+  if (!beginPage(renderContext, heading, host)) return;
   placePlaybackBar();
+
+  let latestState = player.viewState();
+  let currentSiteGuid = '';
+  let currentSite = null;
+  const updateAge = () => {
+    age.textContent = latestState.current ? scannerRelativeAge(latestState.current.completed_at_ms) :
+      'Waiting for a call';
+  };
+  const draw = (state) => {
+    latestState = state;
+    playbackStatus.textContent = state.recentReplay ? 'Replaying recent call' : state.status ||
+      (state.paused ? 'Ready' : 'Listening');
+    playbackStatus.classList.toggle('active', !state.paused || state.recentReplay);
+    replayBanner.hidden = !state.recentReplay;
+    if (state.recentReplay && state.current) replayCopy.textContent =
+      `Replaying ${scannerTargetLabel(state.current)}. Live playback is paused at its saved position.`;
+    play.textContent = state.paused ? 'Play' : 'Pause';
+    play.classList.toggle('active', !state.paused);
+    replay.disabled = !state.currentReady;
+    skip.disabled = !state.current && !state.queuedCount;
+    hold.disabled = state.recentReplay || (!state.holdTarget && !state.currentReady);
+    hold.classList.toggle('active', Boolean(state.holdTarget));
+    avoid.disabled = !state.currentReady || state.recentReplay;
+    avoidList.textContent = `Avoid List${state.avoids.length ? ` (${state.avoids.length})` : ''}`;
+    recent.textContent = `Recent Calls${state.recentCalls.length ? ` (${state.recentCalls.length})` : ''}`;
+    clearQueue.textContent = `Clear Queue${state.queuedCount ? ` (${state.queuedCount})` : ''}`;
+    clearQueue.disabled = !state.queuedCount;
+    volume.value = String(state.volume);
+    updateAge();
+    renderScannerCall(display, state, currentSite);
+
+    scanButtons.replaceChildren();
+    const selectedCount = state.scanLists.filter((item) => item.selected).length;
+    scanCopy.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
+      `${selectedCount} of ${state.scanLists.length} listening` : 'Loading available lists';
+    state.scanLists.forEach((item, index) => {
+      const button = node('button', `scanner-scan-button${item.selected ? ' active' : ''}`);
+      button.type = 'button';
+      button.disabled = !item.enabled;
+      button.setAttribute('aria-pressed', String(item.selected));
+      button.append(node('span', 'scanner-scan-number', String(index + 1)), node('strong', '', item.name),
+        node('small', '', item.description || (item.defaultSelected ? 'Default list' : 'Available')));
+      button.addEventListener('click', () => player.setScanListSelected(item.id, !item.selected));
+      scanButtons.append(button);
+    });
+
+    const nextGuid = String(state.current?.site_guid || '');
+    if (nextGuid !== currentSiteGuid) {
+      currentSiteGuid = nextGuid;
+      currentSite = null;
+      if (nextGuid) void scannerSiteMetadata(nextGuid).then((site) => {
+        if (currentSiteGuid === nextGuid && display.isConnected) {
+          currentSite = site;
+          renderScannerCall(display, latestState, currentSite);
+        }
+      });
+    }
+  };
+  const unsubscribe = player.subscribeState(draw);
+  renderContext.signal?.addEventListener('abort', unsubscribe, { once: true });
+  pageInterval(updateAge, 1_000);
+  modeBar.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+    scannerDetailMode = button.dataset.mode;
+    modeBar.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
+    renderScannerCall(display, latestState, currentSite);
+  }));
 }
 
 function pageParameters(extra = {}) {
@@ -13170,7 +13689,6 @@ function accessPolicyTierControl(policy, statusHost) {
       adminStatusMessage(statusHost,
         `${policy.displayName || policy.id} now requires ${accessTierLabel(requested)} access.`);
       await refreshAccessSession(false);
-      updateNavigationAccess();
     } catch (error) {
       select.value = previous;
       adminStatusMessage(statusHost, error.message, true);
@@ -14288,7 +14806,8 @@ function renderAccessDenied(view, renderContext = captureRenderContext()) {
   action.type = 'button';
   action.addEventListener('click', async () => {
     if (accessSession.authenticated) {
-      const first = [...document.querySelectorAll('.primary-nav a[data-view]')].find((link) => !link.hidden);
+      const first = [...document.querySelectorAll('.primary-nav a[data-view]')]
+        .find((link) => viewAllowed(link.dataset.view));
       if (first) first.click();
     } else if (!accessSessionAvailable) {
       action.disabled = true;

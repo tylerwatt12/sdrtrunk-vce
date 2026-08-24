@@ -29,8 +29,10 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TitledPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.Screen;
 import javafx.stage.Window;
 
 /** JavaFX editor for the list-owned catch-all and new-talkgroup defaults. */
@@ -62,7 +64,7 @@ final class AliasListDefaultsDialog
 
         VBox content = new VBox(10);
         content.setPadding(new Insets(10));
-        content.setPrefWidth(720);
+        content.setFillWidth(true);
         content.getChildren().add(wrapped("These settings apply when a destination talkgroup or patch group has no " +
             "exact Alias or covering talkgroup range in this Alias List. New talkgroup Aliases created in this list " +
             "start with the same selections. Existing Aliases are not changed."));
@@ -97,7 +99,28 @@ final class AliasListDefaultsDialog
         Label warning = wrapped(WARNING);
         warning.getStyleClass().add("warning");
         content.getChildren().addAll(recordingPane, scanPane, streamingPane, warning);
-        dialog.getDialogPane().setContent(content);
+        recordingPane.setMaxWidth(Double.MAX_VALUE);
+        scanPane.setMaxWidth(Double.MAX_VALUE);
+        streamingPane.setMaxWidth(Double.MAX_VALUE);
+        ScrollPane scroll = new ScrollPane(content);
+        scroll.setFitToWidth(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setPannable(false);
+        double screenWidth = Screen.getPrimary().getVisualBounds().getWidth();
+        double screenHeight = Screen.getPrimary().getVisualBounds().getHeight();
+        if(owner != null)
+        {
+            List<Screen> screens = Screen.getScreensForRectangle(owner.getX(), owner.getY(), owner.getWidth(),
+                owner.getHeight());
+            if(!screens.isEmpty())
+            {
+                screenWidth = screens.getFirst().getVisualBounds().getWidth();
+                screenHeight = screens.getFirst().getVisualBounds().getHeight();
+            }
+        }
+        scroll.setPrefViewportWidth(Math.max(420, Math.min(720, screenWidth - 120)));
+        scroll.setPrefViewportHeight(Math.max(260, Math.min(560, screenHeight - 220)));
+        dialog.getDialogPane().setContent(scroll);
 
         final AliasAdministrationService.MutationResult[] saved = new AliasAdministrationService.MutationResult[1];
         final long[] revision = {entry.revision()};

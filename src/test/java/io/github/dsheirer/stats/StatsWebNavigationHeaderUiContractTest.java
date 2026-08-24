@@ -25,10 +25,10 @@ class StatsWebNavigationHeaderUiContractTest
     {
         String html = readText(INDEX_HTML);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"90\">"));
-        assertTrue(html.contains("/assets/app.css?v=74"));
-        assertTrue(html.contains("/assets/web-call-player.js?v=13"));
-        assertTrue(html.contains("/assets/app.js?v=112"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"91\">"));
+        assertTrue(html.contains("/assets/app.css?v=75"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=14"));
+        assertTrue(html.contains("/assets/app.js?v=113"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
@@ -39,6 +39,33 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(conventional.contains("M4 18a8 8 0 0 1 16 0"));
         assertTrue(conventional.contains("M12 18l4-5"));
         assertFalse(conventional.contains("<circle cx=\"12\" cy=\"13\" r=\"7\""));
+    }
+
+    @Test
+    void keepsRestrictedNavigationVisibleAndMarksEachLockedDestination() throws Exception
+    {
+        String html = readText(INDEX_HTML);
+        String source = readText(APP_JAVASCRIPT);
+        String access = block(source, "function updateNavigationAccess()");
+
+        int position = 0;
+        int links = 0;
+        while((position = html.indexOf("<a data-view=", position)) >= 0)
+        {
+            int end = html.indexOf("</a>", position);
+            assertTrue(end > position);
+            String link = html.substring(position, end);
+            assertTrue(link.contains("class=\"nav-lock\""));
+            assertFalse(html.substring(position, html.indexOf('>', position)).contains(" hidden"));
+            links++;
+            position = end + 4;
+        }
+        assertTrue(links >= 10);
+        assertFalse(html.contains("nav-group-protected"));
+        assertTrue(access.contains("link.classList.toggle('access-locked', locked)"));
+        assertTrue(access.contains("lock.hidden = !locked"));
+        assertFalse(access.contains("link.hidden"));
+        assertFalse(access.contains("group.hidden"));
     }
 
     @Test

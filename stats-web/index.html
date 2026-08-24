@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="90">
+  <meta name="sdrtrunk-web-revision" content="91">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
@@ -16,7 +16,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=74">
+  <link rel="stylesheet" href="/assets/app.css?v=75">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -47,27 +47,27 @@
         <a class="brand" href="/?view=dashboard">sdrtrunk-vce</a>
         <nav id="primary-navigation" class="primary-nav" aria-label="Primary navigation">
           <details class="nav-group" data-nav-group="listen"><summary>Listen</summary><div class="nav-group-links">
-            <a data-view="dashboard" href="/?view=dashboard" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>Dashboard</span></a>
-            <a data-view="live" href="/?view=live" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Live</span></a>
-            <a data-view="scanner" href="/?view=scanner" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-scanner"></use></svg><span>Scanner</span></a>
+            <a data-view="dashboard" href="/?view=dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>Dashboard</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="live" href="/?view=live"><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Live</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="scanner" href="/?view=scanner"><svg class="nav-icon" aria-hidden="true"><use href="#icon-scanner"></use></svg><span>Scanner</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
           <details class="nav-group" data-nav-group="channels"><summary>Channels</summary><div class="nav-group-links">
-            <a data-view="systems" href="/?view=systems" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-trunked"></use></svg><span>Trunked</span></a>
-            <a data-view="conventional" href="/?view=conventional" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-conventional"></use></svg><span>Conventional</span></a>
+            <a data-view="systems" href="/?view=systems"><svg class="nav-icon" aria-hidden="true"><use href="#icon-trunked"></use></svg><span>Trunked</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="conventional" href="/?view=conventional"><svg class="nav-icon" aria-hidden="true"><use href="#icon-conventional"></use></svg><span>Conventional</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
-          <details class="nav-group nav-group-protected" data-nav-group="configuration"><summary>Configuration <svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></summary><div class="nav-group-links">
-            <a data-view="aliases" href="/?view=aliases" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-aliases"></use></svg><span>Aliases</span></a>
-            <a data-view="configuration" data-nav-tab="scan-lists" href="/?view=configuration&amp;tab=scan-lists" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-scan-lists"></use></svg><span>Scan Lists</span></a>
-            <a data-view="configuration" data-nav-tab="radioreference" href="/?view=configuration&amp;tab=radioreference" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-radioreference"></use></svg><span>RadioReference</span></a>
-            <a data-view="configuration" data-nav-tab="recording" href="/?view=configuration&amp;tab=recording" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-recording"></use></svg><span>Recording</span><small>Coming soon</small></a>
-            <a data-view="configuration" data-nav-tab="streaming" href="/?view=configuration&amp;tab=streaming" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-streaming"></use></svg><span>Streaming</span><small>Coming soon</small></a>
+          <details class="nav-group" data-nav-group="configuration"><summary>Configuration</summary><div class="nav-group-links">
+            <a data-view="aliases" href="/?view=aliases"><svg class="nav-icon" aria-hidden="true"><use href="#icon-aliases"></use></svg><span>Aliases</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="configuration" data-nav-tab="scan-lists" href="/?view=configuration&amp;tab=scan-lists"><svg class="nav-icon" aria-hidden="true"><use href="#icon-scan-lists"></use></svg><span>Scan Lists</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="configuration" data-nav-tab="radioreference" href="/?view=configuration&amp;tab=radioreference"><svg class="nav-icon" aria-hidden="true"><use href="#icon-radioreference"></use></svg><span>RadioReference</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="configuration" data-nav-tab="recording" href="/?view=configuration&amp;tab=recording"><svg class="nav-icon" aria-hidden="true"><use href="#icon-recording"></use></svg><span>Recording</span><small>Coming soon</small><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="configuration" data-nav-tab="streaming" href="/?view=configuration&amp;tab=streaming"><svg class="nav-icon" aria-hidden="true"><use href="#icon-streaming"></use></svg><span>Streaming</span><small>Coming soon</small><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
-          <details class="nav-group nav-group-protected" data-nav-group="hardware"><summary>Hardware <svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></summary><div class="nav-group-links">
-            <a data-view="hardware" data-nav-tab="tuners" href="/?view=hardware&amp;tab=tuners" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-tuner"></use></svg><span>Tuners</span><small>Coming soon</small></a>
-            <a data-view="tuner-spectrum" href="/?view=tuner-spectrum" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-spectrum"></use></svg><span>Spectrum</span></a>
+          <details class="nav-group" data-nav-group="hardware"><summary>Hardware</summary><div class="nav-group-links">
+            <a data-view="hardware" data-nav-tab="tuners" href="/?view=hardware&amp;tab=tuners"><svg class="nav-icon" aria-hidden="true"><use href="#icon-tuner"></use></svg><span>Tuners</span><small>Coming soon</small><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="tuner-spectrum" href="/?view=tuner-spectrum"><svg class="nav-icon" aria-hidden="true"><use href="#icon-spectrum"></use></svg><span>Spectrum</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
-          <a data-view="admin" class="nav-direct nav-group-protected" href="/?view=admin&amp;tab=health" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-admin"></use></svg><span>Administration</span><svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></a>
-          <a data-view="credits" class="nav-direct" href="/?view=credits" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-about"></use></svg><span>About</span></a>
+          <a data-view="admin" class="nav-direct" href="/?view=admin&amp;tab=health"><svg class="nav-icon" aria-hidden="true"><use href="#icon-admin"></use></svg><span>Administration</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+          <a data-view="credits" class="nav-direct" href="/?view=credits"><svg class="nav-icon" aria-hidden="true"><use href="#icon-about"></use></svg><span>About</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
         </nav>
         <div class="header-controls">
           <a id="receiver-health-indicator" class="receiver-health-indicator receiver-health-loading icon-button" href="/?view=admin&amp;tab=health" hidden aria-label="Receiver health loading" title="Receiver health loading"><svg aria-hidden="true"><use href="#icon-health"></use></svg><span id="receiver-health-indicator-state" class="visually-hidden">Loading</span></a>
@@ -79,7 +79,7 @@
       <button type="button" id="navigation-backdrop" class="navigation-backdrop" aria-label="Close navigation" hidden></button>
       <div id="desktop-playback-slot">
         <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
-          <div class="playback-controls" role="group" aria-label="Playback controls"><button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button><button type="button" id="playback-skip" class="playback-command">Skip</button><button type="button" id="playback-replay" class="playback-command">Replay</button><button type="button" id="playback-hold" class="playback-command">Hold</button><button type="button" id="playback-avoid" class="playback-command">Avoid</button><button type="button" id="playback-clear" class="playback-command">Clear</button></div>
+          <div class="playback-controls" role="group" aria-label="Playback controls"><button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button><button type="button" id="playback-skip" class="playback-command">Skip</button><button type="button" id="playback-replay" class="playback-command">Replay</button><button type="button" id="playback-hold" class="playback-command">Hold</button><button type="button" id="playback-avoid" class="playback-command">Avoid</button><button type="button" id="playback-avoid-list" class="playback-command">Avoids</button><button type="button" id="playback-clear-queue" class="playback-command">Clear Queue</button></div>
           <label class="playback-volume" title="Browser playback volume"><span class="playback-field">Vol</span><input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Browser playback volume" aria-describedby="playback-volume-value"><output id="playback-volume-value" for="playback-volume">100%</output></label>
           <div class="playback-now"><span class="playback-field">Now</span><div id="playback-current" class="playback-current"><strong class="playback-current-primary">Idle</strong></div></div>
           <a class="playback-scanner-link" href="/?view=scanner"><span class="playback-field">Scan lists</span><strong id="playback-scan-list-summary">Loading</strong></a>
@@ -92,9 +92,9 @@
     </div>
     <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading" role="status">Loading</div></main>
   </div>
-  <script src="/assets/web-call-player.js?v=13"></script>
+  <script src="/assets/web-call-player.js?v=14"></script>
   <script src="/assets/core/page-lifecycle.js?v=1"></script>
   <script src="/assets/features/systems-directory.js?v=2"></script>
-  <script src="/assets/app.js?v=112"></script>
+  <script src="/assets/app.js?v=113"></script>
 </body>
 </html>

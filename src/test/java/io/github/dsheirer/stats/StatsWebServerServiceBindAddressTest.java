@@ -173,6 +173,20 @@ class StatsWebServerServiceBindAddressTest
     }
 
     @Test
+    void parsesOnlyCanonicalScanListCoveragePaths()
+    {
+        assertEquals(12L, StatsWebServerService.scanListCoverageId(
+            URI.create("/api/v1/scan-lists/12/coverage")));
+
+        for(String path : List.of("/api/v1/scan-lists/0/coverage", "/api/v1/scan-lists/01/coverage",
+            "/api/v1/scan-lists/+1/coverage", "/api/v1/scan-lists/1", "/api/v1/scan-lists/1/coverage/",
+            "/api/v1/scan-lists/1/extra/coverage", "/api/v1/admin/scan-lists/1/coverage"))
+        {
+            assertEquals(null, StatsWebServerService.scanListCoverageId(URI.create(path)), path);
+        }
+    }
+
+    @Test
     void appliesDownloadAndSecurityHeadersToCsvResponses()
     {
         Headers headers = new Headers();
