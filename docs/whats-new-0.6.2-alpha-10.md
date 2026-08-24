@@ -58,7 +58,8 @@ v4, and the release retains Alpha 9's portable-storage layout and existing migra
   newly imported RadioReference rows retain their identity while delayed ID assignment completes; selection
   restoration no longer targets stale sorted-table instances; and talkgroup, talkgroup-range, radio, and radio-range
   identifiers sort numerically. Failed persistence leaves the dirty draft and selection intact and displays an error.
-  This prevents wrong-row edits, no-op deletes, and duplicate or unexpectedly reordered rows.
+  The New, Clone, Move To, and Delete action buttons also retain their full labels. This prevents wrong-row edits,
+  no-op deletes, and duplicate or unexpectedly reordered rows.
 - **Dark-themed Playlist and Settings windows no longer flash white while loading.** The lightweight themed shell
   completes a render before expensive editor construction begins, remains theme-aware afterward, and recovers for a
   retry if setup fails. This covers editor content; native Windows title-bar contrast remains outside the application.

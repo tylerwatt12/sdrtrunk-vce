@@ -38,7 +38,8 @@ Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stabi
 - **Encryption details stay with the correct call.** Late algorithm and key information updates the existing P25,
   DMR, or NXDN activity row, and event key IDs display in hexadecimal.
 - **Alias editing preserves the intended row.** New and cloned aliases stay detached until Save, and edits, deletes,
-  moves, sorted-table selection, and numeric talkgroup/radio identifier sorting use stable schema-v4 identities.
+  moves, sorted-table selection, and numeric talkgroup/radio identifier sorting use stable schema-v4 identities. Alias
+  action buttons retain their full labels at supported window sizes.
 - **Dark-themed editors stay covered while loading.** Playlist and Settings render a theme-aware shell before
   constructing their full JavaFX content.
 - **P25 channel handling is safer.** Implicit uplinks resolve from the downlink band, non-autonomous SNDCP messages no
