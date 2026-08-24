@@ -2,106 +2,104 @@
 
 ## What
 
-Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stability release. It restores Scanner-Map
-uploads through the Rdio Scanner integration, keeps late encryption details attached to the correct call, prevents
-Alias editor operations from publishing or targeting the wrong row, keeps dark-themed JavaFX editors covered while
-they load, corrects P25 channel handling, bounds stale receiver work during overload, and prevents tuner
-disable/allocation races. Windows packages also preserve the Java runtime's vendor signatures.
+Alpha 10 is mainly a bug-fix and stability update. Scanner-Map call uploads work again, Alias editor actions stay with
+the correct alias, late encryption information stays with the correct call, and Configuration Editor and User
+Preferences no longer flash white when opened in a dark theme. This release also improves P25 channel handling and
+makes tuner shutdown and receiver overload safer.
 
-This release does not change the database schema, recording format or ownership, RadioReference import fields or
-update semantics, streaming-provider configuration, or multipart call-upload fields. Alias storage remains schema
-v4, and the release retains Alpha 9's portable-storage layout and existing migration behavior.
+Alpha 10 uses the same database format and portable `data` folder layout as Alpha 8 and Alpha 9. Alias storage remains
+at version 4. This release does not change the recording format or administrator control of recordings,
+RadioReference import behavior, streaming-provider settings, or the fields used for multipart call uploads.
 
 ## Added
 
-- **Fail-fast tuner lifecycle coordination.** Channel allocation reserves a tuner's lifecycle without waiting. If
-  hardware is being enabled or disabled, decoder-side allocation immediately tries another tuner or returns no source
-  instead of waiting behind hardware teardown.
-- **Bounded channel-output recovery.** Channelizer output queues and reusable result pools have explicit limits and
-  cleanup behavior for overflow, stopped consumers, and blocked downstream processing.
-- **Theme-aware JavaFX loading shells.** Playlist and Settings first render a lightweight shell whose background and
-  text follow the active theme, then replace it with the fully constructed editor.
+- **Safer behavior while tuners start and stop.** If a channel needs a tuner while hardware is being enabled or
+  disabled, sdrtrunk-vce immediately tries another usable tuner or ends the request cleanly instead of waiting for
+  shutdown to finish.
+- **Limits on backed-up receiver data.** Internal queues that carry live radio data now have firm size limits and clean
+  themselves up when a decoder stops or falls behind. This prevents stale data and memory use from continuing to
+  build up.
+- **Dark-themed loading screens.** Configuration Editor and User Preferences now show a lightweight screen in the
+  selected theme while the full editor is opening.
 
 ## Changed
 
-- **Encryption key IDs display in hexadecimal.** P25, DMR, and NXDN decoded-event details use uppercase, unpadded
-  hexadecimal key identifiers. Raw decoder diagnostic strings remain unchanged.
-- **Receiver overload favors live samples.** When a channel-output consumer falls behind, the oldest stale work is
-  released instead of allowing an unbounded backlog or retaining its high-water memory usage.
-- **Disabled tuners leave allocation before teardown.** The available-tuner snapshot now requires both an enabled state
-  and a fully instantiated tuner. Allocation safely rejects a missing channel-source manager.
+- **Encryption key IDs are shown consistently.** P25, DMR, and NXDN event details now display key IDs as uppercase
+  hexadecimal numbers without leading zeroes. Raw decoder diagnostic text is unchanged.
+- **Live radio samples take priority during overload.** If processing falls behind, sdrtrunk-vce discards the oldest
+  stale channel work and keeps newer samples. Memory used during a backlog can also be released.
+- **Disabled tuners become unavailable sooner.** A tuner is removed from the available list before shutdown begins,
+  and sdrtrunk-vce will not select a tuner that is no longer fully available.
 
 ## Fixed
 
-- **Scanner-Map Rdio Scanner uploads connect and send calls again.** Connection probes and completed-call uploads use
-  the exact protocol-compatible `User-Agent: sdrtrunk` value expected by Scanner-Map's SDRTrunk handler. Product
-  branding elsewhere remains `sdrtrunk-vce`. This fixes issue
-  [#46](https://github.com/tylerwatt12/sdrtrunk-vce/issues/46).
-- **Late encryption details update the original call.** Algorithm, key, and encrypted status learned after a P25, DMR,
-  or NXDN call begins enrich that same Activity row and live update without creating a duplicate call or incrementing
-  call/encryption counters twice. This fixes issue
+- **Alias editor actions stay with the correct alias.** New and cloned aliases do not appear in the list until you
+  click Save. Create, edit, multi-delete, and Move To operations continue to target the right rows after sorting or
+  refreshing the table, including newly imported RadioReference aliases while they are being saved. If saving fails,
+  the unsaved changes and selection remain on screen and an error is shown.
+- **The Alias table is easier to use.** Talkgroup and radio IDs, including ranges, sort by number. The New, Clone,
+  Move To, and Delete labels are fully visible, and saving one clone no longer shows a duplicate row.
+- **Scanner-Map uploads work again.** Rdio Scanner connection checks and completed-call uploads now use the exact
+  `User-Agent: sdrtrunk` value required by Scanner-Map. The product name remains sdrtrunk-vce everywhere else. This
+  fixes [#46](https://github.com/tylerwatt12/sdrtrunk-vce/issues/46).
+- **Late encryption information stays with the original call.** If the encryption algorithm, key, or encrypted status
+  becomes known after a P25, DMR, or NXDN call starts, the existing Activity entry and live Activity view are updated.
+  sdrtrunk-vce no longer creates a duplicate call or counts the call and encryption twice. This fixes
   [#35](https://github.com/tylerwatt12/sdrtrunk-vce/issues/35).
-- **Event key IDs use the expected number format.** Event details no longer mix decimal key IDs with hexadecimal status
-  displays. This fixes issue [#38](https://github.com/tylerwatt12/sdrtrunk-vce/issues/38).
-- **P25 implicit uplinks resolve from the downlink band plan.** An explicit uplink field containing the reserved
-  `0xFFFF` value is no longer interpreted as band 15/channel 4095, which produced incorrect frequencies such as
-  216.375 MHz. This addresses issue [#24](https://github.com/tylerwatt12/sdrtrunk-vce/issues/24).
-- **P25 traffic-channel shutdown avoids a manager-lock deadlock.** Synchronous channel-disable requests are issued
-  after releasing the traffic manager lock, and queued channelizer results are released correctly when work is stale
-  or a consumer stops.
-- **Concurrent tuner disable no longer exposes a tuner during teardown.** Allocation cannot dereference a tuner or
-  channel-source manager while disable teardown removes it. This addresses the Airspy/null-manager NPE portion of
-  issue [#43](https://github.com/tylerwatt12/sdrtrunk-vce/issues/43); it does not claim to fix that report's separate
-  API-latency or retry-storm symptoms.
-- **Alias editor mutations keep their intended row.** New and cloned aliases remain detached drafts until Save commits
-  them. Create, edit, multi-delete, and move operations persist before replacing live rows by durable schema-v4 ID;
-  newly imported RadioReference rows retain their identity while delayed ID assignment completes; selection
-  restoration no longer targets stale sorted-table instances; and talkgroup, talkgroup-range, radio, and radio-range
-  identifiers sort numerically. Failed persistence leaves the dirty draft and selection intact and displays an error.
-  The New, Clone, Move To, and Delete action buttons also retain their full labels. This prevents wrong-row edits,
-  no-op deletes, and duplicate or unexpectedly reordered rows.
-- **Dark-themed Playlist and Settings windows no longer flash white while loading.** The lightweight themed shell
-  completes a render before expensive editor construction begins, remains theme-aware afterward, and recovers for a
-  retry if setup fails. This covers editor content; native Windows title-bar contrast remains outside the application.
-- **Non-autonomous P25 SNDCP announcements no longer create ghost data channels.** Channel fields are published only
-  when autonomous access is active, preventing inactive announcements from appearing as a `DAT-A` channel with LCN
-  `0-0`.
-- **Short P25 TDULC candidates are rejected.** Golay correction no longer reads a partial codeword, and link-control
-  data assembled without all 12 protected codewords cannot be accepted as valid after zero filling.
-- **Windows packages retain the bundled Java runtime's vendor signatures.** Packaging restores the BellSoft and
-  Microsoft Authenticode-signed runtime files after jlink image creation. Each Windows archive's runtime `.exe` and
-  `.dll` is verified byte-for-byte against the pinned signed JDK, avoiding unsigned jlink natives without changing
-  host security policy.
+- **Encryption key numbers match the other status displays.** Event details no longer show a decimal key ID when the
+  corresponding status display uses hexadecimal. This fixes
+  [#38](https://github.com/tylerwatt12/sdrtrunk-vce/issues/38).
+- **P25 implicit uplink frequencies are calculated correctly.** Some P25 messages use the reserved `0xFFFF` value to
+  say that no separate uplink channel was supplied. sdrtrunk-vce now uses the downlink band plan in that case instead
+  of treating the marker as a real channel, which could produce an incorrect frequency such as 216.375 MHz. This
+  addresses
+  [#24](https://github.com/tylerwatt12/sdrtrunk-vce/issues/24).
+- **Ending a P25 traffic channel no longer risks locking the traffic manager.** Shutdown work is performed in a safe
+  order, and stale queued channel data is released when a channel stops.
+- **Disabling a tuner during channel assignment no longer exposes a half-removed device.** This prevents the Airspy
+  missing-channel-manager crash reported in [#43](https://github.com/tylerwatt12/sdrtrunk-vce/issues/43). It does not
+  fix the separate slow Activity API or repeated tuner-retry symptoms in that report.
+- **Dark-mode Configuration Editor and User Preferences windows no longer flash white while opening.** Their content
+  stays covered by the selected theme during loading and can recover cleanly if opening fails. This applies to
+  application content; the native Windows title bar is still controlled by Windows.
+- **Inactive P25 data announcements no longer create ghost channels.** An inactive announcement will no longer appear
+  as a `DAT-A` channel with LCN `0-0`.
+- **Incomplete P25 link-control messages are rejected.** A message must contain all 12 protected pieces before it can
+  be accepted. Short messages are no longer padded with zeroes and treated as valid.
+- **Windows packages retain the Java runtime's digital signatures.** The included BellSoft- and Microsoft-signed
+  `.exe` and `.dll` files are restored after the runtime image is built and checked byte-for-byte against the original
+  vendor-signed Java runtime. This avoids unsigned runtime files without changing the computer's security policy or
+  promising that a particular policy will trust those publishers.
 
 ## Removed
 
 - No decoder, channel type, Alias feature, recording feature, streaming provider, RadioReference feature, or database
-  storage is removed.
-- No supported migration path is removed. The exact Alpha 7 conversion available in Alpha 9 remains available in
-  Alpha 10.
+  storage has been removed.
+- No supported upgrade path has been removed. The Alpha 7 conversion offered by Alpha 9 remains available in Alpha 10.
 
 ## Before You Upgrade
 
-- **Alpha 8, Alpha 9, and Alpha 10 use the same database schema.** An exact Alpha 8 or Alpha 9 profile opens without a
-  database conversion or history reset. Channels, aliases, streams, tuners, preferences, calls, counts, Activity,
-  affiliations, site observations, identity evidence, and quality history remain intact.
-- **Migrate Previous Data can copy an Alpha 8 or Alpha 9 portable profile into a new Alpha 10 installation.** The
-  source installation remains unchanged, recognized portable paths are adjusted for the new location, and classic
-  recording files remain in their administrator-configured location.
-- **The exact Alpha 7 conversion remains available.** It preserves or converts supported configuration and starts the
-  current activity/statistics storage empty, matching Alpha 9 behavior. Alpha 10 retains this compatibility path for
-  the focused hotfix release; Alpha 1 through Alpha 6 and mixed or development schemas remain unsupported.
-- **This release does not close issues #41 or #43.** The included fixes are limited to the P25
-  manager-lock/channelizer-backlog path and the Airspy/null-manager NPE. The slow `/api/activity` request,
-  preferred-tuner retry storm, physical unplug/error teardown, and other reported symptoms remain outside this
-  release.
-- Test multi-tuner operation with an Airspy, concurrent traffic grants, tuner disable, and unplug/error handling before
-  relying on this build unattended. Also inspect buffer-drop logs and control-channel decode quality at wide sample
-  rates or under sustained load.
-- Stop sdrtrunk-vce and back up the complete portable `data` folder before upgrading. Keep the previous installation
-  until Alpha 10 has been verified with the receiver's normal configuration.
+- Stop sdrtrunk-vce and back up the complete portable `data` folder.
+- **Alpha 8, Alpha 9, and Alpha 10 use the same database format.** An exact Alpha 8 or Alpha 9 profile opens without a
+  database conversion or history reset. Channels, aliases, streams, tuners, preferences, calls, counts, Activity
+  history, affiliations, site observations, identity evidence, and quality history remain intact.
+- **Migrate Previous Data can copy an Alpha 8 or Alpha 9 portable profile into a new Alpha 10 installation.** The old
+  installation is not changed. Portable paths are updated for the new location, while recordings remain in the
+  administrator-selected recording folder.
+- **The same Alpha 7 conversion remains available.** Supported configuration is preserved or converted, but current
+  Activity and statistics storage starts empty, just as it did when upgrading to Alpha 9. To upgrade from Alpha 1
+  through Alpha 6, first use Alpha 7 to create an exact Alpha 7 profile; Alpha 10 cannot open those older formats
+  directly. Mixed schemas and development schemas remain unsupported.
+- **Issues #41 and #43 are not fully fixed by this release.** Alpha 10 includes the P25 shutdown/backlog fix and the
+  Airspy missing-channel-manager crash fix. Slow or hanging `/api/activity` requests, repeated preferred-tuner
+  retries, physical unplug/error shutdown problems, and the other reported symptoms are outside this release.
+- Before relying on Alpha 10 unattended, test normal multi-tuner use with an Airspy, simultaneous traffic channels,
+  tuner disable, and unplug or error handling. At wide sample rates or under sustained load, also check buffer-drop
+  logs and control-channel decode quality.
+- Keep the previous installation until Alpha 10 has been tested with the receiver's normal configuration.
 
 ## Downloads
 
-Use the package that matches your operating system and processor. Java 25 is included. JMBE remains a separate setup
-under **Preferences > Decoder > JMBE Audio Library**. Verify the downloaded ZIP with `SHA256SUMS.txt` before installing.
+Choose the download that matches your operating system and processor. Java 25 is included. JMBE still requires
+separate setup under **Preferences > Decoder > JMBE Audio Library**. Before installing, verify that the ZIP's SHA-256
+checksum matches the value in `SHA256SUMS.txt`.
