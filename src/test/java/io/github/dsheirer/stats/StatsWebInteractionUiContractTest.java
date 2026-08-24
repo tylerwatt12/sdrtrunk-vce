@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"91\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"92\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=75"));
+        assertTrue(html.contains("/assets/app.css?v=76"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -805,6 +805,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".scanner-chassis {"));
         assertTrue(css.contains(".scanner-field-grid {"));
         assertTrue(css.contains(".scanner-quality-meter {"));
+        assertTrue(css.contains("font-size: 14px;"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-scan-button.active {"));
         assertTrue(source.contains("restorePlaybackBarBeforeRender();"));
         assertTrue(function(source, "function placePlaybackBar()")
             .contains("(scannerHost || slot).append(bar)"));

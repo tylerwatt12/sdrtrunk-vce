@@ -4344,7 +4344,7 @@ th.numeric {
 :root[data-theme="dark"] .dashboard-filter-button.active,
 :root[data-theme="dark"] .signal-range-button.active,
 :root[data-theme="dark"] .button:not(.secondary):not(.disabled),
-:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.systems-tab-select):not(.systems-tab-title-button):not(.systems-tab-close):not(.live-details-tab):not(.channel-diagnostic-view-button) {
+:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.systems-tab-select):not(.systems-tab-title-button):not(.systems-tab-close):not(.live-details-tab):not(.channel-diagnostic-view-button) {
   color: #071a18;
   border-color: #69cec2;
 }
@@ -5893,13 +5893,13 @@ th.numeric {
 }
 
 .scanner-view-modes button {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 0 12px;
   color: var(--muted);
   background: transparent;
   border: 0;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 750;
 }
 
@@ -5929,7 +5929,7 @@ th.numeric {
   justify-content: space-between;
   gap: 14px;
   margin: 0 2px 12px;
-  font: 750 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 800 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -5967,7 +5967,7 @@ th.numeric {
   border: 1px solid #728a52;
   border-radius: 5px;
   box-shadow: inset 0 0 14px rgba(40,57,29,.18);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -6003,7 +6003,7 @@ th.numeric {
 
 .scanner-call-kind {
   display: block;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 950;
   letter-spacing: .12em;
   text-transform: uppercase;
@@ -6012,7 +6012,7 @@ th.numeric {
 .scanner-call-title {
   display: block;
   margin-top: 4px;
-  font-size: clamp(24px, 3.4vw, 38px);
+  font-size: clamp(30px, 3.4vw, 46px);
   font-weight: 950;
   line-height: 1.05;
   letter-spacing: -.05em;
@@ -6022,7 +6022,8 @@ th.numeric {
 .scanner-call-subtitle {
   display: block;
   margin-top: 7px;
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: 850;
 }
 
@@ -6061,7 +6062,7 @@ th.numeric {
 
 .scanner-field {
   min-width: 0;
-  padding: 10px 12px 9px 0;
+  padding: 12px 14px 11px 0;
   border-bottom: 1px dotted rgba(23,33,20,.25);
 }
 
@@ -6073,7 +6074,8 @@ th.numeric {
   display: block;
   margin-bottom: 4px;
   color: rgba(23,33,20,.67);
-  font-size: 8px;
+  font-size: 10px;
+  line-height: 1.3;
   font-weight: 950;
   letter-spacing: .11em;
   text-transform: uppercase;
@@ -6083,8 +6085,8 @@ th.numeric {
 .scanner-field-link {
   min-width: 0;
   color: #172114;
-  font-size: 11px;
-  line-height: 1.3;
+  font-size: 14px;
+  line-height: 1.4;
   font-weight: 900;
 }
 
@@ -6106,7 +6108,7 @@ th.numeric {
 .scanner-field-link::after {
   content: "↗";
   flex: 0 0 auto;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .scanner-quality-meter {
@@ -6122,14 +6124,14 @@ th.numeric {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 7px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 950;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
 
 .scanner-quality-track {
-  height: 9px;
+  height: 11px;
   overflow: hidden;
   background: rgba(23,33,20,.19);
   border: 1px solid rgba(23,33,20,.42);
@@ -6146,7 +6148,7 @@ th.numeric {
   display: block;
   margin-top: 5px;
   color: rgba(23,33,20,.68);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 800;
 }
 
@@ -6169,7 +6171,8 @@ th.numeric {
 .scanner-engineer-item span {
   display: block;
   color: rgba(23,33,20,.62);
-  font-size: 7px;
+  font-size: 9px;
+  line-height: 1.3;
   font-weight: 900;
   letter-spacing: .09em;
   text-transform: uppercase;
@@ -6178,7 +6181,8 @@ th.numeric {
 .scanner-engineer-item strong {
   display: block;
   margin-top: 2px;
-  font-size: 9px;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .scanner-idle {
@@ -6195,7 +6199,7 @@ th.numeric {
 }
 
 .scanner-idle span {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 750;
 }
 
@@ -6207,7 +6211,7 @@ th.numeric {
 }
 
 .scanner-key {
-  min-height: 49px;
+  min-height: 54px;
   padding: 7px;
   color: #cbd1d3;
   background: linear-gradient(180deg, #3a4144 0%, #242a2d 100%);
@@ -6215,7 +6219,7 @@ th.numeric {
   border-top-color: #5a6266;
   border-radius: 7px;
   box-shadow: 0 3px 0 #101315, 0 5px 7px rgba(0,0,0,.25), inset 0 1px rgba(255,255,255,.06);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 780;
   letter-spacing: .03em;
   text-transform: uppercase;
@@ -6239,7 +6243,7 @@ th.numeric {
   background: #4b3821;
   border: 1px solid #76572f;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .scanner-replay-banner button {
@@ -6255,7 +6259,7 @@ th.numeric {
   gap: 10px;
   margin-top: 14px;
   color: #919ca1;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -6286,14 +6290,14 @@ th.numeric {
 }
 
 .scanner-scan-heading strong {
-  font-size: 11px;
+  font-size: 13px;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
 
 .scanner-scan-heading span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .scanner-scan-buttons {
@@ -6306,7 +6310,7 @@ th.numeric {
 .scanner-scan-button {
   min-width: 0;
   display: grid;
-  grid-template-columns: 34px 1fr;
+  grid-template-columns: 38px 1fr;
   grid-template-rows: auto auto;
   gap: 2px 9px;
   align-items: center;
@@ -6325,8 +6329,8 @@ th.numeric {
 }
 
 .scanner-scan-number {
-  width: 31px;
-  height: 31px;
+  width: 35px;
+  height: 35px;
   grid-row: 1 / span 2;
   display: grid;
   place-items: center;
@@ -6334,12 +6338,12 @@ th.numeric {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 5px;
-  font: 850 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 850 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .scanner-scan-button.active .scanner-scan-number { color: var(--success); }
-.scanner-scan-button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; text-transform: uppercase; }
-.scanner-scan-button small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.scanner-scan-button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; text-transform: uppercase; }
+.scanner-scan-button small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
 .scanner-list-modal {
   width: min(760px, calc(100vw - 24px));
@@ -6360,9 +6364,9 @@ th.numeric {
 
 .scanner-modal-row:last-of-type { border-bottom: 0; }
 .scanner-modal-row > div { min-width: 0; display: grid; gap: 3px; }
-.scanner-modal-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.scanner-modal-row span { color: var(--muted); font-size: 10px; }
-.scanner-modal-note { margin: 12px 0 0; color: var(--muted); font-size: 10px; }
+.scanner-modal-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.scanner-modal-row span { color: var(--muted); font-size: 12px; }
+.scanner-modal-note { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
 
 .scanner-coverage-choices {
   display: flex;
@@ -6393,7 +6397,7 @@ th.numeric {
   padding: 9px 10px;
   color: var(--ink);
   background: var(--surface-2);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 750;
 }
 
@@ -6410,7 +6414,7 @@ th.numeric {
 
 .scanner-coverage-group li {
   padding-left: 2px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .scanner-coverage-group li strong { margin-right: 8px; }
@@ -6423,10 +6427,57 @@ th.numeric {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 5px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .scanner-unmatched-rules span { color: var(--muted); }
+
+/* Preserve the scanner's component colors from the general dark-theme button rule. */
+:root[data-theme="dark"] #content .scanner-view-modes button {
+  color: var(--muted);
+  border-color: transparent;
+}
+
+:root[data-theme="dark"] #content .scanner-view-modes button.active {
+  color: #ecffd9;
+}
+
+:root[data-theme="dark"] #content .scanner-field-link {
+  color: #172114;
+  border-color: rgba(23,33,20,.48);
+}
+
+:root[data-theme="dark"] #content .scanner-key {
+  color: #cbd1d3;
+  border-color: #090b0c;
+  border-top-color: #5a6266;
+}
+
+:root[data-theme="dark"] #content .scanner-key.active,
+:root[data-theme="dark"] #content .scanner-key.primary.active {
+  color: #e8ffd0;
+  border-color: #6a8c36;
+}
+
+:root[data-theme="dark"] #content .scanner-key.danger {
+  color: #ffe1dc;
+  border-color: #8b4940;
+}
+
+:root[data-theme="dark"] #content .scanner-scan-button {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] #content .scanner-scan-button.active {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--success) 65%, var(--line));
+}
+
+:root[data-theme="dark"] #content .scanner-replay-banner button {
+  color: #fff1d2;
+  border-color: #99713c;
+}
 }
 
 .live-detail-toolbar {
@@ -6884,7 +6935,7 @@ th.numeric {
   }
 
   .scanner-call-title {
-    font-size: 24px;
+    font-size: 30px;
   }
 
   .scanner-field-grid {
