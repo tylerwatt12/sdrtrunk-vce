@@ -25,14 +25,15 @@ class StatsWebNavigationHeaderUiContractTest
     {
         String html = readText(INDEX_HTML);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"97\">"));
-        assertTrue(html.contains("/assets/app.css?v=80"));
-        assertTrue(html.contains("/assets/web-call-player.js?v=16"));
-        assertTrue(html.contains("/assets/app.js?v=115"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"98\">"));
+        assertTrue(html.contains("/assets/app.css?v=81"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=17"));
+        assertTrue(html.contains("/assets/app.js?v=116"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
         assertTrue(html.contains("data-nav-tab=\"streaming\" href=\"/?view=configuration&amp;tab=streaming\""));
+        assertTrue(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));
         String conventional = fragment(html, "<symbol id=\"icon-conventional\"", "</symbol>");
@@ -139,10 +140,12 @@ class StatsWebNavigationHeaderUiContractTest
         String placement = block(source, "function placePlaybackBar()");
         String controls = block(player, "  bindControls()");
 
-        assertTrue(header.contains("const panels = [...(bar?.querySelectorAll('details') || [])]"));
+        assertTrue(header.contains("querySelectorAll('details:not(.playback-control-menu)')"));
         assertTrue(header.contains("bar.classList.contains('scanner-expanded')"));
         assertTrue(header.contains("if (other !== panel) other.open = false"));
         assertTrue(header.contains("if (panel.open && !panel.contains(event.target)) panel.open = false"));
+        assertTrue(header.contains("controlMenu.open = !navigationUsesDrawer()"));
+        assertTrue(header.contains("controlMenu?.open && !controlMenu.contains(event.target)"));
         assertTrue(placement.contains("panel.open = Boolean(scannerHost)"));
         assertTrue(controls.contains("panel.closest('.playback-bar')?.classList.contains('scanner-expanded')"));
         assertTrue(controls.contains("if (panel.open && !expanded)"));

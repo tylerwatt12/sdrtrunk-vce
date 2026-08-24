@@ -49,7 +49,6 @@ class WebCallPlayer {
     this.scanListCatalogReady = false;
     this.scanListCatalogState = 'loading';
     this.listenerToken = null;
-    this.capacity = null;
     this.ui.volume.value = String(this.volume);
     this.bindControls();
     this.render();
@@ -372,8 +371,7 @@ class WebCallPlayer {
     else if (!this.selectedScanListIds.size) {
       this.ui.scanListStatus.textContent = 'Select at least one scan list to receive calls.';
     } else {
-      this.ui.scanListStatus.textContent =
-        `Matching calls are delivered once. Choose up to ${this.maximumSelectedScanLists} scan lists.`;
+      this.ui.scanListStatus.textContent = '';
     }
   }
 
@@ -382,46 +380,6 @@ class WebCallPlayer {
     value.className = 'muted';
     value.textContent = message;
     return value;
-  }
-
-  updateCapacity(capacity) {
-    this.capacity = capacity && typeof capacity === 'object' ? capacity : null;
-    if (!this.ui.capacity) return;
-    const value = this.capacity || {};
-    const listeners = this.firstFinite(value.active_listeners, value.listeners, value.subscribers);
-    const maximumListeners = this.firstFinite(value.maximum_listeners, value.maximum_clients);
-    const artifacts = this.firstFinite(value.artifact_count, value.cached_calls);
-    const maximumArtifacts = this.firstFinite(value.maximum_artifacts, value.maximum_calls);
-    const audioBytes = this.firstFinite(value.artifact_bytes, value.cached_audio_bytes);
-    const maximumAudioBytes = this.firstFinite(value.maximum_artifact_bytes, value.maximum_audio_bytes);
-    const parts = [];
-    if (listeners !== null || maximumListeners !== null) {
-      parts.push(`${listeners ?? 0}${maximumListeners !== null ? `/${maximumListeners}` : ''} listeners`);
-    }
-    if (artifacts !== null || maximumArtifacts !== null) {
-      parts.push(`${artifacts ?? 0}${maximumArtifacts !== null ? `/${maximumArtifacts}` : ''} calls cached`);
-    }
-    if (audioBytes !== null || maximumAudioBytes !== null) {
-      parts.push(`${this.byteLabel(audioBytes ?? 0)}${maximumAudioBytes !== null ?
-        `/${this.byteLabel(maximumAudioBytes)}` : ''} audio`);
-    }
-    this.ui.capacity.textContent = parts.join(' · ') || 'Listener capacity is unavailable.';
-  }
-
-  firstFinite(...values) {
-    for (const value of values) {
-      const candidate = Number(value);
-      if (Number.isFinite(candidate) && candidate >= 0) return candidate;
-    }
-    return null;
-  }
-
-  byteLabel(value) {
-    const bytes = Math.max(0, Number(value) || 0);
-    if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
-    if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(bytes >= 10485760 ? 0 : 1)} MB`;
-    if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${Math.round(bytes)} B`;
   }
 
   // Recorded-call pages can feed this same queue by providing the same call shape and an audio_url.

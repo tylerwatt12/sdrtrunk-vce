@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"97\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"98\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=80"));
+        assertTrue(html.contains("/assets/app.css?v=81"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -618,7 +618,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=16"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=17"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -633,7 +633,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(startCurrent.contains("source.connect(this.gainNode)"));
         assertTrue(css.contains(".playback-volume input:focus-visible"));
         assertTrue(css.contains(".playback-volume input::-webkit-slider-runnable-track"));
-        assertTrue(css.contains("height: 14px"));
+        assertTrue(css.contains("height: 18px"));
+        assertTrue(css.contains(".playback-volume {\n  position: relative;\n  width: 92px;\n  height: 28px;"));
+        assertTrue(css.contains("border: 1px solid #30383b;"));
     }
 
     @Test
@@ -661,6 +663,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
+        String css = readText(APP_CSS);
         String enqueue = function(source, "  enqueue(call)");
         String togglePlayback = function(source, "  async togglePlayback()");
         String replayCurrent = function(source, "  async replayCurrent()");
@@ -674,6 +677,19 @@ class StatsWebInteractionUiContractTest
         int hold = html.indexOf("id=\"playback-hold\"");
         int avoid = html.indexOf("id=\"playback-avoid\"");
         assertTrue(play >= 0 && play < skip && skip < replay && replay < hold && hold < avoid);
+        assertTrue(html.contains("id=\"icon-replay\""));
+        assertTrue(html.contains("id=\"playback-replay\" class=\"playback-command playback-icon-command\" " +
+            "aria-label=\"Replay current call\""));
+        assertTrue(html.contains("<use href=\"#icon-replay\"></use>"));
+        assertTrue(html.contains("id=\"playback-control-menu\" class=\"playback-control-menu\" open"));
+        assertTrue(css.contains("#desktop-playback-slot .playback-control-menu[open] > " +
+            ".playback-control-menu-panel"));
+        assertTrue(css.contains("#desktop-playback-slot .playback-control-menu-panel .playback-volume"));
+        assertFalse(css.contains(".playback-controls .playback-command:not(#playback-play)"));
+        assertFalse(html.contains("id=\"playback-capacity\""));
+        assertFalse(source.contains("Matching calls are delivered once"));
+        assertTrue(css.contains(".playback-panel-note:empty"));
+        assertTrue(css.contains("linear-gradient(180deg, #2c3235 0%, #202528 52%, #171b1d 100%)"));
         assertFalse(html.contains("id=\"playback-mute\""));
         assertFalse(html.contains(">Unmute<"));
         assertTrue(source.contains("this.paused = true"));

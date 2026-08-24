@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="97">
+  <meta name="sdrtrunk-web-revision" content="98">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
@@ -16,7 +16,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=80">
+  <link rel="stylesheet" href="/assets/app.css?v=81">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -42,8 +42,10 @@
     <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7Z"></path></symbol>
     <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"></path></symbol>
     <symbol id="icon-skip" viewBox="0 0 24 24"><path d="M5 5v14l10-7ZM19 5v14"></path></symbol>
+    <symbol id="icon-replay" viewBox="0 0 24 24"><path d="M7 7H3v-4M3.5 7A9 9 0 1 1 3 16"></path></symbol>
     <symbol id="icon-clear-queue" viewBox="0 0 24 24"><path d="M4 6h10M4 12h8M4 18h6M16 14l5 5M21 14l-5 5"></path></symbol>
     <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+    <symbol id="icon-playback-controls" viewBox="0 0 24 24"><path d="M4 6h5M15 6h5M12 3v6M4 12h9M19 12h1M16 9v6M4 18h2M12 18h8M9 15v6"></path></symbol>
   </svg>
   <div class="app-shell">
     <div class="app-header">
@@ -63,7 +65,7 @@
           <details class="nav-group" data-nav-group="configuration"><summary>Configuration</summary><div class="nav-group-links">
             <a data-view="aliases" href="/?view=aliases"><svg class="nav-icon" aria-hidden="true"><use href="#icon-aliases"></use></svg><span>Aliases</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="configuration" data-nav-tab="scan-lists" href="/?view=configuration&amp;tab=scan-lists"><svg class="nav-icon" aria-hidden="true"><use href="#icon-scan-lists"></use></svg><span>Scan Lists</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
-            <a data-view="configuration" data-nav-tab="radioreference" href="/?view=configuration&amp;tab=radioreference"><svg class="nav-icon" aria-hidden="true"><use href="#icon-radioreference"></use></svg><span>RadioReference</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="configuration" data-nav-tab="radioreference" href="/?view=configuration&amp;tab=radioreference"><svg class="nav-icon" aria-hidden="true"><use href="#icon-radioreference"></use></svg><span>RadioReference</span><small>Coming soon</small><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="configuration" data-nav-tab="recording" href="/?view=configuration&amp;tab=recording"><svg class="nav-icon" aria-hidden="true"><use href="#icon-recording"></use></svg><span>Recording</span><small>Coming soon</small><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="configuration" data-nav-tab="streaming" href="/?view=configuration&amp;tab=streaming"><svg class="nav-icon" aria-hidden="true"><use href="#icon-streaming"></use></svg><span>Streaming</span><small>Coming soon</small><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
@@ -84,10 +86,9 @@
       <button type="button" id="navigation-backdrop" class="navigation-backdrop" aria-label="Close navigation" hidden></button>
       <div id="desktop-playback-slot">
         <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
-          <div class="playback-controls" role="group" aria-label="Playback controls"><button type="button" id="playback-play" class="playback-command playback-icon-command" aria-pressed="false" aria-label="Play browser call audio" title="Play browser call audio"><svg aria-hidden="true"><use href="#icon-play"></use></svg></button><button type="button" id="playback-skip" class="playback-command playback-icon-command" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#icon-skip"></use></svg></button><button type="button" id="playback-replay" class="playback-command">Replay</button><button type="button" id="playback-hold" class="playback-command playback-letter-command" aria-label="Hold current target" title="Hold current target">H</button><div class="playback-command-group" role="group" aria-label="Avoid controls"><button type="button" id="playback-avoid" class="playback-command playback-letter-command" aria-label="Avoid current target" title="Avoid current target">A</button><button type="button" id="playback-avoid-list" class="playback-command playback-menu-command" aria-label="Open avoid list" title="Open avoid list"><svg aria-hidden="true"><use href="#icon-chevron-down"></use></svg></button></div><button type="button" id="playback-clear-queue" class="playback-command playback-icon-command" aria-label="Clear queued calls" title="Clear queued calls"><svg aria-hidden="true"><use href="#icon-clear-queue"></use></svg></button></div>
-          <label class="playback-volume" title="Browser playback volume"><span class="playback-volume-label" aria-hidden="true">VOL</span><input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Browser playback volume"></label>
+          <details id="playback-control-menu" class="playback-control-menu" open><summary aria-label="Playback controls" title="Playback controls"><svg aria-hidden="true"><use href="#icon-playback-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button type="button" id="playback-play" class="playback-command playback-icon-command" aria-pressed="false" aria-label="Play browser call audio" title="Play browser call audio"><svg aria-hidden="true"><use href="#icon-play"></use></svg></button><button type="button" id="playback-skip" class="playback-command playback-icon-command" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#icon-skip"></use></svg></button><button type="button" id="playback-replay" class="playback-command playback-icon-command" aria-label="Replay current call" title="Replay current call"><svg aria-hidden="true"><use href="#icon-replay"></use></svg></button><button type="button" id="playback-hold" class="playback-command playback-letter-command" aria-label="Hold current target" title="Hold current target">H</button><div class="playback-command-group" role="group" aria-label="Avoid controls"><button type="button" id="playback-avoid" class="playback-command playback-letter-command" aria-label="Avoid current target" title="Avoid current target">A</button><button type="button" id="playback-avoid-list" class="playback-command playback-menu-command" aria-label="Open avoid list" title="Open avoid list"><svg aria-hidden="true"><use href="#icon-chevron-down"></use></svg></button></div><button type="button" id="playback-clear-queue" class="playback-command playback-icon-command" aria-label="Clear queued calls" title="Clear queued calls"><svg aria-hidden="true"><use href="#icon-clear-queue"></use></svg></button></div><label class="playback-volume" title="Browser playback volume"><span class="playback-volume-label" aria-hidden="true">VOL</span><input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Browser playback volume"></label></div></details>
           <div class="playback-now"><div id="playback-current" class="playback-current"><strong class="playback-current-primary">Idle</strong></div></div>
-          <details class="playback-subscriptions"><summary><span class="playback-scan-list-label">Scan Lists:</span> <strong id="playback-scan-list-summary">Loading</strong></summary><div class="playback-subscription-panel"><div class="playback-panel-heading">Listen to one or more scan lists</div><div id="playback-scan-list-options" class="playback-scan-list-options"></div><div id="playback-scan-list-status" class="playback-panel-note" role="status">Loading available scan lists…</div><div id="playback-capacity" class="playback-capacity">Listener capacity unavailable</div></div></details>
+          <details class="playback-subscriptions"><summary><span class="playback-scan-list-label">Scan Lists:</span> <strong id="playback-scan-list-summary">Loading</strong></summary><div class="playback-subscription-panel"><div class="playback-panel-heading">Listen to one or more scan lists</div><div id="playback-scan-list-options" class="playback-scan-list-options"></div><div id="playback-scan-list-status" class="playback-panel-note" role="status">Loading available scan lists…</div></div></details>
           <details class="playback-queue"><summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong></summary><div id="playback-queue-list" class="playback-queue-list">No queued calls</div></details>
           <output id="playback-missed" class="playback-missed" role="status" aria-live="polite" hidden></output>
           <div id="playback-status" class="playback-status">Checking access</div><div id="playback-progress" class="playback-progress" aria-hidden="true"><span id="playback-progress-glow" class="playback-progress-glow"></span></div>
@@ -96,9 +97,9 @@
     </div>
     <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading" role="status">Loading</div></main>
   </div>
-  <script src="/assets/web-call-player.js?v=16"></script>
+  <script src="/assets/web-call-player.js?v=17"></script>
   <script src="/assets/core/page-lifecycle.js?v=1"></script>
   <script src="/assets/features/systems-directory.js?v=2"></script>
-  <script src="/assets/app.js?v=115"></script>
+  <script src="/assets/app.js?v=116"></script>
 </body>
 </html>

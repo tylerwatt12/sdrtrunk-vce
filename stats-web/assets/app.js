@@ -6743,7 +6743,9 @@ function restorePlaybackBarBeforeRender() {
   const slot = document.getElementById('desktop-playback-slot');
   if (!bar || !slot || !content.contains(bar)) return;
   bar.classList.remove('scanner-expanded');
-  bar.querySelectorAll('details').forEach((panel) => { panel.open = false; });
+  bar.querySelectorAll('details:not(.playback-control-menu)').forEach((panel) => { panel.open = false; });
+  const controlMenu = bar.querySelector('.playback-control-menu');
+  if (controlMenu) controlMenu.open = !navigationUsesDrawer();
   slot.append(bar);
   bar.setAttribute('aria-label', 'Web call playback');
 }
@@ -6757,7 +6759,10 @@ function placePlaybackBar() {
   bar.classList.toggle('scanner-expanded', Boolean(scannerHost));
   (scannerHost || slot).append(bar);
   bar.setAttribute('aria-label', scannerHost ? 'Browser scanner and call playback' : 'Web call playback');
-  bar.querySelectorAll('details').forEach((panel) => { panel.open = Boolean(scannerHost); });
+  bar.querySelectorAll('details:not(.playback-control-menu)')
+    .forEach((panel) => { panel.open = Boolean(scannerHost); });
+  const controlMenu = bar.querySelector('.playback-control-menu');
+  if (controlMenu) controlMenu.open = !navigationUsesDrawer();
 }
 
 function initializePlaybackHeader() {
@@ -6768,16 +6773,29 @@ function initializePlaybackHeader() {
     bar.setAttribute('aria-disabled', 'true');
     bar.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
   }
-  const panels = [...(bar?.querySelectorAll('details') || [])];
+  const controlMenu = bar?.querySelector('.playback-control-menu');
+  const panels = [...(bar?.querySelectorAll('details:not(.playback-control-menu)') || [])];
   panels.forEach((panel) => panel.addEventListener('toggle', () => {
     if (!panel.open || bar.classList.contains('scanner-expanded')) return;
+    if (navigationUsesDrawer() && controlMenu) controlMenu.open = false;
     panels.forEach((other) => { if (other !== panel) other.open = false; });
   }));
+  controlMenu?.addEventListener('toggle', () => {
+    if (!controlMenu.open || !navigationUsesDrawer()) return;
+    panels.forEach((panel) => { panel.open = false; });
+  });
+  window.matchMedia(NAVIGATION_DRAWER_MEDIA).addEventListener('change', () => {
+    if (controlMenu) controlMenu.open = !navigationUsesDrawer();
+  });
+  if (controlMenu) controlMenu.open = !navigationUsesDrawer();
   document.addEventListener('click', (event) => {
     if (bar?.classList.contains('scanner-expanded')) return;
     panels.forEach((panel) => {
       if (panel.open && !panel.contains(event.target)) panel.open = false;
     });
+    if (navigationUsesDrawer() && controlMenu?.open && !controlMenu.contains(event.target)) {
+      controlMenu.open = false;
+    }
   });
 }
 
@@ -6846,8 +6864,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
       progress: 'playback-progress',
       scanListSummary: 'playback-scan-list-summary',
       scanListOptions: 'playback-scan-list-options',
-      scanListStatus: 'playback-scan-list-status',
-      capacity: 'playback-capacity'
+      scanListStatus: 'playback-scan-list-status'
     });
   }
   window.sdrtrunkWebPlayer.setActions({
@@ -14972,19 +14989,16 @@ async function loadStatus(refreshCurrentView = false) {
   if (await reloadForWebClientRevision()) return;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     serviceStatus = null;
-    window.sdrtrunkWebPlayer?.updateCapacity(null);
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Status restricted';
     return;
   }
   try {
     serviceStatus = await api('/api/v1/status', {}, { page: false });
-    window.sdrtrunkWebPlayer?.updateCapacity(serviceStatus.webPlayer || serviceStatus.web_player || null);
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Receiver status available';
   } catch (error) {
     serviceStatus = null;
-    window.sdrtrunkWebPlayer?.updateCapacity(null);
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Receiver status unavailable';
   }
