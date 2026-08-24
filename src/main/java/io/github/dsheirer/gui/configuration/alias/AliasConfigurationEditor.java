@@ -100,6 +100,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     private ComboBox<String> mAliasListNameComboBox;
     private Button mNewAliasListButton;
     private Button mDeleteAliasListButton;
+    private Button mAliasListDefaultsButton;
     private FilteredList<Alias> mAliasFilteredList;
     private SortedList<Alias> mAliasSortedList;
     private boolean mIgnoreAliasSelectionChanges;
@@ -435,7 +436,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             searchBox.setAlignment(Pos.BASELINE_RIGHT);
 
             mSearchAndListSelectionBox.getChildren().addAll(listLabel, getAliasListNameComboBox(),
-                getNewAliasListButton(), getDeleteAliasListButton(), searchBox);
+                getNewAliasListButton(), getDeleteAliasListButton(), getAliasListDefaultsButton(), searchBox);
         }
 
         return mSearchAndListSelectionBox;
@@ -617,6 +618,26 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
 
         return mDeleteAliasListButton;
+    }
+
+    private Button getAliasListDefaultsButton()
+    {
+        if(mAliasListDefaultsButton == null)
+        {
+            mAliasListDefaultsButton = new Button("Alias List Defaults");
+            mAliasListDefaultsButton.setOnAction(event ->
+            {
+                AliasListDefinition definition = getAliasListDefinition(
+                    getAliasListNameComboBox().getSelectionModel().getSelectedItem());
+                if(definition == null || !resolveModifiedAliasDraft())
+                {
+                    return;
+                }
+                AliasListDefaultsDialog.show(mConfigurationManager, definition,
+                    mAliasListDefaultsButton.getScene().getWindow());
+            });
+        }
+        return mAliasListDefaultsButton;
     }
 
     private Alert createDeleteAliasListAlert(Alert.AlertType alertType, ButtonType... buttonTypes)
@@ -900,6 +921,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                 Alias draft = AliasDrafts.cloneOf(original);
                 if(draft != null)
                 {
+                    getAliasItemEditor().setInitialScanListIds(
+                        mConfigurationManager.getScanListModel().scanListIdsForAlias(original.getId()));
                     showNewAliasDraft(draft);
                 }
             });

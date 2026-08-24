@@ -27,6 +27,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService.ImportResult;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService.PreparedImport;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -97,6 +98,15 @@ class LegacyPlaylistImportServiceTest
         assertTrue(aliases.stream().anyMatch(alias ->
             "Imported Dispatch".equals(alias.getName()) &&
                 "County (Imported)".equals(alias.getAliasListName())));
+        ScanListConfiguration scanLists = new ScanListDatabaseStore(database).loadConfiguration();
+        long defaultScanListId = scanLists.defaultScanList().getId();
+        Alias importedAlias = aliases.stream().filter(alias -> "Imported Dispatch".equals(alias.getName()))
+            .findFirst().orElseThrow();
+        AliasListDefinition importedDefinition = definitions.stream()
+            .filter(definition -> "County (Imported)".equals(definition.getName())).findFirst().orElseThrow();
+        assertEquals(java.util.Set.of(defaultScanListId), scanLists.scanListIdsForAlias(importedAlias.getId()));
+        assertEquals(java.util.Set.of(defaultScanListId),
+            scanLists.scanListIdsForUnmatchedTalkgroups(importedDefinition.getId()));
 
         ConfigurationState merged = new ConfigurationDatabaseStore(database).loadConfigurationState();
         assertEquals(List.of("Control", "Control (Imported)"),

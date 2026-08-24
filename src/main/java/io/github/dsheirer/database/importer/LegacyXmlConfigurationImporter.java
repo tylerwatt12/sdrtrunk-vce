@@ -224,7 +224,10 @@ public class LegacyXmlConfigurationImporter
         {
             XmlPlaylist playlist = xmlMapper().readValue(inputStream, XmlPlaylist.class);
             ConfigurationState state = new ConfigurationState();
-            state.setAliases(convertAliases(nonNull(playlist.getAliases()), playlistVersion));
+            List<ConvertedAlias> convertedAliases = convertAliases(nonNull(playlist.getAliases()), playlistVersion);
+            state.setAliases(convertedAliases.stream().map(ConvertedAlias::alias).toList());
+            convertedAliases.forEach(converted ->
+                state.setLegacyAliasListenEnabled(converted.alias(), converted.listenEnabled()));
             state.setBroadcastConfigurations(new ArrayList<>(nonNull(playlist.getBroadcastConfigurations()).stream()
                 .filter(configuration -> !(configuration instanceof RetiredBroadcastConfiguration))
                 .toList()));
@@ -384,9 +387,9 @@ public class LegacyXmlConfigurationImporter
         return factory;
     }
 
-    private static List<Alias> convertAliases(List<LegacyAlias> legacyAliases, int playlistVersion)
+    private static List<ConvertedAlias> convertAliases(List<LegacyAlias> legacyAliases, int playlistVersion)
     {
-        List<Alias> aliases = new ArrayList<>();
+        List<ConvertedAlias> aliases = new ArrayList<>();
 
         for(LegacyAlias legacyAlias: legacyAliases)
         {
@@ -605,7 +608,7 @@ public class LegacyXmlConfigurationImporter
         @JacksonXmlProperty(isAttribute = false, localName = "id")
         private List<AliasID> mIdentifiers = new ArrayList<>();
 
-        private List<Alias> toAliases(int playlistVersion)
+        private List<ConvertedAlias> toAliases(int playlistVersion)
         {
             Alias template = new Alias(mName);
             template.setAliasListName(mAliasListName);
@@ -615,6 +618,7 @@ public class LegacyXmlConfigurationImporter
             template.setIconName(mIconName);
             template.setStreamTalkgroupAlias(mStreamTalkgroupAlias);
             List<AliasID> matchers = new ArrayList<>();
+            boolean listenEnabled = true;
 
             for(AliasID identifier: nonNull(mIdentifiers))
             {
@@ -628,9 +632,7 @@ public class LegacyXmlConfigurationImporter
                     case RetiredAliasIdentifier ignored -> { }
                     case BroadcastChannel broadcastChannel -> template.addBroadcastChannel(broadcastChannel);
                     case Record ignored -> template.setRecordable(true);
-                    //Priority was receiver-local playback state.  Keep parsing legacy XML, but intentionally do not
-                    //carry that retired behavior into the current configuration model.
-                    case Priority ignored -> { }
+                    case Priority priority -> listenEnabled = !priority.isDoNotMonitor();
                     case NonRecordable ignored -> {
                         if(playlistVersion > 2)
                         {
@@ -642,18 +644,18 @@ public class LegacyXmlConfigurationImporter
                 }
             }
 
-            List<Alias> aliases = new ArrayList<>(matchers.size());
+            List<ConvertedAlias> aliases = new ArrayList<>(matchers.size());
 
             if(matchers.isEmpty())
             {
-                return List.of(template);
+                return List.of(new ConvertedAlias(template, listenEnabled));
             }
 
             for(int index = 0; index < matchers.size(); index++)
             {
                 Alias alias = index == 0 ? template : AliasFactory.copyOf(template);
                 alias.setMatchIdentifier(matchers.get(index));
-                aliases.add(alias);
+                aliases.add(new ConvertedAlias(alias, listenEnabled));
             }
 
             return aliases;
@@ -767,6 +769,10 @@ public class LegacyXmlConfigurationImporter
             return minimum == maximum ? new Radio(Protocol.APCO25, minimum) :
                 new RadioRange(Protocol.APCO25, minimum, maximum);
         }
+    }
+
+    private record ConvertedAlias(Alias alias, boolean listenEnabled)
+    {
     }
 
     /**

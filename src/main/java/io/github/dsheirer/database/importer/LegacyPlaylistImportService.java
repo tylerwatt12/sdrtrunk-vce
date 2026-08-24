@@ -17,6 +17,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.MergeResult;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Summary;
@@ -155,6 +156,7 @@ public class LegacyPlaylistImportService
         var definitions = aliasStore.loadAliasListDefinitions();
         current.setAliasListDefinitions(definitions);
         current.setAliases(aliasStore.loadAliases(definitions));
+        current.setScanListConfiguration(new ScanListDatabaseStore(mDatabasePath).loadConfiguration());
         return current;
     }
 

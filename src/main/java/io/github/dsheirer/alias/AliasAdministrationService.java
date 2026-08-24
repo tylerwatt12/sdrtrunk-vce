@@ -13,6 +13,8 @@ package io.github.dsheirer.alias;
 
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.configuration.ConfigurationIdentityAllocator;
@@ -114,6 +116,16 @@ public final class AliasAdministrationService
             return new Options(revision(), copyDefinition(definition), AliasMatchRegistry.allowed(definition), icons,
                 streams, aliasModel().getGroupNames(), scanListConfiguration.scanLists(),
                 scanListConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId));
+        });
+    }
+
+    /** Returns one detached Alias List Defaults snapshot and the revision at which it was read. */
+    public AliasListDefaultsEntry getAliasListDefaults(long aliasListId)
+    {
+        return onConfigurationThread(() ->
+        {
+            AliasListDefinition definition = requireAliasList(aliasListId);
+            return new AliasListDefaultsEntry(revision(), definition.getId(), defaultsFor(definition));
         });
     }
 
@@ -276,7 +288,9 @@ public final class AliasAdministrationService
             AliasListDefinition definition = new AliasListDefinition(preparedName, family);
             definition.setId(nextAliasListId());
             aliasModel().addAliasListDefinition(definition);
-            return new MutationTarget(definition, List.of(), 1, PublicationMode.ALIAS_LISTS);
+            scanListModel().replaceUnmatchedTalkgroupMemberships(definition.getId(),
+                Set.of(scanListModel().defaultScanList().getId()));
+            return new MutationTarget(definition, List.of(), 1, PublicationMode.SCAN_LISTS_THEN_ALIAS_LISTS);
         });
     }
 
@@ -295,6 +309,15 @@ public final class AliasAdministrationService
                                                           Collection<Long> scanListIds, long expectedRevision)
     {
         return updateUnmatchedTalkgroupPolicy(aliasListId, policy, scanListIds, true, expectedRevision);
+    }
+
+    /** Atomically replaces all Alias List Defaults while retaining the compatibility API name. */
+    public MutationResult updateAliasListDefaults(long aliasListId, AliasListDefaults defaults,
+                                                   long expectedRevision)
+    {
+        Objects.requireNonNull(defaults, "Alias List Defaults cannot be null");
+        return updateUnmatchedTalkgroupPolicy(aliasListId, defaults.unmatchedTalkgroupPolicy(),
+            defaults.scanListIds(), expectedRevision);
     }
 
     private MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
@@ -383,17 +406,14 @@ public final class AliasAdministrationService
 
     public MutationResult createAlias(Alias alias, long expectedRevision)
     {
-        Alias prepared = prepareNewAlias(alias);
-        return savePreparedAliases(List.of(prepared), Long.valueOf(expectedRevision));
+        return saveAliasRequests(List.of(AliasSaveRequest.inherit(alias)), Long.valueOf(expectedRevision));
     }
 
     /** Atomically creates one Alias with its initial scan-list memberships. */
     public MutationResult createAlias(Alias alias, Collection<Long> scanListIds, long expectedRevision)
     {
-        Alias prepared = prepareNewAlias(alias);
-        Objects.requireNonNull(scanListIds, "Scan-list IDs cannot be null");
-        return mutate(Long.valueOf(expectedRevision), () ->
-            saveNewAliasWithMembershipsTarget(prepared, validatedScanListIds(scanListIds)));
+        return saveAliasRequests(List.of(AliasSaveRequest.explicit(alias, scanListIds)),
+            Long.valueOf(expectedRevision));
     }
 
     /**
@@ -401,7 +421,7 @@ public final class AliasAdministrationService
      */
     public MutationResult createAlias(Alias alias)
     {
-        return savePreparedAliases(List.of(prepareNewAlias(alias)), null);
+        return saveAliasRequests(List.of(AliasSaveRequest.inherit(alias)), null);
     }
 
     public MutationResult replaceAlias(long aliasId, Alias replacement, long expectedRevision)
@@ -459,7 +479,7 @@ public final class AliasAdministrationService
      */
     public MutationResult saveAliases(List<Alias> aliases)
     {
-        return savePreparedAliases(prepareAliases(aliases), null);
+        return saveAliasRequests(inheritedRequests(aliases), null);
     }
 
     /**
@@ -467,7 +487,21 @@ public final class AliasAdministrationService
      */
     public MutationResult saveAliases(List<Alias> aliases, long expectedRevision)
     {
-        return savePreparedAliases(prepareAliases(aliases), Long.valueOf(expectedRevision));
+        return saveAliasRequests(inheritedRequests(aliases), Long.valueOf(expectedRevision));
+    }
+
+    /**
+     * Saves a mixed create/update batch. New rows explicitly choose inherited or submitted routing; existing rows
+     * always preserve their current scan-list memberships unless a separate replacement command is used.
+     */
+    public MutationResult saveAliasRequests(List<AliasSaveRequest> requests, long expectedRevision)
+    {
+        return saveAliasRequests(requests, Long.valueOf(expectedRevision));
+    }
+
+    public MutationResult saveAliasRequests(List<AliasSaveRequest> requests)
+    {
+        return saveAliasRequests(requests, null);
     }
 
     /**
@@ -646,23 +680,94 @@ public final class AliasAdministrationService
         return mutate(expectedRevision, () -> saveAliasesTarget(prepared));
     }
 
-    /** Creates one detached Alias and its initial memberships in the same candidate snapshot. */
-    private MutationTarget saveNewAliasWithMembershipsTarget(Alias prepared, Set<Long> scanListIds)
+    private MutationResult saveAliasRequests(List<AliasSaveRequest> requests, Long expectedRevision)
     {
-        AliasListDefinition definition = resolveAliasList(prepared);
-        validateAlias(prepared, definition, null);
-        prepared.setAliasListDefinition(definition);
-        prepared.setId(nextAliasId());
-        scanListModel().replaceAliasMemberships(prepared.getId(), scanListIds);
-        aliasModel().addAliases(List.of(prepared));
-        return new MutationTarget(null, List.of(), 1, List.of(prepared),
-            PublicationMode.SCAN_LISTS_THEN_ALIASES, null);
+        if(requests == null || requests.isEmpty())
+        {
+            throw new IllegalArgumentException("Select at least one Alias to save");
+        }
+
+        List<PreparedAliasRequest> prepared = new ArrayList<>(requests.size());
+        Set<Alias> instances = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for(AliasSaveRequest request: requests)
+        {
+            Objects.requireNonNull(request, "Alias save request cannot be null");
+            if(!instances.add(request.alias()))
+            {
+                throw new IllegalArgumentException("Aliases to save must be unique instances");
+            }
+            Alias alias = request.alias().getId() == Alias.UNASSIGNED_ID ? prepareNewAlias(request.alias()) :
+                prepareReplacement(request.alias().getId(), request.alias());
+            prepared.add(new PreparedAliasRequest(alias, request.creationRouting(), request.scanListIds()));
+        }
+
+        return mutate(expectedRevision, () -> saveAliasRequestsTarget(prepared));
     }
 
-    private long nextAliasId()
+    private MutationTarget saveAliasRequestsTarget(List<PreparedAliasRequest> requests)
     {
-        return identityAllocator().nextAliasIds(aliasModel().getAliases().stream().map(Alias::getId).toList(), 1)
-            .getFirst();
+        for(PreparedAliasRequest request: requests)
+        {
+            Alias alias = request.alias();
+            if(alias.getId() == Alias.UNASSIGNED_ID && request.creationRouting() == CreationRouting.INHERIT_DEFAULTS)
+            {
+                applyDefaults(alias);
+            }
+        }
+
+        MutationTarget target = saveAliasesTarget(requests.stream().map(PreparedAliasRequest::alias).toList());
+        boolean membershipsChanged = false;
+        for(PreparedAliasRequest request: requests)
+        {
+            Alias alias = request.alias();
+            if(request.wasNew())
+            {
+                Set<Long> memberships = request.creationRouting() == CreationRouting.INHERIT_DEFAULTS ?
+                    inheritedScanListIds(alias) : validatedScanListIds(request.scanListIds());
+                scanListModel().replaceAliasMemberships(alias.getId(), memberships);
+                membershipsChanged |= !memberships.isEmpty();
+            }
+        }
+        return membershipsChanged ? target.withPublication(PublicationMode.SCAN_LISTS_THEN_ALIASES) : target;
+    }
+
+    private void applyDefaults(Alias alias)
+    {
+        if(!inheritsAliasListDefaults(alias))
+        {
+            return;
+        }
+
+        AliasListDefaults defaults = defaultsFor(resolveAliasList(alias));
+        alias.setRecordable(defaults.isRecordEnabled());
+        alias.setBroadcastChannels(defaults.streamDestinationNames().stream().map(BroadcastChannel::new).toList());
+    }
+
+    private Set<Long> inheritedScanListIds(Alias alias)
+    {
+        return inheritsAliasListDefaults(alias) ? defaultsFor(resolveAliasList(alias)).scanListIds() : Set.of();
+    }
+
+    private AliasListDefaults defaultsFor(AliasListDefinition definition)
+    {
+        return new AliasListDefaults(definition.getUnmatchedTalkgroupPolicy(),
+            scanListModel().scanListIdsForUnmatchedTalkgroups(definition.getId()));
+    }
+
+    private static boolean inheritsAliasListDefaults(Alias alias)
+    {
+        return alias != null && (alias.getMatchIdentifier() instanceof Talkgroup ||
+            alias.getMatchIdentifier() instanceof TalkgroupRange);
+    }
+
+    private static List<AliasSaveRequest> inheritedRequests(List<Alias> aliases)
+    {
+        if(aliases == null)
+        {
+            return null;
+        }
+        return aliases.stream().map(alias -> alias != null && alias.getId() == Alias.UNASSIGNED_ID ?
+            AliasSaveRequest.inherit(alias) : AliasSaveRequest.preserve(alias)).toList();
     }
 
     private long nextAliasListId()
@@ -870,35 +975,6 @@ public final class AliasAdministrationService
         Alias prepared = prepareNewAlias(source);
         prepared.setId(requirePositiveId(aliasId, "Alias ID"));
         return prepared;
-    }
-
-    private static List<Alias> prepareAliases(List<Alias> aliases)
-    {
-        if(aliases == null || aliases.isEmpty())
-        {
-            throw new IllegalArgumentException("Select at least one Alias to save");
-        }
-
-        Set<Long> persistedIds = new HashSet<>();
-        Set<Alias> instances = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-        List<Alias> prepared = new ArrayList<>(aliases.size());
-        for(Alias source: aliases)
-        {
-            Objects.requireNonNull(source, "Alias cannot be null");
-            if(!instances.add(source))
-            {
-                throw new IllegalArgumentException("Aliases to save must be unique instances");
-            }
-            Alias copy = copyAlias(source);
-            requireName(copy.getName(), "Alias name");
-            if(copy.getId() > Alias.UNASSIGNED_ID && !persistedIds.add(copy.getId()))
-            {
-                throw new IllegalArgumentException("Alias IDs to save must be unique");
-            }
-            prepared.add(copy);
-        }
-
-        return List.copyOf(prepared);
     }
 
     private AliasListDefinition resolveAliasList(Alias alias)
@@ -1562,6 +1638,43 @@ public final class AliasAdministrationService
         }
     }
 
+    public record AliasListDefaultsEntry(long revision, long aliasListId, AliasListDefaults defaults)
+    {
+    }
+
+    public enum CreationRouting
+    {
+        INHERIT_DEFAULTS,
+        EXPLICIT,
+        PRESERVE
+    }
+
+    public record AliasSaveRequest(Alias alias, CreationRouting creationRouting, Set<Long> scanListIds)
+    {
+        public AliasSaveRequest
+        {
+            Objects.requireNonNull(alias, "Alias cannot be null");
+            Objects.requireNonNull(creationRouting, "Creation routing cannot be null");
+            scanListIds = scanListIds != null ? Set.copyOf(new LinkedHashSet<>(scanListIds)) : Set.of();
+        }
+
+        public static AliasSaveRequest inherit(Alias alias)
+        {
+            return new AliasSaveRequest(alias, CreationRouting.INHERIT_DEFAULTS, Set.of());
+        }
+
+        public static AliasSaveRequest explicit(Alias alias, Collection<Long> scanListIds)
+        {
+            return new AliasSaveRequest(alias, CreationRouting.EXPLICIT,
+                scanListIds != null ? new LinkedHashSet<>(scanListIds) : Set.of());
+        }
+
+        public static AliasSaveRequest preserve(Alias alias)
+        {
+            return new AliasSaveRequest(alias, CreationRouting.PRESERVE, Set.of());
+        }
+    }
+
     public record Options(long revision, AliasListDefinition aliasList, List<AliasMatchDescriptor> matchers,
                           List<String> iconNames, List<String> streamNames, List<String> groupNames,
                           List<ScanList> scanLists, Set<Long> unmatchedScanListIds)
@@ -1721,6 +1834,15 @@ public final class AliasAdministrationService
 
     private record ScanListMutation(ScanList scanList, int affected)
     {
+    }
+
+    private record PreparedAliasRequest(Alias alias, CreationRouting creationRouting, Set<Long> scanListIds,
+                                        boolean wasNew)
+    {
+        private PreparedAliasRequest(Alias alias, CreationRouting creationRouting, Set<Long> scanListIds)
+        {
+            this(alias, creationRouting, scanListIds, alias.getId() == Alias.UNASSIGNED_ID);
+        }
     }
 
     private record MutationWorkspace(AliasModel aliasModel, ScanListModel scanListModel)

@@ -313,10 +313,13 @@ class StatsWebAliasCatalogUiContractTest
         }
         assertTrue(policy.contains("aliasScanListChoices(options, policy.scan_list_ids || [])"));
         assertTrue(policy.contains("selectedAliasScanListIds(form)"));
-        assertTrue(policy.contains("'Unknown talkgroup scan-list delivery'"));
-        assertTrue(policy.contains("'Save Global Settings'"));
+        assertTrue(policy.contains("'Scan List'"));
+        assertTrue(policy.contains("'Save Alias List Defaults'"));
+        assertTrue(policy.contains("'Recording'"));
+        assertTrue(policy.contains("'Streaming'"));
+        assertTrue(policy.contains("including sensitive traffic"));
         assertTrue(prefill.contains("scan_list_ids: [...(policy.scan_list_ids || [])]"));
-        assertTrue(renderer.contains("'Global Settings'"));
+        assertTrue(renderer.contains("'Alias List Defaults'"));
         assertFalse(policy.contains("listen_enabled"));
         assertFalse(policy.contains("priority"));
 
@@ -351,10 +354,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(create.contains("observedTalkgroupPromotionReason(row)"));
         assertTrue(detail.contains("observedTalkgroupPromotionSupported(row)"));
         assertTrue(prefill.contains("stream_as_talkgroup: null"));
-        assertTrue(prefill.contains("copy_actions_from_alias_id"));
-        assertTrue(editor.contains("rangeActionsPromise"));
-        assertTrue(editor.contains("/api/v1/admin/aliases/${Number(prefill.copy_actions_from_alias_id)}"));
-        assertTrue(editor.contains("['recordable', 'broadcast_channels', 'scan_list_ids']"));
+        assertFalse(prefill.contains("copy_actions_from_alias_id"));
+        assertFalse(editor.contains("rangeActionsPromise"));
         assertTrue(editor.contains("selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName))"));
     }
 
