@@ -427,9 +427,13 @@ public class Alias
 
     public static Callback<Alias,Observable[]> extractor()
     {
+        //Overlap is derived while an AliasList rebuilds its lookup index.  Publishing that derived change through
+        //the owning model's extractor can reenter a structural list-change notification (for example, while a
+        //cloned alias is being added) and corrupt FilteredList/SortedList projections.  Controls that display overlap
+        //bind to overlapProperty() directly, so it must not be a structural model invalidation signal.
         return alias -> new Observable[] {alias.recordableProperty(), alias.streamableProperty(),
             alias.colorProperty(), alias.aliasListNameProperty(), alias.descriptionProperty(), alias.groupProperty(),
-            alias.iconNameProperty(), alias.nameProperty(), alias.overlapProperty(), alias.priorityProperty(),
+            alias.iconNameProperty(), alias.nameProperty(), alias.priorityProperty(),
             alias.streamTalkgroupAliasProperty(), alias.matchIdentifierProperty(), alias.broadcastChannels()};
     }
 }

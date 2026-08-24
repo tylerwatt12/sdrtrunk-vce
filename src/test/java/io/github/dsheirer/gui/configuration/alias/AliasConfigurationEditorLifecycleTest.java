@@ -146,6 +146,76 @@ class AliasConfigurationEditorLifecycleTest
     }
 
     @Test
+    void cloneSaveButtonWithActiveOverlapIndexPublishesOneCanonicalRowBeforeAndAfterReload() throws Exception
+    {
+        AliasListDefinition source = new AliasListDefinition("Source", AliasListFamily.P25);
+        AliasListDefinition target = new AliasListDefinition("Target", AliasListFamily.P25);
+        List<Alias> aliases = List.of(alias("Two", 2), alias("Ten", 10), alias("Alpha", 100),
+            alias("Bravo", 200), alias("Charlie", 300));
+        aliases.forEach(alias -> alias.setAliasListDefinition(source));
+        Alias targetAnchor = alias("Target Anchor", 900);
+        targetAnchor.setAliasListDefinition(target);
+        Fixture fixture = createFixture(
+            List.of(aliases.get(0), aliases.get(1), aliases.get(2), aliases.get(3), aliases.get(4), targetAnchor),
+            List.of(source, target));
+        //Materialize the runtime lookup list so saving the duplicate matcher rebuilds its overlap index.  The overlap
+        //changes occur inside the model add notification and previously corrupted the filtered/sorted table view.
+        mManager.getAliasModel().getAliasList("Source");
+        Alias alpha = liveAlias("Alpha");
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            aliasListComboBox(mEditor).getSelectionModel().select("Source");
+            TableColumn<Alias,?> identifier = table(mEditor).getColumns().stream()
+                .filter(column -> "Identifier".equals(column.getText())).findFirst().orElseThrow();
+            identifier.setSortType(TableColumn.SortType.ASCENDING);
+            table(mEditor).getSortOrder().setAll(identifier);
+            table(mEditor).sort();
+            table(mEditor).getSelectionModel().select(alpha);
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            cloneButton(mEditor).fire();
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+        assertEquals(5, JavaFxTestSupport.onFxThread(() -> table(mEditor).getItems().size()));
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            AliasItemEditor editor = itemEditor(mEditor);
+            editor.getNameField().setText("Alpha Clone");
+            saveButton(editor).fire();
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        assertCanonicalLiveAliases(7);
+        assertCanonicalOverlappingSourceAliases();
+        assertEquals(7, loadAliases(fixture.database()).size());
+        assertEquals(6, JavaFxTestSupport.onFxThread(() -> table(mEditor).getItems().size()));
+        assertEquals(1, JavaFxTestSupport.onFxThread(() -> table(mEditor).getItems().stream()
+            .filter(alias -> "Alpha Clone".equals(alias.getName())).count()));
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            mManager.init();
+            aliasListComboBox(mEditor).getSelectionModel().select("Source");
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        assertCanonicalLiveAliases(7);
+        assertCanonicalOverlappingSourceAliases();
+        assertEquals(6, JavaFxTestSupport.onFxThread(() -> table(mEditor).getItems().size()));
+        assertEquals(1, JavaFxTestSupport.onFxThread(() -> table(mEditor).getItems().stream()
+            .filter(alias -> "Alpha Clone".equals(alias.getName())).count()));
+    }
+
+    @Test
     void sortChangingSaveKeepsTheNewlySelectedAlias() throws Exception
     {
         createFixture(List.of(alias("Alpha", 100), alias("Bravo", 200)));
@@ -634,6 +704,25 @@ class AliasConfigurationEditorLifecycleTest
             .filter(alias -> name.equals(alias.getName())).findFirst().orElseThrow();
     }
 
+    private void assertCanonicalLiveAliases(int expected)
+    {
+        List<Alias> aliases = mManager.getAliasModel().getAliases();
+        assertEquals(expected, aliases.size());
+        assertEquals(expected, new HashSet<>(aliases.stream().map(Alias::getId).toList()).size());
+    }
+
+    private void assertCanonicalOverlappingSourceAliases()
+    {
+        List<Alias> sourceAliases = mManager.getAliasModel().getAliasList("Source").aliases();
+        List<Alias> talkgroupOneHundred = sourceAliases.stream()
+            .filter(alias -> alias.getMatchIdentifier() instanceof Talkgroup talkgroup &&
+                talkgroup.getValue() == 100)
+            .toList();
+        assertEquals(6, sourceAliases.size());
+        assertEquals(2, talkgroupOneHundred.size());
+        assertTrue(talkgroupOneHundred.stream().anyMatch(alias -> alias.overlapProperty().get()));
+    }
+
     private static boolean fireOpenDialogButton(ButtonType buttonType)
     {
         for(Window window: Window.getWindows())
@@ -705,6 +794,16 @@ class AliasConfigurationEditorLifecycleTest
     private static Button cloneButton(AliasConfigurationEditor editor)
     {
         return field(editor, "mCloneAliasButton", Button.class);
+    }
+
+    private static ComboBox<String> aliasListComboBox(AliasConfigurationEditor editor)
+    {
+        return field(editor, "mAliasListNameComboBox", ComboBox.class);
+    }
+
+    private static Button saveButton(AliasItemEditor editor)
+    {
+        return field(editor, "mSaveButton", Button.class);
     }
 
     private static AliasItemEditor itemEditor(AliasConfigurationEditor editor)
