@@ -35,6 +35,8 @@ import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -53,6 +55,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.value.ObservableValue;
@@ -247,7 +250,9 @@ public class SiteEditor extends GridPane
                 return createNXDNDecodeConfiguration(mRadioReferenceDecoder.getFlavor(systemInformation),
                     mRadioReferenceDecoder.getChannelMap(systemInformation, site));
             case P25_PHASE1:
-                return DecoderFactory.getDecodeConfiguration(decoderType);
+                DecodeConfigP25Phase1 p25Phase1 = new DecodeConfigP25Phase1();
+                p25Phase1.setModulation(getP25Phase1Modulation(site));
+                return p25Phase1;
             case P25_PHASE2:
                 DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
 
@@ -303,6 +308,45 @@ public class SiteEditor extends GridPane
             default:
                 return DecoderFactory.getDecodeConfiguration(decoderType);
         }
+    }
+
+    /**
+     * Maps the RadioReference site modulation to the P25 Phase 1 decoder waveform.  The structured modulation field
+     * takes precedence over the site description.  Some RadioReference simulcast sites do not have a modulation value,
+     * so a description containing "simulcast" is used as a fallback.
+     */
+    static Modulation getP25Phase1Modulation(Site site)
+    {
+        if(site == null)
+        {
+            return Modulation.C4FM;
+        }
+
+        String modulation = site.getModulation();
+
+        if(modulation != null && !modulation.isBlank())
+        {
+            String normalized = modulation.toUpperCase(Locale.ROOT);
+
+            if(normalized.contains("CQPSK") || normalized.contains("LSM"))
+            {
+                return Modulation.CQPSK;
+            }
+
+            if(normalized.contains("C4FM"))
+            {
+                return Modulation.C4FM;
+            }
+        }
+
+        String description = site.getDescription();
+
+        if(description != null && description.toLowerCase(Locale.ROOT).contains("simulcast"))
+        {
+            return Modulation.CQPSK;
+        }
+
+        return Modulation.C4FM;
     }
 
     /**
