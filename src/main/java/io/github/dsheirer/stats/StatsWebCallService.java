@@ -49,6 +49,7 @@ final class StatsWebCallService implements AutoCloseable
     private static final int EVENT_QUEUE_CAPACITY = 256;
     static final int MAXIMUM_SNAPSHOT_CALLS = 128;
     static final int MAXIMUM_METADATA_TEXT_CHARACTERS = 256;
+    static final int MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS = 160;
     /** Maximum encoded size demonstrated for 128 calls when every externally derived field needs JSON escaping. */
     static final int MAXIMUM_SNAPSHOT_JSON_BYTES = 4 * 1024 * 1024;
     static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
@@ -511,11 +512,20 @@ final class StatsWebCallService implements AutoCloseable
             Role.ANY));
         putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
         putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
+        putText(value, "source_description", recordingMetadata != null ? recordingMetadata.sourceDescription() : null,
+            MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
+        putText(value, "source_group", recordingMetadata != null ? recordingMetadata.sourceGroup() : null,
+            MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
         putText(value, "source_form", form(source));
         putText(value, "talker_alias", identifierValue(identifiers, IdentifierClass.USER, Form.TALKER_ALIAS,
             Role.FROM));
         putText(value, "target_id", recordingMetadata != null ? recordingMetadata.destinationValue() : value(target));
         putText(value, "target_alias", recordingMetadata != null ? recordingMetadata.destinationAlias() : null);
+        putText(value, "target_description",
+            recordingMetadata != null ? recordingMetadata.destinationDescription() : null,
+            MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
+        putText(value, "target_group", recordingMetadata != null ? recordingMetadata.destinationGroup() : null,
+            MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
         putText(value, "target_form", form(target));
         putText(value, "protocol", target != null && target.getProtocol() != null ? target.getProtocol().name() :
             recordingMetadata != null ? recordingMetadata.destinationProtocol() : null);
@@ -645,7 +655,22 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
+    private static void putText(Map<String,Object> values, String key, Object value, int maximumCharacters)
+    {
+        String bounded = boundedText(value, maximumCharacters);
+
+        if(bounded != null)
+        {
+            values.put(key, bounded);
+        }
+    }
+
     static String boundedText(Object value)
+    {
+        return boundedText(value, MAXIMUM_METADATA_TEXT_CHARACTERS);
+    }
+
+    private static String boundedText(Object value, int maximumCharacters)
     {
         if(value == null)
         {
@@ -654,12 +679,12 @@ final class StatsWebCallService implements AutoCloseable
 
         String text = value.toString();
 
-        if(text.length() <= MAXIMUM_METADATA_TEXT_CHARACTERS)
+        if(text.length() <= maximumCharacters)
         {
             return text;
         }
 
-        int end = MAXIMUM_METADATA_TEXT_CHARACTERS;
+        int end = maximumCharacters;
 
         if(Character.isHighSurrogate(text.charAt(end - 1)) && Character.isLowSurrogate(text.charAt(end)))
         {

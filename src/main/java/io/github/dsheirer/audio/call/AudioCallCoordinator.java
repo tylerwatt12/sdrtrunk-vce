@@ -1377,8 +1377,10 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             winnerMetadata.channelIdentity(), selectedMetadata.aliasListName(),
             selectedMetadata.destinationProtocol(), selectedMetadata.destinationValue(),
             selectedMetadata.destinationIdentity(), selectedMetadata.destinationAlias(),
+            selectedMetadata.destinationDescription(), selectedMetadata.destinationGroup(),
             selectedMetadata.destinationMatcherIdentity(), true, winnerMetadata.sourceProtocol(),
-            winnerMetadata.sourceValue(), winnerMetadata.sourceAlias());
+            winnerMetadata.sourceValue(), winnerMetadata.sourceAlias(), winnerMetadata.sourceDescription(),
+            winnerMetadata.sourceGroup());
     }
 
     /**

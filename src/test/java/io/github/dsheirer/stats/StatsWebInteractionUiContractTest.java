@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"94\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"96\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=78"));
+        assertTrue(html.contains("/assets/app.css?v=80"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -616,8 +616,9 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
-        assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=14"));
+        assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
+        assertFalse(html.contains("id=\"playback-volume-value\""));
+        assertTrue(html.contains("/assets/web-call-player.js?v=15"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -630,7 +631,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(ensureAudioContext.contains("this.gainNode.gain.value = this.volume"));
         assertTrue(startCurrent.contains("source.connect(this.gainNode)"));
         assertTrue(css.contains(".playback-volume input:focus-visible"));
-        assertTrue(css.contains("accent-color: #36a99e"));
+        assertTrue(css.contains(".playback-volume input::-webkit-slider-runnable-track"));
+        assertTrue(css.contains("height: 14px"));
     }
 
     @Test
@@ -781,6 +783,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-bar\""));
         assertTrue(html.contains("id=\"playback-avoid-list\""));
         assertTrue(html.contains("id=\"playback-clear-queue\""));
+        assertTrue(html.contains("id=\"icon-play\""));
+        assertTrue(html.contains("id=\"icon-pause\""));
+        assertTrue(html.contains("id=\"icon-skip\""));
+        assertTrue(html.contains("id=\"icon-clear-queue\""));
+        assertTrue(html.contains("id=\"playback-hold\"") && html.contains(">H</button>"));
+        assertTrue(html.contains("id=\"playback-avoid\"") && html.contains(">A</button>"));
+        assertTrue(html.contains("class=\"playback-command-group\""));
+        assertTrue(html.contains("class=\"playback-scan-list-label\">Scan Lists:</span>"));
+        assertFalse(html.contains("Choose scan lists"));
+        assertFalse(html.contains("class=\"playback-field\">Now</span>"));
         assertFalse(html.contains("id=\"playback-clear\""));
         assertTrue(scanner.contains("scanner-player-host"));
         assertTrue(scanner.contains("scanner-chassis"));
@@ -792,12 +804,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Recent Calls"));
         assertTrue(scanner.contains("Clear Queue"));
         assertTrue(scanner.contains("View coverage tree"));
-        assertTrue(source.contains("scannerField('Target Alias'"));
-        assertTrue(source.contains("scannerField('Source Alias / Talker Alias'"));
+        assertTrue(source.contains("scannerParticipant('Target'"));
+        assertTrue(source.contains("scannerParticipant('Source'"));
         assertTrue(source.contains("scannerField('Identifier'"));
         assertTrue(source.contains("scannerField('Frequency'"));
         assertTrue(source.contains("scannerField('Modulation'"));
         assertTrue(source.contains("function scannerVoiceMeter(call)"));
+        assertTrue(source.contains("function scannerParticipant("));
+        assertTrue(source.contains("scannerField('Matched Scan Lists'"));
+        assertTrue(source.contains("['System Identity', call.system_identity]"));
+        assertTrue(source.contains("['Site Identity', call.site_identity]"));
+        assertTrue(source.contains("['Channel Identity', call.channel_identity]"));
         assertFalse(scanner.contains("Squelch"));
         assertFalse(scanner.contains("Tune"));
         assertFalse(scanner.contains("RF Signal"));
@@ -805,6 +822,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".scanner-chassis {"));
         assertTrue(css.contains(".scanner-field-grid {"));
         assertTrue(css.contains(".scanner-quality-meter {"));
+        assertTrue(css.contains(".scanner-quality-bars {"));
+        assertFalse(css.contains(".scanner-quality-track {"));
+        assertTrue(css.contains(".scanner-participant-grid {"));
         assertTrue(css.contains("font-size: 14px;"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-scan-button.active {"));

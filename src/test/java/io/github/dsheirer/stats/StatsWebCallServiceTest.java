@@ -202,6 +202,12 @@ class StatsWebCallServiceTest
             maximumCall.put(field, maximallyEscaped);
         }
 
+        String maximumAliasMetadata = "\u0001".repeat(StatsWebCallService.MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
+        for(String field: List.of("source_description", "source_group", "target_description", "target_group"))
+        {
+            maximumCall.put(field, maximumAliasMetadata);
+        }
+
         maximumCall.put("source_form", "RADIO");
         maximumCall.put("target_form", "TALKGROUP");
         maximumCall.put("completed_at_ms", Long.MAX_VALUE);
@@ -569,11 +575,19 @@ class StatsWebCallServiceTest
         definition.setId(10);
         Alias destination = alias(101, "Dispatch", new Talkgroup(Protocol.APCO25, 4400), definition);
         Alias source = alias(102, "Unit 9001", new Radio(Protocol.APCO25, 9001), definition);
+        destination.setDescription("County dispatch channel");
+        destination.setGroup("Dispatch");
+        source.setDescription("Patrol unit");
+        source.setGroup("Police radios");
         AliasList aliasList = new AliasList(definition);
         aliasList.addAliases(List.of(destination, source));
         CompletedAudioCall completed = withAliasList(call(), aliasList);
         destination.setName("Renamed dispatch");
+        destination.setDescription("Renamed destination description");
+        destination.setGroup("Renamed destination group");
         source.setName("Renamed unit");
+        source.setDescription("Renamed source description");
+        source.setGroup("Renamed source group");
 
         StatsWebCallService service = new StatsWebCallService(
             scanListModel(Map.of(101L, Set.of(2L), 102L, Set.of(2L))), WebCallConfiguration.defaults());
@@ -585,7 +599,11 @@ class StatsWebCallServiceTest
             StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
             assertNotNull(event);
             assertEquals("Dispatch", metadata(event).get("target_alias"));
+            assertEquals("County dispatch channel", metadata(event).get("target_description"));
+            assertEquals("Dispatch", metadata(event).get("target_group"));
             assertEquals("Unit 9001", metadata(event).get("source_alias"));
+            assertEquals("Patrol unit", metadata(event).get("source_description"));
+            assertEquals("Police radios", metadata(event).get("source_group"));
         }
         finally
         {

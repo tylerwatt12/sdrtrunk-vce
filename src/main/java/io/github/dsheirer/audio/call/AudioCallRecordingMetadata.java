@@ -41,9 +41,11 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
                                          String siteIdentity, String channelName, String channelIdentity,
                                          String aliasListName, String destinationProtocol, String destinationValue,
                                          String destinationIdentity, String destinationAlias,
+                                         String destinationDescription, String destinationGroup,
                                          String destinationMatcherIdentity,
                                          boolean destinationTalkgroupRecordEnabled, String sourceProtocol,
-                                         String sourceValue, String sourceAlias)
+                                         String sourceValue, String sourceAlias, String sourceDescription,
+                                         String sourceGroup)
 {
     private static final int MAXIMUM_LABEL_LENGTH = 160;
 
@@ -73,8 +75,9 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         return new AudioCallRecordingMetadata(label(system), nullSafe(system), label(site), stableSiteIdentity,
             label(channel), stableChannelIdentity, label(aliasList), safeDestination.protocol(),
             safeDestination.value(), safeDestination.receivedIdentity(), safeDestination.aliasName(),
-            safeDestination.matcherIdentity(), safeDestination.recordEnabled(), safeSource.protocol(),
-            safeSource.value(), safeSource.aliasName());
+            safeDestination.aliasDescription(), safeDestination.aliasGroup(), safeDestination.matcherIdentity(),
+            safeDestination.recordEnabled(), safeSource.protocol(), safeSource.value(), safeSource.aliasName(),
+            safeSource.aliasDescription(), safeSource.aliasGroup());
     }
 
     public static boolean isDestination(Identifier<?> identifier)
@@ -97,8 +100,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
         if(aliasList == null || destination == null)
         {
-            return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity,
-                false);
+            return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, null, null,
+                fallbackIdentity, false);
         }
 
         List<TalkgroupIdentifier> candidates = new ArrayList<>();
@@ -115,8 +118,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         }
         else
         {
-            return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity,
-                false);
+            return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, null, null,
+                fallbackIdentity, false);
         }
 
         DestinationDecision firstMatch = null;
@@ -134,7 +137,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
                 String matcherIdentity = matcher != null ? matcherIdentity(matcher) :
                     receivedDestinationIdentity(candidate);
                 DestinationDecision match = new DestinationDecision(protocol(destination), value, fallbackIdentity,
-                    label(alias.getName()), matcherIdentity, alias.isRecordable());
+                    label(alias.getName()), label(alias.getDescription()), label(alias.getGroup()), matcherIdentity,
+                    alias.isRecordable());
 
                 if(match.recordEnabled())
                 {
@@ -154,8 +158,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         }
 
         UnmatchedTalkgroupPolicy unmatchedPolicy = aliasList.getUnmatchedTalkgroupPolicy(destination);
-        return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity,
-            unmatchedPolicy != null && unmatchedPolicy.isRecordEnabled());
+        return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, null, null,
+            fallbackIdentity, unmatchedPolicy != null && unmatchedPolicy.isRecordEnabled());
     }
 
     public static SourceDecision captureSource(AliasList aliasList, Identifier<?> source)
@@ -166,6 +170,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         }
 
         String aliasName = null;
+        String aliasDescription = null;
+        String aliasGroup = null;
 
         if(aliasList != null)
         {
@@ -173,12 +179,15 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
             if(!aliases.isEmpty())
             {
-                aliasName = label(aliases.getFirst().getName());
+                Alias alias = aliases.getFirst();
+                aliasName = label(alias.getName());
+                aliasDescription = label(alias.getDescription());
+                aliasGroup = label(alias.getGroup());
             }
         }
 
         return new SourceDecision(protocol(source),
-            source.getValue() != null ? source.getValue().toString() : null, aliasName);
+            source.getValue() != null ? source.getValue().toString() : null, aliasName, aliasDescription, aliasGroup);
     }
 
     private static AliasID matchingTalkgroupAliasId(Alias alias, TalkgroupIdentifier destination)
@@ -310,19 +319,21 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
     }
 
     public record DestinationDecision(String protocol, String value, String receivedIdentity, String aliasName,
-                                      String matcherIdentity, boolean recordEnabled)
+                                      String aliasDescription, String aliasGroup, String matcherIdentity,
+                                      boolean recordEnabled)
     {
         static DestinationDecision empty()
         {
-            return new DestinationDecision(null, null, null, null, null, false);
+            return new DestinationDecision(null, null, null, null, null, null, null, false);
         }
     }
 
-    public record SourceDecision(String protocol, String value, String aliasName)
+    public record SourceDecision(String protocol, String value, String aliasName, String aliasDescription,
+                                 String aliasGroup)
     {
         static SourceDecision empty()
         {
-            return new SourceDecision(null, null, null);
+            return new SourceDecision(null, null, null, null, null);
         }
     }
 }

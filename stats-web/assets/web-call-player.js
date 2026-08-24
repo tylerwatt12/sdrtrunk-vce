@@ -320,9 +320,9 @@ class WebCallPlayer {
         this.ui.scanListSummary.removeAttribute('title');
       } else {
         const selected = this.scanLists.filter((item) => this.selectedScanListIds.has(item.id));
-        this.ui.scanListSummary.textContent = !selected.length ? 'None' :
-          (selected.length === 1 ? selected[0].name : `${selected.length} lists`);
-        this.ui.scanListSummary.title = selected.map((item) => item.name).join(', ');
+        this.ui.scanListSummary.textContent = String(selected.length);
+        this.ui.scanListSummary.title = selected.length ? selected.map((item) => item.name).join(', ') :
+          'No scan lists selected';
       }
     }
     if (!this.ui.scanListOptions) return;
@@ -1068,7 +1068,6 @@ class WebCallPlayer {
   }
 
   renderVolume() {
-    this.ui.volumeValue.value = `${Math.round(this.volume * 100)}%`;
     this.ui.volume.setAttribute('aria-valuetext', `${Math.round(this.volume * 100)} percent`);
   }
 
@@ -1193,22 +1192,28 @@ class WebCallPlayer {
       this.ui.queueList.append(empty);
     }
 
-    this.ui.play.textContent = this.paused ? 'Play' : 'Pause';
+    const playLabel = this.paused ? 'Play browser call audio' : 'Pause browser call audio';
+    const playIcon = this.ui.play.querySelector('use');
+    if (playIcon) playIcon.setAttribute('href', this.paused ? '#icon-play' : '#icon-pause');
     this.ui.play.classList.toggle('active', !this.paused);
     this.ui.play.setAttribute('aria-pressed', String(!this.paused));
-    this.ui.play.title = this.paused ? 'Play browser call audio' : 'Pause browser call audio';
+    this.ui.play.setAttribute('aria-label', playLabel);
+    this.ui.play.title = playLabel;
     this.ui.replay.disabled = !currentReady;
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));
     this.ui.hold.disabled = Boolean(this.recentReplay) || (!this.holdTarget && !currentReady);
     this.ui.hold.title = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';
+    this.ui.hold.setAttribute('aria-label', this.ui.hold.title);
     this.ui.avoid.disabled = !currentReady || Boolean(this.recentReplay);
     if (this.ui.avoidList) {
-      this.ui.avoidList.textContent = this.avoids.size ? `Avoids (${this.avoids.size})` : 'Avoids';
-      this.ui.avoidList.title = `View ${this.avoids.size} browser avoid(s)`;
+      const avoidListLabel = `View ${this.avoids.size} browser avoid(s)`;
+      this.ui.avoidList.setAttribute('aria-label', avoidListLabel);
+      this.ui.avoidList.title = avoidListLabel;
     }
     if (this.ui.clearQueue) {
       this.ui.clearQueue.disabled = !this.queuedCount;
       this.ui.clearQueue.title = `Clear ${this.queuedCount} queued browser call(s)`;
+      this.ui.clearQueue.setAttribute('aria-label', this.ui.clearQueue.title);
     }
     this.ui.skip.disabled = !this.current && !this.queuedCount;
     this.renderProgress();

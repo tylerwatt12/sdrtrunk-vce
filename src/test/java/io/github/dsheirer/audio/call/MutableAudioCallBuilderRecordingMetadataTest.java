@@ -35,9 +35,13 @@ class MutableAudioCallBuilderRecordingMetadataTest
     {
         Alias destinationAlias = new Alias("Fire Dispatch");
         destinationAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 56138));
+        destinationAlias.setDescription("Primary fire dispatch");
+        destinationAlias.setGroup("Fire");
         destinationAlias.setRecordable(true);
         Alias sourceAlias = new Alias("Engine 12");
         sourceAlias.setMatchIdentifier(new Radio(Protocol.APCO25, 120012));
+        sourceAlias.setDescription("Station 12 engine");
+        sourceAlias.setGroup("Apparatus");
         AliasList aliasList = new AliasList(
             new AliasListDefinition("Primary", AliasListFamily.P25));
         aliasList.addAlias(destinationAlias);
@@ -48,13 +52,21 @@ class MutableAudioCallBuilderRecordingMetadataTest
             APCO25RadioIdentifier.createFrom(120012)));
 
         destinationAlias.setName("Renamed Dispatch");
+        destinationAlias.setDescription("Changed destination description");
+        destinationAlias.setGroup("Changed destination group");
         destinationAlias.setRecordable(false);
         sourceAlias.setName("Renamed Radio");
+        sourceAlias.setDescription("Changed source description");
+        sourceAlias.setGroup("Changed source group");
         AudioCallRecordingMetadata metadata = builder.getRecordingMetadata();
 
         assertEquals("APCO25:TALKGROUP:56138", metadata.destinationIdentity());
         assertEquals("Fire Dispatch", metadata.destinationAlias());
+        assertEquals("Primary fire dispatch", metadata.destinationDescription());
+        assertEquals("Fire", metadata.destinationGroup());
         assertEquals("Engine 12", metadata.sourceAlias());
+        assertEquals("Station 12 engine", metadata.sourceDescription());
+        assertEquals("Apparatus", metadata.sourceGroup());
         assertTrue(metadata.destinationTalkgroupRecordEnabled());
         assertTrue(builder.isRecordAudio());
         assertSame(metadata, builder.getRecordingMetadata());

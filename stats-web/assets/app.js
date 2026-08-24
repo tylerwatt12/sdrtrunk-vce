@@ -6838,7 +6838,6 @@ function synchronizePlaybackAccess(accessChanged = false) {
       avoidList: 'playback-avoid-list',
       clearQueue: 'playback-clear-queue',
       volume: 'playback-volume',
-      volumeValue: 'playback-volume-value',
       current: 'playback-current',
       queued: 'playback-queued',
       missed: 'playback-missed',
@@ -6951,6 +6950,13 @@ function scannerSourceAlias(call) {
   return alias || talker || '';
 }
 
+function scannerMatchedScanLists(call, state) {
+  const values = call?._matchedScanListIds ?? call?.scan_list_ids ?? [];
+  const ids = Array.isArray(values) ? [...new Set(values.map(String))] : [];
+  const names = new Map((state?.scanLists || []).map((item) => [String(item.id), item.name]));
+  return ids.map((id) => names.get(id) || `Scan list ${id}`).join(' · ');
+}
+
 function scannerFrequency(call) {
   const frequency = Number(call?.frequency_hz);
   return Number.isFinite(frequency) && frequency > 0 ? `${(frequency / 1_000_000).toFixed(5)} MHz` : '';
@@ -6975,6 +6981,20 @@ function scannerField(label, value, level, action, wide = false) {
     field.append(node('strong', 'scanner-field-value', text));
   }
   return field;
+}
+
+function scannerParticipant(title, alias, identifier, description, group, aliasAction, identifierAction) {
+  const participant = node('section', 'scanner-participant');
+  participant.append(node('strong', 'scanner-participant-heading', title));
+  const fields = node('div', 'scanner-participant-fields');
+  [
+    scannerField(title === 'Source' ? 'Alias / Talker Alias' : 'Alias', alias, 0, aliasAction, true),
+    scannerField('ID', identifier, 1, identifierAction),
+    scannerField('Group', group, 1),
+    scannerField('Description', description, 1, null, true)
+  ].filter(Boolean).forEach((field) => fields.append(field));
+  participant.append(fields);
+  return participant;
 }
 
 async function scannerNavigate(call, destination, knownSite = null) {
@@ -7016,15 +7036,24 @@ async function scannerNavigate(call, destination, knownSite = null) {
 function scannerVoiceMeter(call) {
   const quality = Number(call?.vc_quality_pct);
   const measured = Number.isFinite(quality) && quality >= 0;
+  const bounded = measured ? Math.max(0, Math.min(100, quality)) : 0;
+  const strength = measured ? Math.ceil(bounded / 20) : 0;
   const meter = node('div', 'scanner-quality-meter');
-  const heading = node('div', 'scanner-quality-heading');
-  heading.append(node('span', '', 'Voice Quality'), node('strong', '', measured ? `${Math.round(quality)}%` : '—'));
-  const track = node('div', 'scanner-quality-track');
-  const fill = node('span', 'scanner-quality-fill');
-  fill.style.width = measured ? `${Math.max(0, Math.min(100, quality))}%` : '0%';
-  track.append(fill);
-  meter.append(heading, track, node('small', '', measured ? 'Measured from decoded voice frames' :
-    'Not measured for this call'));
+  const copy = node('div', 'scanner-quality-copy');
+  copy.append(node('span', 'scanner-quality-heading', 'Voice Quality'),
+    node('small', '', measured ? 'Measured from decoded voice frames' : 'Not measured for this call'));
+  const reading = node('div', 'scanner-quality-reading');
+  const bars = node('span', 'scanner-quality-bars');
+  bars.setAttribute('role', 'img');
+  bars.setAttribute('aria-label', measured ? `Voice quality ${Math.round(bounded)} percent` :
+    'Voice quality not measured');
+  for (let index = 1; index <= 5; index++) {
+    const bar = node('i', index <= strength ? 'active' : '');
+    bar.setAttribute('aria-hidden', 'true');
+    bars.append(bar);
+  }
+  reading.append(bars, node('strong', '', measured ? `${Math.round(bounded)}%` : '—'));
+  meter.append(copy, reading);
   return meter;
 }
 
@@ -7052,16 +7081,20 @@ function renderScannerCall(host, state, site) {
 
   const fields = node('div', 'scanner-field-grid');
   const open = (destination) => () => void scannerNavigate(call, destination, site);
+  const participants = node('div', 'scanner-participant-grid');
+  participants.append(
+    scannerParticipant('Target', call.target_alias, call.target_id, call.target_description, call.target_group,
+      open('target-alias'), open('target')),
+    scannerParticipant('Source', scannerSourceAlias(call), call.source_id, call.source_description,
+      call.source_group, open('source-alias'), open('source'))
+  );
   const nativeIdentifier = scannerNativeIdentifier(call);
   const nac = scannerHex(call.nac, 3) || (scannerIdentifierNumber(call.ran) !== null ? String(call.ran) : '');
   const modulation = site?.p25_decoder_mode || call.modulation || '';
   [
-    scannerField('Target Alias', call.target_alias, 0, open('target-alias'), true),
-    scannerField('Target', call.target_id, 1, open('target')),
-    scannerField('Source', call.source_id, 1, open('source')),
-    scannerField('Source Alias / Talker Alias', scannerSourceAlias(call), 1, open('source-alias'), true),
     scannerField('System', call.system, 0, open('system')),
     scannerField('Site', call.site, 0, open('site')),
+    scannerField('Matched Scan Lists', scannerMatchedScanLists(call, state), 1, null, true),
     scannerField('Channel', call.channel, 1, open('channel'), true),
     scannerField('Identifier', nativeIdentifier, 2, open('identifier'), true),
     scannerField(call.ran !== null && call.ran !== undefined ? 'RAN' : 'NAC', nac, 2, open('identifier')),
@@ -7082,7 +7115,9 @@ function renderScannerCall(host, state, site) {
       ['Decoded Frames', call.vc_decoded_frames], ['Repeated Frames', call.vc_repeated_frames],
       ['Concealed Frames', call.vc_concealed_frames], ['Missing Frames', call.vc_missing_frames],
       ['FEC Errors', call.vc_fec_errors], ['FEC Protected Bits', call.vc_fec_protected_bits],
-      ['Configuration ID', call.configuration_id], ['Site GUID', call.site_guid]
+      ['Configuration ID', call.configuration_id], ['Site GUID', call.site_guid],
+      ['System Identity', call.system_identity], ['Site Identity', call.site_identity],
+      ['Channel Identity', call.channel_identity]
     ];
     values.forEach(([label, value]) => {
       const item = node('div', 'scanner-engineer-item');
@@ -7091,7 +7126,7 @@ function renderScannerCall(host, state, site) {
       engineer.append(item);
     });
   }
-  host.append(intro, fields, quality);
+  host.append(intro, participants, fields, quality);
   if (engineer.childNodes.length) host.append(engineer);
 }
 
@@ -7329,7 +7364,7 @@ function renderScanner() {
 
   chassis.append(statusBar, displayShell, replayBanner, controls, utility);
   page.append(chassis, scanPanel);
-  const heading = pageHeader('Scanner', 'Choose scan lists and listen to completed calls from this receiver');
+  const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   heading.append(modeBar);
   const host = node('div', 'scanner-player-host');
   host.append(page);
