@@ -16,7 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import org.junit.jupiter.api.Test;
 
 class ChannelConfigurationEditorTest
@@ -31,5 +33,17 @@ class ChannelConfigurationEditorTest
         assertTrue(ChannelConfigurationEditor.isAliasListCompatible(p25, DecoderType.P25_PHASE2));
         assertFalse(ChannelConfigurationEditor.isAliasListCompatible(p25, DecoderType.DMR));
         assertFalse(ChannelConfigurationEditor.isAliasListCompatible(p25, DecoderType.NXDN));
+    }
+
+    @Test
+    void newTrunkedP25ChannelsLearnAnnouncedControlsByDefaultButExplicitFalseIsPreserved()
+    {
+        DecodeConfigP25 phase1 = (DecodeConfigP25)DecoderFactory.getDecodeConfiguration(DecoderType.P25_PHASE1);
+        DecodeConfigP25 phase2 = (DecodeConfigP25)DecoderFactory.getDecodeConfiguration(DecoderType.P25_PHASE2);
+        assertTrue(phase1.getLearnAnnouncedControlChannels());
+        assertTrue(phase2.getLearnAnnouncedControlChannels());
+        phase1.setLearnAnnouncedControlChannels(false);
+        DecodeConfigP25 copy = (DecodeConfigP25)DecoderFactory.copy(phase1);
+        assertFalse(copy.getLearnAnnouncedControlChannels());
     }
 }

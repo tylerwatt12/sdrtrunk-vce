@@ -247,15 +247,18 @@ public class SiteEditor extends GridPane
                 return createNXDNDecodeConfiguration(mRadioReferenceDecoder.getFlavor(systemInformation),
                     mRadioReferenceDecoder.getChannelMap(systemInformation, site));
             case P25_PHASE1:
-                DecodeConfiguration p1config = DecoderFactory.getDecodeConfiguration(decoderType);
+                DecodeConfigP25Phase1 p25Phase1 = new DecodeConfigP25Phase1();
+                p25Phase1.setLearnAnnouncedControlChannels(true);
 
-                if(mRadioReferenceDecoder.isLSM(site) && p1config instanceof DecodeConfigP25Phase1 p1)
+                if(mRadioReferenceDecoder.isLSM(site))
                 {
-                    p1.setModulation(Modulation.CQPSK);
+                    p25Phase1.setModulation(Modulation.CQPSK);
                 }
-                return p1config;
+
+                return p25Phase1;
             case P25_PHASE2:
                 DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+                config.setLearnAnnouncedControlChannels(true);
 
                 int nac = 0;
 
