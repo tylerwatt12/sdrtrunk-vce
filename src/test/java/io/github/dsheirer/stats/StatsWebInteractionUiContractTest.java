@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=73"));
+        assertTrue(html.contains("/assets/app.css?v=74"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -617,7 +617,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=12"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=13"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -678,6 +678,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(enqueue.contains("else this.render();"));
         assertTrue(togglePlayback.contains("this.playbackOffset = this.getPlaybackPosition()"));
         assertTrue(togglePlayback.contains("if (this.currentBuffer) this.startCurrent();"));
+        assertTrue(togglePlayback.contains("item.enabled && item.defaultSelected"));
+        assertTrue(togglePlayback.contains("this.persistSelectedScanLists()"));
         assertTrue(replayCurrent.contains("this.playbackOffset = 0"));
         assertTrue(replayCurrent.contains("this.startCurrent()"));
         assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
@@ -780,12 +782,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(scanLists.contains("'No scan lists are configured'"));
         assertTrue(scanLists.contains("unmatched_alias_list_count"));
-        assertTrue(scanLists.contains("'Unknown routes'"));
-        assertTrue(scanLists.contains("Alias List\\'s Global Settings"));
+        assertTrue(scanLists.contains("'Alias List Defaults'"));
+        assertTrue(scanLists.contains("Alias List\\'s Alias List Defaults"));
         String editScanList = function(source, "function openScanListAdminModal(scanList, revision)");
         String deleteScanList = function(source, "function openDeleteScanListAdminModal(scanList, revision)");
         assertTrue(deleteScanList.contains("unmatched_alias_list_count"));
-        assertTrue(deleteScanList.contains("global unmatched-"));
+        assertTrue(deleteScanList.contains("Alias List Defaults"));
         assertTrue(source.contains("/api/v1/admin/scan-lists/${scanList.id}"));
         assertTrue(editScanList.contains("await refreshPlaybackScanLists(true)"));
         assertTrue(deleteScanList.contains("await refreshPlaybackScanLists(true)"));

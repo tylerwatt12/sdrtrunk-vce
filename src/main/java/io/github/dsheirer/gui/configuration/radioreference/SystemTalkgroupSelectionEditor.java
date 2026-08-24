@@ -21,6 +21,7 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import javafx.animation.RotateTransition;
@@ -398,8 +400,25 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             }
         }
 
-        List<Alias> changes = new ArrayList<>(createAliases(aliasesToCreate));
-        changes.addAll(aliasesToUpdate);
+        List<Alias> created = createAliases(aliasesToCreate);
+        List<AliasAdministrationService.AliasSaveRequest> changes = new ArrayList<>();
+        for(int index = 0; index < created.size(); index++)
+        {
+            Alias alias = created.get(index);
+            Talkgroup source = aliasesToCreate.get(index);
+            if(TalkgroupEncryption.lookup(source.getEncryptionState()) == TalkgroupEncryption.FULL)
+            {
+                alias.setRecordable(false);
+                alias.setBroadcastChannels(List.of());
+                changes.add(AliasAdministrationService.AliasSaveRequest.explicit(alias, Set.of()));
+            }
+            else
+            {
+                changes.add(AliasAdministrationService.AliasSaveRequest.inherit(alias));
+            }
+        }
+        aliasesToUpdate.stream().map(AliasAdministrationService.AliasSaveRequest::preserve)
+            .forEach(changes::add);
 
         ButtonType apply = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
@@ -421,7 +440,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             else
             {
                 AliasMutationUi.execute(sourceButton, title, () ->
-                    mConfigurationManager.getAliasAdministrationService().saveAliases(changes, revision))
+                    mConfigurationManager.getAliasAdministrationService().saveAliasRequests(changes, revision))
                     .ifPresent(ignored -> getImportResultLabel().setText(formatImportCompletion(
                         aliasesToCreate.size(), aliasesToUpdate.size(), identicalCount)));
             }

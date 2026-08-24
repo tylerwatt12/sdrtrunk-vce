@@ -30,6 +30,7 @@ import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javafx.geometry.HPos;
 import javafx.geometry.Orientation;
@@ -359,7 +360,16 @@ public class TalkgroupEditor extends GridPane
                     long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
 
                     AliasMutationUi.execute(getCreateAliasButton(), "Create RadioReference Alias", () ->
-                        mConfigurationManager.getAliasAdministrationService().createAlias(alias, revision));
+                    {
+                        if(TalkgroupEncryption.lookup(mTalkgroup.getEncryptionState()) == TalkgroupEncryption.FULL)
+                        {
+                            alias.setRecordable(false);
+                            alias.setBroadcastChannels(List.of());
+                            return mConfigurationManager.getAliasAdministrationService()
+                                .createAlias(alias, Set.of(), revision);
+                        }
+                        return mConfigurationManager.getAliasAdministrationService().createAlias(alias, revision);
+                    });
                 }
             });
         }

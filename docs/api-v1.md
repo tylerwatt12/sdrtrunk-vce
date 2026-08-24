@@ -307,8 +307,8 @@ session:
 - `GET /frequencies` searches the configured lookup region for an exact frequency, and
   `GET /frequencies/details` loads bounded category, site, and channel-use details for one result.
 
-The browser API does not import RadioReference systems, sites, talkgroups, or conventional channels. Those workflows
-remain in the desktop configuration editor until a focused web migration is completed.
+The browser API does not import RadioReference systems, sites, talkgroups, or conventional channels. Use the desktop
+Configuration Editor for those workflows.
 
 Session `capabilities` is an object whose values are booleans. The administrator access-policy resource returns one
 `capabilities` array; each entry has `id`, `display_name`, `required_tier`, `default_tier`, and `configurable`.

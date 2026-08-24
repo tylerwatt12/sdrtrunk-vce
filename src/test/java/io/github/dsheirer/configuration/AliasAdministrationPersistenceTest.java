@@ -377,7 +377,9 @@ class AliasAdministrationPersistenceTest
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             Alias original = alias("Dispatch", aliasListId, 101);
             original.addBroadcastChannel("Old Stream");
-            long aliasId = service.createAlias(original).aliasIds().getFirst();
+            long aliasId = service.createAlias(original,
+                Set.of(manager.getScanListModel().defaultScanList().getId()), service.currentRevision())
+                .aliasIds().getFirst();
             long secondAliasId = service.createAlias(alias("Secondary", aliasListId, 101)).aliasIds().getFirst();
             AliasList cachedAliasList = manager.getAliasModel().getAliasList("County P25");
             assertEquals(secondAliasId,
@@ -469,7 +471,9 @@ class AliasAdministrationPersistenceTest
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             Alias proposed = alias("Dispatch", aliasListId, 101);
             proposed.addBroadcastChannel("Old Stream");
-            long aliasId = service.createAlias(proposed).aliasIds().getFirst();
+            long aliasId = service.createAlias(proposed,
+                Set.of(manager.getScanListModel().defaultScanList().getId()), service.currentRevision())
+                .aliasIds().getFirst();
             service.updateUnmatchedTalkgroupPolicy(aliasListId,
                 new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")), service.currentRevision());
 

@@ -30,6 +30,9 @@ import io.github.dsheirer.scanlist.ScanListConfiguration;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Optional;
 
 public class ConfigurationState
 {
@@ -38,6 +41,8 @@ public class ConfigurationState
     private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
     private List<Channel> mChannels = new ArrayList<>();
     private ScanListConfiguration mScanListConfiguration;
+    private final Map<Alias,Boolean> mLegacyAliasListenEnabled = new IdentityHashMap<>();
+    private final Map<AliasListDefinition,Boolean> mLegacyAliasListListenEnabled = new IdentityHashMap<>();
 
     public List<Alias> getAliases()
     {
@@ -77,6 +82,38 @@ public class ConfigurationState
     public void setScanListConfiguration(ScanListConfiguration scanListConfiguration)
     {
         mScanListConfiguration = scanListConfiguration;
+    }
+
+    /** Import-only playback intent; never serialized or retained by the runtime Alias model. */
+    @JsonIgnore
+    public void setLegacyAliasListenEnabled(Alias alias, boolean enabled)
+    {
+        if(alias != null)
+        {
+            mLegacyAliasListenEnabled.put(alias, enabled);
+        }
+    }
+
+    @JsonIgnore
+    public Optional<Boolean> getLegacyAliasListenEnabled(Alias alias)
+    {
+        return Optional.ofNullable(mLegacyAliasListenEnabled.get(alias));
+    }
+
+    /** Import-only default/catch-all playback intent for a newly imported Alias List. */
+    @JsonIgnore
+    public void setLegacyAliasListListenEnabled(AliasListDefinition definition, boolean enabled)
+    {
+        if(definition != null)
+        {
+            mLegacyAliasListListenEnabled.put(definition, enabled);
+        }
+    }
+
+    @JsonIgnore
+    public Optional<Boolean> getLegacyAliasListListenEnabled(AliasListDefinition definition)
+    {
+        return Optional.ofNullable(mLegacyAliasListListenEnabled.get(definition));
     }
 
     public List<Channel> getChannels()

@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -337,6 +338,74 @@ class AliasAdministrationServiceTest
             assertEquals(Set.of(defaultScanListId), service.getAlias(aliasId).scanListIds());
             assertEquals(Set.of(defaultScanListId),
                 new ScanListDatabaseStore(database).loadConfiguration().scanListIdsForAlias(aliasId));
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void centralDefaultsInitializeOnlyNewTalkgroupMatchersAndExplicitRoutingWins() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("central-defaults-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long defaultScanListId = manager.getScanListModel().defaultScanList().getId();
+            AliasAdministrationService.MutationResult list = service.createAliasList(
+                "County P25", AliasListFamily.P25, service.currentRevision());
+            assertEquals(Set.of(defaultScanListId),
+                service.getAliasListDefaults(list.aliasListId()).defaults().scanListIds());
+
+            BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+            primary.setName("Primary");
+            manager.getBroadcastModel().addBroadcastConfiguration(primary);
+            AliasAdministrationService.MutationResult configured = service.updateAliasListDefaults(
+                list.aliasListId(), new AliasListDefaults(
+                    new UnmatchedTalkgroupPolicy(true, List.of("Primary")), Set.of(defaultScanListId)),
+                list.revision());
+
+            Alias talkgroup = alias("Dispatch", list.aliasListId(), "County P25", 101);
+            long talkgroupId = service.createAlias(talkgroup, configured.revision()).aliasIds().getFirst();
+            Alias inherited = service.getAlias(talkgroupId).alias();
+            assertTrue(inherited.isRecordable());
+            assertEquals(Set.of("Primary"), inherited.getBroadcastChannels().stream()
+                .map(BroadcastChannel::getChannelName).collect(java.util.stream.Collectors.toSet()));
+            assertEquals(Set.of(defaultScanListId), service.getAlias(talkgroupId).scanListIds());
+
+            Alias range = alias("Range", list.aliasListId(), "County P25", 200);
+            range.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 200, 210));
+            long rangeId = service.createAlias(range, service.currentRevision()).aliasIds().getFirst();
+            assertTrue(service.getAlias(rangeId).alias().isRecordable());
+            assertEquals(Set.of(defaultScanListId), service.getAlias(rangeId).scanListIds());
+
+            Alias radio = new Alias("Radio");
+            radio.setAliasListId(list.aliasListId());
+            radio.setAliasListName("County P25");
+            radio.setMatchIdentifier(new Radio(Protocol.APCO25, 5001));
+            long radioId = service.createAlias(radio, service.currentRevision()).aliasIds().getFirst();
+            assertFalse(service.getAlias(radioId).alias().isRecordable());
+            assertTrue(service.getAlias(radioId).alias().getBroadcastChannels().isEmpty());
+            assertTrue(service.getAlias(radioId).scanListIds().isEmpty());
+
+            Alias explicit = alias("Encrypted", list.aliasListId(), "County P25", 102);
+            long explicitId = service.createAlias(explicit, Set.of(), service.currentRevision()).aliasIds().getFirst();
+            assertFalse(service.getAlias(explicitId).alias().isRecordable());
+            assertTrue(service.getAlias(explicitId).alias().getBroadcastChannels().isEmpty());
+            assertTrue(service.getAlias(explicitId).scanListIds().isEmpty());
+
+            service.updateAliasListDefaults(list.aliasListId(),
+                new AliasListDefaults(UnmatchedTalkgroupPolicy.DEFAULT, Set.of()), service.currentRevision());
+            assertTrue(service.getAlias(talkgroupId).alias().isRecordable());
+            assertEquals(Set.of(defaultScanListId), service.getAlias(talkgroupId).scanListIds());
         }
         finally
         {

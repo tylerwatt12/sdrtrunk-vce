@@ -3218,8 +3218,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
   const editing = mode === 'edit';
   const cloning = mode === 'clone';
   const selectedListId = Number(prefill?.alias_list_id || route.get('list'));
-  const copyingRangeActions = !editing && !cloning && Number(prefill?.copy_actions_from_alias_id) > 0;
-  const loading = node('div', 'loading', editing || cloning || copyingRangeActions ?
+  const loading = node('div', 'loading', editing || cloning ?
     'Loading alias settings' : 'Preparing alias editor');
   const modal = openReadOnlyModal(editing ? `Edit Alias ${identifierNumber(id)}` :
     (cloning ? 'Clone Alias' : 'Add Alias'), loading, {
@@ -3235,26 +3234,15 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       { csrf: false });
     const analyticsPromise = editing || cloning ?
       api(`/api/v1/aliases/${encodeURIComponent(String(id))}`).catch(() => null) : Promise.resolve(null);
-    const rangeActionsPromise = copyingRangeActions ?
-      requestJson(`/api/v1/admin/aliases/${Number(prefill.copy_actions_from_alias_id)}`, { csrf: false }) :
-      Promise.resolve(null);
-    const [recordResponse, options, analytics, rangeActionsResponse] = await Promise.all([
-      recordPromise, initialOptionsPromise, analyticsPromise, rangeActionsPromise
+    const [recordResponse, options, analytics] = await Promise.all([
+      recordPromise, initialOptionsPromise, analyticsPromise
     ]);
     if (activeReadOnlyModal !== modal.state) return;
     const source = editing || cloning ? { ...(recordResponse?.alias || {}) } : { ...(prefill || {}) };
-    if (rangeActionsResponse?.alias) {
-      if (Number(rangeActionsResponse.alias.alias_list_id) !== selectedListId) {
-        throw new Error('The covering range alias changed lists. Reload Discover and try again.');
-      }
-      ['recordable', 'broadcast_channels', 'scan_list_ids'].forEach((field) => {
-        source[field] = rangeActionsResponse.alias[field];
-      });
-    }
     if ((editing || cloning) && Number(source.alias_list_id) !== selectedListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
-    const revision = Number(recordResponse?.revision ?? rangeActionsResponse?.revision ?? options?.revision ??
+    const revision = Number(recordResponse?.revision ?? options?.revision ??
       aliasEditorContext?.revision ?? 0);
     const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
       Number(source.alias_list_id || selectedListId)) || aliasEditorContext?.selectedList;
@@ -3263,6 +3251,14 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol,
       source.matcher?.variant);
     const initialMatcher = source.matcher || aliasMatcherDefault(descriptor, options);
+    const initialType = String(initialMatcher?.type || descriptor?.type || '');
+    if (!editing && !cloning && source.recordable === undefined) {
+      const defaults = options?.alias_list?.unmatched_talkgroup_policy || {};
+      const inherits = ['talkgroup', 'talkgroup_range'].includes(initialType);
+      source.recordable = inherits && Boolean(defaults.recordable);
+      source.broadcast_channels = inherits ? [...(defaults.broadcast_channels || [])] : [];
+      source.scan_list_ids = inherits ? [...(defaults.scan_list_ids || [])] : [];
+    }
     const form = node('form', 'alias-editor-form');
     const basics = node('section', 'alias-editor-panel');
     const identifier = node('section', 'alias-editor-panel');
@@ -3272,6 +3268,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const listSelect = aliasSelect('aliasListId', compatibleLists.map((row) => ({
       value: aliasListId(row), label: row.name
     })), source.alias_list_id || selectedListId);
+    if (!editing) listSelect.disabled = true;
     const name = aliasTextInput('name', cloning ? `Copy of ${source.name || ''}` : source.name || '');
     name.required = true;
     name.maxLength = 256;
@@ -3322,9 +3319,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const matcherHost = node('div', 'alias-matcher-fields alias-editor-grid');
     let activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
     aliasMatcherFields(matcherHost, activeDescriptor, initialMatcher, options);
+    let updateCreationRoutingDefaults = () => {};
     matcherType.addEventListener('change', () => {
       activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
       aliasMatcherFields(matcherHost, activeDescriptor, aliasMatcherDefault(activeDescriptor, options), options);
+      updateCreationRoutingDefaults(activeDescriptor);
       matcherNotice.replaceChildren(node('div', 'logging-notice warning',
         'Changing the identifier type resets the old identifier values.'));
       modal.setDirty(true);
@@ -3356,6 +3355,20 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
       streams.append(label);
     });
+    updateCreationRoutingDefaults = (changedDescriptor) => {
+      if (editing || cloning) return;
+      const defaults = options?.alias_list?.unmatched_talkgroup_policy || {};
+      const inherits = ['talkgroup', 'talkgroup_range'].includes(String(changedDescriptor?.type || ''));
+      record.checked = inherits && Boolean(defaults.recordable);
+      const selectedScanLists = new Set(inherits ? (defaults.scan_list_ids || []).map(Number) : []);
+      scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) => {
+        checkbox.checked = selectedScanLists.has(Number(checkbox.value));
+      });
+      const selectedDestinations = new Set(inherits ? (defaults.broadcast_channels || []) : []);
+      streams.querySelectorAll('[name="broadcastChannel"]').forEach((checkbox) => {
+        checkbox.checked = selectedDestinations.has(checkbox.value);
+      });
+    };
     const streamAs = aliasTextInput('streamAsTalkgroup', source.stream_as_talkgroup ?? '', 'number');
     streamAs.min = '1';
     streamAs.max = '65535';
@@ -3766,22 +3779,30 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const policy = selectedList?.unmatched_talkgroup_policy || {};
   const form = node('form', 'alias-editor-form alias-policy-form');
   form.append(node('p', 'modal-introduction',
-    'These settings apply only when a received talkgroup has no exact alias or covering range in this list. ' +
-    'Assigning scan lists keeps newly observed talkgroups available to listeners until an alias is created.'));
+    'These settings apply when a destination talkgroup or patch group has no exact Alias or covering talkgroup ' +
+    'range in this Alias List. New talkgroup Aliases created in this list start with the same selections. ' +
+    'Existing Aliases are not changed.'));
 
   const record = node('input');
   record.type = 'checkbox';
   record.name = 'recordable';
   record.checked = Boolean(policy.recordable);
-  const behavior = node('div', 'alias-editor-grid');
-  behavior.append(aliasCheckOption('Record calls', record));
+  const behavior = node('fieldset', 'alias-stream-options alias-defaults-section');
+  behavior.append(node('legend', '', 'Recording'), node('p', 'muted',
+    'Records completed unmatched talkgroup calls in the configured recording directory. New talkgroup Aliases ' +
+    'are created with these defaults. Existing Aliases are unchanged.'), aliasCheckOption('Record calls', record));
 
   const scanLists = aliasScanListChoices(options, policy.scan_list_ids || []);
   const scanListLegend = scanLists.querySelector('legend');
-  if (scanListLegend) scanListLegend.textContent = 'Unknown talkgroup scan-list delivery';
+  if (scanListLegend) scanListLegend.textContent = 'Scan List';
+  scanListLegend?.after(node('p', 'muted',
+    'Routes unmatched talkgroup calls to the selected scan lists for browser playback. New talkgroup Aliases are ' +
+    'created with these defaults.'));
 
   const streams = node('fieldset', 'alias-stream-options');
-  streams.append(node('legend', '', 'Streaming destinations'));
+  streams.append(node('legend', '', 'Streaming'), node('p', 'muted',
+    'Sends unmatched talkgroup calls to the selected external streaming destinations. New talkgroup Aliases are ' +
+    'created with these defaults.'));
   const selectedStreams = new Set(policy.broadcast_channels || []);
   const configuredStreams = new Set(options.stream_names || []);
   const streamNames = [...new Set([...(options.stream_names || []), ...(policy.broadcast_channels || [])])];
@@ -3802,10 +3823,14 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const errorHost = node('div', 'alias-form-message');
   const cancel = node('button', 'button secondary', 'Cancel');
   cancel.type = 'button';
-  const save = node('button', 'button', 'Save Global Settings');
+  const warning = node('div', 'logging-notice warning',
+    'Warning: These settings act as a catch-all and can play, record, or stream traffic that has not been ' +
+    'individually reviewed, including sensitive traffic. If a selected streaming destination sends to Broadcastify ' +
+    'or another third-party provider, leave catch-all Streaming disabled and configure approved talkgroups individually.');
+  const save = node('button', 'button', 'Save Alias List Defaults');
   save.type = 'submit';
-  form.append(behavior, scanLists, streams, errorHost, aliasModalFooter(cancel, save));
-  const modal = openReadOnlyModal(`Global Settings · ${selectedList.name}`, form, {
+  form.append(behavior, scanLists, streams, warning, errorHost, aliasModalFooter(cancel, save));
+  const modal = openReadOnlyModal(`Alias List Defaults · ${selectedList.name}`, form, {
     id: `unmatched-talkgroups-${listId}`,
     className: 'alias-editor-modal alias-policy-modal',
     returnFocusSelector: '.alias-policy-button'
@@ -3945,7 +3970,6 @@ function observedTalkgroupPrefill(row, selectedList) {
     throw new Error(observedTalkgroupPromotionReason(row));
   }
   const policy = selectedList?.unmatched_talkgroup_policy || {};
-  const matchedAliasId = Number(row.matched_alias_id);
   const talkgroupId = Number(row.talkgroup_id);
   let matcher;
   if (isP25(row)) {
@@ -3975,8 +3999,6 @@ function observedTalkgroupPrefill(row, selectedList) {
     scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
     matcher,
-    copy_actions_from_alias_id: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
-      matchedAliasId > 0 ? matchedAliasId : null,
     returnFocusSelector: `.observed-talkgroup-create[data-observed-key="${observedTalkgroupFocusKey(row)}"]`
   };
 }
@@ -4389,7 +4411,7 @@ async function renderAliases() {
   remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
   listActions.append(add);
   if (unmatchedTalkgroupsSupported(selectedList)) {
-    const policy = node('button', 'button secondary alias-policy-button', 'Global Settings');
+    const policy = node('button', 'button secondary alias-policy-button', 'Alias List Defaults');
     policy.type = 'button';
     policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
     listActions.append(policy);
@@ -13309,8 +13331,8 @@ function openDeleteScanListAdminModal(scanList, revision) {
   const aliasCount = Number(scanList.alias_count || 0);
   const unmatchedAliasListCount = Number(scanList.unmatched_alias_list_count || 0);
   body.append(node('p', '', `Delete ${scanList.name}?`),
-    node('p', 'muted', `This removes the list from ${number(aliasCount)} aliases and the global unmatched-` +
-      `talkgroup settings of ${number(unmatchedAliasListCount)} alias lists. The aliases and alias lists ` +
+    node('p', 'muted', `This removes the list from ${number(aliasCount)} aliases and the Alias List Defaults of ` +
+      `${number(unmatchedAliasListCount)} alias lists. The aliases and alias lists ` +
       'themselves are preserved.'));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
@@ -13392,14 +13414,14 @@ async function renderAdminScanLists() {
   body.append(node('p', 'admin-section-intro',
     'Scan lists group aliases from any alias list, and overlapping listener subscriptions are deduplicated. ' +
     'Open a scan list to search all of its alias members and remove selected memberships in bounded batches. ' +
-    'Route unknown talkgroups from an Alias List\'s Global Settings.'),
+    'Route unmatched talkgroups from an Alias List\'s Alias List Defaults.'),
     table(scanLists, [
       { id: 'scan-list', label: 'Scan list', width: 240, render: adminScanListIdentity,
         sortValue: (row) => Number(row.sort_order || 0) },
       { id: 'description', label: 'Description', render: (row) => availableValue(row.description) },
       { id: 'aliases', label: 'Aliases', width: 100, className: 'numeric',
         render: adminScanListMemberCount, sortValue: (row) => Number(row.alias_count || 0) },
-      { id: 'unmatched-alias-lists', label: 'Unknown routes', width: 130, className: 'numeric',
+      { id: 'unmatched-alias-lists', label: 'Alias List Defaults', width: 160, className: 'numeric',
         render: (row) => number(row.unmatched_alias_list_count || 0),
         sortValue: (row) => Number(row.unmatched_alias_list_count || 0) },
       { id: 'actions', label: 'Actions', width: 300, sortable: false,
@@ -14148,9 +14170,9 @@ async function renderAdminHealth() {
   void receiverHealthController.refresh();
 }
 
-function comingSoonPanel(title, detail) {
+function comingSoonPanel(title) {
   const panel = node('section', 'section placeholder-page');
-  panel.append(node('h2', '', title), badge('Coming soon', 'state-stale'), node('p', '', detail));
+  panel.append(node('h2', '', title), badge('Coming Soon', 'state-stale'));
   return panel;
 }
 
@@ -14168,19 +14190,15 @@ async function renderConfiguration() {
     'Manage receiver configuration and external data sources'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('configuration', { tab: item.id }) })), active))) return;
   if (active === 'scan-lists') await renderAdminScanLists();
-  else if (active === 'radioreference') content.append(comingSoonPanel('RadioReference',
-    'Web RadioReference importing will be added during a focused migration. Use the desktop Configuration Editor ' +
-      'for RadioReference imports.'));
-  else if (active === 'recording') content.append(comingSoonPanel('Recording',
-    'Web recording configuration will be added here. Existing receiver recording behavior is unchanged.'));
-  else content.append(comingSoonPanel('Streaming',
-    'Web streaming configuration will be added here. Existing receiver streaming behavior is unchanged.'));
+  else if (active === 'radioreference') content.append(comingSoonPanel('RadioReference'));
+  else if (active === 'recording') content.append(comingSoonPanel('Recording'));
+  else content.append(comingSoonPanel('Streaming'));
 }
 
 function renderHardware() {
   const renderContext = captureRenderContext();
   beginPage(renderContext, pageHeader('Hardware', 'Inspect and configure receiver hardware'),
-    comingSoonPanel('Tuners', 'Web tuner configuration will be added here. Use Spectrum for live tuner diagnostics.'));
+    comingSoonPanel('Tuners'));
 }
 
 function adminSystemStatusSection() {

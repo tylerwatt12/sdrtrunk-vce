@@ -657,9 +657,13 @@ public class DecoderFactory
             case P25_CONVENTIONAL:
                 return new DecodeConfigP25Conventional();
             case P25_PHASE1:
-                return new DecodeConfigP25Phase1();
+                DecodeConfigP25Phase1 phase1 = new DecodeConfigP25Phase1();
+                phase1.setLearnAnnouncedControlChannels(true);
+                return phase1;
             case P25_PHASE2:
-                return new DecodeConfigP25Phase2();
+                DecodeConfigP25Phase2 phase2 = new DecodeConfigP25Phase2();
+                phase2.setLearnAnnouncedControlChannels(true);
+                return phase2;
             default:
                 throw new IllegalArgumentException("DecodeConfigFactory - unknown decoder type [" + decoder + "]");
         }

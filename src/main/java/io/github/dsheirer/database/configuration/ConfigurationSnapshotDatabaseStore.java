@@ -16,6 +16,11 @@ import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.scanlist.ScanList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -51,6 +56,7 @@ public class ConfigurationSnapshotDatabaseStore
                     state.getScanListConfiguration() : scanListStore.loadConfiguration(connection);
                 new AliasDatabaseStore(mDatabasePath).replaceAliases(connection, state.getAliases(),
                     state.getAliasListDefinitions());
+                scanListConfiguration = applyLegacyListenIntent(state, scanListConfiguration);
                 scanListStore.replaceConfiguration(connection, scanListConfiguration);
                 new ConfigurationDatabaseStore(mDatabasePath).replaceConfigurationState(connection, state);
                 connection.commit();
@@ -68,6 +74,46 @@ public class ConfigurationSnapshotDatabaseStore
                 throw e;
             }
         }
+    }
+
+    private static ScanListConfiguration applyLegacyListenIntent(ConfigurationState state,
+                                                                   ScanListConfiguration configuration)
+    {
+        Map<Long,Set<Long>> aliases = mutable(configuration.aliasMemberships());
+        Map<Long,Set<Long>> unmatched = mutable(configuration.unmatchedAliasListMemberships());
+        ScanList defaultScanList = configuration.defaultScanList();
+
+        state.getAliases().forEach(alias -> state.getLegacyAliasListenEnabled(alias).ifPresent(enabled ->
+        {
+            if(enabled)
+            {
+                aliases.put(alias.getId(), Set.of(defaultScanList.getId()));
+            }
+            else
+            {
+                aliases.remove(alias.getId());
+            }
+        }));
+        state.getAliasListDefinitions().forEach(definition ->
+            state.getLegacyAliasListListenEnabled(definition).ifPresent(enabled ->
+            {
+                if(enabled)
+                {
+                    unmatched.put(definition.getId(), Set.of(defaultScanList.getId()));
+                }
+                else
+                {
+                    unmatched.remove(definition.getId());
+                }
+            }));
+        return new ScanListConfiguration(configuration.scanLists(), aliases, unmatched);
+    }
+
+    private static Map<Long,Set<Long>> mutable(Map<Long,Set<Long>> source)
+    {
+        Map<Long,Set<Long>> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> copy.put(key, new LinkedHashSet<>(value)));
+        return copy;
     }
 
 }

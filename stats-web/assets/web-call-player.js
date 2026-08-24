@@ -176,7 +176,8 @@ class WebCallPlayer {
         id,
         name: String(row?.name || `Scan list ${id}`).trim() || `Scan list ${id}`,
         description: String(row?.description || '').trim(),
-        enabled: row?.enabled !== false && row?.available !== false,
+        enabled: row?.enabled !== false && row?.available !== false && row?.published !== false,
+        published: row?.published !== false,
         defaultSelected: row?.default === true || row?.default_selected === true
       });
     });
@@ -307,7 +308,7 @@ class WebCallPlayer {
       }
       if (!item.enabled) {
         const unavailable = document.createElement('small');
-        unavailable.textContent = 'Unavailable';
+        unavailable.textContent = item.published ? 'Unavailable' : 'Not published to listeners';
         copy.append(unavailable);
       }
       label.append(checkbox, copy);
@@ -567,6 +568,17 @@ class WebCallPlayer {
   }
 
   async togglePlayback() {
+    if (this.paused && this.scanListCatalogReady && !this.selectedScanListIds.size) {
+      const selected = this.scanLists.find((item) => item.enabled && item.defaultSelected) ||
+        this.scanLists.find((item) => item.enabled);
+      if (selected) {
+        this.selectedScanListIds = new Set([selected.id]);
+        this.persistSelectedScanLists();
+        this.updateScanListStatus();
+        this.renderScanLists();
+        this.synchronizeSubscription();
+      }
+    }
     const token = ++this.transportToken;
     this.paused = !this.paused;
 

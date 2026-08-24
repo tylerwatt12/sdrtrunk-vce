@@ -50,6 +50,7 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.IntegerFormat;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.scanlist.ScanList;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.List;
@@ -127,6 +128,10 @@ public class AliasItemEditor extends Editor<Alias>
     private VBox mTitledPanesBox;
     private TitledPane mIdentifierPane;
     private TitledPane mStreamPane;
+    private TitledPane mScanListPane;
+    private AliasRoutingSelectionPane<ScanList> mScanListSelector;
+    private Set<Long> mPendingNewAliasScanListIds;
+    private boolean mApplyDefaultsToNewDraft;
     private ListView<String> mAvailableStreamsView;
     private ListView<BroadcastChannel> mSelectedStreamsView;
     private ListView<AliasID> mIdentifiersList;
@@ -218,14 +223,19 @@ public class AliasItemEditor extends Editor<Alias>
         getIdentifiersList().getItems().clear();
         getAddIdentifierButton().setDisable(disable);
 
+        mApplyDefaultsToNewDraft = alias != null && alias.getId() == Alias.UNASSIGNED_ID &&
+            mPendingNewAliasScanListIds == null;
         updateStreamViews();
+        updateScanListViews();
 
         if(alias != null)
         {
             getGroupField().setText(alias.getGroup());
             getNameField().setText(alias.getName());
             getDescriptionField().setText(alias.getDescription());
-            getRecordAudioToggleSwitch().setSelected(alias.isRecordable());
+            boolean defaultRecord = mApplyDefaultsToNewDraft && inheritsDefaults(alias) ?
+                defaults(alias).isRecordEnabled() : alias.isRecordable();
+            getRecordAudioToggleSwitch().setSelected(defaultRecord);
 
             Icon icon = null;
             String iconName = alias.getIconName();
@@ -263,6 +273,13 @@ public class AliasItemEditor extends Editor<Alias>
 
         refreshMatcherChoices(alias);
         modifiedProperty().set(alias != null && alias.getId() == Alias.UNASSIGNED_ID);
+        mPendingNewAliasScanListIds = null;
+    }
+
+    /** Supplies scan-list memberships when a new draft is a clone instead of an ordinary defaulted Alias. */
+    void setInitialScanListIds(Set<Long> scanListIds)
+    {
+        mPendingNewAliasScanListIds = scanListIds != null ? Set.copyOf(scanListIds) : Set.of();
     }
 
     /**
@@ -345,6 +362,7 @@ public class AliasItemEditor extends Editor<Alias>
         getIdentifiersList().getSelectionModel().select(replacement);
         modifiedProperty().set(true);
         refreshMatcherChoices(getItem());
+        applyRoutingDefaultsForMatcher(replacement);
     }
 
     @Override
@@ -408,11 +426,14 @@ public class AliasItemEditor extends Editor<Alias>
         replacement.setGroup(getGroupField().getText());
 
         boolean create = alias.getId() == Alias.UNASSIGNED_ID;
+        Set<Long> scanListIds = getScanListSelector().selectedValues().stream().map(ScanList::getId)
+            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
         Optional<AliasAdministrationService.MutationResult> saved = AliasMutationUi.execute(getSaveButton(),
             "Save Alias", () -> create ?
-                mConfigurationManager.getAliasAdministrationService().createAlias(replacement, mLoadedRevision) :
                 mConfigurationManager.getAliasAdministrationService()
-                    .replaceAlias(alias.getId(), replacement, mLoadedRevision));
+                    .createAlias(replacement, scanListIds, mLoadedRevision) :
+                mConfigurationManager.getAliasAdministrationService()
+                    .replaceAlias(alias.getId(), replacement, scanListIds, mLoadedRevision));
         if(saved.isEmpty())
         {
             return false;
@@ -464,7 +485,7 @@ public class AliasItemEditor extends Editor<Alias>
         {
             mTitledPanesBox = new VBox();
             mTitledPanesBox.setMaxWidth(Double.MAX_VALUE);
-            mTitledPanesBox.getChildren().addAll(getIdentifierPane(), getStreamPane());
+            mTitledPanesBox.getChildren().addAll(getIdentifierPane(), getScanListPane(), getStreamPane());
         }
 
         return mTitledPanesBox;
@@ -651,6 +672,60 @@ public class AliasItemEditor extends Editor<Alias>
         return mStreamPane;
     }
 
+    private TitledPane getScanListPane()
+    {
+        if(mScanListPane == null)
+        {
+            mScanListPane = new TitledPane("Scan List", getScanListSelector());
+            mScanListPane.setExpanded(false);
+        }
+        return mScanListPane;
+    }
+
+    private AliasRoutingSelectionPane<ScanList> getScanListSelector()
+    {
+        if(mScanListSelector == null)
+        {
+            mScanListSelector = new AliasRoutingSelectionPane<>();
+            mScanListSelector.setChangeListener(() ->
+            {
+                if(getItem() != null)
+                {
+                    modifiedProperty().set(true);
+                    getScanListPane().setText("Scan List (" + mScanListSelector.selectedValues().size() + ")");
+                }
+            });
+        }
+        return mScanListSelector;
+    }
+
+    private void updateScanListViews()
+    {
+        Alias alias = getItem();
+        List<ScanList> all = mConfigurationManager.getScanListModel().scanLists();
+        Set<Long> selectedIds;
+        if(alias == null)
+        {
+            selectedIds = Set.of();
+        }
+        else if(alias.getId() > Alias.UNASSIGNED_ID)
+        {
+            selectedIds = mConfigurationManager.getScanListModel().scanListIdsForAlias(alias.getId());
+        }
+        else if(mPendingNewAliasScanListIds != null)
+        {
+            selectedIds = mPendingNewAliasScanListIds;
+        }
+        else
+        {
+            selectedIds = inheritsDefaults(alias) ? defaults(alias).scanListIds() : Set.of();
+        }
+        getScanListSelector().setValues(all,
+            all.stream().filter(scanList -> selectedIds.contains(scanList.getId())).toList());
+        getScanListSelector().setChooserDisabled(alias == null);
+        getScanListPane().setText(selectedIds.isEmpty() ? "Scan List" : "Scan List (" + selectedIds.size() + ")");
+    }
+
     private void updateStreamViews()
     {
         Platform.runLater(() -> {
@@ -667,7 +742,10 @@ public class AliasItemEditor extends Editor<Alias>
                 {
                     List<String> availableStreams =
                         mConfigurationManager.getBroadcastModel().getBroadcastConfigurationNames();
-                    Set<BroadcastChannel> selectedChannels = getItem().getBroadcastChannels();
+                    Set<BroadcastChannel> selectedChannels = mApplyDefaultsToNewDraft && inheritsDefaults(getItem()) ?
+                        defaults(getItem()).streamDestinationNames().stream().map(BroadcastChannel::new)
+                            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)) :
+                        getItem().getBroadcastChannels();
 
                     for(BroadcastChannel channel: selectedChannels)
                     {
@@ -701,6 +779,35 @@ public class AliasItemEditor extends Editor<Alias>
                 mLoadingStreamViews = false;
             }
         });
+    }
+
+    private void applyRoutingDefaultsForMatcher(AliasID matcher)
+    {
+        Alias alias = getItem();
+        if(alias == null || alias.getId() != Alias.UNASSIGNED_ID || !mApplyDefaultsToNewDraft)
+        {
+            return;
+        }
+        boolean inherit = matcher instanceof Talkgroup || matcher instanceof TalkgroupRange;
+        var defaults = defaults(alias);
+        getRecordAudioToggleSwitch().setSelected(inherit && defaults.isRecordEnabled());
+        getSelectedStreamsView().getItems().setAll(inherit ? defaults.streamDestinationNames().stream()
+            .map(BroadcastChannel::new).toList() : List.of());
+        List<ScanList> all = mConfigurationManager.getScanListModel().scanLists();
+        Set<Long> ids = inherit ? defaults.scanListIds() : Set.of();
+        getScanListSelector().setValues(all, all.stream().filter(scanList -> ids.contains(scanList.getId())).toList());
+    }
+
+    private io.github.dsheirer.alias.AliasListDefaults defaults(Alias alias)
+    {
+        AliasListDefinition definition = mConfigurationManager.getAliasModel().getAliasListDefinition(alias);
+        return mConfigurationManager.getAliasAdministrationService().getAliasListDefaults(definition.getId()).defaults();
+    }
+
+    private static boolean inheritsDefaults(Alias alias)
+    {
+        return alias != null && (alias.getMatchIdentifier() instanceof Talkgroup ||
+            alias.getMatchIdentifier() instanceof TalkgroupRange);
     }
 
     private ListView<String> getAvailableStreamsView()

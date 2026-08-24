@@ -115,6 +115,7 @@ public final class AliasListDefinitionResolver
                 AliasListDefinition definition = new AliasListDefinition(name, family);
                 group.mDefinitions.put(family, definition);
                 definitions.add(definition);
+                state.setLegacyAliasListListenEnabled(definition, true);
             }
         }
 
@@ -157,10 +158,12 @@ public final class AliasListDefinitionResolver
                 Alias imported = index == 0 ? alias : AliasFactory.copyOf(alias);
                 imported.setAliasListDefinition(targets.get(index));
                 importedAliases.add(imported);
+                state.getLegacyAliasListenEnabled(alias).ifPresent(enabled ->
+                    state.setLegacyAliasListenEnabled(imported, enabled));
             }
         }
 
-        convertUnambiguousCatchAllAliases(importedAliases, definitions);
+        convertUnambiguousCatchAllAliases(state, importedAliases, definitions);
 
         state.setAliases(importedAliases);
         state.setAliasListDefinitions(definitions);
@@ -171,7 +174,7 @@ public final class AliasListDefinitionResolver
      * remains a normal alias.  Ambiguous legacy configurations are also left untouched so import never guesses which
      * behavior the administrator intended.
      */
-    private static void convertUnambiguousCatchAllAliases(List<Alias> aliases,
+    private static void convertUnambiguousCatchAllAliases(ConfigurationState state, List<Alias> aliases,
                                                            List<AliasListDefinition> definitions)
     {
         for(AliasListDefinition definition: definitions)
@@ -200,6 +203,8 @@ public final class AliasListDefinitionResolver
             definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(catchAll.isRecordable(),
                 catchAll.getBroadcastChannels().stream()
                     .map(BroadcastChannel::getChannelName).toList()));
+            state.getLegacyAliasListenEnabled(catchAll).ifPresent(enabled ->
+                state.setLegacyAliasListListenEnabled(definition, enabled));
             aliases.remove(catchAll);
         }
     }

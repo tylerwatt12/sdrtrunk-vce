@@ -30,7 +30,8 @@ class StatsWebFrequencyActionsUiContractTest
 
         assertTrue(configuration.contains("id: 'radioreference', label: 'RadioReference'"));
         assertTrue(configuration.contains("comingSoonPanel('RadioReference'"));
-        assertTrue(configuration.contains("focused migration"));
+        assertFalse(configuration.contains("focused migration"));
+        assertTrue(configuration.contains("comingSoonPanel('RadioReference')"));
         assertFalse(configuration.contains("renderAdminRadioReferenceSettings"));
         assertTrue(administration.contains("id: 'live-activity', label: 'Live & Activity'"));
         assertTrue(administration.contains("await renderAdminLiveActivitySettings()"));

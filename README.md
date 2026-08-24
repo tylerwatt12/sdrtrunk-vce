@@ -24,7 +24,8 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
   an operator's saved enabled or disabled choice. View live systems, sites, channels, talkgroups, radios, activity,
   and statistics from a browser. Subscribe to one or more administrator-defined scan lists; assign normal Aliases or
-  an Alias List's global unmatched-talkgroup policy to them. Overlapping routes are deduplicated before completed
+  Alias List Defaults to them. Those defaults also initialize new talkgroup Aliases consistently across the desktop,
+  web, Discover, and RadioReference workflows. Overlapping routes are deduplicated before completed
   calls enter the conversation-aware browser queue.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk

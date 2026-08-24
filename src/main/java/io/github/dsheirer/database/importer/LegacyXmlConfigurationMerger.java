@@ -121,6 +121,8 @@ public final class LegacyXmlConfigurationMerger
                 new AliasListDefinition(reservation.name(), sourceDefinition.getFamily(),
                     sourceDefinition.getUnmatchedTalkgroupPolicy());
             mergedDefinitions.add(importedDefinition);
+            importedState.getLegacyAliasListListenEnabled(sourceDefinition).ifPresent(enabled ->
+                merged.setLegacyAliasListListenEnabled(importedDefinition, enabled));
             importedDefinitionsByOriginalName.putIfAbsent(normalize(sourceDefinition.getName()), importedDefinition);
 
             if(reservation.renamed())
@@ -171,6 +173,8 @@ public final class LegacyXmlConfigurationMerger
             importedAlias.setAliasListDefinition(importedDefinition);
             updateBroadcastRoutes(importedAlias, importedStreamNames);
             mergedAliases.add(importedAlias);
+            importedState.getLegacyAliasListenEnabled(sourceAlias).ifPresent(enabled ->
+                merged.setLegacyAliasListenEnabled(importedAlias, enabled));
             importedAliasCount++;
         }
 
@@ -222,6 +226,7 @@ public final class LegacyXmlConfigurationMerger
         merged.setAliases(mergedAliases);
         merged.setChannels(mergedChannels);
         merged.setBroadcastConfigurations(mergedStreams);
+        merged.setScanListConfiguration(currentState.getScanListConfiguration());
 
         Summary summary = new Summary(
             nonNullDefinitions(importedState.getAliasListDefinitions()).size(),

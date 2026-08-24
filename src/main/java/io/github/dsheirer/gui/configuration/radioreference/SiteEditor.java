@@ -251,10 +251,12 @@ public class SiteEditor extends GridPane
                     mRadioReferenceDecoder.getChannelMap(systemInformation, site));
             case P25_PHASE1:
                 DecodeConfigP25Phase1 p25Phase1 = new DecodeConfigP25Phase1();
+                p25Phase1.setLearnAnnouncedControlChannels(true);
                 p25Phase1.setModulation(getP25Phase1Modulation(site));
                 return p25Phase1;
             case P25_PHASE2:
                 DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+                config.setLearnAnnouncedControlChannels(true);
 
                 int nac = 0;
 

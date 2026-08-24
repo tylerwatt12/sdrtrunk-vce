@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.dcs.Dcs;
@@ -72,6 +73,44 @@ class LegacyXmlConfigurationImporterTest
     Path mTemporaryFolder;
 
     @Test
+    void mapsLegacyListenPriorityAndCatchAllWithoutRetainingPriorityAliases() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("legacy-listen.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="Listen" list="DMR Imported">
+                <id type="talkgroup" protocol="DMR" value="100"/>
+              </alias>
+              <alias name="Muted" list="DMR Imported">
+                <id type="priority" priority="-1"/>
+                <id type="talkgroup" protocol="DMR" value="101"/>
+              </alias>
+              <alias name="Catch All" list="DMR Imported">
+                <id type="priority" priority="-1"/>
+                <id type="talkgroupRange" protocol="DMR" min="1" max="16777215"/>
+              </alias>
+            </playlist>
+            """);
+        Path database = mTemporaryFolder.resolve("legacy-listen.sqlite");
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        AliasDatabaseStore store = new AliasDatabaseStore(database);
+        List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+        AliasListDefinition imported = definitions.stream()
+            .filter(definition -> "DMR Imported".equals(definition.getName())).findFirst().orElseThrow();
+        List<Alias> aliases = store.loadAliases(definitions).stream()
+            .filter(alias -> alias.getAliasListId() == imported.getId()).toList();
+        assertEquals(List.of("Listen", "Muted"), aliases.stream().map(Alias::getName).toList());
+        var scanLists = new ScanListDatabaseStore(database).loadConfiguration();
+        long defaultScanListId = scanLists.defaultScanList().getId();
+        Alias listen = aliases.stream().filter(alias -> "Listen".equals(alias.getName())).findFirst().orElseThrow();
+        Alias muted = aliases.stream().filter(alias -> "Muted".equals(alias.getName())).findFirst().orElseThrow();
+        assertEquals(Set.of(defaultScanListId), scanLists.scanListIdsForAlias(listen.getId()));
+        assertTrue(scanLists.scanListIdsForAlias(muted.getId()).isEmpty());
+        assertTrue(scanLists.scanListIdsForUnmatchedTalkgroups(imported.getId()).isEmpty());
+    }
+
+    @Test
     void migratesCurrentXmlShapeToSqlite() throws Exception
     {
         Path xml = writePlaylistXml();
@@ -88,6 +127,8 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(AliasListFamily.P25, county.getFamily());
         var scanLists = new ScanListDatabaseStore(database).loadConfiguration();
         long defaultScanListId = scanLists.defaultScanList().getId();
+        assertEquals(Set.of(defaultScanListId),
+            scanLists.scanListIdsForUnmatchedTalkgroups(county.getId()));
         for(AliasListFamily family: AliasListFamily.values())
         {
             var factory = definitions.stream()
@@ -99,6 +140,8 @@ class LegacyXmlConfigurationImporterTest
         }
         assertEquals(2, aliases.size());
         assertTrue(aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0));
+        assertTrue(aliases.stream().allMatch(alias ->
+            scanLists.scanListIdsForAlias(alias.getId()).equals(Set.of(defaultScanListId))));
         assertTrue(aliases.stream().allMatch(alias -> "Dispatch".equals(alias.getName())));
         assertTrue(aliases.stream().allMatch(alias -> "County".equals(alias.getAliasListName())));
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof Talkgroup));
@@ -172,6 +215,7 @@ class LegacyXmlConfigurationImporterTest
             .findFirst().orElseThrow();
         assertEquals(AliasListFamily.P25.getDefaultAliasListName(), p25.getAliasListName());
         assertEquals(AliasListFamily.DMR.getDefaultAliasListName(), dmr.getAliasListName());
+        assertFalse(((DecodeConfigP25)p25.getDecodeConfiguration()).getLearnAnnouncedControlChannels());
     }
 
     @Test
