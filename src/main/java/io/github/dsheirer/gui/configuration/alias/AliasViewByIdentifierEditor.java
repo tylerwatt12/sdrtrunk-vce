@@ -28,6 +28,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
+import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -40,6 +41,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.cell.PropertyValueFactory;
@@ -58,7 +60,7 @@ public class AliasViewByIdentifierEditor extends VBox
     private ComboBox<String> mAliasListNameComboBox;
     private ComboBox<AliasIDType> mAliasIDTypeComboBox;
     private TableView<AliasAndIdentifier> mAliasAndIdentifierTableView;
-    private TableColumn<AliasAndIdentifier,String> mIdentifierColumn;
+    private TableColumn<AliasAndIdentifier,AliasID> mIdentifierColumn;
     private Button mViewAliasButton;
     private boolean aliasListInvalidated;
 
@@ -196,7 +198,18 @@ public class AliasViewByIdentifierEditor extends VBox
             mAliasAndIdentifierTableView = new TableView<>(FXCollections.observableArrayList(AliasAndIdentifier.extractor()));
             mAliasAndIdentifierTableView.setPlaceholder(new Label("No aliases or identifiers available"));
             mIdentifierColumn = new TableColumn<>("Identifier");
-            mIdentifierColumn.setCellValueFactory(new PropertyValueFactory<>("identifier"));
+            mIdentifierColumn.setCellValueFactory(features ->
+                new ReadOnlyObjectWrapper<>(features.getValue().getAliasIdentifier()));
+            mIdentifierColumn.setComparator(AliasConfigurationEditor::compareAliasIdentifiers);
+            mIdentifierColumn.setCellFactory(column -> new TableCell<>()
+            {
+                @Override
+                protected void updateItem(AliasID item, boolean empty)
+                {
+                    super.updateItem(item, empty);
+                    setText(empty || item == null ? null : item.toString());
+                }
+            });
             mIdentifierColumn.setPrefWidth(350);
 
             TableColumn<AliasAndIdentifier, String> aliasColumn = new TableColumn<>();

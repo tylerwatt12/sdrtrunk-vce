@@ -15,7 +15,12 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.AliasIDType;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -35,9 +40,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javafx.application.Platform;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -549,6 +556,43 @@ class AliasConfigurationEditorLifecycleTest
         assertEquals(List.of(2, 10, 100), sorted);
     }
 
+    @Test
+    void identifierViewSortsNumericMatcherTypesByValue() throws Exception
+    {
+        createFixture(List.of(
+            alias("Talkgroup One Hundred", new Talkgroup(Protocol.APCO25, 100)),
+            alias("Talkgroup Two", new Talkgroup(Protocol.APCO25, 2)),
+            alias("Talkgroup Ten", new Talkgroup(Protocol.APCO25, 10)),
+            alias("Talkgroup Range One Hundred", new TalkgroupRange(Protocol.APCO25, 100, 109)),
+            alias("Talkgroup Range Two", new TalkgroupRange(Protocol.APCO25, 2, 9)),
+            alias("Talkgroup Range Ten", new TalkgroupRange(Protocol.APCO25, 10, 19)),
+            alias("Radio One Hundred", new Radio(Protocol.APCO25, 100)),
+            alias("Radio Two", new Radio(Protocol.APCO25, 2)),
+            alias("Radio Ten", new Radio(Protocol.APCO25, 10)),
+            alias("Radio Range One Hundred", new RadioRange(Protocol.APCO25, 100, 109)),
+            alias("Radio Range Two", new RadioRange(Protocol.APCO25, 2, 9)),
+            alias("Radio Range Ten", new RadioRange(Protocol.APCO25, 10, 19))));
+
+        AliasViewByIdentifierEditor identifierEditor = JavaFxTestSupport.onFxThread(() ->
+        {
+            AliasViewByIdentifierEditor editor = new AliasViewByIdentifierEditor(mManager,
+                new SimpleBooleanProperty(true));
+            new Scene(editor, 900, 700);
+            editor.applyCss();
+            editor.layout();
+            return editor;
+        });
+
+        assertEquals(List.of(2, 10, 100), sortedIdentifiers(identifierEditor, AliasIDType.TALKGROUP).stream()
+            .map(identifier -> ((Talkgroup)identifier).getValue()).toList());
+        assertEquals(List.of(2, 10, 100), sortedIdentifiers(identifierEditor, AliasIDType.TALKGROUP_RANGE).stream()
+            .map(identifier -> ((TalkgroupRange)identifier).getMinTalkgroup()).toList());
+        assertEquals(List.of(2, 10, 100), sortedIdentifiers(identifierEditor, AliasIDType.RADIO_ID).stream()
+            .map(identifier -> ((Radio)identifier).getValue()).toList());
+        assertEquals(List.of(2, 10, 100), sortedIdentifiers(identifierEditor, AliasIDType.RADIO_ID_RANGE).stream()
+            .map(identifier -> ((RadioRange)identifier).getMinRadio()).toList());
+    }
+
     private Fixture createFixture(List<Alias> aliases) throws Exception
     {
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
@@ -612,9 +656,35 @@ class AliasConfigurationEditorLifecycleTest
 
     private static Alias alias(String name, int talkgroup)
     {
+        return alias(name, new Talkgroup(Protocol.APCO25, talkgroup));
+    }
+
+    private static Alias alias(String name, AliasID identifier)
+    {
         Alias alias = new Alias(name);
-        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
+        alias.setMatchIdentifier(identifier);
         return alias;
+    }
+
+    private static List<AliasID> sortedIdentifiers(AliasViewByIdentifierEditor editor, AliasIDType type)
+        throws Exception
+    {
+        return JavaFxTestSupport.onFxThread(() ->
+        {
+            @SuppressWarnings("unchecked")
+            ComboBox<AliasIDType> typeComboBox = field(editor, "mAliasIDTypeComboBox", ComboBox.class);
+            @SuppressWarnings("unchecked")
+            TableView<AliasViewByIdentifierEditor.AliasAndIdentifier> table =
+                field(editor, "mAliasAndIdentifierTableView", TableView.class);
+            typeComboBox.getSelectionModel().select(type);
+            TableColumn<AliasViewByIdentifierEditor.AliasAndIdentifier,?> identifierColumn = table.getColumns().stream()
+                .filter(column -> "Identifier".equals(column.getText())).findFirst().orElseThrow();
+            identifierColumn.setSortType(TableColumn.SortType.ASCENDING);
+            table.getSortOrder().setAll(identifierColumn);
+            table.sort();
+            return table.getItems().stream().map(AliasViewByIdentifierEditor.AliasAndIdentifier::getAliasIdentifier)
+                .toList();
+        });
     }
 
     private static List<Alias> loadAliases(Path database) throws Exception

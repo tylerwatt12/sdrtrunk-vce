@@ -733,7 +733,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         return mAliasTableView;
     }
 
-    private static int compareAliasIdentifiers(AliasID first, AliasID second)
+    static int compareAliasIdentifiers(AliasID first, AliasID second)
     {
         if(first == second)
         {
