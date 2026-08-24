@@ -6904,9 +6904,14 @@ th.numeric {
     flex: 1 1 140px;
   }
 
+  body[data-view="scanner"] .page-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
   .page-header .scanner-view-modes {
     width: 100%;
-    grid-column: 1 / -1;
+    flex: 1 0 100%;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     margin: 8px 0 0;
   }
