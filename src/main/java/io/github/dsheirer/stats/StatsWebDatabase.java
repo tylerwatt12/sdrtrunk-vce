@@ -2820,6 +2820,7 @@ class StatsWebDatabase
 
         for(Map<String,Object> row: rows)
         {
+            row.put("site_id", row.get("site"));
             row.put("protocol_code", protocolCode);
         }
 

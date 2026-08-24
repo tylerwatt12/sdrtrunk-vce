@@ -2272,6 +2272,10 @@ class StatsWebDatabaseTest
 
         List<Map<String,Object>> neighbors = rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID)));
+        Map<String,Object> siteNeighbor = neighbors.stream()
+            .filter(row -> "348:1:2:0-661".equals(row.get("neighbor_key"))).findFirst().orElseThrow();
+        assertEquals(2L, number(siteNeighbor.get("site")));
+        assertEquals(2L, number(siteNeighbor.get("site_id")));
         assertEquals("CURRENT", neighbors.get(0).get("state"));
         assertEquals("HISTORICAL", neighbors.get(1).get("state"));
         assertEquals("CURRENT", neighbors.get(2).get("state"));
@@ -4536,8 +4540,9 @@ class StatsWebDatabaseTest
         assertEquals("trunked", tied.get("site_kind"));
         assertNotNull(rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID))).getFirst().get("descriptor"));
-        assertFalse(rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=" + GUID))).getFirst().containsKey("site_id"));
+        Map<String,Object> p25Neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=" + GUID))).getFirst();
+        assertEquals(number(p25Neighbor.get("site")), number(p25Neighbor.get("site_id")));
         CSVRecord p25ChannelExport = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=site-channels&guid=" + GUID))).getFirst();
         assertEquals("P25", p25ChannelExport.get("protocol"));

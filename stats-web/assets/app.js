@@ -1030,6 +1030,10 @@ function neighborSiteDisplayParts(row) {
   return { primary, secondary: site && !sameSiteText(site, primary) ? site : '' };
 }
 
+function neighborSiteId(row) {
+  return row?.site_id ?? row?.site;
+}
+
 function siteNameSummaryValue(primary, secondary, target = '') {
   if (!primary) return '';
   const summary = node('span', 'site-name-summary');
@@ -12155,8 +12159,8 @@ function p25SiteNeighborColumns() {
       sortValue: (row) => Number(row.system_id || 0) },
     { id: 'rfss', label: 'RFSS', render: (row) => hex(row.rfss, 2),
       sortValue: (row) => Number(row.rfss || 0) },
-    { id: 'site', label: 'Site', render: (row) => hex(row.site, 2),
-      sortValue: (row) => Number(row.site || 0) },
+    { id: 'site', label: 'Site', render: (row) => hex(neighborSiteId(row), 2),
+      sortValue: (row) => Number(neighborSiteId(row) || 0) },
     { id: 'lra', label: 'LRA', render: (row) => hex(row.lra, 2),
       sortValue: (row) => Number(row.lra || 0) },
     { label: 'LCN', key: 'channel_descriptor' },
@@ -12193,7 +12197,7 @@ function trunkedSiteNeighborColumns(site) {
     { label: 'System', key: 'system_id', className: 'numeric',
       render: (row) => identifierNumber(row.system_id) },
     { label: 'Site', key: 'site_id', className: 'numeric',
-      render: (row) => identifierNumber(row.site_id) },
+      render: (row) => identifierNumber(neighborSiteId(row)) },
     { label: 'Channel', key: 'channel_number', className: 'numeric',
       render: (row) => identifierNumber(row.channel_number) },
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
