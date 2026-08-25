@@ -110,6 +110,75 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void keepsSharedP25IdentitiesSingularAcrossSiteSpecificAliasLists() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list (id, name, family)
+                VALUES (20, 'County Site 2', 'P25'),
+                       (21, 'County Site 3', 'P25'),
+                       (22, 'County Site 4', 'P25'),
+                       (23, 'County Site 5', 'P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, group_name, matcher_type, protocol, value)
+                VALUES (20, 20, 'Dispatch', 'Law Dispatch', 'TALKGROUP', 'APCO25', 56132),
+                       (21, 20, 'Engine 1', 'Fire', 'RADIO_ID', 'APCO25', 1811332),
+                       (22, 21, 'Dispatch', 'Law Dispatch', 'TALKGROUP', 'APCO25', 56132),
+                       (23, 21, 'Engine 1', 'Fire', 'RADIO_ID', 'APCO25', 1811332),
+                       (24, 22, 'Dispatch', 'Law Dispatch', 'TALKGROUP', 'APCO25', 56132),
+                       (25, 22, 'Engine 1', 'Fire', 'RADIO_ID', 'APCO25', 1811332),
+                       (26, 23, 'Dispatch', 'Law Dispatch', 'TALKGROUP', 'APCO25', 56132),
+                       (27, 23, 'Engine 1', 'Fire', 'RADIO_ID', 'APCO25', 1811332)
+                """);
+
+            for(int site = 2; site <= 5; site++)
+            {
+                int contextId = 20 + site;
+                String guid = "county-site-" + site;
+                String aliasList = "County Site " + site;
+                statement.executeUpdate("""
+                    INSERT INTO receiver_context (
+                        id, context_key, guid, kind_code, protocol_code, channel_name,
+                        alias_list_name, decoder, first_seen_ms, last_seen_ms, system_key, rfss, site
+                    ) VALUES (%d, 'site-%d', '%s', 1, 1, 'County Site %d', '%s',
+                        'P25-1', 1000, 2000, 1, 1, %d)
+                    """.formatted(contextId, site, guid, site, aliasList, site));
+                statement.executeUpdate("""
+                    INSERT INTO trunked_identity_scope_context (
+                        scope_id, context_id, first_seen_ms, last_seen_ms
+                    ) VALUES (1, %d, 1000, 2000)
+                    """.formatted(contextId));
+                statement.executeUpdate("""
+                    INSERT INTO p25_site_snapshot (
+                        guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                        protocol, channel_name, alias_list_name, decoder, system_key, rfss, site
+                    ) VALUES ('%s', 'hash-%d', 1000, 2000, 10, 'APCO25', 'County Site %d',
+                        '%s', 'P25-1', 1, 1, %d)
+                    """.formatted(guid, site, site, aliasList, site));
+            }
+        }
+
+        Map<String,Object> talkgroups = mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?scope=p25:BEE00:348"));
+        assertEquals(1L, number(talkgroups.get("totalCount")));
+        assertEquals(1, rows(talkgroups).size());
+        assertEquals(56132L, number(rows(talkgroups).getFirst().get("talkgroup_id")));
+        assertEquals(12L, number(rows(talkgroups).getFirst().get("call_count")),
+            "Attaching additional site Alias Lists must not multiply the retained identity summary");
+
+        Map<String,Object> radios = mDatabase.systemRadios(request(
+            "/api/system/radios?scope=p25:BEE00:348"));
+        assertEquals(1L, number(radios.get("totalCount")));
+        assertEquals(1, rows(radios).size());
+        assertEquals(1811332L, number(rows(radios).getFirst().get("radio_id")));
+        assertEquals(8L, number(rows(radios).getFirst().get("call_count")),
+            "Attaching additional site Alias Lists must not multiply the retained identity summary");
+    }
+
+    @Test
     void embedsOnlyTheBoundedSitePreviewForRequestedSystemPages() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
