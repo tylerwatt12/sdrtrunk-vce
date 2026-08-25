@@ -24,7 +24,6 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.MergeResult;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -41,12 +40,12 @@ class LegacyXmlConfigurationMergerTest
     @Test
     void renamesAllCaseInsensitiveConflictsAndUpdatesImportedReferences()
     {
-        ConfigurationState existing = state("County", "Control", "Calls", 100);
+        LegacyConfigurationState existing = state("County", "Control", "Calls", 100);
         existing.getChannels().getFirst().setConfigurationId(EXISTING_CONFIGURATION_ID);
         existing.getChannels().getFirst().setRadresGuid(DUPLICATE_RADIO_REFERENCE_GUID);
         existing.getBroadcastConfigurations().getFirst().setConfigurationId(EXISTING_CONFIGURATION_ID);
 
-        ConfigurationState imported = state("county", "control", "calls", 200);
+        LegacyConfigurationState imported = state("county", "control", "calls", 200);
         imported.getAliasListDefinitions().getFirst().setUnmatchedTalkgroupPolicy(
             new UnmatchedTalkgroupPolicy(true, List.of("calls")));
         Alias importedSourceAlias = imported.getAliases().getFirst();
@@ -68,7 +67,7 @@ class LegacyXmlConfigurationMergerTest
         assertEquals(3, preview.totalConflicts());
 
         MergeResult result = LegacyXmlConfigurationMerger.merge(existing, imported);
-        ConfigurationState merged = result.configurationState();
+        LegacyConfigurationState merged = result.configurationState();
 
         assertSame(existing.getAliasListDefinitions().getFirst(), merged.getAliasListDefinitions().getFirst());
         assertSame(existing.getAliases().getFirst(), merged.getAliases().getFirst());
@@ -124,7 +123,7 @@ class LegacyXmlConfigurationMergerTest
     @Test
     void preservesNonConflictingNamesContentAndUniqueRadioReferenceGuid()
     {
-        ConfigurationState imported = state("Metro", "Primary", "Metro Calls", 1234);
+        LegacyConfigurationState imported = state("Metro", "Primary", "Metro Calls", 1234);
         Alias sourceAlias = imported.getAliases().getFirst();
         sourceAlias.setDescription("Primary dispatch");
         sourceAlias.setGroup("Dispatch");
@@ -137,8 +136,8 @@ class LegacyXmlConfigurationMergerTest
             (RadioResolveConfiguration)imported.getBroadcastConfigurations().getFirst();
         sourceStream.setConfigurationId(EXISTING_CONFIGURATION_ID);
 
-        MergeResult result = LegacyXmlConfigurationMerger.merge(new ConfigurationState(), imported);
-        ConfigurationState merged = result.configurationState();
+        MergeResult result = LegacyXmlConfigurationMerger.merge(new LegacyConfigurationState(), imported);
+        LegacyConfigurationState merged = result.configurationState();
 
         assertEquals("Metro", merged.getAliasListDefinitions().getFirst().getName());
         assertEquals("Primary", merged.getChannels().getFirst().getName());
@@ -158,18 +157,18 @@ class LegacyXmlConfigurationMergerTest
 
         assertEquals(4, result.summary().totalImported());
         assertEquals(0, result.summary().totalRenamed());
-        assertEquals(0, LegacyXmlConfigurationMerger.preview(new ConfigurationState(), imported).totalConflicts());
+        assertEquals(0, LegacyXmlConfigurationMerger.preview(new LegacyConfigurationState(), imported).totalConflicts());
     }
 
     @Test
     void usesNumberedSuffixWhenImportedNameIsAlreadyReserved()
     {
-        ConfigurationState existing = state("County", "Control", "Calls", 100);
+        LegacyConfigurationState existing = state("County", "Control", "Calls", 100);
         append(existing, state("County (Imported)", "Control (Imported)", "Calls (Imported)", 101));
-        ConfigurationState imported = state("COUNTY", "CONTROL", "CALLS", 200);
+        LegacyConfigurationState imported = state("COUNTY", "CONTROL", "CALLS", 200);
 
         MergeResult result = LegacyXmlConfigurationMerger.merge(existing, imported);
-        ConfigurationState merged = result.configurationState();
+        LegacyConfigurationState merged = result.configurationState();
 
         assertEquals("COUNTY (Imported 2)", merged.getAliasListDefinitions().get(2).getName());
         assertEquals("CONTROL (Imported 2)", merged.getChannels().get(2).getName());
@@ -179,9 +178,9 @@ class LegacyXmlConfigurationMergerTest
         assertEquals(3, result.summary().totalRenamed());
     }
 
-    private static ConfigurationState state(String aliasListName, String channelName, String streamName, int talkgroup)
+    private static LegacyConfigurationState state(String aliasListName, String channelName, String streamName, int talkgroup)
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         AliasListDefinition definition =
             new AliasListDefinition(aliasListName, AliasListFamily.P25);
         Alias alias = new Alias("Talkgroup " + talkgroup);
@@ -208,7 +207,7 @@ class LegacyXmlConfigurationMergerTest
         return state;
     }
 
-    private static void append(ConfigurationState target, ConfigurationState addition)
+    private static void append(LegacyConfigurationState target, LegacyConfigurationState addition)
     {
         target.setAliasListDefinitions(concat(target.getAliasListDefinitions(),
             addition.getAliasListDefinitions()));

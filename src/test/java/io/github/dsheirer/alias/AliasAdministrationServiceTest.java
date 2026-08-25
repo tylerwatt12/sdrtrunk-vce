@@ -26,7 +26,6 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -47,6 +46,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -119,6 +123,122 @@ class AliasAdministrationServiceTest
         }
         finally
         {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void concurrentSameRevisionMutationsProduceOneCommitAndOneStaleResult() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("same-revision-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasAdministrationService.MutationResult list =
+                service.createAliasList("County P25", AliasListFamily.P25);
+            long revision = list.revision();
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Object>> futures = new ArrayList<>();
+            for(int index = 0; index < 2; index++)
+            {
+                int talkgroup = 101 + index;
+                futures.add(executor.submit(() ->
+                {
+                    ready.countDown();
+                    start.await();
+                    try
+                    {
+                        return service.createAlias(alias("Dispatch " + talkgroup, list.aliasListId(), talkgroup),
+                            revision);
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        return exception;
+                    }
+                }));
+            }
+
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            List<Object> results = new ArrayList<>();
+            for(Future<Object> future: futures)
+            {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            assertEquals(1, results.stream()
+                .filter(AliasAdministrationService.MutationResult.class::isInstance).count());
+            assertEquals(1, results.stream()
+                .filter(AliasAdministrationService.StaleRevisionException.class::isInstance).count());
+            assertEquals(1, manager.getAliasModel().getAliases().size());
+            AliasDatabaseStore store = new AliasDatabaseStore(database);
+            List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+            assertEquals(1, store.loadAliases(definitions).size());
+        }
+        finally
+        {
+            executor.shutdownNow();
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void concurrentUnversionedMutationsSerializeAndAllocateUniqueIds() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("unversioned-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
+        int count = 12;
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            CountDownLatch ready = new CountDownLatch(4);
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<AliasAdministrationService.MutationResult>> futures = new ArrayList<>();
+            for(int index = 0; index < count; index++)
+            {
+                int talkgroup = 1000 + index;
+                futures.add(executor.submit(() ->
+                {
+                    ready.countDown();
+                    start.await();
+                    return service.createAlias(alias("Talkgroup " + talkgroup, aliasListId, talkgroup));
+                }));
+            }
+
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            Set<Long> identifiers = new HashSet<>();
+            for(Future<AliasAdministrationService.MutationResult> future: futures)
+            {
+                identifiers.add(future.get(15, TimeUnit.SECONDS).aliasIds().getFirst());
+            }
+
+            assertEquals(count, identifiers.size());
+            assertEquals(count, manager.getAliasModel().getAliases().size());
+            AliasDatabaseStore store = new AliasDatabaseStore(database);
+            List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+            List<Alias> stored = store.loadAliases(definitions);
+            assertEquals(count, stored.size());
+            assertEquals(identifiers, stored.stream().map(Alias::getId).collect(java.util.stream.Collectors.toSet()));
+        }
+        finally
+        {
+            executor.shutdownNow();
             MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
         }
     }
@@ -611,7 +731,7 @@ class AliasAdministrationServiceTest
             assertTrue(remainingDefinitions.stream().noneMatch(definition -> definition.getId() == aliasListId));
             assertTrue(aliasStore.loadAliases(remainingDefinitions).isEmpty());
             List<Channel> storedChannels = new ConfigurationDatabaseStore(database)
-                .loadConfigurationState().getChannels();
+                .load().channels();
             assertEquals(1, storedChannels.size());
             assertNull(storedChannels.getFirst().getAliasListName());
             assertTrue(storedChannels.getFirst().hasRadresGuid());

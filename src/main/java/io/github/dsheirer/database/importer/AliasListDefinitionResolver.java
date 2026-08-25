@@ -19,7 +19,6 @@ import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.util.ArrayList;
@@ -38,7 +37,7 @@ import java.util.Set;
  * <p>Only complete, operational rows cross this import boundary. Everything else is omitted instead of creating
  * compatibility or review state in the current schema.</p>
  */
-public final class AliasListDefinitionResolver
+final class AliasListDefinitionResolver
 {
     private static final String LEGACY_NO_ALIAS_LIST = "(No Alias List)";
     private static final String IMPORTED_UNASSIGNED = "Imported Unassigned";
@@ -50,7 +49,7 @@ public final class AliasListDefinitionResolver
     /**
      * Normalizes legacy list protocol families in-place before the state is written to the current alias schema.
      */
-    public static void normalizeLegacyState(ConfigurationState state)
+    static void normalizeLegacyState(LegacyConfigurationState state)
     {
         if(state == null)
         {
@@ -174,7 +173,7 @@ public final class AliasListDefinitionResolver
      * remains a normal alias.  Ambiguous legacy configurations are also left untouched so import never guesses which
      * behavior the administrator intended.
      */
-    private static void convertUnambiguousCatchAllAliases(ConfigurationState state, List<Alias> aliases,
+    private static void convertUnambiguousCatchAllAliases(LegacyConfigurationState state, List<Alias> aliases,
                                                            List<AliasListDefinition> definitions)
     {
         for(AliasListDefinition definition: definitions)

@@ -32,7 +32,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastHTTPConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
@@ -156,27 +155,27 @@ class LegacyXmlConfigurationImporterTest
             alias.getStreamTalkgroupAlias().toString().equals(
                 alias.getStreamTalkgroupAlias().valueProperty().get())));
 
-        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
-        assertEquals(2, state.getChannels().size());
-        assertEquals(1, state.getBroadcastConfigurations().size());
+        var state = new ConfigurationDatabaseStore(database).load();
+        assertEquals(2, state.channels().size());
+        assertEquals(1, state.broadcastConfigurations().size());
 
-        assertInstanceOf(RadioResolveConfiguration.class, state.getBroadcastConfigurations().get(0));
-        RadioResolveConfiguration stream = (RadioResolveConfiguration)state.getBroadcastConfigurations().get(0);
+        assertInstanceOf(RadioResolveConfiguration.class, state.broadcastConfigurations().get(0));
+        RadioResolveConfiguration stream = (RadioResolveConfiguration)state.broadcastConfigurations().get(0);
         assertEquals("test-api-key", stream.getApiKey());
         assertEquals("TEST-NODE", stream.getNodeName());
 
-        assertInstanceOf(DecodeConfigP25Conventional.class, state.getChannels().get(0).getDecodeConfiguration());
-        assertEquals(DecoderType.P25_CONVENTIONAL, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
-        assertTrue(state.getChannels().get(0).getAutoStart());
-        assertEquals(4, state.getChannels().get(0).getAutoStartOrder());
-        assertEquals("11111111-2222-3333-4444-555555555555", state.getChannels().get(0).getRadresGuid());
-        assertInstanceOf(SourceConfigTuner.class, state.getChannels().get(0).getSourceConfiguration());
+        assertInstanceOf(DecodeConfigP25Conventional.class, state.channels().get(0).getDecodeConfiguration());
+        assertEquals(DecoderType.P25_CONVENTIONAL, state.channels().get(0).getDecodeConfiguration().getDecoderType());
+        assertTrue(state.channels().get(0).getAutoStart());
+        assertEquals(4, state.channels().get(0).getAutoStartOrder());
+        assertEquals("11111111-2222-3333-4444-555555555555", state.channels().get(0).getRadresGuid());
+        assertInstanceOf(SourceConfigTuner.class, state.channels().get(0).getSourceConfiguration());
 
-        assertInstanceOf(DecodeConfigP25Phase1.class, state.getChannels().get(1).getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, state.channels().get(1).getDecodeConfiguration());
         SourceConfigTunerMultipleFrequency trunkedSource = assertInstanceOf(SourceConfigTunerMultipleFrequency.class,
-            state.getChannels().get(1).getSourceConfiguration());
+            state.channels().get(1).getSourceConfiguration());
         assertEquals(List.of(856137500L, 856162500L), trunkedSource.getFrequencies());
-        DecodeConfigP25 p25 = (DecodeConfigP25)state.getChannels().get(1).getDecodeConfiguration();
+        DecodeConfigP25 p25 = (DecodeConfigP25)state.channels().get(1).getDecodeConfiguration();
         assertTrue(p25.getLearnAnnouncedControlChannels());
     }
 
@@ -208,10 +207,10 @@ class LegacyXmlConfigurationImporterTest
 
         LegacyXmlConfigurationImporter.importPlaylist(xml, database);
 
-        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
-        Channel p25 = state.getChannels().stream().filter(channel -> channel.getName().equals("P25 Control"))
+        var state = new ConfigurationDatabaseStore(database).load();
+        Channel p25 = state.channels().stream().filter(channel -> channel.getName().equals("P25 Control"))
             .findFirst().orElseThrow();
-        Channel dmr = state.getChannels().stream().filter(channel -> channel.getName().equals("DMR Control"))
+        Channel dmr = state.channels().stream().filter(channel -> channel.getName().equals("DMR Control"))
             .findFirst().orElseThrow();
         assertEquals(AliasListFamily.P25.getDefaultAliasListName(), p25.getAliasListName());
         assertEquals(AliasListFamily.DMR.getDefaultAliasListName(), dmr.getAliasListName());
@@ -327,7 +326,7 @@ class LegacyXmlConfigurationImporterTest
             Path xml = mTemporaryFolder.resolve("playlist-v" + version + ".xml");
             Files.writeString(xml, legacyMatcherPlaylist(version));
 
-            ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+            LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
             assertEquals(4, state.getAliases().size());
 
             Talkgroup p25Talkgroup = assertInstanceOf(Talkgroup.class,
@@ -377,7 +376,7 @@ class LegacyXmlConfigurationImporterTest
             </playlist>
             """);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
         assertEquals(1, state.getAliases().size());
         Alias alias = state.getAliases().getFirst();
         assertInstanceOf(Talkgroup.class, alias.getMatchIdentifier());
@@ -412,7 +411,7 @@ class LegacyXmlConfigurationImporterTest
             </playlist>
             """);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
         assertEquals(4, state.getAliases().size());
 
         Radio single = assertInstanceOf(Radio.class, matcher(state, "Large Single"));
@@ -447,7 +446,7 @@ class LegacyXmlConfigurationImporterTest
             </playlist>
             """);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
         Talkgroup talkgroup = assertInstanceOf(Talkgroup.class, matcher(state, "Dispatch"));
         assertEquals(1234, talkgroup.getValue());
     }
@@ -551,8 +550,8 @@ class LegacyXmlConfigurationImporterTest
         Path database = mTemporaryFolder.resolve("shoutcast-v2.sqlite");
         LegacyXmlConfigurationImporter.importPlaylist(xml, database);
 
-        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
-        assertTrue(state.getBroadcastConfigurations().isEmpty());
+        var state = new ConfigurationDatabaseStore(database).load();
+        assertTrue(state.broadcastConfigurations().isEmpty());
         AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
         assertEquals(1, aliasStore.loadAliases(aliasStore.loadAliasListDefinitions()).size());
     }
@@ -657,8 +656,8 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(firstTone.toString(), firstTone.valueProperty().get());
         assertEquals(tones.toString(), tones.valueProperty().get());
 
-        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
-        Channel nbfmChannel = state.getChannels().stream().filter(channel -> "NBFM".equals(channel.getName()))
+        var state = new ConfigurationDatabaseStore(database).load();
+        Channel nbfmChannel = state.channels().stream().filter(channel -> "NBFM".equals(channel.getName()))
             .findFirst().orElseThrow();
         assertEquals(List.of(DecoderType.MDC1200, DecoderType.DCS),
             nbfmChannel.getAuxDecodeConfiguration().getAuxDecoders());
@@ -683,13 +682,13 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(1.5f, nbfm.getOutputGain());
 
         IcecastHTTPConfiguration icecast = assertInstanceOf(IcecastHTTPConfiguration.class,
-            state.getBroadcastConfigurations().stream()
+            state.broadcastConfigurations().stream()
                 .filter(configuration -> configuration instanceof IcecastHTTPConfiguration)
                 .findFirst().orElseThrow());
         assertEquals(BroadcastFormat.MP3, icecast.getBroadcastFormat());
         assertEquals(48, icecast.getBitRate());
         ShoutcastV1Configuration shoutcast = assertInstanceOf(ShoutcastV1Configuration.class,
-            state.getBroadcastConfigurations().stream()
+            state.broadcastConfigurations().stream()
                 .filter(configuration -> configuration instanceof ShoutcastV1Configuration)
                 .findFirst().orElseThrow());
         assertEquals(BroadcastFormat.MP3, shoutcast.getBroadcastFormat());
@@ -726,9 +725,9 @@ class LegacyXmlConfigurationImporterTest
 
         Path database = mTemporaryFolder.resolve("dmr.sqlite");
         LegacyXmlConfigurationImporter.importPlaylist(xml, database);
-        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
+        var state = new ConfigurationDatabaseStore(database).load();
         DecodeConfigDMR dmr = assertInstanceOf(DecodeConfigDMR.class,
-            state.getChannels().get(0).getDecodeConfiguration());
+            state.channels().get(0).getDecodeConfiguration());
 
         assertEquals(78, dmr.getTimeslotMap().size());
         assertEquals(1, dmr.getTimeslotMap().get(0).getNumber());
@@ -741,7 +740,7 @@ class LegacyXmlConfigurationImporterTest
         assertTrue(dmr.isUseCompressedTalkgroups());
     }
 
-    private static AliasID matcher(ConfigurationState state, String aliasName)
+    private static AliasID matcher(LegacyConfigurationState state, String aliasName)
     {
         return state.getAliases().stream()
             .filter(alias -> aliasName.equals(alias.getName()))
@@ -862,7 +861,7 @@ class LegacyXmlConfigurationImporterTest
             </playlist>
             """);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
 
         assertEquals(2, state.getChannels().size());
         assertEquals(List.of(DecoderType.AM, DecoderType.DMR), state.getChannels().stream()
@@ -954,7 +953,7 @@ class LegacyXmlConfigurationImporterTest
             </playlist>
             """);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
 
         assertEquals(1, state.getChannels().size());
         assertEquals("Supported DMR", state.getChannels().get(0).getName());
@@ -990,7 +989,7 @@ class LegacyXmlConfigurationImporterTest
             """);
         byte[] original = Files.readAllBytes(xml);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
 
         assertEquals(1, state.getChannels().size());
         assertEquals("Supported DMR", state.getChannels().get(0).getName());
@@ -1002,7 +1001,7 @@ class LegacyXmlConfigurationImporterTest
     @Test
     void classifiesLegacyP25ChannelsUsingTrunkedIndicators()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setAliases(List.of(
             talkgroupAlias("Trunked", 1001),
             talkgroupAlias("Trunked", 1002),

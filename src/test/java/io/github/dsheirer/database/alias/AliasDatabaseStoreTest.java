@@ -28,6 +28,7 @@ import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Path;
@@ -337,12 +338,12 @@ class AliasDatabaseStoreTest
     private static AliasConfigurationSnapshot replace(AliasDatabaseStore store, List<Alias> aliases,
                                                       List<AliasListDefinition> definitions) throws Exception
     {
-        AliasConfigurationDatabaseStore configurationStore =
-            new AliasConfigurationDatabaseStore(store.getDatabasePath());
-        AliasConfigurationSnapshot current = configurationStore.load();
+        ConfigurationRepository configurationStore = new ConfigurationRepository(store.getDatabasePath());
+        AliasConfigurationSnapshot current = configurationStore.loadAliasConfiguration();
         ScanListConfiguration scanLists = new ScanListConfiguration(current.scanLists().scanLists(), Map.of(),
             Map.of());
-        return configurationStore.commit(new AliasConfigurationSnapshot(definitions, aliases, scanLists), List.of());
+        return configurationStore.commitAliasConfiguration(
+            new AliasConfigurationSnapshot(definitions, aliases, scanLists), List.of());
     }
 
     private static List<Alias> loadAliases(AliasDatabaseStore store) throws Exception

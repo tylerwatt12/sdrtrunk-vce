@@ -23,24 +23,24 @@ import io.github.dsheirer.audio.broadcast.openmhz.OpenMHzConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class ConfigurationManagerValidationTest
+class ConfigurationSnapshotValidatorTest
 {
     private static final String DUPLICATE_ID = "11111111-2222-4333-8444-555555555555";
 
     @Test
-    void startupValidationRejectsDuplicateChannelIdentitiesWithoutRewritingThem()
+    void startupRejectsDuplicateChannelIdentitiesWithoutRewritingThem()
     {
         Channel first = new Channel("First");
         Channel second = new Channel("Second");
         first.setConfigurationId(DUPLICATE_ID);
         second.setConfigurationId(DUPLICATE_ID);
-        ConfigurationState state = new ConfigurationState();
-        state.setChannels(List.of(first, second));
+        ConfigurationSnapshot state = snapshot(List.of(), List.of(first, second), List.of());
 
-        assertThrows(RuntimeException.class, () -> ConfigurationManager.validateConfigurationIdentities(state));
+        assertThrows(RuntimeException.class, () -> ConfigurationSnapshotValidator.validateForStartup(state));
         assertEquals(DUPLICATE_ID, first.getConfigurationId());
         assertEquals(DUPLICATE_ID, second.getConfigurationId());
     }
@@ -52,10 +52,9 @@ class ConfigurationManagerValidationTest
         BroadcastConfiguration second = new OpenMHzConfiguration(BroadcastFormat.MP3);
         first.setConfigurationId(DUPLICATE_ID);
         second.setConfigurationId(DUPLICATE_ID);
-        ConfigurationState state = new ConfigurationState();
-        state.setBroadcastConfigurations(List.of(first, second));
+        ConfigurationSnapshot state = snapshot(List.of(), List.of(), List.of(first, second));
 
-        assertThrows(RuntimeException.class, () -> ConfigurationManager.validateConfigurationIdentities(state));
+        assertThrows(RuntimeException.class, () -> ConfigurationSnapshotValidator.validateForStartup(state));
         assertEquals(DUPLICATE_ID, first.getConfigurationId());
         assertEquals(DUPLICATE_ID, second.getConfigurationId());
     }
@@ -69,21 +68,20 @@ class ConfigurationManagerValidationTest
         differentSystem.setSystem("System B");
         differentSystem.setAliasListName("County");
         differentSystem.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        ConfigurationState differentSystemState = new ConfigurationState();
-        differentSystemState.setChannels(List.of(differentSystem));
+        ConfigurationSnapshot differentSystemState =
+            snapshot(List.of(definition), List.of(differentSystem), List.of());
 
         assertDoesNotThrow(() ->
-            ConfigurationManager.validateAliasListAssignments(differentSystemState, List.of(definition)));
+            ConfigurationSnapshotValidator.validateForWrite(differentSystemState));
 
         Channel wrongFamily = new Channel("Wrong Family");
         wrongFamily.setSystem("System A");
         wrongFamily.setAliasListName("County");
         wrongFamily.setDecodeConfiguration(new DecodeConfigDMR());
-        ConfigurationState wrongFamilyState = new ConfigurationState();
-        wrongFamilyState.setChannels(List.of(wrongFamily));
+        ConfigurationSnapshot wrongFamilyState = snapshot(List.of(definition), List.of(wrongFamily), List.of());
 
         assertThrows(RuntimeException.class, () ->
-            ConfigurationManager.validateAliasListAssignments(wrongFamilyState, List.of(definition)));
+            ConfigurationSnapshotValidator.validateForWrite(wrongFamilyState));
     }
 
     @Test
@@ -95,11 +93,9 @@ class ConfigurationManagerValidationTest
         channel.setSystem("System A");
         channel.setAliasListName("County");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        ConfigurationState state = new ConfigurationState();
-        state.setChannels(List.of(channel));
+        ConfigurationSnapshot state = snapshot(List.of(definition), List.of(channel), List.of());
 
-        assertDoesNotThrow(() ->
-            ConfigurationManager.validateAliasListAssignments(state, List.of(definition)));
+        assertDoesNotThrow(() -> ConfigurationSnapshotValidator.validateForWrite(state));
     }
 
     @Test
@@ -111,10 +107,15 @@ class ConfigurationManagerValidationTest
         channel.setSystem("System A");
         channel.setAliasListName("county");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        ConfigurationState state = new ConfigurationState();
-        state.setChannels(List.of(channel));
+        ConfigurationSnapshot state = snapshot(List.of(definition), List.of(channel), List.of());
 
-        assertThrows(RuntimeException.class, () ->
-            ConfigurationManager.validateAliasListAssignments(state, List.of(definition)));
+        assertThrows(RuntimeException.class, () -> ConfigurationSnapshotValidator.validateForWrite(state));
+    }
+
+    private static ConfigurationSnapshot snapshot(List<AliasListDefinition> definitions, List<Channel> channels,
+                                                  List<BroadcastConfiguration> streams)
+    {
+        return new ConfigurationSnapshot(definitions, List.of(), ScanListConfiguration.defaultConfiguration(),
+            channels, streams);
     }
 }

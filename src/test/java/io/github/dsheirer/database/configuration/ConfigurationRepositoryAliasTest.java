@@ -9,7 +9,7 @@
  * *****************************************************************************
  */
 
-package io.github.dsheirer.database.alias;
+package io.github.dsheirer.database.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -47,7 +47,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class AliasConfigurationDatabaseStoreTest
+class ConfigurationRepositoryAliasTest
 {
     @TempDir
     Path mTemporaryFolder;
@@ -62,8 +62,8 @@ class AliasConfigurationDatabaseStoreTest
         AliasConfigurationSnapshot proposed = new AliasConfigurationSnapshot(List.of(proposedDefinition),
             List.of(proposedAlias), new ScanListConfiguration(List.of(proposedDefault), Map.of(), Map.of()));
 
-        AliasConfigurationSnapshot committed = new AliasConfigurationDatabaseStore(database)
-            .commit(proposed, Set.of());
+        AliasConfigurationSnapshot committed = new ConfigurationRepository(database)
+            .commitAliasConfiguration(proposed, Set.of());
 
         AliasListDefinition committedDefinition = committed.definitions().getFirst();
         Alias committedAlias = committed.aliases().getFirst();
@@ -81,7 +81,7 @@ class AliasConfigurationDatabaseStoreTest
         assertEquals(Alias.UNASSIGNED_ALIAS_LIST_ID, proposedAlias.getAliasListId());
         assertEquals(ScanList.UNASSIGNED_ID, proposedDefault.getId());
 
-        AliasConfigurationSnapshot reloaded = new AliasConfigurationDatabaseStore(database).load();
+        AliasConfigurationSnapshot reloaded = new ConfigurationRepository(database).loadAliasConfiguration();
         assertEquals(committedDefinition.getId(), reloaded.definitions().getFirst().getId());
         assertEquals(committedAlias.getId(), reloaded.aliases().getFirst().getId());
         assertEquals(committedAlias.getAliasListId(), reloaded.aliases().getFirst().getAliasListId());
@@ -92,7 +92,7 @@ class AliasConfigurationDatabaseStoreTest
     void ordinaryAliasCommitLeavesChannelAndBroadcastRowsUnchanged() throws Exception
     {
         Path database = database("row-scope.sqlite");
-        AliasConfigurationDatabaseStore store = new AliasConfigurationDatabaseStore(database);
+        ConfigurationRepository store = new ConfigurationRepository(database);
         AliasConfigurationSnapshot baseline = seedAlias(store, database, "County P25", 1001);
 
         try(Connection connection = SdrTrunkDatabase.open(database))
@@ -108,7 +108,7 @@ class AliasConfigurationDatabaseStoreTest
         replacement.setId(baseline.aliases().getFirst().getId());
         replacement.setDescription("Updated description");
 
-        AliasConfigurationSnapshot committed = store.commit(new AliasConfigurationSnapshot(
+        AliasConfigurationSnapshot committed = store.commitAliasConfiguration(new AliasConfigurationSnapshot(
             baseline.definitions(), List.of(replacement), baseline.scanLists()), Set.of());
 
         assertEquals("Updated description", committed.aliases().getFirst().getDescription());
@@ -120,7 +120,7 @@ class AliasConfigurationDatabaseStoreTest
     void aliasListDeletionClearsOnlyMatchingChannelAssignments() throws Exception
     {
         Path database = database("list-delete.sqlite");
-        AliasConfigurationDatabaseStore store = new AliasConfigurationDatabaseStore(database);
+        ConfigurationRepository store = new ConfigurationRepository(database);
         AliasConfigurationSnapshot baseline = seedAlias(store, database, "County P25", 1001);
 
         try(Connection connection = SdrTrunkDatabase.open(database))
@@ -137,7 +137,7 @@ class AliasConfigurationDatabaseStoreTest
         ScanListConfiguration retainedScanLists = new ScanListConfiguration(
             baseline.scanLists().scanLists(), Map.of(), Map.of());
 
-        AliasConfigurationSnapshot committed = store.commit(new AliasConfigurationSnapshot(
+        AliasConfigurationSnapshot committed = store.commitAliasConfiguration(new AliasConfigurationSnapshot(
             List.of(), List.of(), retainedScanLists), Set.of("County P25"));
 
         assertTrue(committed.definitions().isEmpty());
@@ -168,11 +168,11 @@ class AliasConfigurationDatabaseStoreTest
     void lateChannelFailureRollsBackAliasAndScanListChanges() throws Exception
     {
         Path database = database("late-rollback.sqlite");
-        AliasConfigurationDatabaseStore store = new AliasConfigurationDatabaseStore(database);
+        ConfigurationRepository store = new ConfigurationRepository(database);
         AliasConfigurationSnapshot seeded = seedAlias(store, database, "County P25", 1001);
         long aliasId = seeded.aliases().getFirst().getId();
         long defaultScanListId = seeded.scanLists().defaultScanList().getId();
-        AliasConfigurationSnapshot baseline = store.commit(new AliasConfigurationSnapshot(seeded.definitions(),
+        AliasConfigurationSnapshot baseline = store.commitAliasConfiguration(new AliasConfigurationSnapshot(seeded.definitions(),
             seeded.aliases(), new ScanListConfiguration(seeded.scanLists().scanLists(),
                 Map.of(aliasId, Set.of(defaultScanListId)), Map.of())), Set.of());
 
@@ -196,12 +196,12 @@ class AliasConfigurationDatabaseStoreTest
         ScanListConfiguration proposedScanLists = new ScanListConfiguration(
             baseline.scanLists().scanLists(), Map.of(), Map.of());
 
-        assertThrows(SQLException.class, () -> store.commit(new AliasConfigurationSnapshot(
+        assertThrows(SQLException.class, () -> store.commitAliasConfiguration(new AliasConfigurationSnapshot(
             List.of(), List.of(), proposedScanLists), Set.of("County P25")));
 
         assertEquals(rowsBefore, aliasOwnedRows(database));
         assertEquals(channelBefore, row(database, "configuration_channel", 41L));
-        AliasConfigurationSnapshot reloaded = store.load();
+        AliasConfigurationSnapshot reloaded = store.loadAliasConfiguration();
         assertEquals(baseline.definitions().getFirst().getId(), reloaded.definitions().getFirst().getId());
         assertEquals(aliasId, reloaded.aliases().getFirst().getId());
         assertEquals(Set.of(defaultScanListId), reloaded.scanLists().scanListIdsForAlias(aliasId));
@@ -211,12 +211,12 @@ class AliasConfigurationDatabaseStoreTest
     void lateBroadcastFailureRollsBackStreamAndAliasReferenceChanges() throws Exception
     {
         Path database = database("broadcast-rollback.sqlite");
-        AliasConfigurationDatabaseStore store = new AliasConfigurationDatabaseStore(database);
+        ConfigurationRepository store = new ConfigurationRepository(database);
         AliasConfigurationSnapshot seeded = seedAlias(store, database, "County P25", 1001);
         seeded.definitions().getFirst().setUnmatchedTalkgroupPolicy(
             new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")));
         seeded.aliases().getFirst().addBroadcastChannel("Old Stream");
-        AliasConfigurationSnapshot baseline = store.commit(seeded, Set.of());
+        AliasConfigurationSnapshot baseline = store.commitAliasConfiguration(seeded, Set.of());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
@@ -247,7 +247,7 @@ class AliasConfigurationDatabaseStoreTest
         Map<String,List<List<Object>>> aliasRowsBefore = aliasOwnedRows(database);
         List<List<Object>> broadcastRowsBefore = rows(database, "configuration_broadcast_stream");
 
-        assertThrows(SQLException.class, () -> store.commitWithBroadcastConfigurationRename(proposed, Set.of(),
+        assertThrows(SQLException.class, () -> store.commitAliasConfigurationWithBroadcastRename(proposed, Set.of(),
             List.of(proposedStream), "Old Stream", "New Stream"));
 
         assertEquals(aliasRowsBefore, aliasOwnedRows(database));
@@ -261,14 +261,14 @@ class AliasConfigurationDatabaseStoreTest
         return database;
     }
 
-    private static AliasConfigurationSnapshot seedAlias(AliasConfigurationDatabaseStore store, Path database,
+    private static AliasConfigurationSnapshot seedAlias(ConfigurationRepository store, Path database,
                                                          String listName, int talkgroup) throws Exception
     {
         AliasListDefinition definition = new AliasListDefinition(listName, AliasListFamily.P25);
         Alias alias = alias("Dispatch", definition, talkgroup);
         ScanListConfiguration currentScanLists = new ScanListDatabaseStore(database).loadConfiguration();
         ScanListConfiguration scanLists = new ScanListConfiguration(currentScanLists.scanLists(), Map.of(), Map.of());
-        return store.commit(new AliasConfigurationSnapshot(List.of(definition), List.of(alias), scanLists),
+        return store.commitAliasConfiguration(new AliasConfigurationSnapshot(List.of(definition), List.of(alias), scanLists),
             Set.of());
     }
 

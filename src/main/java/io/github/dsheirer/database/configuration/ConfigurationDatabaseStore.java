@@ -16,7 +16,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -59,52 +58,32 @@ public class ConfigurationDatabaseStore
         return mDatabasePath;
     }
 
-    public ConfigurationState loadConfigurationState() throws IOException, SQLException
+    public ChannelAndBroadcastConfiguration load() throws IOException, SQLException
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            ConfigurationState state = new ConfigurationState();
-            state.setChannels(loadChannels(connection));
-            state.setBroadcastConfigurations(loadBroadcastConfigurations(connection));
-            return state;
+            return load(connection);
         }
     }
 
-    /** Replaces only active channels and broadcast streams in one owned transaction. */
-    public void replaceConfigurationState(ConfigurationState state) throws IOException, SQLException
+    /** Loads the channel and stream portion of a snapshot from one caller-owned database view. */
+    public ChannelAndBroadcastConfiguration load(Connection connection) throws IOException, SQLException
     {
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        if(connection == null)
         {
-            connection.setAutoCommit(false);
-
-            try
-            {
-                replaceConfigurationState(connection, state);
-                connection.commit();
-            }
-            catch(IOException | SQLException | RuntimeException | Error exception)
-            {
-                try
-                {
-                    connection.rollback();
-                }
-                catch(SQLException rollbackException)
-                {
-                    exception.addSuppressed(rollbackException);
-                }
-                throw exception;
-            }
+            throw new IllegalArgumentException("Connection cannot be null");
         }
+        return new ChannelAndBroadcastConfiguration(loadChannels(connection),
+            loadBroadcastConfigurations(connection));
     }
 
     /**
-     * Saves channels and streams using a caller-owned transaction. Import workflows use this overload together with
-     * {@link io.github.dsheirer.database.alias.AliasDatabaseStore#replaceAliases(Connection, List, List)} so every
-     * reference and its alias-list definition becomes visible in one commit.
+     * Saves channels and streams using the caller-owned repository transaction so every reference and its Alias List
+     * definition becomes visible in one commit.
      *
      * @param connection open connection with auto-commit disabled
      */
-    public void replaceConfigurationState(Connection connection, ConfigurationState state)
+    public void replace(Connection connection, ChannelAndBroadcastConfiguration configuration)
         throws IOException, SQLException
     {
         if(connection == null || connection.getAutoCommit())
@@ -112,11 +91,16 @@ public class ConfigurationDatabaseStore
             throw new IllegalArgumentException("Configuration snapshot writes require a caller-owned transaction");
         }
 
+        if(configuration == null)
+        {
+            throw new IllegalArgumentException("Channel and broadcast configuration cannot be null");
+        }
+
         List<RetainedChannelRow> retainedChannels = loadRetainedChannelRows(connection);
         clearConfigurationState(connection);
         restoreRetainedChannelRows(connection, retainedChannels);
-        insertChannels(connection, state.getChannels());
-        insertBroadcastConfigurations(connection, state.getBroadcastConfigurations());
+        insertChannels(connection, configuration.channels());
+        insertBroadcastConfigurations(connection, configuration.broadcastConfigurations());
     }
 
     /**

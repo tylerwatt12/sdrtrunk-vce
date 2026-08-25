@@ -193,8 +193,8 @@ class AliasAdministrationPersistenceTest
 
             manager.flushConfiguration();
 
-            assertEquals(List.of("Late Channel"), new ConfigurationDatabaseStore(database).loadConfigurationState()
-                .getChannels().stream().map(Channel::getName).toList());
+            assertEquals(List.of("Late Channel"), new ConfigurationDatabaseStore(database).load()
+                .channels().stream().map(Channel::getName).toList());
         }
         finally
         {
@@ -233,7 +233,7 @@ class AliasAdministrationPersistenceTest
             manager.flushConfiguration();
 
             assertEquals(List.of("Publication Channel"),
-                new ConfigurationDatabaseStore(database).loadConfigurationState().getChannels().stream()
+                new ConfigurationDatabaseStore(database).load().channels().stream()
                     .map(Channel::getName).toList());
         }
         finally
@@ -481,8 +481,8 @@ class AliasAdministrationPersistenceTest
             service.renameBroadcastChannelReferences("Old Stream", "New Stream");
 
             assertEquals("New Stream", stream.getName());
-            assertEquals(List.of("New Stream"), new ConfigurationDatabaseStore(database).loadConfigurationState()
-                .getBroadcastConfigurations().stream().map(configuration -> configuration.getName()).toList());
+            assertEquals(List.of("New Stream"), new ConfigurationDatabaseStore(database).load()
+                .broadcastConfigurations().stream().map(configuration -> configuration.getName()).toList());
             List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
             Alias stored = new AliasDatabaseStore(database).loadAliases(definitions).stream()
                 .filter(alias -> alias.getId() == aliasId).findFirst().orElseThrow();

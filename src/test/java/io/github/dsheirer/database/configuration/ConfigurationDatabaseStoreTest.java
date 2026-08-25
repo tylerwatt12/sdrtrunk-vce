@@ -21,10 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog.Bandwidth;
@@ -34,7 +32,6 @@ import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
-import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -42,7 +39,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -52,7 +48,7 @@ class ConfigurationDatabaseStoreTest
     Path mTemporaryFolder;
 
     @Test
-    void roundTripsConfigurationState() throws Exception
+    void roundTripsChannelAndBroadcastConfiguration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -85,17 +81,17 @@ class ConfigurationDatabaseStoreTest
         stream.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
         stream.setEnabled(true);
 
-        ConfigurationState state = new ConfigurationState();
+        TestConfiguration state = new TestConfiguration();
         state.setChannels(List.of(channel));
         state.setBroadcastConfigurations(List.of(stream));
 
         replace(database, state);
 
-        ConfigurationState loaded = store.loadConfigurationState();
-        assertEquals(1, loaded.getChannels().size());
-        assertEquals(1, loaded.getBroadcastConfigurations().size());
+        ChannelAndBroadcastConfiguration loaded = store.load();
+        assertEquals(1, loaded.channels().size());
+        assertEquals(1, loaded.broadcastConfigurations().size());
 
-        Channel loadedChannel = loaded.getChannels().get(0);
+        Channel loadedChannel = loaded.channels().get(0);
         assertEquals("County", loadedChannel.getSystem());
         assertEquals("Simulcast", loadedChannel.getSite());
         assertEquals("Control", loadedChannel.getName());
@@ -114,7 +110,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals(853_762_500L, loadedSource.getFrequency());
         assertEquals("Airspy", loadedSource.getPreferredTuner());
 
-        BroadcastConfiguration loadedStream = loaded.getBroadcastConfigurations().get(0);
+        BroadcastConfiguration loadedStream = loaded.broadcastConfigurations().get(0);
         assertInstanceOf(RadioResolveConfiguration.class, loadedStream);
         RadioResolveConfiguration loadedRadioResolve = (RadioResolveConfiguration)loadedStream;
         assertEquals("RadioResolve", loadedRadioResolve.getName());
@@ -181,11 +177,11 @@ class ConfigurationDatabaseStoreTest
         source.setPreferredFrequency(rememberedFrequency);
         channel.setSourceConfiguration(source);
 
-        ConfigurationState state = new ConfigurationState();
+        TestConfiguration state = new TestConfiguration();
         state.setChannels(List.of(channel));
         replace(database, state);
 
-        Channel restoredChannel = store.loadConfigurationState().getChannels().getFirst();
+        Channel restoredChannel = store.load().channels().getFirst();
         SourceConfigTunerMultipleFrequency restored = assertInstanceOf(SourceConfigTunerMultipleFrequency.class,
             restoredChannel.getSourceConfiguration());
         assertEquals(List.of(firstFrequency, rememberedFrequency), restored.getFrequencies());
@@ -241,7 +237,7 @@ class ConfigurationDatabaseStoreTest
             mapStatement.executeUpdate();
         }
 
-        assertTrue(store.loadConfigurationState().getChannels().isEmpty(),
+        assertTrue(store.load().channels().isEmpty(),
             "retired rows must be classified before attempting to bind their JSON");
 
         Channel active = new Channel("Supported DMR");
@@ -250,13 +246,13 @@ class ConfigurationDatabaseStoreTest
         SourceConfigTuner source = new SourceConfigTuner();
         source.setFrequency(460_000_000L);
         active.setSourceConfiguration(source);
-        ConfigurationState replacement = new ConfigurationState();
+        TestConfiguration replacement = new TestConfiguration();
         replacement.setChannels(List.of(active));
         replace(database, replacement);
 
-        ConfigurationState loaded = store.loadConfigurationState();
-        assertEquals(1, loaded.getChannels().size());
-        assertEquals("Supported DMR", loaded.getChannels().get(0).getName());
+        ChannelAndBroadcastConfiguration loaded = store.load();
+        assertEquals(1, loaded.channels().size());
+        assertEquals("Supported DMR", loaded.channels().get(0).getName());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement channelQuery = connection.prepareStatement("""
@@ -344,11 +340,11 @@ class ConfigurationDatabaseStoreTest
         sourceConfig.setFrequency(121_900_000L);
         channel.setSourceConfiguration(sourceConfig);
 
-        ConfigurationState state = new ConfigurationState();
+        TestConfiguration state = new TestConfiguration();
         state.setChannels(List.of(channel));
         replace(database, state);
 
-        Channel loaded = store.loadConfigurationState().getChannels().get(0);
+        Channel loaded = store.load().channels().get(0);
         DecodeConfigAM loadedDecodeConfiguration =
             assertInstanceOf(DecodeConfigAM.class, loaded.getDecodeConfiguration());
         assertEquals(DecoderType.AM, loadedDecodeConfiguration.getDecoderType());
@@ -383,12 +379,12 @@ class ConfigurationDatabaseStoreTest
         sourceConfig.setFrequency(155_250_000L);
         channel.setSourceConfiguration(sourceConfig);
 
-        ConfigurationState state = new ConfigurationState();
+        TestConfiguration state = new TestConfiguration();
         state.setChannels(List.of(channel));
 
         replace(database, state);
 
-        Channel loaded = store.loadConfigurationState().getChannels().get(0);
+        Channel loaded = store.load().channels().get(0);
         DecodeConfigP25Conventional loadedDecodeConfiguration =
             assertInstanceOf(DecodeConfigP25Conventional.class, loaded.getDecodeConfiguration());
         assertEquals(DecoderType.P25_CONVENTIONAL, loaded.getDecodeConfiguration().getDecoderType());
@@ -423,7 +419,7 @@ class ConfigurationDatabaseStoreTest
             statement.executeUpdate();
         }
 
-        assertThrows(IOException.class, store::loadConfigurationState);
+        assertThrows(IOException.class, store::load);
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
@@ -436,15 +432,31 @@ class ConfigurationDatabaseStoreTest
         }
     }
 
-    private static void replace(Path database, ConfigurationState state) throws Exception
+    private static void replace(Path database, TestConfiguration state) throws Exception
     {
-        if(state.getScanListConfiguration() == null)
+        try(Connection connection = SdrTrunkDatabase.open(database))
         {
-            ScanListConfiguration current = new ScanListDatabaseStore(database).loadConfiguration();
-            state.setScanListConfiguration(new ScanListConfiguration(current.scanLists(), Map.of(), Map.of()));
+            connection.setAutoCommit(false);
+            new ConfigurationDatabaseStore(database).replace(connection,
+                new ChannelAndBroadcastConfiguration(state.mChannels, state.mBroadcastConfigurations));
+            connection.commit();
+        }
+    }
+
+    private static final class TestConfiguration
+    {
+        private List<Channel> mChannels = List.of();
+        private List<BroadcastConfiguration> mBroadcastConfigurations = List.of();
+
+        private void setChannels(List<Channel> channels)
+        {
+            mChannels = channels;
         }
 
-        new ConfigurationSnapshotDatabaseStore(database).replace(state);
+        private void setBroadcastConfigurations(List<BroadcastConfiguration> configurations)
+        {
+            mBroadcastConfigurations = configurations;
+        }
     }
 
     private static boolean tableExists(Connection connection, String table) throws Exception

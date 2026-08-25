@@ -829,19 +829,14 @@ public final class AliasAdministrationService
 
     private long nextAliasListId()
     {
-        return identityAllocator().nextAliasListIds(aliasModel().aliasListDefinitions().stream()
+        return mConfigurationManager.nextAliasListIds(aliasModel().aliasListDefinitions().stream()
             .map(AliasListDefinition::getId).toList(), 1).getFirst();
     }
 
     private long nextScanListId()
     {
-        return identityAllocator().nextScanListIds(scanListModel().scanLists().stream().map(ScanList::getId).toList(),
-            1).getFirst();
-    }
-
-    private ConfigurationIdentityAllocator identityAllocator()
-    {
-        return new ConfigurationIdentityAllocator(mConfigurationManager.getDatabasePath());
+        return mConfigurationManager.nextScanListIds(scanListModel().scanLists().stream()
+            .map(ScanList::getId).toList(), 1).getFirst();
     }
 
     /** Validates and installs a batch in the detached candidate by durable identity. */
@@ -860,7 +855,7 @@ public final class AliasAdministrationService
         Set<Alias> creates = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         prepared.stream().filter(alias -> alias != null && alias.getId() == Alias.UNASSIGNED_ID)
             .forEach(creates::add);
-        List<Long> allocatedIds = identityAllocator().nextAliasIds(aliasModel().getAliases().stream()
+        List<Long> allocatedIds = mConfigurationManager.nextAliasIds(aliasModel().getAliases().stream()
             .map(Alias::getId).toList(), creates.size());
         int allocatedIndex = 0;
         for(Alias alias: prepared)

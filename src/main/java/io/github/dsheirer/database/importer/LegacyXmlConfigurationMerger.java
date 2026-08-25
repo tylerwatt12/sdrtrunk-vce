@@ -17,7 +17,6 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,10 +43,10 @@ public final class LegacyXmlConfigurationMerger
     /**
      * Describes the imported content and the names that will need to change.
      */
-    public static Preview preview(ConfigurationState existing, ConfigurationState imported)
+    static Preview preview(LegacyConfigurationState existing, LegacyConfigurationState imported)
     {
-        ConfigurationState currentState = state(existing);
-        ConfigurationState importedState = state(imported);
+        LegacyConfigurationState currentState = state(existing);
+        LegacyConfigurationState importedState = state(imported);
 
         Set<String> aliasListNames = normalizedDefinitionNames(currentState.getAliasListDefinitions());
         int aliasListConflicts = 0;
@@ -97,11 +96,11 @@ public final class LegacyXmlConfigurationMerger
     /**
      * Adds every valid imported item while preserving all existing configuration.
      */
-    public static MergeResult merge(ConfigurationState existing, ConfigurationState imported)
+    static MergeResult merge(LegacyConfigurationState existing, LegacyConfigurationState imported)
     {
-        ConfigurationState currentState = state(existing);
-        ConfigurationState importedState = state(imported);
-        ConfigurationState merged = new ConfigurationState();
+        LegacyConfigurationState currentState = state(existing);
+        LegacyConfigurationState importedState = state(imported);
+        LegacyConfigurationState merged = new LegacyConfigurationState();
 
         List<AliasListDefinition> mergedDefinitions =
             new ArrayList<>(nonNullDefinitions(currentState.getAliasListDefinitions()));
@@ -410,9 +409,9 @@ public final class LegacyXmlConfigurationMerger
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private static ConfigurationState state(ConfigurationState state)
+    private static LegacyConfigurationState state(LegacyConfigurationState state)
     {
-        return state != null ? state : new ConfigurationState();
+        return state != null ? state : new LegacyConfigurationState();
     }
 
     private static List<AliasListDefinition> nonNullDefinitions(List<AliasListDefinition> definitions)
@@ -463,7 +462,7 @@ public final class LegacyXmlConfigurationMerger
         }
     }
 
-    public record MergeResult(ConfigurationState configurationState, Summary summary)
+    record MergeResult(LegacyConfigurationState configurationState, Summary summary)
     {
     }
 }

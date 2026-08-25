@@ -11,33 +11,27 @@
 
 package io.github.dsheirer.database.importer;
 
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.alias.AliasDatabaseStore;
-import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
-import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
-import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.MergeResult;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Summary;
 import io.github.dsheirer.database.upgrade.SqliteDatabaseSnapshot;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
-import java.util.List;
 
 /**
  * Previews and safely merges a legacy XML playlist into the active SQLite configuration.
@@ -51,9 +45,6 @@ import java.util.List;
 public class LegacyPlaylistImportService
 {
     private static final DateTimeFormatter BACKUP_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final List<String> CONFIGURATION_TABLES = List.of(
-        "alias_list", "alias", "alias_broadcast_channel", "alias_list_unmatched_talkgroup_stream",
-        "configuration_channel", "configuration_broadcast_stream");
     private final Path mDatabasePath;
 
     public LegacyPlaylistImportService(Path databasePath)
@@ -69,25 +60,16 @@ public class LegacyPlaylistImportService
     public PreparedImport prepare(Path sourceXml) throws IOException, SQLException
     {
         Path source = requireSource(sourceXml);
-        String sourceFingerprint = fileFingerprint(source);
-        String configurationFingerprint = configurationFingerprint();
-        ConfigurationState imported = loadImported(source);
-        ConfigurationState current = loadCurrent();
+        LoadedImport loadedImport = loadImported(source);
+        ConfigurationRepository.FingerprintedSnapshot current =
+            new ConfigurationRepository(mDatabasePath).loadWithFingerprint();
+        LegacyConfigurationState imported = loadedImport.configuration();
+        LegacyConfigurationState currentState = LegacyConfigurationState.from(current.snapshot());
 
-        if(!sourceFingerprint.equals(fileFingerprint(source)))
-        {
-            throw new IOException("The playlist changed while it was being read. Preview it again.");
-        }
-
-        if(!configurationFingerprint.equals(configurationFingerprint()))
-        {
-            throw new IOException("The active configuration changed while the preview was prepared. Preview it again.");
-        }
-
-        Preview preview = LegacyXmlConfigurationMerger.preview(current, imported);
+        Preview preview = LegacyXmlConfigurationMerger.preview(currentState, imported);
         requireSupportedContent(preview);
-        MergeResult mergeResult = LegacyXmlConfigurationMerger.merge(current, imported);
-        return new PreparedImport(source, preview, sourceFingerprint, configurationFingerprint, mergeResult);
+        MergeResult mergeResult = LegacyXmlConfigurationMerger.merge(currentState, imported);
+        return new PreparedImport(source, preview, loadedImport.fingerprint(), current.fingerprint(), mergeResult);
     }
 
     public ImportResult execute(PreparedImport preparedImport) throws IOException, SQLException
@@ -104,14 +86,15 @@ public class LegacyPlaylistImportService
             throw new IOException("The playlist changed after the preview. Preview it again.");
         }
 
-        if(!preparedImport.configurationFingerprint().equals(configurationFingerprint()))
+        if(!preparedImport.configurationFingerprint().equals(new ConfigurationRepository(mDatabasePath).fingerprint()))
         {
             throw new IOException("The active configuration changed after the preview. Preview it again.");
         }
 
         Path backup = createBackup();
-        new ConfigurationSnapshotDatabaseStore(mDatabasePath)
-            .replace(preparedImport.mergeResult().configurationState());
+        LegacyConfigurationState merged = preparedImport.mergeResult().configurationState();
+        ConfigurationRepository repository = new ConfigurationRepository(mDatabasePath);
+        repository.replace(merged.toConfigurationSnapshot(repository));
         return new ImportResult(source, backup, preparedImport.preview(),
             preparedImport.mergeResult().summary());
     }
@@ -142,63 +125,21 @@ public class LegacyPlaylistImportService
         }
     }
 
-    private ConfigurationState loadImported(Path sourceXml) throws IOException
-    {
-        ConfigurationState imported = LegacyXmlConfigurationImporter.readConfigurationState(sourceXml);
-        LegacyXmlConfigurationImporter.convertLikelyConventionalP25Channels(imported);
-        return imported;
-    }
-
-    private ConfigurationState loadCurrent() throws IOException, SQLException
-    {
-        ConfigurationState current = new ConfigurationDatabaseStore(mDatabasePath).loadConfigurationState();
-        AliasDatabaseStore aliasStore = new AliasDatabaseStore(mDatabasePath);
-        var definitions = aliasStore.loadAliasListDefinitions();
-        current.setAliasListDefinitions(definitions);
-        current.setAliases(aliasStore.loadAliases(definitions));
-        current.setScanListConfiguration(new ScanListDatabaseStore(mDatabasePath).loadConfiguration());
-        return current;
-    }
-
-    private String configurationFingerprint() throws IOException, SQLException
+    private LoadedImport loadImported(Path sourceXml) throws IOException
     {
         MessageDigest digest = sha256();
-
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        LegacyConfigurationState imported;
+        try(DigestInputStream inputStream = new DigestInputStream(Files.newInputStream(sourceXml), digest))
         {
-            connection.setAutoCommit(false);
-
-            for(String table: CONFIGURATION_TABLES)
+            imported = LegacyXmlConfigurationImporter.readConfigurationState(inputStream);
+            byte[] buffer = new byte[8192];
+            while(inputStream.read(buffer) >= 0)
             {
-                update(digest, table);
-
-                try(Statement statement = connection.createStatement();
-                    ResultSet resultSet = statement.executeQuery("SELECT * FROM " + table + " ORDER BY id"))
-                {
-                    ResultSetMetaData metadata = resultSet.getMetaData();
-                    int columns = metadata.getColumnCount();
-
-                    for(int column = 1; column <= columns; column++)
-                    {
-                        update(digest, metadata.getColumnName(column));
-                    }
-
-                    while(resultSet.next())
-                    {
-                        for(int column = 1; column <= columns; column++)
-                        {
-                            Object value = resultSet.getObject(column);
-                            update(digest, value != null ? value.getClass().getName() : null);
-                            update(digest, value != null ? value.toString() : null);
-                        }
-                    }
-                }
+                //Drain any parser lookahead remainder so the token covers the complete captured source.
             }
-
-            connection.rollback();
         }
-
-        return HexFormat.of().formatHex(digest.digest());
+        LegacyXmlConfigurationImporter.convertLikelyConventionalP25Channels(imported);
+        return new LoadedImport(imported, HexFormat.of().formatHex(digest.digest()));
     }
 
     private static String fileFingerprint(Path source) throws IOException
@@ -232,23 +173,6 @@ public class LegacyPlaylistImportService
         {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
-    }
-
-    private static void update(MessageDigest digest, String value)
-    {
-        if(value == null)
-        {
-            digest.update((byte)0);
-            return;
-        }
-
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        digest.update((byte)1);
-        digest.update((byte)(bytes.length >>> 24));
-        digest.update((byte)(bytes.length >>> 16));
-        digest.update((byte)(bytes.length >>> 8));
-        digest.update((byte)bytes.length);
-        digest.update(bytes);
     }
 
     private Path createBackup() throws IOException, SQLException
@@ -356,6 +280,10 @@ public class LegacyPlaylistImportService
     }
 
     public record ImportResult(Path sourceXml, Path backupPath, Preview preview, Summary summary)
+    {
+    }
+
+    private record LoadedImport(LegacyConfigurationState configuration, String fingerprint)
     {
     }
 }

@@ -28,7 +28,6 @@ import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
@@ -49,7 +48,7 @@ class AliasListDefinitionResolverTest
     @Test
     void splitsSharedLegacyNameAndPreservesEveryCompatibleAliasAndRoute()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Channel p25 = channel("Metro P25", "Shared", new DecodeConfigP25Phase1());
         Channel dmr = channel("Metro DMR", "Shared", new DecodeConfigDMR());
         state.setChannels(List.of(p25, dmr));
@@ -93,7 +92,7 @@ class AliasListDefinitionResolverTest
     @Test
     void sameFamilySystemsShareLegacyListWithoutCreatingCopies()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Channel north = channel("North", "Regional", new DecodeConfigP25Phase1());
         Channel south = channel("South", "Regional", new DecodeConfigP25Phase1());
         state.setChannels(List.of(north, south));
@@ -120,7 +119,7 @@ class AliasListDefinitionResolverTest
     @Test
     void genericMatcherUsesClaimedFamilyWithoutInventingAnotherProtocol()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Channel p25 = channel("Metro", "Regional", new DecodeConfigP25Phase1());
         state.setChannels(List.of(p25));
         state.setAliases(List.of(alias("Emergency", "Regional", unitStatus(4))));
@@ -136,7 +135,7 @@ class AliasListDefinitionResolverTest
     @Test
     void ignoresAuxiliaryDecodersWhenResolvingListFamily()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Channel first = channel("Metro", "Shared", new DecodeConfigP25Phase1());
         Channel second = channel("Metro", "Shared", new DecodeConfigP25Phase1());
         first.getAuxDecodeConfiguration().addAuxDecoder(DecoderType.DCS);
@@ -152,7 +151,7 @@ class AliasListDefinitionResolverTest
     @Test
     void infersUnassignedListFamilyFromProtocolSpecificMatcher()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Alias alias = alias("Orphan", "Old List", new Talkgroup(Protocol.NXDN, 1));
         state.setAliases(List.of(alias));
 
@@ -167,7 +166,7 @@ class AliasListDefinitionResolverTest
     @Test
     void splitsNamedListInferredFromMixedMatchersWithoutChannels()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setAliases(List.of(
             alias("P25", "Mixed", new Talkgroup(Protocol.APCO25, 1)),
             alias("DMR", "Mixed", new Talkgroup(Protocol.DMR, 1))));
@@ -184,7 +183,7 @@ class AliasListDefinitionResolverTest
     @Test
     void matcherFamilyAddsASecondDefinitionInsteadOfBeingDropped()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Channel p25 = channel("Metro P25", "Metro Aliases", new DecodeConfigP25Phase1());
         state.setChannels(List.of(p25));
         state.setAliases(List.of(
@@ -204,7 +203,7 @@ class AliasListDefinitionResolverTest
     @Test
     void recoversNullBlankAndNoAliasListAliasesIntoFamilyOwnedLists()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setAliases(List.of(
             alias("P25", null, new Talkgroup(Protocol.APCO25, 1)),
             alias("DMR", "   ", new Talkgroup(Protocol.DMR, 2)),
@@ -223,7 +222,7 @@ class AliasListDefinitionResolverTest
     @Test
     void clonesAmbiguousUnassignedMatcherIntoEachCompatibleFamily()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Alias status = alias("Emergency", null, unitStatus(5));
         status.addBroadcastChannel("Calls");
         state.setAliases(List.of(status));
@@ -239,7 +238,7 @@ class AliasListDefinitionResolverTest
     @Test
     void preservesAmbiguousMatcherAlongsideIncompatibleSingletonMatcher()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Dcs dcs = new Dcs();
         dcs.setDCSCode(DCSCode.N023);
         state.setAliases(List.of(
@@ -258,7 +257,7 @@ class AliasListDefinitionResolverTest
     @Test
     void preservesSingleFamilyOriginalNameWhenGeneratedFamilyNameWouldCollide()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Channel p25 = channel("Metro P25", "Shared", new DecodeConfigP25Phase1());
         Channel dmr = channel("Metro DMR", "Shared", new DecodeConfigDMR());
         Channel original = channel("Other P25", "Shared [P25]", new DecodeConfigP25Phase1());
@@ -302,7 +301,7 @@ class AliasListDefinitionResolverTest
             """);
         byte[] before = Files.readAllBytes(source);
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(source);
+        LegacyConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(source);
 
         assertArrayEquals(before, Files.readAllBytes(source));
         assertEquals(List.of("Shared [P25]", "Shared [DMR]", "Imported Unassigned [NXDN]"),
@@ -318,7 +317,7 @@ class AliasListDefinitionResolverTest
     @Test
     void convertsSingleFullRangeAliasIntoUnmatchedTalkgroupPolicy()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
         Alias catchAll = alias("Unknown Talkgroups", "Metro",
             new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
@@ -338,7 +337,7 @@ class AliasListDefinitionResolverTest
     @Test
     void convertsDmrAndNxdnFullRangeAliases()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         Alias dmr = alias("Unknown DMR", "DMR List", new TalkgroupRange(Protocol.DMR, 1, 0xFFFFFF));
         dmr.setRecordable(true);
         Alias nxdn = alias("Unknown NXDN", "NXDN List", new TalkgroupRange(Protocol.NXDN, 1, 0xFFFF));
@@ -355,7 +354,7 @@ class AliasListDefinitionResolverTest
     @Test
     void preservesOrdinaryRangeAlias()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
         state.setAliases(List.of(alias("Operations", "Metro",
             new TalkgroupRange(Protocol.APCO25, 100, 199))));
@@ -370,7 +369,7 @@ class AliasListDefinitionResolverTest
     @Test
     void preservesFullRangeAliasWithFixedStreamAsIdentity()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
         Alias catchAll = alias("Unknown Talkgroups", "Metro",
             new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
@@ -388,7 +387,7 @@ class AliasListDefinitionResolverTest
     @Test
     void preservesStyledFullRangeAliasForManualReview()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
         Alias catchAll = alias("Styled Unknown Talkgroups", "Metro",
             new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
@@ -413,7 +412,7 @@ class AliasListDefinitionResolverTest
     @Test
     void preservesMultipleCatchAllAliasesRatherThanGuessing()
     {
-        ConfigurationState state = new ConfigurationState();
+        LegacyConfigurationState state = new LegacyConfigurationState();
         state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
         Alias first = alias("Unknown One", "Metro", new TalkgroupRange(Protocol.APCO25, 0, 0xFFFF));
         first.setRecordable(true);
@@ -461,13 +460,13 @@ class AliasListDefinitionResolverTest
         return channel;
     }
 
-    private static AliasListDefinition definition(ConfigurationState state, String name)
+    private static AliasListDefinition definition(LegacyConfigurationState state, String name)
     {
         return state.getAliasListDefinitions().stream()
             .filter(definition -> name.equals(definition.getName())).findFirst().orElseThrow();
     }
 
-    private static List<Alias> aliases(ConfigurationState state, String name)
+    private static List<Alias> aliases(LegacyConfigurationState state, String name)
     {
         return state.getAliases().stream().filter(alias -> name.equals(alias.getName())).toList();
     }

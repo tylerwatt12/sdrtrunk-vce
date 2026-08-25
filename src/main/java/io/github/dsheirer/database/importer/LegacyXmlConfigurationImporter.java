@@ -14,7 +14,6 @@ package io.github.dsheirer.database.importer;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.deser.DeserializationProblemHandler;
 import com.fasterxml.jackson.databind.jsontype.TypeIdResolver;
@@ -50,14 +49,11 @@ import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
 import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
-import io.github.dsheirer.configuration.ConfigurationState;
+import io.github.dsheirer.configuration.ConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.DatabaseFileInstaller;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.alias.AliasDatabaseStore;
-import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
-import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
-import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
@@ -160,13 +156,15 @@ public class LegacyXmlConfigurationImporter
             throw new IOException("Refusing to overwrite existing SDRTrunk SQLite database: " + normalizedDatabase);
         }
 
-        ConfigurationState state = readConfigurationState(normalizedXml);
+        LegacyConfigurationState state = readConfigurationState(normalizedXml);
         convertLikelyConventionalP25Channels(state);
         DatabaseFileInstaller.install(normalizedDatabase, temporaryDatabase -> {
             SdrTrunkDatabaseStartup.createGlobalDatabase(temporaryDatabase);
-            ConfigurationState merged = mergeWithFactoryDefaults(temporaryDatabase, state);
-            new ConfigurationSnapshotDatabaseStore(temporaryDatabase).replace(merged);
-            validateMigration(temporaryDatabase, merged);
+            LegacyConfigurationState merged = mergeWithFactoryDefaults(temporaryDatabase, state);
+            ConfigurationRepository repository = new ConfigurationRepository(temporaryDatabase);
+            ConfigurationSnapshot snapshot = merged.toConfigurationSnapshot(repository);
+            repository.replace(snapshot);
+            validateMigration(temporaryDatabase, snapshot);
         });
 
     }
@@ -176,17 +174,14 @@ public class LegacyXmlConfigurationImporter
      * configuration. Name conflicts use the same deterministic imported-name handling as an import into an existing
      * profile.
      */
-    private static ConfigurationState mergeWithFactoryDefaults(Path databasePath, ConfigurationState imported)
+    private static LegacyConfigurationState mergeWithFactoryDefaults(Path databasePath,
+                                                                       LegacyConfigurationState imported)
         throws IOException, SQLException
     {
-        AliasDatabaseStore aliasStore = new AliasDatabaseStore(databasePath);
-        ConfigurationState factory = new ConfigurationDatabaseStore(databasePath).loadConfigurationState();
-        var definitions = aliasStore.loadAliasListDefinitions();
-        factory.setAliasListDefinitions(definitions);
-        factory.setAliases(aliasStore.loadAliases(definitions));
-        factory.setScanListConfiguration(new ScanListDatabaseStore(databasePath).loadConfiguration());
+        LegacyConfigurationState factory = LegacyConfigurationState.from(
+            new ConfigurationRepository(databasePath).load());
 
-        ConfigurationState merged = LegacyXmlConfigurationMerger.merge(factory, imported).configurationState();
+        LegacyConfigurationState merged = LegacyXmlConfigurationMerger.merge(factory, imported).configurationState();
         merged.setScanListConfiguration(factory.getScanListConfiguration());
         assignDefaultAliasListsToUnassignedChannels(merged);
         return merged;
@@ -196,7 +191,7 @@ public class LegacyXmlConfigurationImporter
      * Legacy playback allowed otherwise eligible calls from channels without an Alias List. Route those channels
      * through the compatible factory list so the Default scan list preserves that behavior.
      */
-    private static void assignDefaultAliasListsToUnassignedChannels(ConfigurationState state)
+    private static void assignDefaultAliasListsToUnassignedChannels(LegacyConfigurationState state)
     {
         for(Channel channel: state.getChannels())
         {
@@ -216,34 +211,57 @@ public class LegacyXmlConfigurationImporter
         }
     }
 
-    public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
+    static LegacyConfigurationState readConfigurationState(Path sourceXml) throws IOException
     {
-        int playlistVersion = readPlaylistVersion(sourceXml);
-
         try(InputStream inputStream = Files.newInputStream(sourceXml))
         {
-            XmlPlaylist playlist = xmlMapper().readValue(inputStream, XmlPlaylist.class);
-            ConfigurationState state = new ConfigurationState();
-            List<ConvertedAlias> convertedAliases = convertAliases(nonNull(playlist.getAliases()), playlistVersion);
-            state.setAliases(convertedAliases.stream().map(ConvertedAlias::alias).toList());
-            convertedAliases.forEach(converted ->
-                state.setLegacyAliasListenEnabled(converted.alias(), converted.listenEnabled()));
-            state.setBroadcastConfigurations(new ArrayList<>(nonNull(playlist.getBroadcastConfigurations()).stream()
-                .filter(configuration -> !(configuration instanceof RetiredBroadcastConfiguration))
-                .toList()));
-            List<Channel> channels = new ArrayList<>(nonNull(playlist.getChannels()));
-            sanitizeChannelConfigurationLists(channels);
+            return readConfigurationState(inputStream);
+        }
+    }
 
-            if(playlistVersion <= 2)
+    /** Parses one captured source stream so preview hashing and XML conversion can observe exactly the same bytes. */
+    static LegacyConfigurationState readConfigurationState(InputStream inputStream) throws IOException
+    {
+        XMLInputFactory factory = secureXmlInputFactory();
+        try
+        {
+            XMLStreamReader reader = factory.createXMLStreamReader(inputStream);
+            try
             {
-                removeVersionOneChannelSettings(channels);
-            }
+                int playlistVersion = readPlaylistVersion(reader);
+                XmlPlaylist playlist = xmlMapper().readValue(reader, XmlPlaylist.class);
+                LegacyConfigurationState state = new LegacyConfigurationState();
+                List<ConvertedAlias> convertedAliases =
+                    convertAliases(nonNull(playlist.getAliases()), playlistVersion);
+                state.setAliases(convertedAliases.stream().map(ConvertedAlias::alias).toList());
+                convertedAliases.forEach(converted ->
+                    state.setLegacyAliasListenEnabled(converted.alias(), converted.listenEnabled()));
+                state.setBroadcastConfigurations(new ArrayList<>(
+                    nonNull(playlist.getBroadcastConfigurations()).stream()
+                        .filter(configuration -> !(configuration instanceof RetiredBroadcastConfiguration))
+                        .toList()));
+                List<Channel> channels = new ArrayList<>(nonNull(playlist.getChannels()));
+                sanitizeChannelConfigurationLists(channels);
 
-            state.setChannels(new ArrayList<>(channels.stream()
-                .filter(ChannelConfigurationPolicy::isActive)
-                .toList()));
-            AliasListDefinitionResolver.normalizeLegacyState(state);
-            return state;
+                if(playlistVersion <= 2)
+                {
+                    removeVersionOneChannelSettings(channels);
+                }
+
+                state.setChannels(new ArrayList<>(channels.stream()
+                    .filter(ChannelConfigurationPolicy::isActive)
+                    .toList()));
+                AliasListDefinitionResolver.normalizeLegacyState(state);
+                return state;
+            }
+            finally
+            {
+                reader.close();
+            }
+        }
+        catch(XMLStreamException exception)
+        {
+            throw new IOException("Unable to read the SDRTrunk playlist XML.", exception);
         }
     }
 
@@ -305,75 +323,51 @@ public class LegacyXmlConfigurationImporter
         }
     }
 
-    private static int readPlaylistVersion(Path sourceXml) throws IOException
+    private static int readPlaylistVersion(XMLStreamReader reader) throws IOException, XMLStreamException
     {
-        XMLInputFactory factory = secureXmlInputFactory();
-
-        try(InputStream inputStream = Files.newInputStream(sourceXml))
+        while(reader.hasNext())
         {
-            XMLStreamReader reader = factory.createXMLStreamReader(inputStream);
-
-            try
+            if(reader.next() == XMLStreamConstants.START_ELEMENT)
             {
-                while(reader.hasNext())
+                String namespace = reader.getNamespaceURI();
+                if(!"playlist".equals(reader.getLocalName()) || namespace != null && !namespace.isEmpty())
                 {
-                    if(reader.next() == XMLStreamConstants.START_ELEMENT)
+                    throw new IOException("The selected XML is not an SDRTrunk playlist.");
+                }
+
+                String value = reader.getAttributeValue(null, "version");
+                int version = MINIMUM_PLAYLIST_VERSION;
+                if(value != null)
+                {
+                    if(value.isBlank())
                     {
-                        String namespace = reader.getNamespaceURI();
-
-                        if(!"playlist".equals(reader.getLocalName()) ||
-                            (namespace != null && !namespace.isEmpty()))
-                        {
-                            throw new IOException("The selected XML is not an SDRTrunk playlist.");
-                        }
-
-                        String value = reader.getAttributeValue(null, "version");
-                        int version = MINIMUM_PLAYLIST_VERSION;
-
-                        if(value != null)
-                        {
-                            if(value.isBlank())
-                            {
-                                throw new IOException("SDRTrunk playlist version must be a whole number from 1 through " +
-                                    MAXIMUM_PLAYLIST_VERSION + ".");
-                            }
-
-                            try
-                            {
-                                version = Integer.parseInt(value.trim());
-                            }
-                            catch(NumberFormatException e)
-                            {
-                                throw new IOException("SDRTrunk playlist version must be a whole number from 1 through " +
-                                    MAXIMUM_PLAYLIST_VERSION + ".", e);
-                            }
-                        }
-
-                        if(version > MAXIMUM_PLAYLIST_VERSION)
-                        {
-                            throw new IOException("SDRTrunk playlist version " + version +
-                                " is newer than this importer supports (versions 1 through " +
-                                MAXIMUM_PLAYLIST_VERSION + ").");
-                        }
-
-                        if(version < MINIMUM_PLAYLIST_VERSION)
-                        {
-                            throw new IOException("Unsupported SDRTrunk playlist version " + version +
-                                ". This importer supports versions 1 through " + MAXIMUM_PLAYLIST_VERSION + ".");
-                        }
-
-                        return version;
+                        throw new IOException("SDRTrunk playlist version must be a whole number from 1 through " +
+                            MAXIMUM_PLAYLIST_VERSION + ".");
+                    }
+                    try
+                    {
+                        version = Integer.parseInt(value.trim());
+                    }
+                    catch(NumberFormatException exception)
+                    {
+                        throw new IOException("SDRTrunk playlist version must be a whole number from 1 through " +
+                            MAXIMUM_PLAYLIST_VERSION + ".", exception);
                     }
                 }
+
+                if(version > MAXIMUM_PLAYLIST_VERSION)
+                {
+                    throw new IOException("SDRTrunk playlist version " + version +
+                        " is newer than this importer supports (versions 1 through " +
+                        MAXIMUM_PLAYLIST_VERSION + ").");
+                }
+                if(version < MINIMUM_PLAYLIST_VERSION)
+                {
+                    throw new IOException("Unsupported SDRTrunk playlist version " + version +
+                        ". This importer supports versions 1 through " + MAXIMUM_PLAYLIST_VERSION + ".");
+                }
+                return version;
             }
-            finally
-            {
-                reader.close();
-            }
-        }
-        catch(XMLStreamException e)
-        {
-            throw new IOException("Unable to read the SDRTrunk playlist version.", e);
         }
 
         throw new IOException("The selected XML does not contain an SDRTrunk playlist.");
@@ -427,14 +421,14 @@ public class LegacyXmlConfigurationImporter
         }
     }
 
-    private static ObjectMapper xmlMapper()
+    private static XmlMapper xmlMapper()
     {
         JacksonXmlModule xmlModule = new JacksonXmlModule();
         xmlModule.setDefaultUseWrapper(false);
-        ObjectMapper objectMapper = new XmlMapper(new XmlFactory(secureXmlInputFactory()), xmlModule)
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true)
-            .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+        XmlMapper objectMapper = new XmlMapper(new XmlFactory(secureXmlInputFactory()), xmlModule);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        objectMapper.configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
         objectMapper.addMixIn(AuxDecodeConfiguration.class, LegacyAuxDecodeConfigurationMixin.class);
         objectMapper.addMixIn(DecodeConfigNBFM.class, LegacyNbfmConfigurationMixin.class);
         objectMapper.addMixIn(RadioRange.class, LegacyRadioRangeMixin.class);
@@ -457,7 +451,7 @@ public class LegacyXmlConfigurationImporter
         return values != null ? values : new ArrayList<>();
     }
 
-    static int convertLikelyConventionalP25Channels(ConfigurationState state)
+    static int convertLikelyConventionalP25Channels(LegacyConfigurationState state)
     {
         int conversions = 0;
 
@@ -510,32 +504,32 @@ public class LegacyXmlConfigurationImporter
         return talkgroups.size();
     }
 
-    private static void validateMigration(Path databasePath, ConfigurationState expected) throws IOException, SQLException
+    private static void validateMigration(Path databasePath, ConfigurationSnapshot expected)
+        throws IOException, SQLException
     {
-        AliasDatabaseStore aliasStore = new AliasDatabaseStore(databasePath);
-        var definitions = aliasStore.loadAliasListDefinitions();
-        List<Alias> aliases = aliasStore.loadAliases(definitions);
-        ConfigurationState actual = new ConfigurationDatabaseStore(databasePath).loadConfigurationState();
+        ConfigurationSnapshot actual = new ConfigurationRepository(databasePath).load();
 
-        int expectedIdentifierCount = countAliasIdentifiers(expected.getAliases());
-        int actualIdentifierCount = countAliasIdentifiers(aliases);
+        int expectedIdentifierCount = countAliasIdentifiers(expected.aliases());
+        int actualIdentifierCount = countAliasIdentifiers(actual.aliases());
 
-        boolean identitiesValid = aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0);
+        boolean identitiesValid = actual.aliases().stream()
+            .allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0);
 
-        if(definitions.size() != expected.getAliasListDefinitions().size() ||
-            aliases.size() != expected.getAliases().size() || actualIdentifierCount != expectedIdentifierCount ||
-            actual.getBroadcastConfigurations().size() != expected.getBroadcastConfigurations().size() ||
-            actual.getChannels().size() != expected.getChannels().size() || !identitiesValid)
+        if(actual.aliasListDefinitions().size() != expected.aliasListDefinitions().size() ||
+            actual.aliases().size() != expected.aliases().size() || actualIdentifierCount != expectedIdentifierCount ||
+            actual.broadcastConfigurations().size() != expected.broadcastConfigurations().size() ||
+            actual.channels().size() != expected.channels().size() || !identitiesValid)
         {
             throw new IOException("Migrated SQLite validation failed: expected aliasLists=" +
-                expected.getAliasListDefinitions().size() + " aliases=" + expected.getAliases().size() +
+                expected.aliasListDefinitions().size() + " aliases=" + expected.aliases().size() +
                 " aliasIdentifiers=" + expectedIdentifierCount +
-                " streams=" + expected.getBroadcastConfigurations().size() + " channels=" +
-                expected.getChannels().size() +
-                " but loaded aliasLists=" + definitions.size() + " aliases=" + aliases.size() +
+                " streams=" + expected.broadcastConfigurations().size() + " channels=" +
+                expected.channels().size() +
+                " but loaded aliasLists=" + actual.aliasListDefinitions().size() + " aliases=" +
+                actual.aliases().size() +
                 " aliasIdentifiers=" + actualIdentifierCount +
-                " streams=" + actual.getBroadcastConfigurations().size() +
-                " channels=" + actual.getChannels().size() + " identitiesValid=" + identitiesValid);
+                " streams=" + actual.broadcastConfigurations().size() +
+                " channels=" + actual.channels().size() + " identitiesValid=" + identitiesValid);
         }
     }
 

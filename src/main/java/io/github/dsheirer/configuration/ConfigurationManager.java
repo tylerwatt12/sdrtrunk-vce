@@ -22,7 +22,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasListDefinition;
-import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
@@ -32,10 +31,7 @@ import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.alias.AliasConfigurationDatabaseStore;
-import io.github.dsheirer.database.alias.AliasDatabaseStore;
-import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
-import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
 import io.github.dsheirer.icon.IconModel;
@@ -43,17 +39,13 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.service.radioreference.RadioReference;
-import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -80,9 +72,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
     private RadioReference mRadioReference;
-    private AliasDatabaseStore mAliasDatabaseStore;
-    private ConfigurationDatabaseStore mConfigurationDatabaseStore;
-    private ScanListDatabaseStore mScanListDatabaseStore;
+    private final ConfigurationRepository mConfigurationRepository;
     private final AliasAdministrationService mAliasAdministrationService;
     private final ScanListModel mScanListModel;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
@@ -113,9 +103,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mTunerManager = tunerManager;
         mAliasModel = aliasModel;
         mIconModel = iconModel;
-        mAliasDatabaseStore = new AliasDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
-        mConfigurationDatabaseStore = new ConfigurationDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
-        mScanListDatabaseStore = new ScanListDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mConfigurationRepository =
+            new ConfigurationRepository(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mScanListModel = new ScanListModel();
         mAliasAdministrationService = new AliasAdministrationService(this);
 
@@ -352,6 +341,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             T result = operation.call();
             databaseOperationCompleted = true;
             transferStateToModels();
+            mAliasConfigurationRevision.incrementAndGet();
             mConfigurationDirty.set(false);
             configurationReady = true;
             return result;
@@ -398,7 +388,22 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public Path getDatabasePath()
     {
-        return mConfigurationDatabaseStore.getDatabasePath();
+        return mConfigurationRepository.getDatabasePath();
+    }
+
+    public List<Long> nextAliasIds(List<Long> candidateIds, int count)
+    {
+        return mConfigurationRepository.nextAliasIds(candidateIds, count);
+    }
+
+    public List<Long> nextAliasListIds(List<Long> candidateIds, int count)
+    {
+        return mConfigurationRepository.nextAliasListIds(candidateIds, count);
+    }
+
+    public List<Long> nextScanListIds(List<Long> candidateIds, int count)
+    {
+        return mConfigurationRepository.nextScanListIds(candidateIds, count);
     }
 
     /** Creates an isolated Alias-only candidate; channel and broadcast state is deliberately out of scope. */
@@ -425,12 +430,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         {
             List<BroadcastConfiguration> broadcastConfigurations = broadcastRename != null ?
                 new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()) : null;
-            AliasConfigurationDatabaseStore store =
-                new AliasConfigurationDatabaseStore(mConfigurationDatabaseStore.getDatabasePath());
-            return broadcastConfigurations != null ? store.commitWithBroadcastConfigurationRename(proposed,
+            return broadcastConfigurations != null ?
+                mConfigurationRepository.commitAliasConfigurationWithBroadcastRename(proposed,
                 publication.clearedChannelAliasListNames(), broadcastConfigurations,
                 broadcastRename.previousName(), broadcastRename.updatedName()) :
-                store.commit(proposed, publication.clearedChannelAliasListNames());
+                mConfigurationRepository.commitAliasConfiguration(proposed,
+                    publication.clearedChannelAliasListNames());
         }
         catch(Exception exception)
         {
@@ -551,7 +556,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         try
         {
-            return new AliasConfigurationDatabaseStore(mConfigurationDatabaseStore.getDatabasePath()).load();
+            return mConfigurationRepository.loadAliasConfiguration();
         }
         catch(Exception exception)
         {
@@ -609,15 +614,18 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private void clearModels()
     {
         mConfigurationLoading = true;
-
-        //Shutdown any running channels
-        mChannelProcessingManager.shutdown();
-
-        mChannelModel.clear();
-        mBroadcastModel.clear();
-        mAliasModel.clear();
-
-        mConfigurationLoading = false;
+        try
+        {
+            //Shutdown any running channels
+            mChannelProcessingManager.shutdown();
+            mChannelModel.clear();
+            mBroadcastModel.clear();
+            mAliasModel.clear();
+        }
+        finally
+        {
+            mConfigurationLoading = false;
+        }
     }
 
     private synchronized void saveNow()
@@ -658,10 +666,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     private void transferStateToModels()
     {
-        ConfigurationState configurationState = loadConfigurationState();
-        AliasSnapshot aliasSnapshot = loadAliases();
-        ScanListConfiguration scanListConfiguration = loadScanLists();
-        validateAliasListAssignments(configurationState, aliasSnapshot.definitions());
+        ConfigurationSnapshot snapshot = loadConfigurationSnapshot();
 
         clearModels();
 
@@ -669,63 +674,16 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
-            mScanListModel.replaceConfiguration(scanListConfiguration);
-            mAliasModel.replaceCommittedConfiguration(aliasSnapshot.definitions(), aliasSnapshot.aliases());
-            mBroadcastModel.addBroadcastConfigurations(configurationState.getBroadcastConfigurations());
+            mScanListModel.replaceConfiguration(snapshot.scanListConfiguration());
+            mAliasModel.replaceCommittedConfiguration(snapshot.aliasListDefinitions(), snapshot.aliases());
+            mBroadcastModel.addBroadcastConfigurations(snapshot.broadcastConfigurations());
 
             //Channel model has to be loaded last since it will auto-start channels that are enabled
-            mChannelModel.addChannels(configurationState.getChannels());
+            mChannelModel.addChannels(snapshot.channels());
         }
         finally
         {
             mConfigurationLoading = false;
-        }
-    }
-
-    /**
-     * Normal startup validates persisted channel/list references without repairing or synthesizing definitions.
-     */
-    static void validateAliasListAssignments(ConfigurationState state, List<AliasListDefinition> definitions)
-    {
-        Map<String,AliasListDefinition> definitionsByName = new HashMap<>();
-
-        if(definitions != null)
-        {
-            for(AliasListDefinition definition: definitions)
-            {
-                if(definition != null && definition.getName() != null)
-                {
-                    definitionsByName.put(definition.getName().trim().toLowerCase(Locale.US), definition);
-                }
-            }
-        }
-
-        if(state == null || state.getChannels() == null)
-        {
-            return;
-        }
-
-        for(Channel channel: state.getChannels())
-        {
-            String aliasListName = channel != null ? channel.getAliasListName() : null;
-
-            if(aliasListName == null || aliasListName.isBlank())
-            {
-                continue;
-            }
-
-            AliasListDefinition definition =
-                definitionsByName.get(aliasListName.trim().toLowerCase(Locale.US));
-
-            if(definition == null || !aliasListName.equals(definition.getName()) ||
-                channel.getDecodeConfiguration() == null ||
-                !AliasMatchRegistry.isChannelCompatible(definition,
-                    channel.getDecodeConfiguration().getDecoderType()))
-            {
-                throw new ConfigurationStateValidationException("Channel [" +
-                    (channel != null ? channel.getName() : null) + "] references incompatible alias list [" +
-                    aliasListName + "]");
-            }
         }
     }
 
@@ -779,118 +737,23 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    private ConfigurationState loadConfigurationState()
+    private ConfigurationSnapshot loadConfigurationSnapshot()
     {
         try
         {
-            ConfigurationState loaded = mConfigurationDatabaseStore.loadConfigurationState();
-            validateConfigurationIdentities(loaded);
-            mLog.debug("Loaded configuration channels [{}] and streams [{}] from SQLite [{}]",
-                loaded.getChannels().size(), loaded.getBroadcastConfigurations().size(),
-                mConfigurationDatabaseStore.getDatabasePath());
+            ConfigurationSnapshot loaded = mConfigurationRepository.load();
+            ConfigurationSnapshotValidator.validateForStartup(loaded);
+            mLog.debug("Loaded configuration alias lists [{}], aliases [{}], scan lists [{}], channels [{}], " +
+                    "and streams [{}] from SQLite [{}]", loaded.aliasListDefinitions().size(),
+                loaded.aliases().size(), loaded.scanListConfiguration().scanLists().size(), loaded.channels().size(),
+                loaded.broadcastConfigurations().size(), mConfigurationRepository.getDatabasePath());
             return loaded;
         }
         catch(Exception e)
         {
             mLog.error("Error loading configuration state from SQLite database [" +
-                mConfigurationDatabaseStore.getDatabasePath() + "]", e);
+                mConfigurationRepository.getDatabasePath() + "]", e);
             throw new ConfigurationLoadException("Unable to load validated configuration state from SQLite", e);
-        }
-    }
-
-    /**
-     * Normal startup is validation-only. Missing, malformed, or duplicate persisted identities must be repaired by
-     * the staged Application Migrator (or assigned while a legacy import is still being constructed).
-     */
-    static void validateConfigurationIdentities(ConfigurationState state)
-    {
-        Set<String> channelIdentities = new HashSet<>();
-
-        if(state != null && state.getChannels() != null)
-        {
-            for(Channel channel: state.getChannels())
-            {
-                if(channel != null)
-                {
-                    String identity = channel.getConfigurationId();
-
-                    if(channel.isConfigurationIdPersistenceRequired() || !channelIdentities.add(identity))
-                    {
-                        throw new ConfigurationIdentityValidationException(
-                            "Saved channel configuration identities require the Application Migrator");
-                    }
-                }
-            }
-        }
-
-        Set<String> providerIdentities = new HashSet<>();
-        if(state != null && state.getBroadcastConfigurations() != null)
-        {
-            for(io.github.dsheirer.audio.broadcast.BroadcastConfiguration configuration:
-                state.getBroadcastConfigurations())
-            {
-                if(configuration != null)
-                {
-                    String identity = configuration.getConfigurationId();
-
-                    if(configuration.isConfigurationIdPersistenceRequired() ||
-                        !providerIdentities.add(identity))
-                    {
-                        throw new ConfigurationIdentityValidationException(
-                            "Saved broadcast configuration identities require the Application Migrator");
-                    }
-                }
-            }
-        }
-    }
-
-    private static final class ConfigurationIdentityValidationException extends RuntimeException
-    {
-        private ConfigurationIdentityValidationException(String message)
-        {
-            super(message);
-        }
-    }
-
-    private static final class ConfigurationStateValidationException extends RuntimeException
-    {
-        private ConfigurationStateValidationException(String message)
-        {
-            super(message);
-        }
-    }
-
-    private AliasSnapshot loadAliases()
-    {
-        try
-        {
-            List<AliasListDefinition> definitions = mAliasDatabaseStore.loadAliasListDefinitions();
-            List<Alias> aliases = mAliasDatabaseStore.loadAliases(definitions);
-            mLog.debug("Loaded [{}] aliases from SQLite [{}]", aliases.size(),
-                mAliasDatabaseStore.getDatabasePath());
-            return new AliasSnapshot(definitions, aliases);
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error loading aliases from SQLite database [" + mAliasDatabaseStore.getDatabasePath() + "]", e);
-            throw new ConfigurationLoadException("Unable to load validated alias configuration from SQLite", e);
-        }
-    }
-
-    private ScanListConfiguration loadScanLists()
-    {
-        try
-        {
-            ScanListConfiguration configuration = mScanListDatabaseStore.loadConfiguration();
-            mLog.debug("Loaded [{}] scan lists from SQLite [{}]", configuration.scanLists().size(),
-                mScanListDatabaseStore.getDatabasePath());
-            return configuration;
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error loading scan lists from SQLite database [" +
-                mScanListDatabaseStore.getDatabasePath() + "]", e);
-            throw new ConfigurationLoadException("Unable to load validated scan-list configuration from SQLite", e);
         }
     }
 
@@ -898,23 +761,17 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         try
         {
-            ConfigurationState databaseState = new ConfigurationState();
-            databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
-            databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
-            validateAliasListAssignments(databaseState, mAliasModel.aliasListDefinitions());
-            mConfigurationDatabaseStore.replaceConfigurationState(databaseState);
+            mConfigurationRepository.replaceChannelAndBroadcastConfiguration(
+                new ArrayList<>(mChannelModel.getChannels()),
+                new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             return true;
         }
         catch(Exception e)
         {
             mLog.error("Error saving channel and broadcast configuration to SQLite database [" +
-                mConfigurationDatabaseStore.getDatabasePath() + "]", e);
+                mConfigurationRepository.getDatabasePath() + "]", e);
             return false;
         }
-    }
-
-    private record AliasSnapshot(List<AliasListDefinition> definitions, List<Alias> aliases)
-    {
     }
 
     private static final class ConfigurationLoadException extends RuntimeException

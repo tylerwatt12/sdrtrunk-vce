@@ -129,7 +129,7 @@ public class AliasDatabaseStore
         }
     }
 
-    List<AliasListDefinition> loadAliasListDefinitions(Connection connection) throws SQLException
+    public List<AliasListDefinition> loadAliasListDefinitions(Connection connection) throws SQLException
     {
         List<AliasListDefinition> definitions = new ArrayList<>();
         Map<Long,List<String>> streamDestinations = loadUnmatchedTalkgroupStreams(connection);
@@ -183,7 +183,7 @@ public class AliasDatabaseStore
         return definitions;
     }
 
-    List<Alias> loadAliases(Connection connection, List<AliasListDefinition> definitions) throws SQLException
+    public List<Alias> loadAliases(Connection connection, List<AliasListDefinition> definitions) throws SQLException
     {
         Map<Long,AliasListDefinition> definitionsById = new HashMap<>();
         if(definitions != null)
