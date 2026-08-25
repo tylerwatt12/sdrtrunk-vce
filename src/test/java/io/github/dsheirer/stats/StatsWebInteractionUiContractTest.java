@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"98\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"99\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=81"));
+        assertTrue(html.contains("/assets/app.css?v=82"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -618,7 +618,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=17"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=18"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -628,13 +628,18 @@ class StatsWebInteractionUiContractTest
         assertTrue(readVolume.contains("return 1"));
         assertTrue(readVolume.contains("saved >= 0 && saved <= 1"));
         assertTrue(function(source, "  synchronizeSubscription()").contains("else this.setStatus('Ready')"));
+        assertTrue(ensureAudioContext.contains("this.audioContext.createAnalyser()"));
+        assertTrue(ensureAudioContext.contains("this.analyserNode.connect(this.gainNode)"));
         assertTrue(ensureAudioContext.contains("this.audioContext.createGain()"));
         assertTrue(ensureAudioContext.contains("this.gainNode.gain.value = this.volume"));
-        assertTrue(startCurrent.contains("source.connect(this.gainNode)"));
+        assertTrue(startCurrent.contains("source.connect(this.analyserNode)"));
+        String waveform = function(source, "  readAudioWaveform(levels)");
+        assertTrue(waveform.contains("this.analyserNode.getByteTimeDomainData(this.waveformSamples)"));
+        assertTrue(waveform.contains("Math.abs(this.waveformSamples[sample] - 128) / 128"));
         assertTrue(css.contains(".playback-volume input:focus-visible"));
         assertTrue(css.contains(".playback-volume input::-webkit-slider-runnable-track"));
-        assertTrue(css.contains("height: 18px"));
-        assertTrue(css.contains(".playback-volume {\n  position: relative;\n  width: 92px;\n  height: 28px;"));
+        assertTrue(css.contains("height: 20px"));
+        assertTrue(css.contains(".playback-volume {\n  position: relative;\n  width: 92px;\n  height: 32px;"));
         assertTrue(css.contains("border: 1px solid #30383b;"));
     }
 
@@ -752,7 +757,7 @@ class StatsWebInteractionUiContractTest
         String subscribeState = function(source, "  subscribeState(observer)");
 
         assertTrue(html.contains("id=\"playback-scan-list-options\""));
-        assertTrue(html.contains("id=\"playback-missed\""));
+        assertFalse(html.contains("id=\"playback-missed\""));
         assertTrue(parameters.contains("scan_list_id: [...this.selectedScanListIds]"));
         assertTrue(synchronize.contains("this.events.update(this.subscriptionParameters())"));
         assertTrue(source.contains("maximum_selected_scan_lists"));
@@ -771,8 +776,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("MAXIMUM_AVOIDS = 256"));
         assertTrue(schedule.contains("consecutive < WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS"));
         assertTrue(source.contains("first._startedAtMs - second._startedAtMs"));
-        assertTrue(source.contains("events.addEventListener('missed'"));
-        assertTrue(source.contains("this.missedCountExact"));
+        assertFalse(source.contains("events.addEventListener('missed'"));
+        assertFalse(source.contains("this.missedCountExact"));
         assertTrue(recent.contains("this.pruneRecentCalls()"));
         assertTrue(pruneRecent.contains(".slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS)"));
         assertTrue(replayRecent.contains("playbackOffset: savedOffset"));
@@ -789,6 +794,8 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String css = Files.readString(APP_CSS);
         String scanner = function(source, "function renderScanner()");
+        String scannerCall = function(source, "function renderScannerCall(host, state, site)");
+        String voiceMeter = function(source, "function scannerVoiceMeter(call)");
         String configuration = function(source, "async function renderConfiguration()");
         String scanLists = function(source, "async function renderAdminScanLists()");
         String audio = function(source, "async function renderAdminWebAudio()");
@@ -838,8 +845,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".scanner-player-host > .playback-bar {"));
         assertTrue(css.contains(".scanner-chassis {"));
         assertTrue(css.contains(".scanner-field-grid {"));
-        assertTrue(css.contains(".scanner-quality-meter {"));
+        assertFalse(css.contains(".scanner-quality-meter {"));
         assertTrue(css.contains(".scanner-quality-bars {"));
+        assertFalse(voiceMeter.contains("Voice Quality"));
+        assertFalse(voiceMeter.contains("Measured from decoded voice frames"));
+        assertFalse(voiceMeter.contains("node('strong'"));
+        assertTrue(scannerCall.contains("for (let index = 0; index < 24; index++)"));
+        assertTrue(scanner.contains("player.readAudioWaveform(waveformLevels)"));
+        assertTrue(scanner.contains("window.cancelAnimationFrame(waveformFrame)"));
+        assertFalse(css.contains("@keyframes scanner-audio-wave"));
+        assertTrue(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
         assertTrue(css.contains("font-size: 14px;"));

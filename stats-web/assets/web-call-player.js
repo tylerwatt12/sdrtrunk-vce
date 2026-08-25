@@ -21,6 +21,8 @@ class WebCallPlayer {
     this.current = null;
     this.currentBuffer = null;
     this.source = null;
+    this.analyserNode = null;
+    this.waveformSamples = null;
     this.gainNode = null;
     this.audioContext = null;
     this.playbackOffset = 0;
@@ -32,8 +34,6 @@ class WebCallPlayer {
     this.connectionFactory = null;
     this.loadToken = 0;
     this.loadController = null;
-    this.missedCalls = 0;
-    this.missedCountExact = true;
     this.paused = true;
     this.volume = this.readVolume();
     this.maximumQueued = 100;
@@ -91,8 +91,6 @@ class WebCallPlayer {
       paused: this.paused,
       holdTarget: this.holdTarget,
       queuedCount: this.queuedCount,
-      missedCalls: this.missedCalls,
-      missedCountExact: this.missedCountExact,
       status: this.ui.status?.textContent || '',
       avoids: [...this.avoids.values()].reverse(),
       recentCalls: this.recentCalls.slice(),
@@ -126,8 +124,6 @@ class WebCallPlayer {
     events.addEventListener('ready', (event) => this.handleReady(this.eventPayload(event)));
     events.addEventListener('call', (event) => this.enqueue(this.eventPayload(event)));
     events.addEventListener('snapshot', (event) => this.consumeSnapshot(this.eventPayload(event)));
-    events.addEventListener('overrun', (event) => this.handleMissedEvent(this.eventPayload(event)));
-    events.addEventListener('missed', (event) => this.handleMissedEvent(this.eventPayload(event)));
     events.onopen = () => this.setStatus(this.paused ? (this.currentBuffer ? 'Paused' : 'Ready') :
       (this.source ? 'Listening' : this.current ? 'Buffering' : 'Waiting'));
     events.onerror = () => {
@@ -169,13 +165,6 @@ class WebCallPlayer {
     this.applyLimits(payload);
     this.renderScanLists();
     this.render();
-  }
-
-  handleMissedEvent(payload) {
-    const exact = payload?.exact !== false;
-    const reported = Math.trunc(Number(payload?.missed_calls ?? payload?.missed_count ?? payload?.count));
-    this.recordMissed(Number.isFinite(reported) && reported > 0 ? reported : (exact ? 1 : 0), exact);
-    this.setStatus('Calls missed');
   }
 
   disconnect(status = 'Unavailable') {
@@ -397,7 +386,6 @@ class WebCallPlayer {
     while (this.queuedCount >= this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.recordMissed(1, true, false);
       this.acknowledge(dropped, 'queue_overflow');
     }
 
@@ -851,7 +839,6 @@ class WebCallPlayer {
           }, 150);
           return;
         }
-        this.recordMissed(1, true, false);
         this.stopCurrent('unavailable');
         this.setStatus('Skipped unavailable call');
         setTimeout(() => {
@@ -877,7 +864,7 @@ class WebCallPlayer {
     const maximumOffset = Number.isFinite(duration) && duration > 0 ? Math.max(0, duration - 0.001) : 0;
     const offset = Math.min(maximumOffset, Math.max(0, this.playbackOffset));
     source.buffer = this.currentBuffer;
-    source.connect(this.gainNode);
+    source.connect(this.analyserNode);
     source.onended = () => {
       if (token !== this.loadToken || source !== this.source) return;
       if (this.recentReplay) {
@@ -984,15 +971,8 @@ class WebCallPlayer {
     while (this.queuedCount > this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.recordMissed(1, true, false);
       this.acknowledge(dropped, 'queue_overflow');
     }
-  }
-
-  recordMissed(count, exact = true, render = true) {
-    if (Number.isFinite(Number(count)) && Number(count) > 0) this.missedCalls += Math.trunc(Number(count));
-    if (!exact) this.missedCountExact = false;
-    if (render) this.render();
   }
 
   changeVolume() {
@@ -1020,10 +1000,35 @@ class WebCallPlayer {
     if (!this.audioContext) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.audioContext = new AudioContext();
+      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode.fftSize = 256;
+      this.analyserNode.smoothingTimeConstant = 0.5;
       this.gainNode = this.audioContext.createGain();
       this.gainNode.gain.value = this.volume;
+      this.analyserNode.connect(this.gainNode);
       this.gainNode.connect(this.audioContext.destination);
     }
+  }
+
+  readAudioWaveform(levels) {
+    if (!levels?.length) return false;
+    levels.fill(0);
+    if (!this.source || !this.analyserNode || this.audioContext?.state !== 'running') return false;
+    const sampleCount = this.analyserNode.fftSize;
+    if (!this.waveformSamples || this.waveformSamples.length !== sampleCount) {
+      this.waveformSamples = new Uint8Array(sampleCount);
+    }
+    this.analyserNode.getByteTimeDomainData(this.waveformSamples);
+    for (let bar = 0; bar < levels.length; bar++) {
+      const start = Math.floor(bar * sampleCount / levels.length);
+      const end = Math.max(start + 1, Math.floor((bar + 1) * sampleCount / levels.length));
+      let peak = 0;
+      for (let sample = start; sample < end; sample++) {
+        peak = Math.max(peak, Math.abs(this.waveformSamples[sample] - 128) / 128);
+      }
+      levels[bar] = peak < 0.01 ? 0 : Math.min(1, Math.sqrt(peak) * 1.15);
+    }
+    return true;
   }
 
   renderVolume() {
@@ -1123,13 +1128,6 @@ class WebCallPlayer {
       this.ui.current.removeAttribute('title');
     }
     this.ui.queued.textContent = String(this.queuedCount);
-    if (this.ui.missed) {
-      const count = this.missedCountExact ? String(this.missedCalls) :
-        (this.missedCalls > 0 ? `${this.missedCalls}+` : 'calls');
-      this.ui.missed.textContent = `Not played ${count}`;
-      this.ui.missed.classList.toggle('active', this.missedCalls > 0 || !this.missedCountExact);
-      this.ui.missed.hidden = this.missedCalls <= 0 && this.missedCountExact;
-    }
     this.ui.queueList.replaceChildren();
     this.scheduledQueue(100).forEach((call, index) => {
       const item = document.createElement('div');

@@ -6858,7 +6858,6 @@ function synchronizePlaybackAccess(accessChanged = false) {
       volume: 'playback-volume',
       current: 'playback-current',
       queued: 'playback-queued',
-      missed: 'playback-missed',
       queueList: 'playback-queue-list',
       status: 'playback-status',
       progress: 'playback-progress',
@@ -7055,11 +7054,6 @@ function scannerVoiceMeter(call) {
   const measured = Number.isFinite(quality) && quality >= 0;
   const bounded = measured ? Math.max(0, Math.min(100, quality)) : 0;
   const strength = measured ? Math.ceil(bounded / 20) : 0;
-  const meter = node('div', 'scanner-quality-meter');
-  const copy = node('div', 'scanner-quality-copy');
-  copy.append(node('span', 'scanner-quality-heading', 'Voice Quality'),
-    node('small', '', measured ? 'Measured from decoded voice frames' : 'Not measured for this call'));
-  const reading = node('div', 'scanner-quality-reading');
   const bars = node('span', 'scanner-quality-bars');
   bars.setAttribute('role', 'img');
   bars.setAttribute('aria-label', measured ? `Voice quality ${Math.round(bounded)} percent` :
@@ -7069,9 +7063,7 @@ function scannerVoiceMeter(call) {
     bar.setAttribute('aria-hidden', 'true');
     bars.append(bar);
   }
-  reading.append(bars, node('strong', '', measured ? `${Math.round(bounded)}%` : '—'));
-  meter.append(copy, reading);
-  return meter;
+  return bars;
 }
 
 function renderScannerCall(host, state, site) {
@@ -7092,9 +7084,9 @@ function renderScannerCall(host, state, site) {
     ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call)),
     node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
   const wave = node('div', `scanner-audio-wave${state.paused || !state.currentReady ? ' paused' : ''}`);
-  for (let index = 0; index < 5; index++) wave.append(node('i'));
+  for (let index = 0; index < 24; index++) wave.append(node('i'));
   wave.setAttribute('aria-label', state.paused ? 'Audio paused' : 'Audio playing');
-  intro.append(copy, wave);
+  intro.append(copy, scannerVoiceMeter(call), wave);
 
   const fields = node('div', 'scanner-field-grid');
   const open = (destination) => () => void scannerNavigate(call, destination, site);
@@ -7121,7 +7113,6 @@ function renderScannerCall(host, state, site) {
     scannerField('Modulation', modulation ? `${modulation} · configured` : '', 2, open('decoder'))
   ].filter(Boolean).forEach((field) => fields.append(field));
 
-  const quality = scannerVoiceMeter(call);
   const engineer = node('div', 'scanner-engineer-grid');
   if (scannerDetailMode === 'engineer') {
     const values = [
@@ -7143,7 +7134,7 @@ function renderScannerCall(host, state, site) {
       engineer.append(item);
     });
   }
-  host.append(intro, participants, fields, quality);
+  host.append(intro, participants, fields);
   if (engineer.childNodes.length) host.append(engineer);
 }
 
@@ -7447,6 +7438,25 @@ function renderScanner() {
   };
   const unsubscribe = player.subscribeState(draw);
   renderContext.signal?.addEventListener('abort', unsubscribe, { once: true });
+  const waveformLevels = new Float32Array(24);
+  let waveformFrame = null;
+  const drawWaveform = () => {
+    if (!renderIsCurrent(renderContext)) return;
+    const wave = display.querySelector('.scanner-audio-wave');
+    if (wave) {
+      const playing = player.readAudioWaveform(waveformLevels);
+      wave.classList.toggle('paused', !playing);
+      wave.setAttribute('aria-label', playing ? 'Audio playing' : 'Audio paused');
+      [...wave.children].forEach((bar, index) => {
+        bar.style.height = `${Math.round(3 + waveformLevels[index] * 31)}px`;
+      });
+    }
+    waveformFrame = window.requestAnimationFrame(drawWaveform);
+  };
+  waveformFrame = window.requestAnimationFrame(drawWaveform);
+  renderContext.signal?.addEventListener('abort', () => {
+    if (waveformFrame !== null) window.cancelAnimationFrame(waveformFrame);
+  }, { once: true });
   pageInterval(updateAge, 1_000);
   modeBar.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
     scannerDetailMode = button.dataset.mode;
