@@ -273,7 +273,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"99\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"100\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -591,7 +591,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=82"));
+        assertTrue(html.contains("/assets/app.css?v=83"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -851,10 +851,13 @@ class StatsWebInteractionUiContractTest
         assertFalse(voiceMeter.contains("Measured from decoded voice frames"));
         assertFalse(voiceMeter.contains("node('strong'"));
         assertTrue(scannerCall.contains("for (let index = 0; index < 24; index++)"));
+        assertTrue(scannerCall.contains("node('div', 'scanner-call-instruments')"));
+        assertTrue(scannerCall.contains("intro.append(copy, instruments)"));
         assertTrue(scanner.contains("player.readAudioWaveform(waveformLevels)"));
         assertTrue(scanner.contains("window.cancelAnimationFrame(waveformFrame)"));
         assertFalse(css.contains("@keyframes scanner-audio-wave"));
         assertTrue(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
+        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr) minmax(140px, 320px);"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));

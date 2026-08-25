@@ -6102,13 +6102,19 @@ th.numeric {
 }
 
 .scanner-call-intro {
-  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 320px);
+  align-items: center;
+  gap: 18px;
   padding-bottom: 13px;
   border-bottom: 1px solid rgba(var(--scanner-screen-rgb),.26);
 }
 
-.scanner-call-intro > div:first-child {
-  padding-right: 56px;
+.scanner-call-instruments {
+  min-width: 0;
+  display: grid;
+  justify-items: stretch;
+  gap: 8px;
 }
 
 .scanner-call-kind {
@@ -6139,11 +6145,10 @@ th.numeric {
 
 .scanner-audio-wave {
   height: 38px;
-  width: min(320px, 100%);
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-top: 12px;
 }
 
 .scanner-audio-wave i {
@@ -6251,13 +6256,10 @@ th.numeric {
 }
 
 .scanner-quality-bars {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 1;
   height: 30px;
   display: inline-flex;
   align-items: flex-end;
+  justify-self: end;
   gap: 3px;
 }
 
@@ -7154,6 +7156,11 @@ th.numeric {
 
   .scanner-call-title {
     font-size: 30px;
+  }
+
+  .scanner-call-intro {
+    grid-template-columns: minmax(0, 1fr) minmax(96px, 32vw);
+    gap: 10px;
   }
 
   .scanner-participant-grid {

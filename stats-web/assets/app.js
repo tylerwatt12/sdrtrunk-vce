@@ -7086,7 +7086,9 @@ function renderScannerCall(host, state, site) {
   const wave = node('div', `scanner-audio-wave${state.paused || !state.currentReady ? ' paused' : ''}`);
   for (let index = 0; index < 24; index++) wave.append(node('i'));
   wave.setAttribute('aria-label', state.paused ? 'Audio paused' : 'Audio playing');
-  intro.append(copy, scannerVoiceMeter(call), wave);
+  const instruments = node('div', 'scanner-call-instruments');
+  instruments.append(scannerVoiceMeter(call), wave);
+  intro.append(copy, instruments);
 
   const fields = node('div', 'scanner-field-grid');
   const open = (destination) => () => void scannerNavigate(call, destination, site);
