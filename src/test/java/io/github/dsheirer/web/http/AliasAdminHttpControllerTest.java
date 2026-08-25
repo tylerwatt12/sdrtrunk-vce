@@ -66,10 +66,9 @@ class AliasAdminHttpControllerTest
         server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, controller::handle);
         server.start();
 
-        try
+        try(HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build())
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             HttpResponse<String> catalogResponse = send(client,
                 request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET());
             JsonNode catalogEnvelope = root(catalogResponse);
@@ -390,7 +389,7 @@ class AliasAdminHttpControllerTest
         finally
         {
             server.stop(0);
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            closeConfigurationManager(manager);
         }
     }
 
@@ -433,10 +432,9 @@ class AliasAdminHttpControllerTest
         server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
         server.start();
 
-        try
+        try(HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build())
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             HttpResponse<String> response = send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId)
                 .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
@@ -452,7 +450,28 @@ class AliasAdminHttpControllerTest
         finally
         {
             server.stop(0);
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            closeConfigurationManager(manager);
+        }
+    }
+
+    private static void closeConfigurationManager(ConfigurationManager manager)
+    {
+        var channelProcessingManager = manager.getChannelProcessingManager();
+
+        try
+        {
+            manager.flushConfiguration();
+        }
+        finally
+        {
+            try
+            {
+                MyEventBus.getGlobalEventBus().unregister(channelProcessingManager);
+            }
+            finally
+            {
+                channelProcessingManager.close();
+            }
         }
     }
 

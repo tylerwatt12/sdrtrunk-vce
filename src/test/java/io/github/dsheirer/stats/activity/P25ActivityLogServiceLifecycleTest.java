@@ -77,7 +77,7 @@ class P25ActivityLogServiceLifecycleTest
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         P25ActivityLogService service = new P25ActivityLogService(userPreferences);
 
-        service.dispose();
+        disposeAndAwait(service);
         service.preferenceUpdated(PreferenceType.APPLICATION);
 
         assertEquals(P25ActivityLogStatus.State.STOPPED, service.getStatus().state());
@@ -140,7 +140,7 @@ class P25ActivityLogServiceLifecycleTest
         finally
         {
             releaseProjection.countDown();
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -200,7 +200,7 @@ class P25ActivityLogServiceLifecycleTest
         finally
         {
             releaseProjection.countDown();
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -311,8 +311,7 @@ class P25ActivityLogServiceLifecycleTest
             releaseDisabledProducer.countDown();
             staleActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
             staleDisabledProducer.join(TimeUnit.SECONDS.toMillis(2));
-            service.dispose();
-            awaitWorkerTermination(service);
+            disposeAndAwait(service);
         }
     }
 
@@ -406,8 +405,7 @@ class P25ActivityLogServiceLifecycleTest
         {
             releaseOldOutput.countDown();
             staleProducer.join(TimeUnit.SECONDS.toMillis(2));
-            service.dispose();
-            awaitWorkerTermination(service);
+            disposeAndAwait(service);
         }
     }
 
@@ -509,7 +507,7 @@ class P25ActivityLogServiceLifecycleTest
             allowWriterActivation.countDown();
             oldActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
             inactiveProducer.join(TimeUnit.SECONDS.toMillis(2));
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -577,6 +575,12 @@ class P25ActivityLogServiceLifecycleTest
         assertTrue(service.isObservationWorkerTerminated(), "statistics observer did not terminate");
     }
 
+    private static void disposeAndAwait(P25ActivityLogService service) throws InterruptedException
+    {
+        service.dispose();
+        awaitWorkerTermination(service);
+    }
+
     @Test
     void countsOneConventionalP25StartNotItsMutableTrackerUpdates() throws Exception
     {
@@ -615,7 +619,7 @@ class P25ActivityLogServiceLifecycleTest
         }
         finally
         {
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -660,7 +664,7 @@ class P25ActivityLogServiceLifecycleTest
         }
         finally
         {
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -752,7 +756,7 @@ class P25ActivityLogServiceLifecycleTest
         }
         finally
         {
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -779,7 +783,7 @@ class P25ActivityLogServiceLifecycleTest
         }
         finally
         {
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
@@ -849,7 +853,7 @@ class P25ActivityLogServiceLifecycleTest
         }
         finally
         {
-            service.dispose();
+            disposeAndAwait(service);
         }
     }
 
