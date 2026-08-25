@@ -509,9 +509,19 @@ def java25Home = javaToolchains.launcherFor {
  * Configures the runtime zip task with additional options/settings.
  * @param rt task to configure
  * @param jvmArgs to use (windows or linux)
+ * @param windowsTarget true when jlink is creating a Windows runtime image
  * @return configured task.
  */
-def configureRuntime = { def task, List<String> jvmArgs ->
+def runtimeJlinkOptions = { boolean windowsTarget ->
+    [
+        windowsTarget ? '--strip-java-debug-attributes' : '--strip-debug',
+        '--compress', 'zip-6',
+        '--no-header-files',
+        '--no-man-pages'
+    ]
+}
+
+def configureRuntime = { def task, List<String> jvmArgs, boolean windowsTarget ->
     //Use the correct set of JVM arguments
     task.extension.launcherData.get().jvmArgs = jvmArgs
 
@@ -520,12 +530,15 @@ def configureRuntime = { def task, List<String> jvmArgs ->
     //Use auto-detected modules and 'add' any specified modules.
     task.extension.additive.set(true)
 
-    //Recommended options for reducing/shrinking runtime target image size
-    task.extension.addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
+    /*
+     * Native debug stripping can alter Windows PE content before signed source-JDK files are overlaid. Strip only
+     * Java debug attributes for Windows targets so the Authenticode equivalence check remains fail-closed.
+     */
+    task.extension.options.set(runtimeJlinkOptions(windowsTarget))
 }
 
-def configure = { org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs ->
-    configureRuntime(rt, jvmArgs)
+def configure = { org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs, boolean windowsTarget ->
+    configureRuntime(rt, jvmArgs, windowsTarget)
 
     //Runtime images have auto appended version in image zip name.  Override to include version in single target image.
     rt.extension.imageZip.set(layout.buildDirectory.file('image/sdrtrunk-vce.zip'))
@@ -541,7 +554,7 @@ runtime {
 
     addModules(*runtimeModules)
     additive.set(true)
-    addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
+    options.set(runtimeJlinkOptions(os.isWindows()))
 
 }
 
@@ -744,6 +757,14 @@ tasks.named('jre', org.beryx.runtime.JreTask) { jreTask ->
     }).withPropertyName('signedWindowsRuntimeNatives')
         .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
 
+    doFirst {
+        if(!windowsJreDescriptors(jreTask).isEmpty() &&
+            (jreTask.options.contains('--strip-debug') ||
+                !jreTask.options.contains('--strip-java-debug-attributes'))) {
+            throw new GradleException('Windows runtime jlink options must preserve native PE content')
+        }
+    }
+
     doLast {
         windowsJreDescriptors(jreTask).each { descriptor ->
             File sourceBin = new File(descriptor.sourceJdkHome as File, 'bin')
@@ -937,7 +958,7 @@ tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
         else if(arch.equals("aarch64")) {
             rt.extension.targetPlatform(targetWindowsAarch64, javaHome)
         }
-        configure(rt, jvmArgsWindows)
+        configure(rt, jvmArgsWindows, true)
     }
     else if(os.isLinux())
     {
@@ -947,7 +968,7 @@ tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
         else if(arch.equals("aarch64")) {
             rt.extension.targetPlatform(targetLinuxAarch64, javaHome)
         }
-        configure(rt, jvmArgsLinux)
+        configure(rt, jvmArgsLinux, false)
     }
     else if(os.isMacOsX())
     {
@@ -957,7 +978,7 @@ tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
         else if(arch.equals("aarch64")) {
             rt.extension.targetPlatform(targetOsxAarch64, javaHome)
         }
-        configure(rt, jvmArgsMac)
+        configure(rt, jvmArgsMac, false)
     }
 }
 
@@ -991,7 +1012,7 @@ tasks.register('runtimeZipWindows', org.beryx.runtime.RuntimeZipTask) {rt ->
         }
     }
 
-    configure(rt, jvmArgsWindows)
+    configure(rt, jvmArgsWindows, true)
 }
 
 /**
@@ -1041,5 +1062,5 @@ tasks.register('runtimeZipOthers', org.beryx.runtime.RuntimeZipTask) {rt ->
         }
     }
 
-    configure(rt, jvmArgsLinux)
+    configure(rt, jvmArgsLinux, false)
 }
