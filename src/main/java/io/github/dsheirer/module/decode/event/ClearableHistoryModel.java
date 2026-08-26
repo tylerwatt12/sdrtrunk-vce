@@ -80,7 +80,7 @@ public abstract class ClearableHistoryModel<T> extends AbstractTableModel
      */
     public void clear()
     {
-        EventQueue.invokeLater(() -> {
+        runOnEventQueue(() -> {
             mItems.clear();
             fireTableDataChanged();
         });
@@ -91,7 +91,7 @@ public abstract class ClearableHistoryModel<T> extends AbstractTableModel
      */
     public void clearAndSet(List<T> items)
     {
-        EventQueue.invokeLater(() -> {
+        runOnEventQueue(() -> {
             mItems.clear();
             fireTableDataChanged();
             for(T item: items)
@@ -99,6 +99,18 @@ public abstract class ClearableHistoryModel<T> extends AbstractTableModel
                 add(item);
             }
         });
+    }
+
+    private static void runOnEventQueue(Runnable runnable)
+    {
+        if(EventQueue.isDispatchThread())
+        {
+            runnable.run();
+        }
+        else
+        {
+            EventQueue.invokeLater(runnable);
+        }
     }
 
     /**

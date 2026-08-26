@@ -55,7 +55,7 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(853_987_500L, null, "P25", owner, row, null, null,
+            panel.receive(new SelectedFrequencyContext(853_987_500L, null, "P25", owner, row, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
@@ -131,7 +131,7 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null, null,
+            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
@@ -163,7 +163,7 @@ class ChannelWebLinkPanelTest
             assertEquals(4, opened.size());
 
             SwingUtilities.invokeAndWait(() -> panel.receive(new SelectedFrequencyContext(451_025_000L, 2,
-                "DMR", dmr, dmr, null, null, ChannelActivitySelectionScope.EXACT_FREQUENCY, false)));
+                "DMR", dmr, dmr, null, ChannelActivitySelectionScope.EXACT, false)));
             SwingUtilities.invokeAndWait(() -> {});
             assertProtocolNeutralSiteDestinations(panel);
         }
@@ -187,7 +187,7 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, uri -> {});
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null, null,
+            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
@@ -225,7 +225,7 @@ class ChannelWebLinkPanelTest
             /*
              * Even a stale site-shaped selection must not override the channel's explicit conventional mode.
              */
-            panel.receive(new SelectedFrequencyContext(154_452_500L, 1, "DMR", dmr, dmr, null, null,
+            panel.receive(new SelectedFrequencyContext(154_452_500L, 1, "DMR", dmr, dmr, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
@@ -271,7 +271,7 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(460_112_500L, null, "NXDN", nxdn, nxdn, null, null,
+            panel.receive(new SelectedFrequencyContext(460_112_500L, null, "NXDN", nxdn, nxdn, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
@@ -310,8 +310,8 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(460_112_500L, null, "NXDN", null, nxdn, null, null,
-                ChannelActivitySelectionScope.EXACT_FREQUENCY, false));
+            panel.receive(new SelectedFrequencyContext(460_112_500L, null, "NXDN", null, nxdn, null,
+                ChannelActivitySelectionScope.EXACT, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
 
@@ -323,7 +323,7 @@ class ChannelWebLinkPanelTest
             assertFalse(item(panel, ChannelWebLinkPanel.Destination.SITE_INFO).isEnabled());
 
             SwingUtilities.invokeAndWait(() -> panel.receive(new SelectedFrequencyContext(460_112_500L, null,
-                "NXDN", nxdn, nxdn, null, null, ChannelActivitySelectionScope.SITE, false)));
+                "NXDN", nxdn, nxdn, null, ChannelActivitySelectionScope.SITE, false)));
             SwingUtilities.invokeAndWait(() -> {});
             assertProtocolNeutralSiteDestinations(panel);
 
@@ -332,7 +332,7 @@ class ChannelWebLinkPanelTest
              * whose logical scope is exact frequency rather than the control site's persistent selection.
              */
             SwingUtilities.invokeAndWait(() -> panel.receive(new SelectedFrequencyContext(460_225_000L, null,
-                "NXDN", nxdn, nxdn, null, null, ChannelActivitySelectionScope.EXACT_FREQUENCY, false)));
+                "NXDN", nxdn, nxdn, null, ChannelActivitySelectionScope.EXACT, false)));
             SwingUtilities.invokeAndWait(() -> {});
 
             assertProtocolNeutralSiteDestinations(panel);
@@ -391,7 +391,7 @@ class ChannelWebLinkPanelTest
                 return "DMR:" + receiverGuid;
             }, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null, null,
+            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
 
@@ -434,7 +434,7 @@ class ChannelWebLinkPanelTest
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
             panel.receive(new SelectedFrequencyContext(154_310_000L, null, "NBFM", conventional, conventional,
-                null, null, ChannelActivitySelectionScope.EXACT_FREQUENCY, false));
+                null, ChannelActivitySelectionScope.EXACT, false));
         });
         SwingUtilities.invokeAndWait(() -> {});
 
@@ -483,7 +483,7 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(851_000_000L, null, "P25", owner, owner, null, null,
+            panel.receive(new SelectedFrequencyContext(851_000_000L, null, "P25", owner, owner, null,
                 ChannelActivitySelectionScope.SITE, false));
         });
         SwingUtilities.invokeAndWait(() -> {});

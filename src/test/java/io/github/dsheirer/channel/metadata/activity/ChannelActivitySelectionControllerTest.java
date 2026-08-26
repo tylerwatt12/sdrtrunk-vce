@@ -81,11 +81,66 @@ class ChannelActivitySelectionControllerTest
 
         assertSame(replacement, controller.resolveSelectedRow());
         assertEquals("new-control", controller.getSelection().rowKey());
-        assertEquals(852_000_000L, controller.getSelection().frequency());
+        assertEquals(852_000_000L, replacement.getFrequency());
     }
 
     @Test
-    void trafficRowWithControlEvidenceHasSiteScope()
+    void siteSelectionFollowsCurrentWhenPreviousControlIsDemotedButRetained()
+    {
+        ChannelActivityTableModel model = model();
+        ChannelActivityRow previous = row(model, "old-control", ChannelActivityRow.Role.CURRENT_CONTROL,
+            851_000_000L);
+        ChannelActivitySelectionController controller = new ChannelActivitySelectionController();
+        controller.select(model, previous);
+
+        //Role changes are authoritative even though display tags retain historical control evidence.
+        previous.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
+        ChannelActivityRow current = row(model, "new-control", ChannelActivityRow.Role.CURRENT_CONTROL,
+            852_000_000L);
+
+        assertSame(current, controller.resolveSelectedRow());
+        assertEquals("new-control", controller.getSelection().rowKey());
+    }
+
+    @Test
+    void clickingAlternateControlImmediatelyBindsCurrentControl()
+    {
+        ChannelActivityTableModel model = model();
+        ChannelActivityRow alternate = row(model, "alternate", ChannelActivityRow.Role.ALTERNATE_CONTROL,
+            851_000_000L);
+        ChannelActivityRow current = row(model, "current", ChannelActivityRow.Role.CURRENT_CONTROL,
+            852_000_000L);
+        ChannelActivitySelectionController controller = new ChannelActivitySelectionController();
+
+        controller.select(model, alternate);
+
+        assertSame(current, controller.resolveSelectedRow());
+        assertEquals(ChannelActivitySelectionScope.SITE, controller.getSelection().scope());
+    }
+
+    @Test
+    void siteSelectionWaitsWithoutHighlightingConfiguredOrAlternateControl()
+    {
+        ChannelActivityTableModel model = model();
+        ChannelActivityRow configured = row(model, "configured", ChannelActivityRow.Role.CONFIGURED_CONTROL,
+            851_000_000L);
+        row(model, "alternate", ChannelActivityRow.Role.ALTERNATE_CONTROL, 852_000_000L);
+        ChannelActivitySelectionController controller = new ChannelActivitySelectionController();
+
+        controller.select(model, configured);
+
+        assertNull(controller.resolveSelectedRow());
+        assertNotNull(controller.getSelection());
+        assertTrue(controller.getSelection().isSite());
+
+        ChannelActivityRow current = row(model, "current", ChannelActivityRow.Role.CURRENT_CONTROL,
+            853_000_000L);
+
+        assertSame(current, controller.resolveSelectedRow());
+    }
+
+    @Test
+    void trafficRoleWithControlEvidenceRemainsExact()
     {
         ChannelActivityTableModel model = model();
         ChannelActivityRow row = row(model, "shared", ChannelActivityRow.Role.TRAFFIC, 851_000_000L);
@@ -94,8 +149,8 @@ class ChannelActivitySelectionControllerTest
 
         controller.select(model, row);
 
-        assertTrue(controller.getSelection().isSite());
-        assertEquals(ChannelActivitySelectionScope.SITE, controller.getSelection().scope());
+        assertFalse(controller.getSelection().isSite());
+        assertEquals(ChannelActivitySelectionScope.EXACT, controller.getSelection().scope());
     }
 
     @Test
@@ -109,6 +164,7 @@ class ChannelActivitySelectionControllerTest
 
         assertFalse(controller.clearIfSelectionIsOutside(conventional));
         assertNotNull(controller.getSelection());
+        assertEquals(ChannelActivitySelectionScope.EXACT, controller.getSelection().scope());
         assertTrue(controller.clearIfSelectionIsOutside(trunkedSite));
         assertNull(controller.getSelection());
     }

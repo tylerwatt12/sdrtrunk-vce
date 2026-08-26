@@ -221,6 +221,16 @@ public class ChannelActivityPanel extends JPanel
         mSelectedFrequencyBroadcaster.removeListener(listener);
     }
 
+    /**
+     * Current logical selection resolved against the latest activity rows.  This is used to replay a selection when
+     * the lower views are expanded after being suspended.
+     */
+    public SelectedFrequencyContext getSelectedFrequencyContext()
+    {
+        ChannelActivityRow row = mSelectionController.resolveSelectedRow();
+        return getSelectedFrequencyContext(mSelectionController.getSelection(), row);
+    }
+
     public void clearSelectedFrequencyContext()
     {
         mSelectionController.clear();
@@ -594,7 +604,10 @@ public class ChannelActivityPanel extends JPanel
         }
 
         ChannelActivitySelectionController.Selection selection = mSelectionController.select(model, row);
+        row = mSelectionController.resolveSelectedRow();
+        selection = mSelectionController.getSelection();
         clearOtherSelectionHighlights(model);
+        renderSelectionHighlight(table, model, row);
         broadcastSelection(selection, row, true);
     }
 
@@ -638,23 +651,28 @@ public class ChannelActivityPanel extends JPanel
             return;
         }
 
+        renderSelectionHighlight(table, model, row);
+
+        broadcastSelection(selection, row, false);
+    }
+
+    private void renderSelectionHighlight(ChannelActivityTable table, ChannelActivityTableModel model,
+                                          ChannelActivityRow row)
+    {
         if(row == null)
         {
             //There is temporarily no row to highlight, but the site remains the user's logical selection.
             table.clearSelection();
+            return;
         }
-        else
+
+        int modelRow = model.getRowIndex(row.getKey());
+        int viewRow = modelRow >= 0 ? table.convertRowIndexToView(modelRow) : -1;
+
+        if(viewRow >= 0 && table.getSelectedRow() != viewRow)
         {
-            int modelRow = model.getRowIndex(row.getKey());
-            int viewRow = modelRow >= 0 ? table.convertRowIndexToView(modelRow) : -1;
-
-            if(viewRow >= 0 && table.getSelectedRow() != viewRow)
-            {
-                table.getSelectionModel().setSelectionInterval(viewRow, viewRow);
-            }
+            table.getSelectionModel().setSelectionInterval(viewRow, viewRow);
         }
-
-        broadcastSelection(selection, row, false);
     }
 
     private void clearOtherSelectionHighlights(ChannelActivityTableModel selectedModel)
@@ -682,16 +700,48 @@ public class ChannelActivityPanel extends JPanel
             return SelectedFrequencyContext.clear();
         }
 
-        long frequency = row != null ? row.getFrequency() : selection.frequency();
-        Integer timeslot = row != null ? row.getTimeslot() : selection.timeslot();
-        String decoderHint = row != null ? row.getDecoder() : selection.decoderHint();
-        Channel rowChannel = row != null ? row.getChannel() : selection.rowChannel();
-        ProcessingChain processingChain = frequency > 0 ?
-            mChannelProcessingManager.getProcessingChainByFrequency(frequency, timeslot) : null;
-        ProcessingChain eventProcessingChain = selection.isSite() && selection.ownerChannel() != null ?
-            mChannelProcessingManager.getProcessingChain(selection.ownerChannel()) : processingChain;
-        return new SelectedFrequencyContext(frequency, timeslot, decoderHint, selection.ownerChannel(), rowChannel,
-            processingChain, eventProcessingChain, selection.scope(), false);
+        Channel ownerChannel = selection.tableModel().getOwnerChannel();
+        Channel rowChannel = row != null ? row.getChannel() : ownerChannel;
+        Integer timeslot = row != null ? row.getTimeslot() : null;
+        String decoderHint = row != null ? row.getDecoder() : null;
+        ProcessingChain processingChain;
+
+        if(selection.isSite())
+        {
+            processingChain = ownerChannel != null ? mChannelProcessingManager.getProcessingChain(ownerChannel) : null;
+        }
+        else
+        {
+            Channel exactChannel = resolveExactChannelIdentity(row, ownerChannel, rowChannel);
+            processingChain = exactChannel != null ? mChannelProcessingManager.getProcessingChain(exactChannel) : null;
+        }
+
+        long frequency = resolveDisplayedFrequency(selection.isSite(), row, getSourceFrequency(processingChain));
+        return new SelectedFrequencyContext(frequency, timeslot, decoderHint, ownerChannel, rowChannel,
+            processingChain, selection.scope(), false);
+    }
+
+    static Channel resolveExactChannelIdentity(ChannelActivityRow row, Channel ownerChannel, Channel rowChannel)
+    {
+        return rowChannel != null && ((row != null && row.getRole() == ChannelActivityRow.Role.CONVENTIONAL) ||
+            ownerChannel == null || rowChannel != ownerChannel) ? rowChannel : null;
+    }
+
+    static long resolveDisplayedFrequency(boolean siteSelection, ChannelActivityRow row, long sourceFrequency)
+    {
+        if(siteSelection && (row == null || row.getRole() != ChannelActivityRow.Role.CURRENT_CONTROL) &&
+            sourceFrequency > 0)
+        {
+            return sourceFrequency;
+        }
+
+        return row != null ? row.getFrequency() : sourceFrequency;
+    }
+
+    private static long getSourceFrequency(ProcessingChain processingChain)
+    {
+        return processingChain != null && processingChain.getSource() != null ?
+            processingChain.getSource().getFrequency() : 0;
     }
 
     private void broadcastSelectedFrequencyContext(SelectedFrequencyContext context, boolean force)

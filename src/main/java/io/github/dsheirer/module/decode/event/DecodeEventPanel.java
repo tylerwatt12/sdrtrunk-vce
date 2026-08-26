@@ -25,7 +25,6 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
-import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.icon.IconModel;
@@ -44,9 +43,12 @@ import java.awt.Component;
 import java.awt.EventQueue;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.Date;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.ImageIcon;
@@ -55,6 +57,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.JTable;
+import javax.swing.Timer;
 import javax.swing.RowFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableModel;
@@ -67,11 +70,21 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     private static final String TABLE_PREFERENCE_KEY = "decode.event.panel";
     private static final int[] DEFAULT_COLUMN_WIDTHS = {146, 79, 111, 99, 82, 82, 94, 62, 98, 240};
     private static final int[] MINIMUM_COLUMN_WIDTHS = {146, 79, 111, 99, 82, 82, 94, 62, 98, 100};
+    private static final int MAX_OBSERVED_EVENT_IDENTITIES = 4096;
+    private static final int LIVE_EVENT_HANDOFF_CAPACITY = 256;
+    private static final int LIVE_EVENT_DRAIN_INTERVAL_MILLISECONDS = 25;
 
     private transient JTable mTable;
     private transient JTableColumnWidthMonitor mTableColumnWidthMonitor;
     private transient DecodeEventModel mEventModel = new DecodeEventModel();
     private transient DecodeEventHistory mCurrentEventHistory;
+    private transient Listener<IDecodeEvent> mCurrentEventHistoryListener;
+    private transient long mEventHistoryAttachmentGeneration;
+    private transient BoundedSwingHistoryHandoff<DecodeEventHistory,IDecodeEvent> mLiveEventHandoff =
+        new BoundedSwingHistoryHandoff<>(LIVE_EVENT_HANDOFF_CAPACITY, this::processLiveEvent);
+    private transient Timer mLiveEventDrainTimer;
+    private transient Set<IDecodeEvent> mObservedEvents = Collections.newSetFromMap(new IdentityHashMap<>());
+    private transient ArrayDeque<IDecodeEvent> mObservedEventOrder = new ArrayDeque<>();
     private transient JScrollPane mEmptyScroller;
     private transient IconModel mIconModel;
     private transient AliasModel mAliasModel;
@@ -80,10 +93,8 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     private transient FilterSet<IDecodeEvent> mFilterSet = new DecodeEventFilterSet();
     private transient TableRowSorter<TableModel> mTableRowSorter;
     private transient HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
-    private transient long mSelectedFrequency;
-    private transient Integer mSelectedTimeslot;
-    private transient Channel mSelectedSiteOwner;
-    private transient boolean mSiteEventSelection;
+    private transient SelectedFrequencyContext mSelectedContext;
+    private transient boolean mActive = true;
 
 
     /**
@@ -107,7 +118,7 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
             MINIMUM_COLUMN_WIDTHS, DEFAULT_COLUMN_WIDTHS, JTable.AUTO_RESIZE_LAST_COLUMN);
         updateCellRenderers();
         mHistoryManagementPanel = new HistoryManagementPanel<>(mEventModel, "Event Filter Editor",
-            this::restoreTablePresentation);
+            this::restoreTablePresentation, this::clearEventHistory);
         mHistoryManagementPanel.updateFilterSet(mFilterSet);
         add(mHistoryManagementPanel, "span,growx");
         mEmptyScroller = new JScrollPane(mTable);
@@ -121,10 +132,16 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
                 EventQueue.invokeLater(this::restoreTablePresentation);
             }
         });
+        mLiveEventDrainTimer = new Timer(LIVE_EVENT_DRAIN_INTERVAL_MILLISECONDS,
+            event -> drainLiveEvents());
+        mLiveEventDrainTimer.setCoalesce(true);
+        mLiveEventDrainTimer.start();
     }
 
     public void dispose()
     {
+        suspend();
+
         if(mTableColumnWidthMonitor != null)
         {
             mTableColumnWidthMonitor.dispose();
@@ -183,48 +200,61 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     public void receive(final SelectedFrequencyContext context)
     {
         EventQueue.invokeLater(() -> {
-            ProcessingChain processingChain = context != null ? context.eventProcessingChain() : null;
-            boolean clearRequested = context == null || context.clearRequested();
-            long selectedFrequency = clearRequested ? 0 : context.frequency();
-            Integer selectedTimeslot = clearRequested ? null : context.timeslot();
-            boolean siteEventSelection = isSiteEventSelection(context);
-            Channel siteOwner = siteEventSelection ? context.ownerChannel() : null;
-            boolean selectionChanged = selectionChanged(selectedFrequency, selectedTimeslot, siteEventSelection,
-                siteOwner);
+            if(!mActive)
+            {
+                return;
+            }
 
-            mSelectedFrequency = selectedFrequency;
-            mSelectedTimeslot = selectedTimeslot;
-            mSelectedSiteOwner = siteOwner;
-            mSiteEventSelection = siteEventSelection;
+            boolean clearRequested = context == null || context.clearRequested();
+            boolean selectionChanged = clearRequested || mSelectedContext == null ||
+                !mSelectedContext.hasSameLogicalSelection(context);
+            mSelectedContext = clearRequested ? null : context;
+            ProcessingChain processingChain = clearRequested ? null : context.processingChain();
 
             if(clearRequested)
             {
                 detachEventHistory();
+                clearObservedEvents();
                 mEventModel.clearAndSet(Collections.emptyList());
                 mHistoryManagementPanel.setEnabled(false);
             }
             else if(processingChain != null)
             {
                 DecodeEventHistory eventHistory = processingChain.getDecodeEventHistory();
+                boolean historyChanged = mCurrentEventHistory != eventHistory;
 
-                if(mCurrentEventHistory != eventHistory)
+                if(!selectionChanged && !historyChanged)
                 {
-                    detachEventHistory();
-                    mCurrentEventHistory = eventHistory;
-                    mCurrentEventHistory.addListener(mEventModel);
+                    mHistoryManagementPanel.setEnabled(true);
+                    return;
                 }
 
-                List<IDecodeEvent> selectedEvents = mCurrentEventHistory.getItems().stream()
-                    .filter(this::matchesSelectedFrequency)
-                    .toList();
+                if(historyChanged)
+                {
+                    detachEventHistory();
+                    attachEventHistory(eventHistory);
+                }
+
+                List<IDecodeEvent> historyItems = mCurrentEventHistory.getItems();
 
                 if(selectionChanged)
                 {
-                    mEventModel.clearAndSet(selectedEvents);
+                    clearObservedEvents();
+                    historyItems.forEach(this::markObservedEvent);
+                    mEventModel.clearAndSet(historyItems.stream()
+                        .filter(this::matchesSelectedFrequency)
+                        .toList());
                 }
                 else
                 {
-                    selectedEvents.forEach(mEventModel::add);
+                    //The source history is smaller than the configurable UI history.  Merge only source objects that
+                    //arrived while detached so retained UI rows are not discarded and a manual Clear is respected.
+                    List<IDecodeEvent> missedEvents = historyItems.stream()
+                        .filter(event -> !mObservedEvents.contains(event))
+                        .filter(this::matchesSelectedFrequency)
+                        .toList();
+                    historyItems.forEach(this::markObservedEvent);
+                    missedEvents.forEach(mEventModel::add);
                 }
 
                 mHistoryManagementPanel.setEnabled(true);
@@ -237,56 +267,144 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
 
                 if(selectionChanged)
                 {
+                    clearObservedEvents();
                     mEventModel.clearAndSet(Collections.emptyList());
                 }
 
-                mHistoryManagementPanel.setEnabled(siteEventSelection);
+                mHistoryManagementPanel.setEnabled(context.isSiteSelection());
             }
         });
     }
 
+    /**
+     * Detaches the live history listener while retaining the bounded model, filter choices, and logical selection.
+     */
+    public void suspend()
+    {
+        mActive = false;
+        detachEventHistory();
+        mLiveEventDrainTimer.stop();
+        mLiveEventHandoff.clear();
+    }
+
+    /**
+     * Reattaches this view to the current selection after it becomes visible again.
+     */
+    public void resume(SelectedFrequencyContext context)
+    {
+        mActive = true;
+        mLiveEventDrainTimer.start();
+        receive(context);
+    }
+
     private void detachEventHistory()
     {
+        mEventHistoryAttachmentGeneration++;
+
         if(mCurrentEventHistory != null)
         {
-            mCurrentEventHistory.removeListener(mEventModel);
+            mCurrentEventHistory.removeListener(mCurrentEventHistoryListener);
         }
 
         mCurrentEventHistory = null;
+        mCurrentEventHistoryListener = null;
     }
 
-    private boolean selectionChanged(long frequency, Integer timeslot, boolean siteEventSelection, Channel siteOwner)
+    private void attachEventHistory(DecodeEventHistory eventHistory)
     {
-        return logicalSelectionChanged(mSelectedFrequency, mSelectedTimeslot, mSiteEventSelection,
-            mSelectedSiteOwner, frequency, timeslot, siteEventSelection, siteOwner);
+        mCurrentEventHistory = eventHistory;
+        DecodeEventHistory attachedHistory = mCurrentEventHistory;
+        long attachmentGeneration = ++mEventHistoryAttachmentGeneration;
+        mCurrentEventHistoryListener = event ->
+            mLiveEventHandoff.offer(attachedHistory, event, attachmentGeneration);
+        mCurrentEventHistory.addListener(mCurrentEventHistoryListener);
     }
 
-    static boolean logicalSelectionChanged(long previousFrequency, Integer previousTimeslot,
-                                           boolean previousSiteSelection, Channel previousSiteOwner,
-                                           long frequency, Integer timeslot, boolean siteEventSelection,
-                                           Channel siteOwner)
+    /**
+     * Establishes a source watermark at the user's Clear action.  The listener generation cut rejects in-flight old
+     * callbacks, while the listener-before-snapshot ordering preserves genuinely new events.
+     */
+    private void clearEventHistory()
     {
-        if(previousSiteSelection || siteEventSelection)
+        DecodeEventHistory eventHistory = mCurrentEventHistory;
+        detachEventHistory();
+        mLiveEventHandoff.clear();
+
+        if(mActive && eventHistory != null)
         {
-            return previousSiteSelection != siteEventSelection || previousSiteOwner != siteOwner;
+            attachEventHistory(eventHistory);
+            eventHistory.getItems().forEach(this::markObservedEvent);
         }
 
-        if(previousFrequency != frequency)
+        mEventModel.clear();
+    }
+
+    /**
+     * Drains the bounded producer handoff.  Swing Timer and deterministic tests invoke this only on the EDT.
+     */
+    void drainLiveEvents()
+    {
+        if(!EventQueue.isDispatchThread())
         {
-            return true;
+            throw new IllegalStateException("Live event handoff must drain on the Swing event thread");
         }
 
-        if(previousTimeslot == null)
+        mLiveEventHandoff.drain();
+    }
+
+    private void clearObservedEvents()
+    {
+        mObservedEvents.clear();
+        mObservedEventOrder.clear();
+    }
+
+    private void processLiveEvent(DecodeEventHistory history, IDecodeEvent event, long attachmentGeneration)
+    {
+        if(mActive && mCurrentEventHistory == history &&
+            mEventHistoryAttachmentGeneration == attachmentGeneration)
         {
-            return timeslot != null;
+            markObservedEvent(event);
+
+            if(matchesSelectedFrequency(event))
+            {
+                mEventModel.add(event);
+            }
+        }
+    }
+
+    /**
+     * Remembers source-event identity independently of visible model contents.  This makes a user-requested Clear a
+     * durable watermark while keeping the state bounded above the largest configurable UI history plus source tail.
+     */
+    private boolean markObservedEvent(IDecodeEvent event)
+    {
+        if(event == null)
+        {
+            return false;
         }
 
-        return !previousTimeslot.equals(timeslot);
+        boolean newlyObserved = mObservedEvents.add(event);
+
+        if(!newlyObserved)
+        {
+            mObservedEventOrder.removeIf(observed -> observed == event);
+        }
+
+        mObservedEventOrder.addLast(event);
+
+        while(mObservedEventOrder.size() > MAX_OBSERVED_EVENT_IDENTITIES)
+        {
+            mObservedEvents.remove(mObservedEventOrder.removeFirst());
+        }
+
+        return newlyObserved;
     }
 
     private boolean matchesSelectedFrequency(IDecodeEvent event)
     {
-        return matchesSelectedFrequency(event, mSelectedFrequency, mSiteEventSelection);
+        return matchesSelectedFrequency(event, mSelectedContext != null ? mSelectedContext.frequency() : 0,
+            mSelectedContext != null ? mSelectedContext.timeslot() : null,
+            mSelectedContext != null && mSelectedContext.isSiteSelection());
     }
 
     /**
@@ -299,7 +417,8 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         return context != null && context.isSiteSelection();
     }
 
-    static boolean matchesSelectedFrequency(IDecodeEvent event, long selectedFrequency, boolean siteEventSelection)
+    static boolean matchesSelectedFrequency(IDecodeEvent event, long selectedFrequency, Integer selectedTimeslot,
+                                            boolean siteEventSelection)
     {
         if(siteEventSelection || selectedFrequency <= 0)
         {
@@ -307,7 +426,10 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         }
 
         IChannelDescriptor channelDescriptor = event != null ? event.getChannelDescriptor() : null;
-        return channelDescriptor != null && channelDescriptor.getDownlinkFrequency() == selectedFrequency;
+        boolean frequencyMatches = channelDescriptor != null &&
+            channelDescriptor.getDownlinkFrequency() == selectedFrequency;
+        return frequencyMatches && (selectedTimeslot == null ||
+            (event.hasTimeslot() && event.getTimeslot() == selectedTimeslot));
     }
 
     /**

@@ -27,12 +27,15 @@ import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.sample.Listener;
+import java.awt.EventQueue;
+import java.util.List;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.RowFilter;
+import javax.swing.Timer;
 import javax.swing.table.TableModel;
 import javax.swing.table.TableRowSorter;
 
@@ -45,17 +48,26 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
     private static final String TABLE_PREFERENCE_KEY = "message.activity.panel";
     private static final int[] DEFAULT_COLUMN_WIDTHS = {151, 73, 76, 793};
     private static final int[] MINIMUM_COLUMN_WIDTHS = {151, 73, 76, 100};
+    private static final int LIVE_MESSAGE_HANDOFF_CAPACITY = 256;
+    private static final int LIVE_MESSAGE_DRAIN_INTERVAL_MILLISECONDS = 25;
     private transient MessageActivityModel mMessageModel = new MessageActivityModel();
     private transient ProcessingChain mCurrentProcessingChain;
     private transient MessageHistory mCurrentMessageHistory;
+    private transient Listener<IMessage> mCurrentMessageHistoryListener;
+    private transient long mMessageHistoryAttachmentGeneration;
+    private transient BoundedSwingHistoryHandoff<MessageHistory,IMessage> mLiveMessageHandoff =
+        new BoundedSwingHistoryHandoff<>(LIVE_MESSAGE_HANDOFF_CAPACITY, this::processLiveMessage);
+    private transient Timer mLiveMessageDrainTimer;
     private transient JTable mTable = new JTable(mMessageModel);
     private transient TableRowSorter<TableModel> mTableRowSorter;
     private transient JTableColumnWidthMonitor mTableColumnWidthMonitor;
     private transient UserPreferences mUserPreferences;
     private transient FilterSet<IMessage> mMessageFilterSet;
+    private transient FilterElementStateCache mFilterElementStateCache = new FilterElementStateCache();
     private transient HistoryManagementPanel<IMessage> mHistoryManagementPanel;
-    private transient long mSelectedFrequency;
-    private transient Integer mSelectedTimeslot;
+    private transient SelectedFrequencyContext mSelectedContext;
+    private transient SelectedFrequencyContext mRetainedContext;
+    private transient boolean mActive;
 
     /**
      * Constructs an instance
@@ -70,16 +82,32 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
         mTableColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY,
             MINIMUM_COLUMN_WIDTHS, DEFAULT_COLUMN_WIDTHS, JTable.AUTO_RESIZE_LAST_COLUMN);
         setLayout(new MigLayout("insets 0 0 0 0", "[][grow,fill]", "[]0[grow,fill]"));
-        mHistoryManagementPanel = new HistoryManagementPanel<>(mMessageModel, "Message Filter Editor");
+        mHistoryManagementPanel = new HistoryManagementPanel<>(mMessageModel, "Message Filter Editor", null,
+            this::clearMessageHistory);
         add(mHistoryManagementPanel, "span,growx");
         add(new JScrollPane(mTable), "span,grow");
+        mLiveMessageDrainTimer = new Timer(LIVE_MESSAGE_DRAIN_INTERVAL_MILLISECONDS,
+            event -> drainLiveMessages());
+        mLiveMessageDrainTimer.setCoalesce(true);
     }
 
     /**
-     * Updates the message activity model for the selected exact-frequency context.
+     * Updates the message activity model for the selected site or exact-channel context.
      */
     @Override
     public void receive(SelectedFrequencyContext selection)
+    {
+        mRetainedContext = selection;
+
+        if(!mActive)
+        {
+            return;
+        }
+
+        applySelection(selection);
+    }
+
+    private void applySelection(SelectedFrequencyContext selection)
     {
         if(selection == null || selection.clearRequested())
         {
@@ -87,19 +115,18 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
             return;
         }
 
-        boolean selectionChanged = selectionChanged(selection.frequency(), selection.timeslot());
-        mSelectedFrequency = selection.frequency();
-        mSelectedTimeslot = selection.timeslot();
-        updateProcessingChain(selection.processingChain(), selectionChanged, true);
+        boolean selectionChanged = mSelectedContext == null ||
+            !mSelectedContext.hasSameLogicalSelection(selection);
+        mSelectedContext = selection;
+        updateProcessingChain(selection.processingChain(), selectionChanged);
     }
 
     private void clearSelection()
     {
         detachMessageHistory();
         unregisterFilterSet();
-        mSelectedFrequency = 0;
-        mSelectedTimeslot = null;
-        mMessageModel.clear();
+        mSelectedContext = null;
+        mMessageModel.resetSelectionHistory();
 
         HistoryManagementPanel<IMessage> historyManagementPanel = mHistoryManagementPanel;
 
@@ -109,85 +136,163 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
         }
     }
 
-    private boolean selectionChanged(long frequency, Integer timeslot)
+    /**
+     * Detaches the live history listener while retaining the bounded model, filter choices, and logical selection.
+     */
+    public void suspend()
     {
-        if(mSelectedFrequency != frequency)
-        {
-            return true;
-        }
-
-        if(mSelectedTimeslot == null)
-        {
-            return timeslot != null;
-        }
-
-        return !mSelectedTimeslot.equals(timeslot);
+        mActive = false;
+        detachMessageHistory();
+        mLiveMessageDrainTimer.stop();
+        mLiveMessageHandoff.clear();
     }
 
-    private void updateProcessingChain(ProcessingChain processingChain, boolean selectionChanged, boolean preloadHistory)
+    /**
+     * Reattaches this view to the current selection after it becomes visible again.
+     */
+    public void resume(SelectedFrequencyContext selection)
+    {
+        mRetainedContext = selection;
+        mActive = true;
+        mLiveMessageDrainTimer.start();
+        applySelection(selection);
+    }
+
+    private void updateProcessingChain(ProcessingChain processingChain, boolean selectionChanged)
     {
         HistoryManagementPanel<IMessage> historyManagementPanel = mHistoryManagementPanel;
+
+        if(selectionChanged)
+        {
+            detachMessageHistory();
+            unregisterFilterSet();
+            mMessageModel.resetSelectionHistory();
+        }
+        else if(processingChain == mCurrentProcessingChain)
+        {
+            return;
+        }
 
         if(processingChain == null)
         {
             detachMessageHistory();
 
-            if(selectionChanged)
+            if(selectionChanged && historyManagementPanel != null)
             {
-                unregisterFilterSet();
-                mMessageModel.clear();
-
-                if(historyManagementPanel != null)
-                {
-                    historyManagementPanel.setEnabled(false);
-                }
+                historyManagementPanel.setEnabled(false);
             }
 
             return;
         }
 
-        if(processingChain == mCurrentProcessingChain && !selectionChanged)
-        {
-            return;
-        }
-
         detachMessageHistory();
-        unregisterFilterSet();
-
-        if(selectionChanged)
-        {
-            mMessageModel.clear();
-        }
-
         mCurrentProcessingChain = processingChain;
         mCurrentMessageHistory = processingChain.getMessageHistory();
-        mMessageFilterSet = DecoderFactory.getMessageFilters(processingChain.getModules());
-        //Register filter change listener to refresh the table any time the event filters are changed.
-        mMessageFilterSet.register(() -> mMessageModel.fireTableDataChanged());
+
+        if(mMessageFilterSet == null)
+        {
+            mMessageFilterSet = DecoderFactory.getMessageFilters(processingChain.getModules());
+            mFilterElementStateCache.restore(mMessageFilterSet);
+            //Register filter change listener to refresh the table any time the message filters are changed.
+            mMessageFilterSet.register(() -> mMessageModel.fireTableDataChanged());
+
+            if(historyManagementPanel != null)
+            {
+                historyManagementPanel.updateFilterSet(mMessageFilterSet);
+            }
+        }
 
         if(historyManagementPanel != null)
         {
-            historyManagementPanel.updateFilterSet(mMessageFilterSet);
             historyManagementPanel.setEnabled(true);
         }
 
-        if(preloadHistory)
-        {
-            mMessageModel.addMessages(mCurrentMessageHistory.getItems());
-        }
+        MessageHistory attachedHistory = mCurrentMessageHistory;
+        attachMessageHistoryListener(attachedHistory);
+        long attachmentGeneration = mMessageHistoryAttachmentGeneration;
+        List<IMessage> snapshot = mCurrentMessageHistory.getItems();
+        Runnable addSnapshot = () -> {
+            if(mActive && mCurrentMessageHistory == attachedHistory &&
+                mMessageHistoryAttachmentGeneration == attachmentGeneration)
+            {
+                mMessageModel.addMessages(snapshot);
+            }
+        };
 
-        mCurrentMessageHistory.addListener(mMessageModel);
+        if(EventQueue.isDispatchThread())
+        {
+            addSnapshot.run();
+        }
+        else
+        {
+            EventQueue.invokeLater(addSnapshot);
+        }
     }
 
     private void detachMessageHistory()
     {
+        mMessageHistoryAttachmentGeneration++;
+
         if(mCurrentMessageHistory != null)
         {
-            mCurrentMessageHistory.removeListener(mMessageModel);
+            mCurrentMessageHistory.removeListener(mCurrentMessageHistoryListener);
         }
 
         mCurrentMessageHistory = null;
+        mCurrentMessageHistoryListener = null;
         mCurrentProcessingChain = null;
+    }
+
+    private void attachMessageHistoryListener(MessageHistory messageHistory)
+    {
+        long attachmentGeneration = ++mMessageHistoryAttachmentGeneration;
+        mCurrentMessageHistoryListener = message ->
+            mLiveMessageHandoff.offer(messageHistory, message, attachmentGeneration);
+        messageHistory.addListener(mCurrentMessageHistoryListener);
+    }
+
+    /**
+     * Establishes a source watermark at the user's Clear action so queued or snapshotted pre-Clear messages cannot
+     * reappear, while the replacement listener continues to accept messages arriving after the snapshot.
+     */
+    private void clearMessageHistory()
+    {
+        ProcessingChain processingChain = mCurrentProcessingChain;
+        MessageHistory messageHistory = mCurrentMessageHistory;
+        detachMessageHistory();
+        mLiveMessageHandoff.clear();
+
+        if(mActive && messageHistory != null)
+        {
+            mCurrentProcessingChain = processingChain;
+            mCurrentMessageHistory = messageHistory;
+            attachMessageHistoryListener(messageHistory);
+            mMessageModel.markObservedMessages(messageHistory.getItems());
+        }
+
+        mMessageModel.clear();
+    }
+
+    /**
+     * Drains the bounded producer handoff.  Swing Timer and deterministic tests invoke this only on the EDT.
+     */
+    void drainLiveMessages()
+    {
+        if(!EventQueue.isDispatchThread())
+        {
+            throw new IllegalStateException("Live message handoff must drain on the Swing event thread");
+        }
+
+        mLiveMessageHandoff.drain();
+    }
+
+    private void processLiveMessage(MessageHistory history, IMessage message, long attachmentGeneration)
+    {
+        if(mActive && mCurrentMessageHistory == history &&
+            mMessageHistoryAttachmentGeneration == attachmentGeneration)
+        {
+            mMessageModel.addMessage(message);
+        }
     }
 
     private void unregisterFilterSet()
@@ -195,6 +300,7 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
         //Unregister from changes made to the filter set
         if(mMessageFilterSet != null)
         {
+            mFilterElementStateCache.capture(mMessageFilterSet);
             mMessageFilterSet.register(null);
         }
 
@@ -203,6 +309,8 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
 
     public void dispose()
     {
+        suspend();
+        mRetainedContext = null;
         clearSelection();
 
         if(mTableColumnWidthMonitor != null)
@@ -213,10 +321,16 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
     }
 
     @Override
+    public void addNotify()
+    {
+        super.addNotify();
+        resume(mRetainedContext);
+    }
+
+    @Override
     public void removeNotify()
     {
-        dispose();
-
+        suspend();
         super.removeNotify();
     }
 

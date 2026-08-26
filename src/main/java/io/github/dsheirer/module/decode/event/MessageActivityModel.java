@@ -20,9 +20,8 @@ package io.github.dsheirer.module.decode.event;
 
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.StuffBitsMessage;
-import io.github.dsheirer.sample.Listener;
-import java.awt.EventQueue;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -32,9 +31,10 @@ import java.util.Set;
 /**
  * Table Model for decoded IMessages.
  */
-public class MessageActivityModel extends ClearableHistoryModel<MessageItem> implements Listener<IMessage>
+public class MessageActivityModel extends ClearableHistoryModel<MessageItem>
 {
     private static final long serialVersionUID = 1L;
+    private static final int MAX_OBSERVED_MESSAGE_IDENTITIES = 4096;
     private static final int TIME = 0;
     private static final int PROTOCOL = 1;
     private static final int TIMESLOT = 2;
@@ -42,47 +42,49 @@ public class MessageActivityModel extends ClearableHistoryModel<MessageItem> imp
 
     private String[] mHeaders = new String[]{"Time", "Protocol", "Timeslot", "Message"};
     private SimpleDateFormat mSDFTime = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss");
-    private transient Set<IMessage> mDisplayedMessages = Collections.newSetFromMap(new IdentityHashMap<>());
-
-    /**
-     * Implements the listener interface and wraps the IMessage in table-compatible message item wrapper.
-     * @param message to add to the model
-     */
-    public void receive(final IMessage message)
-    {
-        EventQueue.invokeLater(() -> addMessage(message));
-    }
+    private transient Set<IMessage> mObservedMessages = Collections.newSetFromMap(new IdentityHashMap<>());
+    private transient ArrayDeque<IMessage> mObservedMessageOrder = new ArrayDeque<>();
 
     /**
      * Adds a snapshot of messages without clearing the current model.
      */
-    public void addMessages(List<IMessage> messages)
+    void addMessages(List<IMessage> messages)
     {
         if(messages == null || messages.isEmpty())
         {
             return;
         }
 
-        EventQueue.invokeLater(() -> messages.forEach(this::addMessage));
+        messages.forEach(this::addMessage);
     }
 
     @Override
     public void clear()
     {
-        mDisplayedMessages.clear();
+        //Manual Clear removes visible rows but preserves the source-identity watermark so a reattach does not
+        //resurrect the same bounded MessageHistory snapshot.
+        super.clear();
+    }
+
+    /**
+     * Clears both visible rows and observed identities for a different logical selection.
+     */
+    void resetSelectionHistory()
+    {
+        clearObservedMessages();
         super.clear();
     }
 
     @Override
     public void clearAndSet(List<MessageItem> items)
     {
-        mDisplayedMessages.clear();
+        clearObservedMessages();
 
         List<MessageItem> deduplicated = new ArrayList<>();
 
         for(MessageItem item: items)
         {
-            if(item != null && item.getMessage() != null && mDisplayedMessages.add(item.getMessage()))
+            if(item != null && markObservedMessage(item.getMessage()))
             {
                 deduplicated.add(item);
             }
@@ -91,7 +93,11 @@ public class MessageActivityModel extends ClearableHistoryModel<MessageItem> imp
         super.clearAndSet(deduplicated);
     }
 
-    private void addMessage(IMessage message)
+    /**
+     * Adds a message immediately.  Callers outside this model use this only after dispatching to the Swing event
+     * thread so attachment-generation checks and insertion remain one atomic UI operation.
+     */
+    void addMessage(IMessage message)
     {
         //Don't process tail bits or stuff bits message fragments
         if(message instanceof StuffBitsMessage)
@@ -99,10 +105,52 @@ public class MessageActivityModel extends ClearableHistoryModel<MessageItem> imp
             return;
         }
 
-        if(message != null && mDisplayedMessages.add(message))
+        if(message != null && markObservedMessage(message))
         {
             add(new MessageItem(message));
         }
+    }
+
+    /**
+     * Records a source snapshot without adding visible rows.  Used to linearize a user-requested Clear against the
+     * bounded live handoff.
+     */
+    void markObservedMessages(List<IMessage> messages)
+    {
+        if(messages != null)
+        {
+            messages.forEach(this::markObservedMessage);
+        }
+    }
+
+    private boolean markObservedMessage(IMessage message)
+    {
+        if(message == null)
+        {
+            return false;
+        }
+
+        boolean newlyObserved = mObservedMessages.add(message);
+
+        if(!newlyObserved)
+        {
+            mObservedMessageOrder.removeIf(observed -> observed == message);
+        }
+
+        mObservedMessageOrder.addLast(message);
+
+        while(mObservedMessageOrder.size() > MAX_OBSERVED_MESSAGE_IDENTITIES)
+        {
+            mObservedMessages.remove(mObservedMessageOrder.removeFirst());
+        }
+
+        return newlyObserved;
+    }
+
+    private void clearObservedMessages()
+    {
+        mObservedMessages.clear();
+        mObservedMessageOrder.clear();
     }
 
     @Override

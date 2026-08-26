@@ -22,6 +22,7 @@ import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.channel.details.ChannelWebLinkPanel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
+import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
 import io.github.dsheirer.icon.IconModel;
@@ -95,6 +96,7 @@ public class NowPlayingPanel extends JPanel
     public void dispose()
     {
         detachLowerTabs();
+        disposeLowerPanels();
         mChannelActivityPanel.dispose();
     }
 
@@ -252,13 +254,25 @@ public class NowPlayingPanel extends JPanel
         if(!mLowerTabsAttached)
         {
             ensureLowerPanels();
+            JideTabbedPane tabbedPane = getTabbedPane();
             mChannelActivityPanel.addSelectedFrequencyListener(mChannelWebLinkPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
+            SelectedFrequencyContext context = mChannelActivityPanel.getSelectedFrequencyContext();
+            //Retain the latest selection before the component becomes displayable.  MessageActivityPanel owns its
+            //symmetric addNotify/removeNotify listener lifecycle.
+            mMessageActivityPanel.receive(context);
             mSplitPaneDividerRestored = false;
-            getSplitPane().add(getTabbedPane());
+            getSplitPane().add(tabbedPane);
             mLowerTabsAttached = true;
+
+            mChannelWebLinkPanel.receive(context);
+            mDecodeEventPanel.resume(context);
+            boolean channelVisible = tabbedPane.getSelectedIndex() ==
+                tabbedPane.indexOfComponent(mChannelSpectrumSquelchPanel);
+            mChannelSpectrumSquelchPanel.receive(context);
+            mChannelSpectrumSquelchPanel.setPanelVisible(channelVisible);
             restoreSplitPaneDividerLocation();
             SwingUtilities.invokeLater(this::restoreSplitPaneDividerLocation);
         }
@@ -274,17 +288,11 @@ public class NowPlayingPanel extends JPanel
             mChannelActivityPanel.removeSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
 
-            mChannelWebLinkPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
-            mDecodeEventPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
-            mMessageActivityPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
-            mChannelSpectrumSquelchPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
+            mDecodeEventPanel.suspend();
             mChannelSpectrumSquelchPanel.setPanelVisible(false);
-            mChannelActivityPanel.clearSelectedFrequencyContext();
             getSplitPane().remove(getTabbedPane());
             mLowerTabsAttached = false;
         }
-
-        disposeLowerPanels();
     }
 
     private void ensureLowerPanels()

@@ -347,11 +347,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         if(!mPanelVisible)
         {
             stopRfProbe();
-
-            if(mSelectedFrequencyContext != null && mSelectedFrequencyContext.processingChain() == null)
-            {
-                disconnectProcessingChain();
-            }
+            disconnectProcessingChain();
         }
         else if(mProcessingChain == null && mRfProbeSource == null && mSelectedFrequencyContext != null &&
             !mSelectedFrequencyContext.clearRequested())
@@ -359,6 +355,10 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             if(mSelectedFrequencyContext.processingChain() != null)
             {
                 attachProcessingChain(mSelectedFrequencyContext.processingChain());
+            }
+            else if(mSelectedFrequencyContext.hasFrequency())
+            {
+                updateViewedFrequency(mSelectedFrequencyContext.frequency());
             }
         }
 
@@ -466,9 +466,10 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     @Override
     public void receive(SelectedFrequencyContext context)
     {
+        mSelectedFrequencyContext = context;
+
         if(context == null || context.clearRequested())
         {
-            mSelectedFrequencyContext = context;
             disconnectProcessingChain();
             stopRfProbe();
             reset();
@@ -478,9 +479,17 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             return;
         }
 
+        if(!mPanelVisible)
+        {
+            disconnectProcessingChain();
+            stopRfProbe();
+            updateFFTProcessing();
+            updateInspectRfButton();
+            return;
+        }
+
         if(context.processingChain() != null)
         {
-            mSelectedFrequencyContext = context;
             stopRfProbe();
 
             if(mProcessingChain != context.processingChain())
@@ -490,11 +499,11 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
                 attachProcessingChain(context.processingChain());
             }
 
+            updateViewedFrequency(context.frequency());
             updateInspectRfButton();
         }
         else if(context.hasFrequency())
         {
-            mSelectedFrequencyContext = context;
             disconnectProcessingChain();
             stopRfProbe();
             reset();
@@ -504,7 +513,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         }
         else
         {
-            mSelectedFrequencyContext = context;
             disconnectProcessingChain();
             stopRfProbe();
             reset();
