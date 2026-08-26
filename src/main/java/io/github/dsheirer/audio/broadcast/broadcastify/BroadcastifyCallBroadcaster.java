@@ -96,6 +96,26 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
     }
 
     /**
+     * Applies the optional site-bound Calls delivery contract before the recording enters this provider's queue.
+     * Legacy Broadcastify Calls providers retain the base accept-all behavior.  A site provider fails closed unless
+     * its durable Alias List still exists and one individual receiver observation contains this provider route, the
+     * selected Alias List ID, and the selected saved-channel UUID.
+     */
+    @Override
+    public boolean accepts(AudioRecording audioRecording)
+    {
+        if(!(getBroadcastConfiguration() instanceof BroadcastifyCallSiteConfiguration siteConfiguration))
+        {
+            return super.accepts(audioRecording);
+        }
+
+        return audioRecording != null && mAliasModel != null &&
+            siteConfiguration.resolveAliasList(mAliasModel).isPresent() &&
+            audioRecording.getDeliveryEvidence().matches(siteConfiguration.getName(),
+                siteConfiguration.getAliasListId(), siteConfiguration.getChannelConfigurationId());
+    }
+
+    /**
      * Starts the audio recording processor thread
      */
     @Override
@@ -594,39 +614,5 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
                 }
             }
         }
-    }
-
-    public static void main(String[] args)
-    {
-        mLog.debug("Starting ...");
-
-        BroadcastifyCallConfiguration config = new BroadcastifyCallConfiguration();
-        config.setHost("https://api.broadcastify.com/call-upload-dev");
-        config.setApiKey("c33aae37-8572-11ea-bd8b-0ecc8ab9ccec");
-        config.setSystemID(11);
-
-        String response = testConnection(config);
-
-        if(response == null)
-        {
-            mLog.debug("Test Successful!");
-        }
-        else
-        {
-            if(response.contains("1 Invalid-API-Key"))
-            {
-                mLog.error("Invalid API Key");
-            }
-            else if(response.contains("1 API-Key-Access-Denied"))
-            {
-                mLog.error("System ID not valid for API Key");
-            }
-            else
-            {
-                mLog.debug("Response: " + response);
-            }
-        }
-
-        mLog.debug("Finished!");
     }
 }

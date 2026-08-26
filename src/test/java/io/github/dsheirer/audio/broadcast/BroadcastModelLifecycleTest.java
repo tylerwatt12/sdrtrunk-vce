@@ -18,6 +18,8 @@
  */
 package io.github.dsheirer.audio.broadcast;
 
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -40,6 +42,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class BroadcastModelLifecycleTest
 {
+    @Test
+    public void legacyBroadcasterRetainsAcceptAllDeliveryAndReplayOwnership()
+    {
+        TestBroadcastModel model = new TestBroadcastModel();
+        TestBroadcastConfiguration configuration = createConfiguration("Legacy route");
+        model.addBroadcastConfiguration(configuration);
+        model.runAllStarts();
+        TestAudioBroadcaster broadcaster = model.getCreatedBroadcasters().getFirst();
+        AudioRecording recording = recordingFor(configuration.getName());
+
+        model.receive(recording);
+
+        assertEquals(1, broadcaster.getReceiveCount());
+        assertTrue(recording.hasPendingReplays(),
+            "An accepted legacy delivery must retain the temporary file for its broadcaster");
+        model.removeBroadcastConfiguration(configuration);
+    }
+
+    @Test
+    public void rejectedDeliveryDoesNotIncrementPendingReplayOrReachBroadcaster()
+    {
+        TestBroadcastModel model = new TestBroadcastModel();
+        TestBroadcastConfiguration configuration = createConfiguration("Site route");
+        configuration.setAcceptRecordings(false);
+        model.addBroadcastConfiguration(configuration);
+        model.runAllStarts();
+        TestAudioBroadcaster broadcaster = model.getCreatedBroadcasters().getFirst();
+        AudioRecording recording = recordingFor(configuration.getName());
+
+        model.receive(recording);
+
+        assertEquals(0, broadcaster.getReceiveCount());
+        assertFalse(recording.hasPendingReplays(),
+            "A rejected delivery must not claim replay ownership of the temporary file");
+        model.removeBroadcastConfiguration(configuration);
+    }
+
     @Test
     public void queuedStartDoesNotRunAfterImmediateDelete()
     {
@@ -214,6 +253,12 @@ public class BroadcastModelLifecycleTest
         return configuration;
     }
 
+    private static AudioRecording recordingFor(String route)
+    {
+        return new AudioRecording(null, List.of(new BroadcastChannel(route)), new IdentifierCollection(),
+            1L, 1L);
+    }
+
     private static class TestBroadcastModel extends BroadcastModel
     {
         private final Deque<Runnable> mPendingStarts = new ArrayDeque<>();
@@ -322,12 +367,25 @@ public class BroadcastModelLifecycleTest
 
     private static class TestBroadcastConfiguration extends BroadcastConfiguration
     {
+        private Boolean mAcceptRecordings;
+
+        private Boolean acceptsRecordings()
+        {
+            return mAcceptRecordings;
+        }
+
+        private void setAcceptRecordings(Boolean acceptRecordings)
+        {
+            mAcceptRecordings = acceptRecordings;
+        }
+
         @Override
         public BroadcastConfiguration copyOf()
         {
             TestBroadcastConfiguration copy = new TestBroadcastConfiguration();
             copy.setName(getName());
             copy.setEnabled(isEnabled());
+            copy.setAcceptRecordings(acceptsRecordings());
             return copy;
         }
 
@@ -345,6 +403,7 @@ public class BroadcastModelLifecycleTest
         private final AtomicInteger mStartCount = new AtomicInteger();
         private final AtomicInteger mStopCount = new AtomicInteger();
         private final AtomicInteger mDisposeCount = new AtomicInteger();
+        private final AtomicInteger mReceiveCount = new AtomicInteger();
         private final AtomicBoolean mActive = new AtomicBoolean();
         private final AtomicBoolean mStartInterrupted = new AtomicBoolean();
         private final CountDownLatch mStartInterruptedLatch = new CountDownLatch(1);
@@ -399,9 +458,16 @@ public class BroadcastModelLifecycleTest
         }
 
         @Override
+        public boolean accepts(AudioRecording audioRecording)
+        {
+            Boolean configuredAcceptance = getBroadcastConfiguration().acceptsRecordings();
+            return configuredAcceptance != null ? configuredAcceptance : super.accepts(audioRecording);
+        }
+
+        @Override
         public void receive(AudioRecording audioRecording)
         {
-            //No network or recording work is needed for lifecycle tests.
+            mReceiveCount.incrementAndGet();
         }
 
         @Override
@@ -423,6 +489,11 @@ public class BroadcastModelLifecycleTest
         private int getDisposeCount()
         {
             return mDisposeCount.get();
+        }
+
+        private int getReceiveCount()
+        {
+            return mReceiveCount.get();
         }
 
         private boolean isActive()

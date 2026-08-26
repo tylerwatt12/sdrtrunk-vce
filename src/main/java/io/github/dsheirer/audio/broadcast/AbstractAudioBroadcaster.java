@@ -110,6 +110,18 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
     public abstract void dispose();
 
     /**
+     * Indicates if this broadcaster accepts the recording for delivery.  Providers that do not apply additional
+     * routing restrictions retain the legacy accept-all behavior.
+     *
+     * @param audioRecording candidate recording
+     * @return true to enqueue the recording for this broadcaster
+     */
+    public boolean accepts(AudioRecording audioRecording)
+    {
+        return true;
+    }
+
+    /**
      * Access the configuration for the broadcaster
      */
     public T getBroadcastConfiguration()

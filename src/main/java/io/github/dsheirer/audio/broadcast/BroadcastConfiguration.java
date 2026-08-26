@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
+import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallSiteConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.audio.broadcast.openmhz.OpenMHzConfiguration;
@@ -45,6 +46,7 @@ import java.util.UUID;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
     @JsonSubTypes.Type(value = BroadcastifyCallConfiguration.class, name="broadcastifyCallConfiguration"),
+    @JsonSubTypes.Type(value = BroadcastifyCallSiteConfiguration.class, name="broadcastifyCallSiteConfiguration"),
     @JsonSubTypes.Type(value = RadioResolveConfiguration.class, name="RadioResolveConfiguration"),
     @JsonSubTypes.Type(value = RadioResolveConfiguration.class, name="RADIORESOLVE"),
     @JsonSubTypes.Type(value = RdioScannerConfiguration.class, name="RdioScannerConfiguration"),

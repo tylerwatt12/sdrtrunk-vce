@@ -50,6 +50,8 @@ public class StreamEditorFactory
                 return new RadioResolveEditor(configurationManager);
             case BROADCASTIFY_CALL:
                 return new BroadcastifyCallEditor(configurationManager);
+            case BROADCASTIFY_CALL_SITE:
+                return new BroadcastifyCallSiteEditor(configurationManager);
             case ICECAST_HTTP:
                 return new IcecastHTTPStreamEditor(configurationManager);
             case ICECAST_TCP:

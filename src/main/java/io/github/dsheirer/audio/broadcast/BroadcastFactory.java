@@ -21,6 +21,7 @@ package io.github.dsheirer.audio.broadcast;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallBroadcaster;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
+import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallSiteConfiguration;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyFeedConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveBroadcaster;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
@@ -71,6 +72,9 @@ public class BroadcastFactory
                 case BROADCASTIFY_CALL:
                     return new BroadcastifyCallBroadcaster((BroadcastifyCallConfiguration)configuration,
                             inputAudioFormat, mp3Setting, aliasModel);
+                case BROADCASTIFY_CALL_SITE:
+                    return new BroadcastifyCallBroadcaster((BroadcastifyCallSiteConfiguration)configuration,
+                        inputAudioFormat, mp3Setting, aliasModel);
                 case RDIOSCANNER_CALL:
                     return new RdioScannerBroadcaster((RdioScannerConfiguration)configuration,
                             inputAudioFormat, mp3Setting, aliasModel);
@@ -115,6 +119,8 @@ public class BroadcastFactory
         {
             case BROADCASTIFY_CALL:
                 return new BroadcastifyCallConfiguration(format);
+            case BROADCASTIFY_CALL_SITE:
+                return new BroadcastifyCallSiteConfiguration(format);
             case RDIOSCANNER_CALL:
                 return new RdioScannerConfiguration(format);
             case BROADCASTIFY:

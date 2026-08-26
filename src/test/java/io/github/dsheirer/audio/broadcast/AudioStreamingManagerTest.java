@@ -28,6 +28,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.dsp.oscillator.ScalarRealOscillator;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -64,6 +65,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -395,6 +397,51 @@ public class AudioStreamingManagerTest
     }
 
     @Test
+    void recordingCarriesSiteEvidenceContributedByLosingDuplicate() throws Exception
+    {
+        String winnerChannel = "00000000-0000-0000-0000-000000000201";
+        String losingChannel = "00000000-0000-0000-0000-000000000202";
+        long aliasListId = 72L;
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        AtomicReference<AudioRecording> delivered = new AtomicReference<>();
+        AudioStreamingManager manager = new AudioStreamingManager(delivered::set, BroadcastFormat.MP3,
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) ->
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW));
+        CompletedAudioCall template = getCompletedAudioCall();
+        ResolvedCallPolicy policy = new ResolvedCallPolicy(false, false,
+            Set.of("Stream B", "Stream C"), List.of(
+                deliveryContext(winnerChannel, aliasListId, "Stream B"),
+                deliveryContext(losingChannel, aliasListId, "Stream C")));
+        CompletedAudioCall mergedCall =
+            new CompletedAudioCall(template.snapshot(), template.audioBuffers(), policy);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            preferences.getCallManagementPreference().setPatchGroupStreamingOption(
+                PatchGroupStreamingOption.PATCH_GROUP);
+            manager.start();
+            manager.receive(mergedCall);
+            manager.new AudioSegmentProcessor().run();
+
+            AudioRecording recording = delivered.get();
+            assertTrue(recording != null, "Expected the streaming recording handoff");
+            assertTrue(recording.getDeliveryEvidence().matches("Stream C", aliasListId, losingChannel),
+                "A losing site's routing evidence must survive the completed-call recording handoff");
+            assertFalse(recording.getDeliveryEvidence().matches("Stream B", aliasListId, losingChannel),
+                "Winner and loser evidence must not be combined during projection");
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
+    @Test
     void stopWaitsForInFlightWriterAndLeavesNoReservation() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
@@ -489,6 +536,13 @@ public class AudioStreamingManagerTest
     {
         CompletedAudioCall template = getCompletedAudioCall();
         return new CompletedAudioCall(template.snapshot(), audioBuffers);
+    }
+
+    private static ResolvedCallPolicy.MatchContext deliveryContext(String channelConfigurationId,
+                                                                   long aliasListId, String route)
+    {
+        return new ResolvedCallPolicy.MatchContext(channelConfigurationId, aliasListId, "County", "System",
+            List.of(), Set.of(), AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, false, false, Set.of(route));
     }
 
     private static boolean awaitWaitingDrain(AudioStreamingManager manager, long timeout, TimeUnit unit)

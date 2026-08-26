@@ -30,6 +30,11 @@ public enum BroadcastServerType
      */
     BROADCASTIFY_CALL("Broadcastify Call", "images/broadcastify.png"),
 
+    /**
+     * Broadcastify calls restricted to calls observed by one configured trunked-site channel
+     */
+    BROADCASTIFY_CALL_SITE("Broadcastify Calls (Trunked Site)", "images/broadcastify.png"),
+
     ICECAST_HTTP("Icecast 2 (v2.4+)", "images/icecast.png"),
     RDIOSCANNER_CALL("Rdio Scanner", "images/rdioscanner.png"),
     OPENMHZ("OpenMHz", "images/openmhz.png"),

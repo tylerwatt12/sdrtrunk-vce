@@ -233,8 +233,10 @@ public class AudioStreamingManager
                     return false;
                 }
 
+                BroadcastDeliveryEvidence deliveryEvidence =
+                    BroadcastDeliveryEvidence.from(completedAudioCall.resolvedPolicy());
                 AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
-                    completedAudioCall.snapshot().startTimestamp(), length);
+                    completedAudioCall.snapshot().startTimestamp(), length, deliveryEvidence);
                 mAudioRecordingListener.receive(audioRecording);
                 return true;
             }

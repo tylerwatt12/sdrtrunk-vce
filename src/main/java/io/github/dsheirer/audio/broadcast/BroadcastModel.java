@@ -344,7 +344,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
                 {
                     AbstractAudioBroadcaster<?> audioBroadcaster = getBroadcaster(channelName);
 
-                    if(audioBroadcaster != null)
+                    if(audioBroadcaster != null && audioBroadcaster.accepts(audioRecording))
                     {
                         audioRecording.addPendingReplay();
                         audioBroadcaster.receive(audioRecording);

@@ -33,6 +33,7 @@ public class AudioRecording implements Comparable<AudioRecording>
     private AtomicInteger mPendingReplayCount = new AtomicInteger();
     private IdentifierCollection mIdentifierCollection;
     private Collection<BroadcastChannel> mBroadcastChannels;
+    private final BroadcastDeliveryEvidence mDeliveryEvidence;
 
     /**
      * Audio recording that is ready to be streamed
@@ -45,11 +46,30 @@ public class AudioRecording implements Comparable<AudioRecording>
     public AudioRecording(Path path, Collection<BroadcastChannel> broadcastChannels,
                           IdentifierCollection identifierCollection, long start, long recordingLength)
     {
+        this(path, broadcastChannels, identifierCollection, start, recordingLength,
+            BroadcastDeliveryEvidence.EMPTY);
+    }
+
+    /**
+     * Audio recording that is ready to be streamed with immutable evidence for optional site-bound delivery.
+     *
+     * @param path to the audio recording file
+     * @param broadcastChannels destinations for the recording
+     * @param identifierCollection associated with the recording
+     * @param start time of recording in milliseconds since epoch
+     * @param recordingLength recording length in milliseconds
+     * @param deliveryEvidence individual channel observations that contributed the broadcast destinations
+     */
+    public AudioRecording(Path path, Collection<BroadcastChannel> broadcastChannels,
+                          IdentifierCollection identifierCollection, long start, long recordingLength,
+                          BroadcastDeliveryEvidence deliveryEvidence)
+    {
         mPath = path;
         mBroadcastChannels = broadcastChannels;
         mIdentifierCollection = identifierCollection;
         mStartTime = start;
         mRecordingLength = recordingLength;
+        mDeliveryEvidence = deliveryEvidence != null ? deliveryEvidence : BroadcastDeliveryEvidence.EMPTY;
     }
 
     /**
@@ -66,6 +86,14 @@ public class AudioRecording implements Comparable<AudioRecording>
     public Collection<BroadcastChannel> getBroadcastChannels()
     {
         return mBroadcastChannels;
+    }
+
+    /**
+     * Immutable individual-channel evidence for optional site-bound delivery filtering.
+     */
+    public BroadcastDeliveryEvidence getDeliveryEvidence()
+    {
+        return mDeliveryEvidence;
     }
 
     /**
