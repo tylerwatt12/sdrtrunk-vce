@@ -97,13 +97,13 @@ class RadioReferenceDecoderSelectionTest
     }
 
     @Test
-    void structuredC4fmSiteModulationTakesPrecedenceOverDescription()
+    void simulcastSiteNameTakesPrecedenceOverStructuredC4fmModulation()
     {
         Site site = new Site();
-        site.setModulation("C4FM");
-        site.setDescription("Example Simulcast");
+        site.setDescription("Lorain County Simulcast");
+        site.setModulation("C4FM, H-DQPSK");
 
-        assertEquals(Modulation.C4FM, SiteEditor.getP25Phase1Modulation(site));
+        assertEquals(Modulation.CQPSK, SiteEditor.getP25Phase1Modulation(site));
     }
 
     @Test

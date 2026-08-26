@@ -313,15 +313,22 @@ public class SiteEditor extends GridPane
     }
 
     /**
-     * Maps the RadioReference site modulation to the P25 Phase 1 decoder waveform.  The structured modulation field
-     * takes precedence over the site description.  Some RadioReference simulcast sites do not have a modulation value,
-     * so a description containing "simulcast" is used as a fallback.
+     * Maps the RadioReference site name and modulation to the P25 Phase 1 decoder waveform.  A site description
+     * containing "simulcast" takes precedence because the structured modulation field can identify a simulcast site
+     * as C4FM even though it requires the LSM decoder.
      */
     static Modulation getP25Phase1Modulation(Site site)
     {
         if(site == null)
         {
             return Modulation.C4FM;
+        }
+
+        String description = site.getDescription();
+
+        if(description != null && description.toLowerCase(Locale.ROOT).contains("simulcast"))
+        {
+            return Modulation.CQPSK;
         }
 
         String modulation = site.getModulation();
@@ -339,13 +346,6 @@ public class SiteEditor extends GridPane
             {
                 return Modulation.C4FM;
             }
-        }
-
-        String description = site.getDescription();
-
-        if(description != null && description.toLowerCase(Locale.ROOT).contains("simulcast"))
-        {
-            return Modulation.CQPSK;
         }
 
         return Modulation.C4FM;
