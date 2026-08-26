@@ -49,6 +49,7 @@ class ChannelDiagnosticServiceTest
             null);
         ChannelDiagnosticService.OpenResult first = service.tryOpen(scope);
         assertEquals(ChannelDiagnosticService.OpenStatus.OPEN, first.status());
+        assertEquals(CONFIGURATION_ID, first.session().state().configurationId());
         assertEquals("waiting", first.session().state().state());
         assertEquals("waiting", first.session().state().signalState());
         assertEquals("waiting", first.session().state().symbolsState());

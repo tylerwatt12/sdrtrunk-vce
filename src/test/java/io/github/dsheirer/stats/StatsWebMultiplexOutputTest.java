@@ -11,10 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
@@ -27,6 +29,22 @@ import org.junit.jupiter.api.Test;
 
 class StatsWebMultiplexOutputTest
 {
+    @Test
+    void echoesTheChannelDiagnosticSubscriptionInEachAuthoritativeState() throws Exception
+    {
+        String subscriptionId = "00000000-0000-0000-0000-000000000003";
+        DiagnosticStreamFrame frame = StatsWebServerService.diagnosticState(7, 11, Map.of(
+            "configuration_id", "00000000-0000-0000-0000-000000000001",
+            "frequency_hz", 851_012_500L,
+            "timeslot", 2), subscriptionId);
+        String json = new String(frame.encoded(), DiagnosticStreamFrame.HEADER_BYTES,
+            frame.encoded().length - DiagnosticStreamFrame.HEADER_BYTES, StandardCharsets.UTF_8);
+
+        assertEquals(DiagnosticStreamFrame.TYPE_STATE, frame.type());
+        assertTrue(json.contains("\"subscription_id\":\"" + subscriptionId + "\""));
+        assertTrue(json.contains("\"frequency_hz\":851012500"));
+    }
+
     @Test
     void boundsMetadataBacklogAndMarksPersistentOverflow()
     {
@@ -400,8 +418,13 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, \"source_change\""));
+        assertEquals(2, countOccurrences(source,
+            "decodeMessageSourceState(sourceState, mDecodeMessageSubscriptionId)"));
+        assertTrue(source.contains("record DecodeMessageSourceState(long generation, boolean bound"));
         assertTrue(source.contains(
-            "writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, \"filter_catalog\""));
+            "writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, \"source_change\""));
+        assertTrue(source.contains("new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(),"));
+        assertTrue(source.contains("writeMultiplexJson(output, TOPIC_DECODE_EVENTS, \"filter_catalog\""));
         assertFalse(source.contains("TOPIC_DECODE_EVENTS, \"snapshot\""));
         assertFalse(source.contains("TOPIC_DECODE_MESSAGES, \"snapshot\""));
         assertTrue(source.contains("output.eventDrops(topic) != mObservedOutputDrops[topic]"));

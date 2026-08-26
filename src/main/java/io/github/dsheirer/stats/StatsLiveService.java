@@ -308,6 +308,7 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         row.put("status", boundedText(snapshot.status(), MAXIMUM_LIVE_TEXT_LENGTH));
+        putText(row, "role", snapshot.role(), MAXIMUM_LIVE_TEXT_LENGTH);
         List<String> tags = snapshot.tags() != null ? snapshot.tags().stream().filter(Objects::nonNull)
             .limit(MAXIMUM_LIVE_TAGS).map(tag -> boundedText(tag, MAXIMUM_LIVE_TAG_LENGTH)).toList() : List.of();
         row.put("tags", tags);

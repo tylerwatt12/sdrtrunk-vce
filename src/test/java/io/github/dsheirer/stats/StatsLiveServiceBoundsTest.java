@@ -64,7 +64,7 @@ class StatsLiveServiceBoundsTest
             "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1")),
             new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
             List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch")),
-            new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)));
+            new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)), "TRAFFIC");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
             "Primary", null, null, true, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
@@ -77,6 +77,7 @@ class StatsLiveServiceBoundsTest
             List<Map<String,Object>> identifiers = (List<Map<String,Object>>)table.get("identifiers");
             Map<String,Object> projected = rows(table).getFirst();
             assertEquals("BEE00", identifiers.getFirst().get("value"));
+            assertEquals("TRAFFIC", projected.get("role"));
             assertEquals("RADIO", projected.get("source_form"));
             assertEquals("TALKGROUP", projected.get("target_form"));
             assertEquals("WPFF205", projected.get("callsign"));
@@ -227,7 +228,7 @@ class StatsLiveServiceBoundsTest
     {
         return new ChannelActivitySnapshot.Row(key, "Control", null, "ACTIVE", List.of("CONTROL"), "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
-            null, null, null, null, null, null, null, null, null, "DMR", null, navigation);
+            null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL");
     }
 
     @SuppressWarnings("unchecked")

@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -30,6 +31,7 @@ import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.preference.PreferenceType;
@@ -1420,6 +1422,11 @@ public class StatsWebServerService implements AutoCloseable
 
     static DecodeEventViewService.Scope decodeEventScope(URI uri)
     {
+        return decodeEventRequest(uri).scope();
+    }
+
+    private static DecodeEventRequest decodeEventRequest(URI uri)
+    {
         StatsRequest request = StatsRequest.from(uri);
         String configurationId;
 
@@ -1434,6 +1441,7 @@ public class StatsWebServerService implements AutoCloseable
 
         Long frequency = request.optionalLong("frequency_hz");
         Integer timeslot = request.optionalInt("timeslot");
+        String subscriptionId = request.text("subscription_id");
 
         if(frequency != null)
         {
@@ -1449,11 +1457,29 @@ public class StatsWebServerService implements AutoCloseable
             throw new StatsApiException(400, "invalid_parameter", "timeslot must be positive", "timeslot");
         }
 
+        if(subscriptionId != null)
+        {
+            try
+            {
+                subscriptionId = UUID.fromString(subscriptionId).toString();
+            }
+            catch(IllegalArgumentException exception)
+            {
+                throw new StatsApiException(400, "subscription_id is invalid");
+            }
+        }
+
         request.requireFullyConsumed();
-        return new DecodeEventViewService.Scope(configurationId, frequency, timeslot);
+        return new DecodeEventRequest(new DecodeEventViewService.Scope(configurationId, frequency, timeslot),
+            subscriptionId);
     }
 
     static DecodeMessageViewService.Scope decodeMessageScope(URI uri)
+    {
+        return decodeMessageRequest(uri).scope();
+    }
+
+    private static DecodeMessageRequest decodeMessageRequest(URI uri)
     {
         StatsRequest request = StatsRequest.from(uri);
         String configurationId;
@@ -1468,6 +1494,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         Long frequency = request.optionalLong("frequency_hz");
+        String subscriptionId = request.text("subscription_id");
 
         if(frequency == null)
         {
@@ -1480,21 +1507,39 @@ public class StatsWebServerService implements AutoCloseable
                 "frequency_hz");
         }
 
+        if(subscriptionId != null)
+        {
+            try
+            {
+                subscriptionId = UUID.fromString(subscriptionId).toString();
+            }
+            catch(IllegalArgumentException exception)
+            {
+                throw new StatsApiException(400, "subscription_id is invalid");
+            }
+        }
+
         request.requireFullyConsumed();
-        return new DecodeMessageViewService.Scope(configurationId, frequency);
+        return new DecodeMessageRequest(new DecodeMessageViewService.Scope(configurationId, frequency),
+            subscriptionId);
     }
 
     static ChannelDiagnosticService.Scope channelDiagnosticScope(URI uri)
     {
-        DecodeEventViewService.Scope selected = decodeEventScope(uri);
+        return channelDiagnosticRequest(uri).scope();
+    }
 
-        if(selected.frequencyHz() == null)
+    private static ChannelDiagnosticRequest channelDiagnosticRequest(URI uri)
+    {
+        DecodeEventRequest selected = decodeEventRequest(uri);
+
+        if(selected.scope().frequencyHz() == null)
         {
             throw new StatsApiException(400, "frequency_hz is required");
         }
 
-        return new ChannelDiagnosticService.Scope(selected.configurationId(), selected.frequencyHz(),
-            selected.timeslot());
+        return new ChannelDiagnosticRequest(new ChannelDiagnosticService.Scope(selected.scope().configurationId(),
+            selected.scope().frequencyHz(), selected.scope().timeslot()), selected.subscriptionId());
     }
 
     private void handleScanLists(HttpExchange exchange) throws IOException
@@ -2565,6 +2610,8 @@ public class StatsWebServerService implements AutoCloseable
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
         private TunerDiagnosticService.Session mTunerDiagnostics;
+        private String mDecodeMessageSubscriptionId;
+        private String mChannelDiagnosticSubscriptionId;
         private long mDecodeMessageGeneration = -1;
         private long mChannelStateRevision = -1;
         private long mLastMessagePoll;
@@ -2636,7 +2683,8 @@ public class StatsWebServerService implements AutoCloseable
                 if(sourceState.generation() != mDecodeMessageGeneration)
                 {
                     mDecodeMessageGeneration = sourceState.generation();
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change", sourceState);
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change",
+                        decodeMessageSourceState(sourceState, mDecodeMessageSubscriptionId));
                     wrote = true;
                 }
 
@@ -2664,7 +2712,8 @@ public class StatsWebServerService implements AutoCloseable
                 if(state.revision() != mChannelStateRevision)
                 {
                     writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS,
-                        diagnosticState(state.generation(), state.revision(), state));
+                        diagnosticState(state.generation(), state.revision(), state,
+                            mChannelDiagnosticSubscriptionId));
                     mChannelStateRevision = state.revision();
                     wrote = true;
                 }
@@ -2918,7 +2967,8 @@ public class StatsWebServerService implements AutoCloseable
                         throw new IllegalStateException("Decode event viewer is unavailable");
                     }
 
-                    DecodeEventViewService.Scope scope = decodeEventScope(uri);
+                    DecodeEventRequest request = decodeEventRequest(uri);
+                    DecodeEventViewService.Scope scope = request.scope();
                     long ingressDropBaseline = mDecodeEventViewService.getDroppedObservationCount();
                     AtomicLong liveEdge = new AtomicLong(Long.MAX_VALUE);
 
@@ -2938,8 +2988,13 @@ public class StatsWebServerService implements AutoCloseable
                     requiredSubscription(mDecodeEvents, topic);
                     mDecodeEventDrops = 0;
                     mDecodeEventIngressDrops = ingressDropBaseline;
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "filter_catalog",
-                        DecodeEventViewService.filterCatalog());
+                    FilterCatalog filterCatalog = DecodeEventViewService.filterCatalog();
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "source_change",
+                        new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(), scope.timeslot(),
+                            request.subscriptionId(), filterCatalog));
+                    //Best-effort compatibility for an older cached browser. The authoritative source-change
+                    //envelope protects the current browser from post-rebind frames crossing logical selections.
+                    writeMultiplexJson(output, TOPIC_DECODE_EVENTS, "filter_catalog", filterCatalog);
                     observeOutputDrops(output, TOPIC_DECODE_EVENTS);
                 }
                 case "decode_messages" -> {
@@ -2949,12 +3004,15 @@ public class StatsWebServerService implements AutoCloseable
                     }
 
                     mMessagePermit = true;
-                    mDecodeMessages = mDecodeMessageViewService.openSession(decodeMessageScope(uri));
+                    DecodeMessageRequest request = decodeMessageRequest(uri);
+                    mDecodeMessages = mDecodeMessageViewService.openSession(request.scope());
+                    mDecodeMessageSubscriptionId = request.subscriptionId();
                     mDecodeMessageDrops = 0;
                     observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
                     DecodeMessageViewService.SourceState sourceState = mDecodeMessages.sourceState();
                     mDecodeMessageGeneration = sourceState.generation();
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change", sourceState);
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "source_change",
+                        decodeMessageSourceState(sourceState, mDecodeMessageSubscriptionId));
                 }
                 case "channel_diagnostics" -> openChannelDiagnostics(uri, output);
                 case "tuner_diagnostics" -> openTunerDiagnostics(uri, output);
@@ -2970,7 +3028,8 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             mChannelDiagnosticPermit = true;
-            ChannelDiagnosticService.OpenResult result = mChannelDiagnosticService.tryOpen(channelDiagnosticScope(uri));
+            ChannelDiagnosticRequest request = channelDiagnosticRequest(uri);
+            ChannelDiagnosticService.OpenResult result = mChannelDiagnosticService.tryOpen(request.scope());
 
             if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
             {
@@ -2978,9 +3037,11 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             mChannelDiagnostics = result.session();
+            mChannelDiagnosticSubscriptionId = request.subscriptionId();
             ChannelDiagnosticService.State state = mChannelDiagnostics.state();
             writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS,
-                diagnosticState(state.generation(), state.revision(), state));
+                diagnosticState(state.generation(), state.revision(), state,
+                    mChannelDiagnosticSubscriptionId));
             mChannelStateRevision = state.revision();
         }
 
@@ -3121,6 +3182,7 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             mDecodeMessageGeneration = -1;
+            mDecodeMessageSubscriptionId = null;
             mDecodeMessageDrops = 0;
         }
 
@@ -3139,6 +3201,7 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             mChannelStateRevision = -1;
+            mChannelDiagnosticSubscriptionId = null;
         }
 
         private void closeTunerDiagnostics()
@@ -3257,6 +3320,19 @@ public class StatsWebServerService implements AutoCloseable
             ApiHttpResponse.encodePayload(StatsApiV1Payload.present(state)));
     }
 
+    static DiagnosticStreamFrame diagnosticState(long generation, long revision, Object state,
+                                                  String subscriptionId) throws IOException
+    {
+        JsonNode presented = StatsApiV1Payload.present(state);
+
+        if(subscriptionId != null && presented instanceof ObjectNode object)
+        {
+            object.put("subscription_id", subscriptionId);
+        }
+
+        return DiagnosticStreamFrame.jsonState(generation, revision, ApiHttpResponse.encodePayload(presented));
+    }
+
     static WebCapability capabilityForTopic(String topic)
     {
         return switch(topic)
@@ -3287,6 +3363,35 @@ public class StatsWebServerService implements AutoCloseable
         {
             subscriptions = Map.copyOf(subscriptions);
         }
+    }
+
+    private record DecodeEventSourceState(String configurationId, Long frequencyHz, Integer timeslot,
+                                          String subscriptionId, FilterCatalog filterCatalog)
+    {
+    }
+
+    private record DecodeEventRequest(DecodeEventViewService.Scope scope, String subscriptionId)
+    {
+    }
+
+    private static DecodeMessageSourceState decodeMessageSourceState(DecodeMessageViewService.SourceState state,
+                                                                      String subscriptionId)
+    {
+        return new DecodeMessageSourceState(state.generation(), state.bound(), state.configurationId(),
+            state.frequencyHz(), subscriptionId, state.filterCatalog());
+    }
+
+    private record DecodeMessageRequest(DecodeMessageViewService.Scope scope, String subscriptionId)
+    {
+    }
+
+    private record DecodeMessageSourceState(long generation, boolean bound, String configurationId,
+                                            long frequencyHz, String subscriptionId, FilterCatalog filterCatalog)
+    {
+    }
+
+    private record ChannelDiagnosticRequest(ChannelDiagnosticService.Scope scope, String subscriptionId)
+    {
     }
 
     record RecoveryCapture<T>(long dropBaseline, T snapshot)
