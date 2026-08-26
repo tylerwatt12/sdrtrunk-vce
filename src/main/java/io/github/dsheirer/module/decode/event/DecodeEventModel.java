@@ -23,13 +23,11 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.preference.PreferenceType;
-import io.github.dsheirer.sample.Listener;
-import java.awt.EventQueue;
 
 /**
  * Decode event table model
  */
-public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implements Listener<IDecodeEvent>
+public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent>
 {
     private static final long serialVersionUID = 1L;
     public static final int COLUMN_TIME = 0;
@@ -65,17 +63,6 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
         {
             fireTableDataChanged();
         }
-    }
-
-    /**
-     * Adds, updates or deletes the event from the model.  Producers can send
-     * the same call event multiple times to indicate that information in the
-     * event is updated.  Producers can also mark the event as invalid and the
-     * event will be removed from the model.
-     */
-    public void receive(final IDecodeEvent event)
-    {
-        EventQueue.invokeLater(() -> add(event));
     }
 
     @Override

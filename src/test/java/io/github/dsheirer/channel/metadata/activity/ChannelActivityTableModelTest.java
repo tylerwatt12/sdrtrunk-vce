@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -116,13 +118,13 @@ class ChannelActivityTableModelTest
     }
 
     @Test
-    void treatsSharedTrafficAndControlRowAsSiteSelection()
+    void trafficRoleWinsOverInheritedControlTagsForSelection()
     {
         ChannelActivityRow row = new ChannelActivityRow("row-1", null, ChannelActivityRow.Role.TRAFFIC,
             851_012_500L, null);
         row.addTag(ChannelTag.CURRENT_CONTROL);
 
-        assertTrue(ChannelActivitySelectionController.isSiteControl(row));
+        assertFalse(ChannelActivitySelectionController.isSiteControl(row));
     }
 
     @Test
@@ -135,7 +137,61 @@ class ChannelActivityTableModelTest
         ChannelActivityRow current = model.getOrCreate("current", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
             852_012_500L, null);
 
-        assertSame(current, ChannelActivitySelectionController.findPreferredSiteControl(model));
+        assertSame(current, ChannelActivitySelectionController.findCurrentSiteControl(model));
         assertTrue(ChannelActivitySelectionController.isSiteControl(configured));
+    }
+
+    @Test
+    void exactConventionalUsesChannelIdentityEvenWhenOwnerMatchesRowChannel()
+    {
+        Channel first = new Channel("County Fire");
+        Channel second = new Channel("County EMS");
+        ChannelActivityRow firstRow = new ChannelActivityRow("first", first,
+            ChannelActivityRow.Role.CONVENTIONAL, 154_310_000L, null);
+        ChannelActivityRow secondRow = new ChannelActivityRow("second", second,
+            ChannelActivityRow.Role.CONVENTIONAL, 154_310_000L, null);
+
+        assertSame(first, ChannelActivityPanel.resolveExactChannelIdentity(firstRow, null, first));
+        assertSame(second, ChannelActivityPanel.resolveExactChannelIdentity(secondRow, null, second));
+    }
+
+    @Test
+    void exactTrafficBindsOnlyItsActiveChildChannelAcrossEqualFrequencySites()
+    {
+        Channel firstOwner = new Channel("First Site");
+        Channel secondOwner = new Channel("Second Site");
+        Channel firstTraffic = new Channel("First Traffic", ChannelType.TRAFFIC);
+        Channel secondTraffic = new Channel("Second Traffic", ChannelType.TRAFFIC);
+        ChannelActivityRow firstRow = new ChannelActivityRow("first-traffic", firstTraffic,
+            ChannelActivityRow.Role.TRAFFIC, 852_012_500L, 1);
+        ChannelActivityRow secondRow = new ChannelActivityRow("second-traffic", secondTraffic,
+            ChannelActivityRow.Role.TRAFFIC, 852_012_500L, 1);
+
+        assertSame(firstTraffic,
+            ChannelActivityPanel.resolveExactChannelIdentity(firstRow, firstOwner, firstTraffic));
+        assertSame(secondTraffic,
+            ChannelActivityPanel.resolveExactChannelIdentity(secondRow, secondOwner, secondTraffic));
+    }
+
+    @Test
+    void unallocatedTrafficRowDoesNotFallBackToOwnerOrGlobalFrequency()
+    {
+        Channel owner = new Channel("Test Site");
+        ChannelActivityRow row = new ChannelActivityRow("unallocated-traffic", owner,
+            ChannelActivityRow.Role.TRAFFIC, 852_012_500L, 1);
+
+        assertNull(ChannelActivityPanel.resolveExactChannelIdentity(row, owner, owner));
+    }
+
+    @Test
+    void siteGapDisplaysOwnerSourceFrequencyInsteadOfIdleAlternate()
+    {
+        ChannelActivityRow current = new ChannelActivityRow("current", null,
+            ChannelActivityRow.Role.CURRENT_CONTROL, 852_012_500L, null);
+
+        assertEquals(853_012_500L,
+            ChannelActivityPanel.resolveDisplayedFrequency(true, null, 853_012_500L));
+        assertEquals(852_012_500L,
+            ChannelActivityPanel.resolveDisplayedFrequency(true, current, 853_012_500L));
     }
 }

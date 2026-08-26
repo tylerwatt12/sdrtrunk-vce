@@ -5,16 +5,13 @@
  */
 package io.github.dsheirer.channel.metadata.activity;
 
-import io.github.dsheirer.controller.channel.Channel;
-
 /**
  * Single source of truth for the user's Now Playing activity selection.  JTable row indexes are deliberately not
  * stored here because they are transient presentation state that changes whenever the live activity model changes.
  */
 class ChannelActivitySelectionController
 {
-    record Selection(ChannelActivityTableModel tableModel, String rowKey, ChannelActivitySelectionScope scope,
-                     long frequency, Integer timeslot, String decoderHint, Channel ownerChannel, Channel rowChannel)
+    record Selection(ChannelActivityTableModel tableModel, String rowKey, ChannelActivitySelectionScope scope)
     {
         boolean isSite()
         {
@@ -32,8 +29,14 @@ class ChannelActivitySelectionController
         }
 
         ChannelActivitySelectionScope scope = isSiteControl(row) ? ChannelActivitySelectionScope.SITE :
-            ChannelActivitySelectionScope.EXACT_FREQUENCY;
+            ChannelActivitySelectionScope.EXACT;
         mSelection = selection(tableModel, row, scope);
+
+        if(mSelection.isSite())
+        {
+            resolveSelectedRow();
+        }
+
         return mSelection;
     }
 
@@ -83,12 +86,8 @@ class ChannelActivitySelectionController
         }
 
         ChannelActivityTableModel model = mSelection.tableModel();
-        ChannelActivityRow row = model.get(mSelection.rowKey());
-
-        if(mSelection.isSite() && !isSiteControl(row))
-        {
-            row = findPreferredSiteControl(model);
-        }
+        ChannelActivityRow row = mSelection.isSite() ? findCurrentSiteControl(model) :
+            model.get(mSelection.rowKey());
 
         if(row != null)
         {
@@ -105,44 +104,27 @@ class ChannelActivitySelectionController
     private static Selection selection(ChannelActivityTableModel tableModel, ChannelActivityRow row,
                                        ChannelActivitySelectionScope scope)
     {
-        return new Selection(tableModel, row.getKey(), scope, row.getFrequency(), row.getTimeslot(), row.getDecoder(),
-            tableModel.getOwnerChannel(), row.getChannel());
+        return new Selection(tableModel, row.getKey(), scope);
     }
 
     static boolean isSiteControl(ChannelActivityRow row)
     {
-        return row != null && (row.isControlRow() || row.hasTag(ChannelTag.CONFIGURED) ||
-            row.hasTag(ChannelTag.CURRENT_CONTROL) || row.hasTag(ChannelTag.ALTERNATE_CONTROL));
+        return row != null && row.isControlRow();
     }
 
-    static ChannelActivityRow findPreferredSiteControl(ChannelActivityTableModel model)
+    static ChannelActivityRow findCurrentSiteControl(ChannelActivityTableModel model)
     {
-        ChannelActivityRow configured = null;
-        ChannelActivityRow alternate = null;
-
         if(model != null)
         {
             for(ChannelActivityRow row: model.getRows())
             {
-                if(row.hasTag(ChannelTag.CURRENT_CONTROL) || row.getRole() == ChannelActivityRow.Role.CURRENT_CONTROL)
+                if(row.getRole() == ChannelActivityRow.Role.CURRENT_CONTROL)
                 {
                     return row;
-                }
-
-                if(configured == null && (row.hasTag(ChannelTag.CONFIGURED) ||
-                    row.getRole() == ChannelActivityRow.Role.CONFIGURED_CONTROL))
-                {
-                    configured = row;
-                }
-
-                if(alternate == null && (row.hasTag(ChannelTag.ALTERNATE_CONTROL) ||
-                    row.getRole() == ChannelActivityRow.Role.ALTERNATE_CONTROL))
-                {
-                    alternate = row;
                 }
             }
         }
 
-        return configured != null ? configured : alternate;
+        return null;
     }
 }

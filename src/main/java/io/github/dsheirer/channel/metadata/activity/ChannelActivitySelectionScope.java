@@ -10,6 +10,6 @@ package io.github.dsheirer.channel.metadata.activity;
  */
 public enum ChannelActivitySelectionScope
 {
-    EXACT_FREQUENCY,
+    EXACT,
     SITE
 }

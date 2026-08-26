@@ -47,6 +47,7 @@ public class HistoryManagementPanel<T> extends JPanel
     private JLabel mHistoryValueLabel;
     private String mFilterEditorTitle;
     private Runnable mHistorySizeChangeListener;
+    private Runnable mClearHandler;
 
     /**
      * Constructs an instance
@@ -54,7 +55,7 @@ public class HistoryManagementPanel<T> extends JPanel
      */
     public HistoryManagementPanel(ClearableHistoryModel model, String filterEditorTitle)
     {
-        this(model, filterEditorTitle, null);
+        this(model, filterEditorTitle, null, null);
     }
 
     /**
@@ -63,9 +64,19 @@ public class HistoryManagementPanel<T> extends JPanel
     public HistoryManagementPanel(ClearableHistoryModel model, String filterEditorTitle,
                                   Runnable historySizeChangeListener)
     {
+        this(model, filterEditorTitle, historySizeChangeListener, null);
+    }
+
+    /**
+     * Constructs an instance with optional callbacks for presentation restoration and source-aware clearing.
+     */
+    public HistoryManagementPanel(ClearableHistoryModel model, String filterEditorTitle,
+                                  Runnable historySizeChangeListener, Runnable clearHandler)
+    {
         mModel = model;
         mFilterEditorTitle = filterEditorTitle;
         mHistorySizeChangeListener = historySizeChangeListener;
+        mClearHandler = clearHandler;
         setLayout(new MigLayout("insets 6 1 5 5", "[]5[]10[]5[]5[][grow]", ""));
         add(getFilterButton());
         add(getClearButton());
@@ -143,7 +154,16 @@ public class HistoryManagementPanel<T> extends JPanel
         if(mClearButton == null)
         {
             mClearButton = new JButton("Clear");
-            mClearButton.addActionListener(e -> mModel.clear());
+            mClearButton.addActionListener(e -> {
+                if(mClearHandler != null)
+                {
+                    mClearHandler.run();
+                }
+                else
+                {
+                    mModel.clear();
+                }
+            });
             mClearButton.setToolTipText("Clears the history");
         }
 

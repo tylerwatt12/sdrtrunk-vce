@@ -259,45 +259,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Returns the active processing chain whose source frequency exactly matches the requested frequency.
-     *
-     * This is intentionally frequency-only selection support for the Now Playing activity view.  It does not fall back
-     * to owner/control/traffic chains when the source frequency differs from the selected row.
-     *
-     * @param frequency selected row frequency in hertz
-     * @param timeslot selected row timeslot, reserved for future decoder-specific disambiguation
-     * @return exact-frequency processing chain or null
-     */
-    public ProcessingChain getProcessingChainByFrequency(long frequency, Integer timeslot)
-    {
-        if(frequency <= 0)
-        {
-            return null;
-        }
-
-        mLock.lock();
-
-        try
-        {
-            for(ProcessingChain processingChain: mProcessingChainsMap.values())
-            {
-                Source source = processingChain != null ? processingChain.getSource() : null;
-
-                if(source != null && source.getFrequency() == frequency)
-                {
-                    return processingChain;
-                }
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return null;
-    }
-
-    /**
      * Returns the channel associated with the processing chain
      *
      * @param processingChain
