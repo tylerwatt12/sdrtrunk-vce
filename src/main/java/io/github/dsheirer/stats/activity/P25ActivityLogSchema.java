@@ -167,7 +167,7 @@ public class P25ActivityLogSchema
                 """);
             statement.executeUpdate(createActivityEventTalkgroupMemberSql());
             createTrunkedCallTables(statement);
-            createTrunkedIdentityTables(statement);
+            TrunkedIdentitySchema.create(statement);
             createConventionalTables(statement);
             createConventionalCallIdentityTable(statement);
             createP25SiteTables(statement);
@@ -234,37 +234,6 @@ public class P25ActivityLogSchema
         validateIndexColumns(connection, "idx_p25_site_call_identity_retention",
             List.of("bucket_start_ms", "scope_id", "learned_site_id", "identity_role_code",
                 "identity_kind_code", "identity_id"));
-    }
-
-    /**
-     * Creates the protocol-neutral trunked identity objects. This is a startup-schema and staged-migrator entry point;
-     * normal runtime services must remain validation-only.
-     */
-    public static void createTrunkedIdentityTables(Statement statement) throws SQLException
-    {
-        TrunkedIdentitySchema.create(statement);
-    }
-
-    /**
-     * Creates the patch-member Activity association for a new database or backed-up staged migration.
-     */
-    public static void createActivityEventTalkgroupMemberObjects(Statement statement) throws SQLException
-    {
-        statement.executeUpdate(createActivityEventTalkgroupMemberSql());
-        statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_activity_event_member_talkgroup_event
-            ON activity_event_talkgroup_member(talkgroup_id, event_id)
-            """);
-    }
-
-    /**
-     * Rebuilds the resolved activity view after a staged schema migration. Normal runtime services remain
-     * validation-only and must not call this method.
-     */
-    public static void recreateResolvedActivityView(Statement statement) throws SQLException
-    {
-        statement.executeUpdate("DROP VIEW IF EXISTS p25_activity_event_resolved");
-        statement.executeUpdate(createResolvedViewSql());
     }
 
     static Long recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
@@ -1006,8 +975,8 @@ public class P25ActivityLogSchema
         Map<String,SiteChannelEvidence> channels = mergeSiteChannels(snapshot);
         Integer systemKey = upsertP25System(connection, snapshot.wacn(), snapshot.systemId(),
             snapshot.observedAtEpochMilliseconds());
-        boolean generationChanged = (previous != null &&
-            !java.util.Objects.equals(previous.systemKey(), systemKey)) ||
+        boolean generationChanged = p25SiteGenerationChanged(previous, previousContext, systemKey,
+            snapshot.systemId()) ||
             (previousContext != null &&
                 (previousContext.kindCode() != CONTEXT_TRUNKED_SITE ||
                     TrunkedIdentityPolicy.protocolFamilyCode(previousContext.protocolCode()) !=
@@ -1015,6 +984,12 @@ public class P25ActivityLogSchema
         boolean changed = previous == null || generationChanged ||
             !java.util.Objects.equals(snapshot.snapshotHash(), previous.snapshotHash());
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(snapshot, systemKey));
+
+        if(generationChanged && systemKey == null)
+        {
+            clearUnresolvedP25SystemGeneration(connection, contextId,
+                snapshot.observedAtEpochMilliseconds());
+        }
 
         if(generationChanged)
         {
@@ -1039,6 +1014,46 @@ public class P25ActivityLogSchema
         else
         {
             confirmCurrentSiteFacts(connection, snapshot);
+        }
+    }
+
+    /**
+     * Treats a newly completed WACN/System key as the same generation when the previously observed site System ID
+     * agrees. Incomplete observations never prove a change; two differing complete keys or two differing observed
+     * System IDs do.
+     */
+    private static boolean p25SiteGenerationChanged(SiteSnapshotState previous,
+                                                     ReceiverContextState previousContext,
+                                                     Integer systemKey, Integer systemId)
+    {
+        Integer previousSystemKey = previous != null ? previous.systemKey() :
+            previousContext != null ? previousContext.systemKey() : null;
+        Integer previousSystemId = previous != null ? previous.systemId() :
+            previousContext != null ? previousContext.systemId() : null;
+
+        if(previousSystemKey != null && systemKey != null)
+        {
+            return !java.util.Objects.equals(previousSystemKey, systemKey);
+        }
+
+        return previousSystemId != null && systemId != null &&
+            !java.util.Objects.equals(previousSystemId, systemId);
+    }
+
+    private static void clearUnresolvedP25SystemGeneration(Connection connection, int contextId,
+                                                            long observedAt) throws SQLException
+    {
+        TrunkedIdentitySchema.clearContextGeneration(connection, contextId);
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE receiver_context
+            SET system_key = NULL, first_seen_ms = ?
+            WHERE id = ?
+            """))
+        {
+            statement.setLong(1, observedAt);
+            statement.setInt(2, contextId);
+            statement.executeUpdate();
         }
     }
 
@@ -1774,7 +1789,9 @@ public class P25ActivityLogSchema
                 tdma INTEGER,
                 voice_service INTEGER,
                 primary_frequency_hz INTEGER,
-                current_control_hz INTEGER
+                current_control_hz INTEGER,
+                active_rfss_network_connection INTEGER,
+                system_id INTEGER
             )
             """);
         statement.executeUpdate("""
@@ -1803,6 +1820,7 @@ public class P25ActivityLogSchema
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
                 observation_count INTEGER NOT NULL DEFAULT 1,
+                callsign TEXT,
                 PRIMARY KEY(guid, channel_key)
             )
             """);
@@ -2116,11 +2134,11 @@ public class P25ActivityLogSchema
             "protocol", "channel_name", "alias_list_name", "decoder", "system_key", "nac", "rfss", "site",
             "lra", "mfid", "broadcast_clock_ms", "micro_slots", "data_service", "data_access",
             "wuid_lease_minutes", "registration_service", "tdma", "voice_service", "primary_frequency_hz",
-            "current_control_hz"),
+            "current_control_hz", "active_rfss_network_connection", "system_id"),
         table("p25_site_channel", "guid", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
             "tdma", "timeslots", "callsign", "confirmed_at_ms"),
         table("p25_site_channel_summary", "guid", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
-            "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count"),
+            "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count", "callsign"),
         table("p25_site_channel_tag", "guid", "channel_key", "tag", "confirmed_at_ms"),
         table("p25_site_channel_tag_summary", "guid", "channel_key", "tag", "first_seen_ms", "last_seen_ms",
             "observation_count"),
@@ -2684,32 +2702,27 @@ public class P25ActivityLogSchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_snapshot (
                 guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, protocol, channel_name,
-                alias_list_name, decoder, system_key, nac, rfss, site, lra, mfid, broadcast_clock_ms, micro_slots,
-                data_service, data_access, wuid_lease_minutes, registration_service, tdma, voice_service,
-                primary_frequency_hz, current_control_hz
-            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                alias_list_name, decoder, system_key, nac, rfss, site, lra, active_rfss_network_connection, mfid,
+                broadcast_clock_ms, micro_slots, data_service, data_access, wuid_lease_minutes, registration_service,
+                tdma, voice_service, primary_frequency_hz, current_control_hz, system_id
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
                 snapshot_hash = coalesce(excluded.snapshot_hash, p25_site_snapshot.snapshot_hash),
-                first_seen_ms = CASE
-                    WHEN coalesce(excluded.system_key, -1) != coalesce(p25_site_snapshot.system_key, -1)
-                    THEN excluded.first_seen_ms
-                    ELSE p25_site_snapshot.first_seen_ms
-                END,
+                first_seen_ms = p25_site_snapshot.first_seen_ms,
                 last_seen_ms = excluded.last_seen_ms,
-                observation_count = CASE
-                    WHEN coalesce(excluded.system_key, -1) != coalesce(p25_site_snapshot.system_key, -1)
-                    THEN 1
-                    ELSE p25_site_snapshot.observation_count + 1
-                END,
+                observation_count = p25_site_snapshot.observation_count + 1,
                 protocol = coalesce(excluded.protocol, p25_site_snapshot.protocol),
                 channel_name = coalesce(excluded.channel_name, p25_site_snapshot.channel_name),
                 alias_list_name = excluded.alias_list_name,
                 decoder = coalesce(excluded.decoder, p25_site_snapshot.decoder),
                 system_key = coalesce(excluded.system_key, p25_site_snapshot.system_key),
+                system_id = coalesce(excluded.system_id, p25_site_snapshot.system_id),
                 nac = excluded.nac,
                 rfss = excluded.rfss,
                 site = excluded.site,
                 lra = coalesce(excluded.lra, p25_site_snapshot.lra),
+                active_rfss_network_connection = coalesce(excluded.active_rfss_network_connection,
+                    p25_site_snapshot.active_rfss_network_connection),
                 mfid = coalesce(excluded.mfid, p25_site_snapshot.mfid),
                 broadcast_clock_ms = CASE WHEN excluded.micro_slots IS NOT NULL
                     THEN excluded.broadcast_clock_ms
@@ -2739,18 +2752,20 @@ public class P25ActivityLogSchema
             setInteger(statement, 11, snapshot.rfss());
             setInteger(statement, 12, snapshot.site());
             setInteger(statement, 13, snapshot.lra());
+            setBoolean(statement, 14, snapshot.activeRfssNetworkConnection());
             P25NetworkConfigurationSnapshot.SiteStatus status = snapshot.siteStatus();
-            setInteger(statement, 14, status != null ? status.mfid() : null);
-            setLong(statement, 15, status != null ? status.broadcastClockEpochMilliseconds() : null);
-            setInteger(statement, 16, status != null ? status.microSlots() : null);
-            setBoolean(statement, 17, status != null ? status.dataService() : null);
-            statement.setString(18, status != null ? status.dataAccess() : null);
-            setInteger(statement, 19, status != null ? status.wuidLeaseMinutes() : null);
-            setBoolean(statement, 20, status != null ? status.registrationService() : null);
-            setBoolean(statement, 21, snapshot.tdma());
-            setBoolean(statement, 22, status != null ? status.voiceService() : null);
-            setLong(statement, 23, snapshot.primaryFrequencyHertz());
-            setLong(statement, 24, snapshot.currentControlHertz());
+            setInteger(statement, 15, status != null ? status.mfid() : null);
+            setLong(statement, 16, status != null ? status.broadcastClockEpochMilliseconds() : null);
+            setInteger(statement, 17, status != null ? status.microSlots() : null);
+            setBoolean(statement, 18, status != null ? status.dataService() : null);
+            statement.setString(19, status != null ? status.dataAccess() : null);
+            setInteger(statement, 20, status != null ? status.wuidLeaseMinutes() : null);
+            setBoolean(statement, 21, status != null ? status.registrationService() : null);
+            setBoolean(statement, 22, snapshot.tdma());
+            setBoolean(statement, 23, status != null ? status.voiceService() : null);
+            setLong(statement, 24, snapshot.primaryFrequencyHertz());
+            setLong(statement, 25, snapshot.currentControlHertz());
+            setInteger(statement, 26, snapshot.systemId());
             statement.executeUpdate();
         }
     }
@@ -2767,14 +2782,15 @@ public class P25ActivityLogSchema
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO p25_site_channel_summary (
                     guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots,
-                    first_seen_ms, last_seen_ms, observation_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    callsign, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(guid, channel_key) DO UPDATE SET
                     descriptor = coalesce(excluded.descriptor, p25_site_channel_summary.descriptor),
                     downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel_summary.downlink_hz),
                     uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel_summary.uplink_hz),
                     tdma = coalesce(excluded.tdma, p25_site_channel_summary.tdma),
                     timeslots = coalesce(excluded.timeslots, p25_site_channel_summary.timeslots),
+                    callsign = coalesce(excluded.callsign, p25_site_channel_summary.callsign),
                     last_seen_ms = max(p25_site_channel_summary.last_seen_ms, excluded.last_seen_ms),
                     observation_count = p25_site_channel_summary.observation_count + 1
                 """))
@@ -2786,8 +2802,9 @@ public class P25ActivityLogSchema
                 setLong(statement, 5, channel.uplink());
                 setBoolean(statement, 6, channel.tdma());
                 setInteger(statement, 7, channel.timeslots());
-                statement.setLong(8, snapshot.observedAtEpochMilliseconds());
+                statement.setString(8, channel.callsign());
                 statement.setLong(9, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(10, snapshot.observedAtEpochMilliseconds());
                 statement.executeUpdate();
             }
 
@@ -3121,7 +3138,13 @@ public class P25ActivityLogSchema
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT snapshot_hash, last_seen_ms, system_key FROM p25_site_snapshot WHERE guid = ?"))
+            """
+            SELECT site.snapshot_hash, site.last_seen_ms, site.system_key,
+                coalesce(system.system_id, site.system_id) AS system_id
+            FROM p25_site_snapshot site
+            LEFT JOIN p25_system system ON system.system_key = site.system_key
+            WHERE site.guid = ?
+            """))
         {
             statement.setString(1, guid);
 
@@ -3129,7 +3152,7 @@ public class P25ActivityLogSchema
             {
                 return resultSet.next() ?
                     new SiteSnapshotState(resultSet.getString(1), resultSet.getLong(2),
-                        nullableInteger(resultSet, "system_key")) : null;
+                        nullableInteger(resultSet, "system_key"), nullableInteger(resultSet, "system_id")) : null;
             }
         }
     }
@@ -3460,9 +3483,11 @@ public class P25ActivityLogSchema
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT guid, kind_code, protocol_code, system_key, first_seen_ms, last_seen_ms
-            FROM receiver_context
-            WHERE context_key = ?
+            SELECT context.guid, context.kind_code, context.protocol_code, context.system_key,
+                system.system_id, context.first_seen_ms, context.last_seen_ms
+            FROM receiver_context context
+            LEFT JOIN p25_system system ON system.system_key = context.system_key
+            WHERE context.context_key = ?
             """))
         {
             statement.setString(1, contextKey);
@@ -3472,7 +3497,8 @@ public class P25ActivityLogSchema
                 return resultSet.next() ?
                     new ReceiverContextState(resultSet.getString("guid"), resultSet.getInt("kind_code"),
                         resultSet.getInt("protocol_code"), nullableInteger(resultSet, "system_key"),
-                        resultSet.getLong("first_seen_ms"), resultSet.getLong("last_seen_ms")) : null;
+                        nullableInteger(resultSet, "system_id"), resultSet.getLong("first_seen_ms"),
+                        resultSet.getLong("last_seen_ms")) : null;
             }
         }
     }
@@ -4023,11 +4049,13 @@ public class P25ActivityLogSchema
     }
 
     private record ReceiverContextState(String guid, int kindCode, int protocolCode, Integer systemKey,
+                                        Integer systemId,
                                         long firstSeenEpochMilliseconds, long lastSeenEpochMilliseconds)
     {
     }
 
-    private record SiteSnapshotState(String snapshotHash, long lastSeenEpochMilliseconds, Integer systemKey)
+    private record SiteSnapshotState(String snapshotHash, long lastSeenEpochMilliseconds, Integer systemKey,
+                                     Integer systemId)
     {
     }
 
@@ -4205,7 +4233,7 @@ public class P25ActivityLogSchema
                 rc.decoder AS resolved_decoder,
                 rc.system_key AS resolved_system_key,
                 ps.wacn AS resolved_wacn,
-                ps.system_id AS resolved_system_id,
+                coalesce(ps.system_id, p25.system_id) AS resolved_system_id,
                 rc.nac AS resolved_nac,
                 rc.rfss AS resolved_rfss,
                 rc.site AS resolved_site,
@@ -4213,6 +4241,8 @@ public class P25ActivityLogSchema
             FROM p25_activity_event a
             LEFT JOIN receiver_context rc ON rc.id = a.context_id
             LEFT JOIN p25_system ps ON ps.system_key = rc.system_key
+            LEFT JOIN p25_site_snapshot p25
+              ON p25.guid = rc.guid AND rc.kind_code = 1 AND rc.protocol_code IN (1, 2)
             """.formatted(contextKindCase("rc.kind_code"), protocolCase("rc.protocol_code"),
             enumCase("a.action_code", P25ActivityLogRecords.Action.values()), decodeEventTypeCase("a.event_type_code"),
             targetKindCase("a.target_kind_code"));

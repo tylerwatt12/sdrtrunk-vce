@@ -80,7 +80,8 @@ class StatsWebServerServiceBindAddressTest
     {
         DecodeEventViewService.Scope scope = StatsWebServerService.decodeEventScope(URI.create(
             "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001" +
-                "&frequency_hz=851012500&timeslot=2"));
+                "&frequency_hz=851012500&timeslot=2" +
+                "&subscription_id=00000000-0000-0000-0000-000000000002"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
@@ -89,6 +90,9 @@ class StatsWebServerServiceBindAddressTest
             () -> StatsWebServerService.decodeEventScope(URI.create("/multiplex/decode-events")));
         assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(URI.create(
             "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001&timeslot=0")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(URI.create(
+            "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&subscription_id=not-a-uuid")));
     }
 
     @Test
@@ -96,7 +100,8 @@ class StatsWebServerServiceBindAddressTest
     {
         ChannelDiagnosticService.Scope scope = StatsWebServerService.channelDiagnosticScope(URI.create(
             "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
-                "&frequency_hz=851012500&timeslot=2"));
+                "&frequency_hz=851012500&timeslot=2" +
+                "&subscription_id=00000000-0000-0000-0000-000000000003"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
@@ -104,6 +109,9 @@ class StatsWebServerServiceBindAddressTest
         assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
             "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&timeslot=2")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
+            "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&frequency_hz=851012500&subscription_id=not-a-uuid")));
     }
 
     @Test
@@ -111,7 +119,8 @@ class StatsWebServerServiceBindAddressTest
     {
         DecodeMessageViewService.Scope scope = StatsWebServerService.decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
-                "&frequency_hz=851012500"));
+                "&frequency_hz=851012500" +
+                "&subscription_id=00000000-0000-0000-0000-000000000004"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
@@ -120,6 +129,9 @@ class StatsWebServerServiceBindAddressTest
         assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
+            "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&frequency_hz=851012500&subscription_id=not-a-uuid")));
     }
 
     @Test

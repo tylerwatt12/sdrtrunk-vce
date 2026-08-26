@@ -53,7 +53,7 @@ changes membership or deletes an owning configuration object.
 
 ## Qualifier-safe P25 identity summaries
 
-P25 activity schema v26 extends the existing `trunked_identity_summary` row with four integer fields:
+P25 activity schema v27 extends the existing `trunked_identity_summary` row with four integer fields:
 
 - a state code for unknown, ordinary, stable fully-qualified, or ambiguous identity evidence; and
 - nullable home WACN, System ID, and talkgroup ID values, present only for stable fully-qualified evidence.
@@ -121,27 +121,28 @@ Startup validation checks the tuple table's exact DDL and column set, its four-c
 foreign key, and both indexes including column order and descending recency direction. Normal application services do
 not create or repair a missing or mismatched table or index.
 
-## Alpha 8/Alpha 9 layout to Alpha 10 migration boundary
+## Alpha 8/Alpha 9/Alpha 10 layout to current migration boundary
 
-The bundled Application Migrator converts one exact Alias v4/P25 v24 source layout directly to Alpha 10 Alias v5/P25
-v26 on a backed-up staged copy. Alpha 8 and Alpha 9 shipped that same layout and schema fingerprint, with no stored
-release provenance, so an exact profile from either release satisfies the same single source gate. It converts only
-one plain, structurally unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls
-remain aliases for manual review. The v24 shared projection cannot establish qualifier-safe P25 history, so the clean
-direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It then
-recreates only the compact ordinary P25 identities and relationships required by preserved authoritative P25
-affiliations. The zero-local tuple projection starts empty.
+The bundled Application Migrator converts one exact Alias v4/P25 v24 source layout directly to current Alias v6/P25
+v27. It creates a safety backup, updates and validates a staged copy, and promotes that copy atomically only after all
+checks pass. Alpha 8, Alpha 9, and Alpha 10 shipped the same source layout and schema fingerprint, with no stored
+release provenance, so an exact profile from any of those releases satisfies the same single source gate.
 
-Existing system-wide P25 affiliations are re-keyed into the protocol-neutral affiliation table. Authoritative site
-presence and presence-lifecycle state start empty because neither call history nor a source affiliation row proves
-which site last accepted a radio or when it deregistered. Supported administrator-owned aliases and unrelated
-configuration remain intact. Stored P25 fully-qualified talkgroup and radio Alias rows and their dependent routes are
-removed; their home values are not converted into ordinary local aliases. Intermediate development schemas are not
+Supported administrator-owned configuration is preserved, including channels, supported Aliases and routes,
+application settings, and streaming definitions. A single plain, structurally unambiguous full-domain talkgroup range
+per list can be converted into the list-owned unmatched-talkgroup policy; styled, multiple, or Stream As catch-alls
+remain Aliases for manual review. Stored P25 fully-qualified talkgroup and radio Alias rows and their dependent routes
+are removed; their home values are not converted into ordinary local Aliases.
+
+All prior statistics and activity data is discarded. The migrator creates the current statistics and activity schema
+empty, including identity summaries, relationships, talker aliases, calls, site observations, quality history,
+affiliations, site presence, lifecycle state, and every accumulated counter. No dynamic identity, affiliation,
+presence, history, or counter row is copied, re-keyed, or reconstructed. Intermediate development schemas are not
 accepted.
 
 ## Development migration boundary
 
-Alias v6 and P25 activity v26 are the clean current schemas during unreleased development. Normal startup validates
+Alias v6 and P25 activity v27 are the clean current schemas during unreleased development. Normal startup validates
 them and does not upgrade an Alias v5 database. Existing Alias v5 development profiles require the narrowly scoped
 external staged-copy candidate before they can use this branch. The candidate creates `Default`, maps every Alias
 whose effective priority is not `-1` into it, maps every Alias List whose unmatched-talkgroup priority is not `-1` to

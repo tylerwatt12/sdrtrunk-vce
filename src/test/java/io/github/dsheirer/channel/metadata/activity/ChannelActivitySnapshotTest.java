@@ -80,7 +80,9 @@ class ChannelActivitySnapshotTest
         row.setTargetAliases(List.of(talkgroup));
         table.refresh(row);
 
-        ChannelActivitySnapshot.Navigation navigation = table.getLatestSnapshot().rows().getFirst().navigation();
+        ChannelActivitySnapshot.Row snapshotRow = table.getLatestSnapshot().rows().getFirst();
+        ChannelActivitySnapshot.Navigation navigation = snapshotRow.navigation();
+        assertEquals("CONVENTIONAL", snapshotRow.role());
         assertEquals("GUID:86a927a5-fc21-4ee3-8bb3-6e8b943cc68f", navigation.contextKey());
         assertEquals("County Sheriff", navigation.aliasListName());
         assertEquals("p25", navigation.protocol());

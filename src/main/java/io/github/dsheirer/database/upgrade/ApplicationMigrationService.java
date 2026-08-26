@@ -318,7 +318,7 @@ public final class ApplicationMigrationService
             throw new IOException("This release accepts only the complete current database (Alias v" +
                 CURRENT_ALIAS_VERSION + ", P25 activity v" + CURRENT_P25_VERSION +
                 ", trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION +
-                ") or the exact shared v0.6.2 Alpha 8/Alpha 9 database layout. Found " +
+                ") or the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout. Found " +
                 state.description() + ".");
         }
 
@@ -885,9 +885,9 @@ public final class ApplicationMigrationService
 
             if(alpha9())
             {
-                return "update Alias storage, remove retired fully-qualified P25 aliases, reset unqualified " +
-                    "trunked identity history, preserve current P25 affiliations, and begin authoritative site " +
-                    "presence empty";
+                return "update Alias storage, remove retired fully-qualified P25 aliases, preserve supported " +
+                    "configuration, aliases, channels, streams, and settings, and reset all statistics, activity " +
+                    "history, learned site state, affiliations, and presence";
             }
 
             return "no bundled transition exists for this schema combination";

@@ -68,10 +68,14 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         assertFalse(result.initializeNewPreferences());
         assertCurrentDatabase(database);
         assertEquals("Migrated In Place", scalar(database, "SELECT name FROM alias WHERE id=1"));
+        assertPreservedConfiguration(database);
+        assertResetStatistics(database);
         List<Path> backups = regularFiles(database.getParent().resolve("backups"));
         assertEquals(1, backups.size());
         assertEquals(alpha9State(), ApplicationMigrationService.readMigrationState(backups.getFirst()));
         assertEquals("Migrated In Place", scalar(backups.getFirst(), "SELECT name FROM alias WHERE id=1"));
+        assertEquals("1", scalar(backups.getFirst(), "SELECT COUNT(*) FROM p25_activity_event"));
+        assertEquals("1", scalar(backups.getFirst(), "SELECT COUNT(*) FROM p25_radio_affiliation"));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoSqliteSidecars(backups.getFirst());
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
@@ -97,6 +101,10 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertCurrentDatabase(targetDatabase);
         assertEquals("Imported Alpha 9", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertPreservedConfiguration(targetDatabase);
+        assertResetStatistics(targetDatabase);
+        assertEquals("1", scalar(sourceDatabase, "SELECT COUNT(*) FROM p25_activity_event"));
+        assertEquals("1", scalar(sourceDatabase, "SELECT COUNT(*) FROM p25_radio_affiliation"));
         assertFalse(Files.exists(targetDatabase.getParent().resolve("backups")));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
@@ -132,7 +140,8 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         SQLException exception = assertThrows(SQLException.class,
             () -> SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true));
 
-        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 schema layout"));
+        assertTrue(exception.getMessage().contains(
+            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
@@ -150,7 +159,8 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         SQLException exception = assertThrows(SQLException.class, () -> SdrTrunkDatabaseBootstrap.run(
             new String[]{"--upgrade-data", sourceRoot.toString()}, targetRoot, true));
 
-        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 schema layout"));
+        assertTrue(exception.getMessage().contains(
+            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
         assertArrayEquals(before, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
@@ -168,9 +178,74 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
                 INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
                 VALUES (1, 1, '%s', 'TALKGROUP', 'APCO25', 101)
                 """.formatted(aliasName.replace("'", "''")));
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, name, alias_list_name, decoder_type, source_type,
+                    primary_frequency_hz, frequency_count, config_json
+                ) VALUES (
+                    1, 1, 'Bootstrap Channel', 'Bootstrap', 'P25_PHASE1', 'TUNER',
+                    851012500, 1, '{"preserved":true}'
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_broadcast_stream(
+                    id, sort_order, name, server_type, enabled, host, port, config_json
+                ) VALUES (
+                    1, 1, 'Bootstrap Stream', 'ICECAST_HTTP', 1,
+                    'stream.example', 8000, '{"preserved":true}'
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('bootstrap-sentinel', '{"preserved":true}', 1000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
+                VALUES (1, 781824, 840, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_context(
+                    id, context_key, guid, kind_code, protocol_code, channel_name,
+                    alias_list_name, decoder, first_seen_ms, last_seen_ms, system_key,
+                    primary_frequency_hz
+                ) VALUES (
+                    1, 'bootstrap-context', 'bootstrap-guid', 1, 1, 'Bootstrap Channel',
+                    'Bootstrap', 'P25-1', 1000, 2000, 1, 851012500
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event(
+                    context_id, observed_at_ms, action_code, target_id, target_kind_code, encrypted
+                ) VALUES (1, 1500, 4, 101, 1, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
+                VALUES (1, 1800001, 101, 1500)
+                """);
         }
 
         return database;
+    }
+
+    private static void assertPreservedConfiguration(Path database) throws Exception
+    {
+        assertEquals("Bootstrap Channel", scalar(database,
+            "SELECT name FROM configuration_channel WHERE id=1"));
+        assertEquals("Bootstrap Stream", scalar(database,
+            "SELECT name FROM configuration_broadcast_stream WHERE id=1"));
+        assertEquals("{\"preserved\":true}", scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='bootstrap-sentinel'"));
+    }
+
+    private static void assertResetStatistics(Path database) throws Exception
+    {
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM receiver_context"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM p25_activity_event"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM p25_site_snapshot"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_site_snapshot"));
     }
 
     private static void addUnexpectedSchemaObject(Path database) throws Exception

@@ -88,6 +88,15 @@ class StatsWebSiteUiContractTest
     }
 
     @Test
+    void rendersDecodedP25ConnectionStatus() throws Exception
+    {
+        String source = source();
+        String siteDetails = function(source, "function p25SiteDetailRows(site)");
+
+        assertTrue(siteDetails.contains("site.active_rfss_network_connection"));
+    }
+
+    @Test
     void keepsSiteMetadataAndPhysicalCallObservationsDistinct() throws Exception
     {
         String source = source();

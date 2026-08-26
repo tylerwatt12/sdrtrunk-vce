@@ -9,7 +9,7 @@ Public/User/Admin access tiers, user and Alias management, Live Events/Messages/
 whole-tuner spectrum and waterfall. It also hardens P25 control-channel and error-correction behavior, fixes
 RadioReference and SQLite Alias problems, and modernizes browser call playback.
 
-This release changes Alias storage from schema v4 to v6 and P25 activity storage directly from v24 to v26.
+This release changes Alias storage from schema v4 to v6 and P25 activity storage directly from v24 to v27.
 **Migrate Existing** copies and upgrades the exact Alias v4/P25 v24 predecessor layout shipped unchanged by Alpha 8
 and Alpha 9 while leaving the original installation unchanged.
 
@@ -113,7 +113,7 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Alias schema v6 stores scan-list routing.** Normalized definitions and Alias and unmatched-talkgroup memberships
   replace the receiver-local playback-priority columns. Migration creates a published Default list and preserves the
   previously enabled Alias and unmatched-talkgroup populations as its initial membership.
-- **P25 activity schema v26 separates qualifier-safe identity evidence from authoritative radio state.** A bounded
+- **P25 activity schema v27 separates qualifier-safe identity evidence from authoritative radio state.** A bounded
   summary retains zero-local fully-qualified talkgroup observations for review without turning talkgroup zero into an
   Alias. Current system-wide P25 affiliation is stored independently from the last site that authoritatively accepted
   a radio, and an accepted deregistration prevents delayed messages from restoring stale state.
@@ -198,22 +198,18 @@ and Alpha 9 while leaving the original installation unchanged.
   schema fingerprint and store no release provenance, so the migrator cannot distinguish which one created an
   otherwise exact profile. This is one direct exact-schema gate; mixed, intermediate development, v25, `webfirst`, and
   older layouts are refused without modification.
-- **Most source data is preserved.** Channels, tuners, supported Aliases and routes, broadcast configuration,
-  preferences, icons, site observations, and unrelated activity remain. Classic recording files are not moved or
-  converted; they remain in their administrator-owned locations. Saved portable paths are adjusted when the profile
-  is copied to its new location.
+- **Supported configuration is preserved.** Channels, tuners, supported Aliases and routes, application settings and
+  preferences, icons, broadcast and streaming definitions, and other administrator-owned configuration remain.
+  Classic recording files are not moved or converted; they remain in their administrator-owned locations. Saved
+  portable paths are adjusted when the profile is copied to its new location.
 - **Retired fully-qualified P25 Alias rows are intentionally removed.** Review the source profile for any Fully
   Qualified Talkgroup or Fully Qualified Radio Alias configuration you need to replace with an ordinary local Alias
   before upgrading.
-- **Shared P25, DMR, and NXDN trunked-identity history resets, but current P25 affiliations are preserved.** The v24
-  shared projection cannot establish qualifier-safe P25 history. The clean direct migration rebuilds that shared
-  storage instead of retaining partial projection state, so accumulated talkgroup/radio activity,
-  call/encryption/recorded/sent totals, relationships, and talker aliases restart from new traffic for all three
-  trunked protocol families. The migrator re-keys each valid system-wide current P25 affiliation and reconstructs only
-  the ordinary P25 radio, talkgroup, and relationship rows required to represent it. It refuses the staged migration
-  instead of truncating invalid or over-capacity affiliation state. Authoritative site presence, clear watermarks, and
-  zero-local review evidence start empty because the source cannot prove them; other retained activity and site
-  observations are not reset.
+- **All statistics and Activity start empty.** The migration discards prior calls, detailed Activity, site
+  observations, quality history, identity summaries, relationships, talker aliases, affiliations, site presence,
+  lifecycle state, call/output totals, and every other counter. It creates the current statistics and activity schema
+  empty, and new traffic repopulates it. No dynamic identity, affiliation, presence, history, or counter row is copied,
+  re-keyed, or reconstructed.
 - **Automatic certificates are encrypted but self-signed.** Current IP addresses should be covered, avoiding a
   certificate-name mismatch, but each browser may still require trust confirmation. Import a certificate trusted by
   your devices to remove that warning.

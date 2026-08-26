@@ -319,7 +319,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
     public record State(long revision, long generation, String state, String reason,
                         String signalState, String signalReason, String symbolsState, String symbolsReason,
-                        long frequencyHz, long sampleRateHz, Integer timeslot, String protocol,
+                        String configurationId, long frequencyHz, long sampleRateHz, Integer timeslot, String protocol,
                         String decoderProfile,
                         int fftSize, int signalFramesPerSecond, int symbolBatchSize, int maximumVisibleSymbols)
     {
@@ -562,7 +562,8 @@ public final class ChannelDiagnosticService implements AutoCloseable
                             String protocol, String decoderProfile, int fftSize)
         {
             return new State(++mStateRevision, generation, state, reason, signalState, signalReason, symbolsState,
-                symbolsReason, frequency, sampleRate, mScope.timeslot(), protocol, decoderProfile, fftSize,
+                symbolsReason, mScope.configurationId(), frequency, sampleRate, mScope.timeslot(), protocol,
+                decoderProfile, fftSize,
                 SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS);
         }
 

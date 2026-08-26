@@ -22,11 +22,12 @@ portable data from an earlier sdrtrunk-vce build. The setup window offers these 
 - **Use Found XML** or **Choose XML…** to import an older XML playlist.
 - **Start Fresh** with an empty profile.
 
-The bundled Application Migrator is the only supported release database-migration entry point. It copies an accepted
-SQLite database into a staging folder, updates only that staged copy, runs schema, integrity, and foreign-key checks,
-and installs it only after every check succeeds. The previous database is never replaced. The saved vault, JMBE
-libraries, and optional module files are also copied when present. Logs, recordings, event logs, screenshots, and
-streaming output remain in the previous data folder instead of being duplicated.
+The bundled Application Migrator is the only supported release database-migration entry point. It creates a
+timestamped safety backup, copies an accepted SQLite database into a staging folder, updates only that staged copy,
+runs schema, integrity, and foreign-key checks, and promotes it atomically only after every check succeeds. The
+previous installation is never changed. The saved vault, JMBE libraries, and optional module files are also copied
+when present. Logs, recordings, event logs, screenshots, and streaming output remain in the previous data folder
+instead of being duplicated.
 
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
@@ -35,22 +36,23 @@ Older macOS `.app` releases remain supported migration sources. The setup workfl
 and use its sibling `<app-name>-data` folder without changing that old installation. Current macOS console packages
 store their active data only under `<install>/data`, unless an explicit `sdrtrunk.vce.data.root` override is supplied.
 
-Alpha 10 accepts its own exact current schema or one exact predecessor layout: Alias v4/P25 v24 as shipped unchanged
-by Alpha 8 and Alpha 9. Those releases have the same schema fingerprint and store no release provenance, so an exact
-profile from either is structurally indistinguishable and satisfies the same single source gate. The transition
-advances Alias storage to v5 and P25 activity storage directly to v26. It converts only a single plain, unambiguous
-full-domain talkgroup catch-all per Alias list into the list-owned unmatched-talkgroup policy and removes retired P25
-fully-qualified Alias rows and their dependent routes. The v24 shared projection cannot establish qualifier-safe P25
-history. The clean direct migration rebuilds that shared storage instead of retaining partial projection state, so
-projected P25, DMR, and NXDN identity history resets. The migrator preserves system-wide current P25 affiliations by
-re-keying them and reconstructing only the required ordinary P25 radio, talkgroup, and relationship rows within the
-current per-scope limits. Authoritative site presence, clear watermarks, and zero-local review evidence start empty
-because the source layout cannot prove them. The staged migration refuses invalid or over-capacity affiliation state
-instead of truncating it. Mixed schemas, intermediate development schemas including v25, and `webfirst` databases
-remain unsupported.
+Current main and Alpha 11 builds accept their own exact current schema or one exact public predecessor layout: Alias
+v4/P25 v24 as shipped unchanged by Alpha 8, Alpha 9, and Alpha 10. Those releases have the same schema fingerprint and
+store no release provenance, so an exact profile from any of them is structurally indistinguishable and satisfies the
+same single source gate. The transition advances Alias storage to v6 and P25 activity storage directly to v27. It
+preserves supported configuration, including channels, supported Aliases and routes, application settings, and
+streaming definitions. It converts only a single plain, unambiguous full-domain talkgroup catch-all per Alias list
+into the list-owned unmatched-talkgroup policy and removes retired P25 fully-qualified Alias rows and their dependent
+routes.
 
-See the version-matched Alpha 10 What's New document for the exact preserved and reset data. Layouts older than the
-shared Alpha 8/Alpha 9 boundary must be upgraded sequentially until they reach that exact source layout.
+The migration discards all previous statistics and activity data and creates the current statistics and activity
+schema empty. Calls, detailed Activity, site observations, quality history, identity summaries, relationships, talker
+aliases, affiliations, site presence, lifecycle state, call/output totals, and every other counter restart from new
+traffic. No dynamic identity, affiliation, presence, history, or counter row is copied, re-keyed, or reconstructed.
+Mixed schemas, intermediate development schemas including v25, and `webfirst` databases remain unsupported.
+
+See the version-matched What's New document for the exact preserved and reset data. Layouts older than the shared
+Alpha 8/Alpha 9/Alpha 10 boundary must be upgraded sequentially until they reach that exact source layout.
 
 ## Recording Storage
 

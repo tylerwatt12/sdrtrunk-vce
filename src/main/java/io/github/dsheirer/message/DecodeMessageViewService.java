@@ -356,7 +356,8 @@ public class DecodeMessageViewService implements AutoCloseable
     }
 
     /** One coherent lifecycle snapshot used for each browser source-change event. */
-    public record SourceState(long generation, boolean bound, long frequencyHz, FilterCatalog filterCatalog)
+    public record SourceState(long generation, boolean bound, String configurationId, long frequencyHz,
+                              FilterCatalog filterCatalog)
     {
     }
 
@@ -544,7 +545,7 @@ public class DecodeMessageViewService implements AutoCloseable
         {
             Binding binding = mBinding;
             boolean bound = sessionActive && binding != null && binding.mSource.matches(mScope);
-            return new SourceState(mGeneration, bound, mScope.frequencyHz(),
+            return new SourceState(mGeneration, bound, mScope.configurationId(), mScope.frequencyHz(),
                 bound ? binding.mClassifier.catalog() : null);
         }
 

@@ -124,6 +124,7 @@ class DecodeMessageViewServiceTest
         {
             await(session::isBound);
             DecodeMessageViewService.SourceState firstState = session.sourceState();
+            assertEquals(CONFIGURATION_ID, firstState.configurationId());
             assertNotNull(firstState.filterCatalog());
 
             selected.set(sameCatalog);

@@ -31,6 +31,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,6 +39,52 @@ import org.junit.jupiter.api.io.TempDir;
 class ApplicationDatabaseMigratorTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final List<String> DERIVED_STATISTICS_TABLES = List.of(
+        "activity_event_talkgroup_member",
+        "conventional_activity_bucket",
+        "conventional_activity_summary",
+        "conventional_call_identity_bucket",
+        "dmr_conventional_radio_summary",
+        "dmr_conventional_talkgroup_summary",
+        "logger_status",
+        "p25_activity_event",
+        "p25_control_channel_quality",
+        "p25_foreign_system_band",
+        "p25_foreign_system_band_summary",
+        "p25_learned_site",
+        "p25_site_call_bucket",
+        "p25_site_call_identity_bucket",
+        "p25_site_channel",
+        "p25_site_channel_summary",
+        "p25_site_channel_tag",
+        "p25_site_channel_tag_summary",
+        "p25_site_frequency_band",
+        "p25_site_frequency_band_summary",
+        "p25_site_neighbor",
+        "p25_site_neighbor_summary",
+        "p25_site_patch_group",
+        "p25_site_patch_group_radio",
+        "p25_site_patch_group_radio_summary",
+        "p25_site_patch_group_summary",
+        "p25_site_patch_group_talkgroup",
+        "p25_site_patch_group_talkgroup_summary",
+        "p25_site_snapshot",
+        "p25_system",
+        "p25_zero_local_fq_talkgroup_summary",
+        "receiver_context",
+        "trunked_identity_scope",
+        "trunked_identity_scope_context",
+        "trunked_identity_summary",
+        "trunked_logical_call_bucket",
+        "trunked_logical_call_identity_bucket",
+        "trunked_radio_affiliation",
+        "trunked_radio_presence_lifecycle",
+        "trunked_radio_site_presence",
+        "trunked_radio_talkgroup_summary",
+        "trunked_signaling_activity_bucket",
+        "trunked_site_channel_summary",
+        "trunked_site_neighbor_summary",
+        "trunked_site_snapshot");
 
     @TempDir
     Path mTemporaryFolder;
@@ -67,7 +114,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void migratesExactPublishedAlpha9DirectlyToCurrentSchema() throws Exception
+    void migratesExactPublishedAlpha8Alpha9Alpha10LayoutDirectlyToCurrentSchema() throws Exception
     {
         Path database = Alpha9TestDatabase.create(newStagedDatabase());
         insertAlpha9MigrationCases(database);
@@ -87,12 +134,13 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database, sourceRoot, targetRoot);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("Alpha 8/Alpha 9 layout migration"));
+        assertTrue(result.output().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
         assertTrue(result.output().contains("converted 4 unmatched-talkgroup"));
         assertTrue(result.output().contains("removed 1 retired fully-qualified talkgroup"));
         assertTrue(result.output().contains("1 retired fully-qualified radio"));
-        assertTrue(result.output().contains("preserved 3 current P25 affiliation"));
-        assertTrue(result.output().contains("without inventing site presence"));
+        assertTrue(result.output().contains(
+            "Statistics, activity history, learned site state, affiliations, and presence were reset; " +
+                "configuration, supported aliases, channels, streams, and settings were preserved."));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -175,63 +223,23 @@ class ApplicationDatabaseMigratorTest
                 SELECT COUNT(*) FROM alias_broadcast_channel
                 WHERE id IN (201, 202)
                 """));
-            assertEquals("1", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope_context"));
-            assertEquals("5", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_summary"));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM trunked_identity_scope WHERE protocol_code IN (3, 4)
-                """));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM trunked_identity_summary WHERE identity_id=999
-                """));
-            assertEquals("2", scalar(connection, """
-                SELECT COUNT(*) FROM receiver_context WHERE protocol_code IN (3, 4)
-                """));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
-            assertEquals("3", scalar(connection,
-                "SELECT COUNT(*) FROM trunked_radio_talkgroup_summary"));
-            assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-            assertEquals("1800001:43:8000|1800002:44:8500|1800003:43:9000", scalar(connection, """
-                SELECT group_concat(affiliation, '|')
-                FROM (
-                    SELECT radio_id || ':' || talkgroup_id || ':' || confirmed_at_ms AS affiliation
-                    FROM trunked_radio_affiliation
-                    ORDER BY radio_id
-                )
-                """));
-            assertEquals("1:43:1|1:44:1|2:1800001:0|2:1800002:0|2:1800003:0", scalar(connection, """
-                SELECT group_concat(identity, '|')
-                FROM (
-                    SELECT identity_kind_code || ':' || identity_id || ':' || p25_identity_state_code AS identity
-                    FROM trunked_identity_summary
-                    ORDER BY identity_kind_code, identity_id
-                )
-                """));
-            assertEquals("8000:9000:2", scalar(connection, """
-                SELECT first_seen_ms || ':' || last_seen_ms || ':' || join_count
-                FROM trunked_identity_summary
-                WHERE identity_kind_code=1 AND identity_id=43
-                """));
-            assertEquals("8000:8000:1", scalar(connection, """
-                SELECT first_seen_ms || ':' || last_seen_ms || ':' || join_count
-                FROM trunked_identity_summary
-                WHERE identity_kind_code=2 AND identity_id=1800001
-                """));
-            assertEquals("8000:8000:1", scalar(connection, """
-                SELECT first_seen_ms || ':' || last_seen_ms || ':' || join_count
-                FROM trunked_radio_talkgroup_summary
-                WHERE radio_id=1800001 AND talkgroup_id=43 AND target_kind_code=1
-                """));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM trunked_radio_presence_lifecycle"));
+            assertAllDerivedStatisticsEmpty(connection);
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM sqlite_schema
-                WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
+                WHERE name IN (
+                    'p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup',
+                    'p25_site_frequency_summary', 'p25_site_talkgroup_bucket',
+                    'p25_site_activity_bucket', 'call_identity_bucket'
+                )
                 """));
-            assertFalse("1234".equals(metadata(connection,
-                P25ActivityLogSchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY)));
+            assertPositiveMetadata(connection,
+                P25ActivityLogSchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+            assertPositiveMetadata(connection,
+                P25ActivityLogSchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY);
+            assertPositiveMetadata(connection,
+                P25ActivityLogSchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
+            assertEquals(null, metadata(connection, "p25_call_output_metrics_started_at_ms"));
+            assertEquals(null, metadata(connection, "all_mode_call_output_metrics_started_at_ms"));
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
@@ -254,20 +262,35 @@ class ApplicationDatabaseMigratorTest
                     ORDER BY id
                 )
                 """));
-            assertEquals("preserved-context", scalar(connection,
-                "SELECT context_key FROM receiver_context WHERE id=50"));
-            assertEquals("92.5", scalar(connection, """
-                SELECT decode_health_pct FROM p25_control_channel_quality WHERE guid='preserved-quality'
+            assertEquals("1:1:1:1", scalar(connection, """
+                SELECT
+                    (SELECT COUNT(*) FROM pragma_table_info('receiver_context')
+                     WHERE name='alias_list_id') || ':' ||
+                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_snapshot')
+                     WHERE name='active_rfss_network_connection') || ':' ||
+                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_snapshot')
+                     WHERE name='system_id') || ':' ||
+                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_channel_summary')
+                     WHERE name='callsign')
                 """));
             assertEquals("{\"preserved\":true}", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='migration-sentinel'
                 """));
+            assertEquals("Preserved Stream:ICECAST_HTTP:1:stream.example:8000", scalar(connection, """
+                SELECT name || ':' || server_type || ':' || enabled || ':' || host || ':' || port
+                FROM configuration_broadcast_stream WHERE id=77
+                """));
+            assertEquals("Preserved Map", scalar(connection,
+                "SELECT name FROM configuration_channel_map WHERE id=77"));
+            assertEquals("{\"preserved\":true}", scalar(connection,
+                "SELECT icons_json FROM application_icons WHERE key='migration-sentinel'"));
             JsonNode preferences = OBJECT_MAPPER.readTree(scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
             assertEquals(targetRoot.resolve("recordings").toString(),
                 preferences.path("directories").path("directory.recording").asText());
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
 
             long insertedId;
             try(ResultSet resultSet = statement.executeQuery("""
@@ -281,19 +304,6 @@ class ApplicationDatabaseMigratorTest
             }
             assertTrue(insertedId > 900, "Retired high-water alias IDs must not be reused");
 
-            long insertedScopeId;
-            try(ResultSet resultSet = statement.executeQuery("""
-                INSERT INTO trunked_identity_scope(
-                    scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    first_seen_ms, last_seen_ms
-                ) VALUES ('post-migration:dmr', 3, 2, 0, 10000, 10000)
-                RETURNING scope_id
-                """))
-            {
-                assertTrue(resultSet.next());
-                insertedScopeId = resultSet.getLong(1);
-            }
-            assertTrue(insertedScopeId > 901, "Reset identity-scope IDs must not be reused");
         }
 
         Path exactCurrent = mTemporaryFolder.resolve("exact-current.sqlite");
@@ -301,7 +311,8 @@ class ApplicationDatabaseMigratorTest
         try(Connection migrated = open(database); Connection current = open(exactCurrent))
         {
             assertEquals(SqliteSchemaValidator.fingerprint(current), SqliteSchemaValidator.fingerprint(migrated),
-                "The direct Alpha 9 transition must produce the exact current schema, not a compatibility layout");
+                "The direct Alpha 8/Alpha 9/Alpha 10 transition must produce the exact current schema, not a " +
+                    "compatibility layout");
         }
     }
 
@@ -318,7 +329,8 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("not the exact shared v0.6.2 Alpha 8/Alpha 9 schema layout"));
+        assertTrue(result.error().contains(
+            "not the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
         try(Connection connection = open(database))
         {
             assertEquals("4", metadata(connection, "alias_schema_version"));
@@ -385,266 +397,6 @@ class ApplicationDatabaseMigratorTest
                 ORDER BY id
             )
             """));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithoutAProtocolNeutralScope() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
-                VALUES (70, 781824, 840, 1000, 2000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001, 43, 2000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("without a protocol-neutral P25 scope"));
-        assertEquals("4", metadata(database, "alias_schema_version"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithANonstandardP25IdentityDomain() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("UPDATE trunked_identity_scope SET identity_domain_code=1 WHERE scope_id=70");
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001, 43, 2000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("without a protocol-neutral P25 scope"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("1", scalar(database, "SELECT identity_domain_code FROM trunked_identity_scope"));
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithAReservedP25Identity() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 16777212, 43, 2000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("reserved identities"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithoutAValidConfirmationTime() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001, 43, 0)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("invalid confirmation times"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("0", scalar(database,
-            "SELECT updated_at_ms FROM p25_radio_affiliation WHERE system_key=70 AND radio_id=1800001"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithNonIntegerStorageClasses() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001.5, 43.5, 'not-a-time')
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("non-integer values"));
-        assertEquals("4", metadata(database, "alias_schema_version"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("real:real:text", scalar(database, """
-            SELECT typeof(radio_id) || ':' || typeof(talkgroup_id) || ':' || typeof(updated_at_ms)
-            FROM p25_radio_affiliation WHERE system_key=70
-            """));
-    }
-
-    @Test
-    void usesIndexBackedBoundedIdentityAdmissionChecks() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-        boolean usesAffiliationIndex = false;
-
-        try(Connection connection = open(database);
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(
-                "EXPLAIN QUERY PLAN " + Alpha9DatabaseMigration.IDENTITY_ADMISSION_CAP_QUERY))
-        {
-            while(resultSet.next())
-            {
-                String detail = resultSet.getString(4);
-                assertFalse(detail.contains("TEMP B-TREE"), detail);
-                usesAffiliationIndex |= detail.contains("idx_p25_radio_affiliation_talkgroup");
-            }
-        }
-
-        assertTrue(usesAffiliationIndex, "Identity admission must scan each bounded system-key index slice");
-    }
-
-    @Test
-    void refusesAlpha9AffiliationsAboveTheBoundedCurrentStateCap() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                WITH RECURSIVE radio_ids(value) AS (
-                    VALUES (1)
-                    UNION ALL
-                    SELECT value + 1 FROM radio_ids WHERE value < 100001
-                )
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                SELECT 70, value, 43, 2000 FROM radio_ids
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("current-affiliation admission cap"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("100001", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationsWhoseEndpointsExceedTheIdentityCap() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                WITH RECURSIVE radio_ids(value) AS (
-                    VALUES (1)
-                    UNION ALL
-                    SELECT value + 1 FROM radio_ids WHERE value < 100000
-                )
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                SELECT 70, value, 43, 2000 FROM radio_ids
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("identity admission cap"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("100000", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void migratesAtTheExactIdentityAdmissionCap() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                WITH RECURSIVE radio_ids(value) AS (
-                    VALUES (1)
-                    UNION ALL
-                    SELECT value + 1 FROM radio_ids WHERE value < 99999
-                )
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                SELECT 70, value, 43, 2000 FROM radio_ids
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertEquals("100000", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
-        assertEquals("99999", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
-        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
-    }
-
-    @Test
-    void migratesMinimumAndMaximumP25IdentitiesAcrossIndependentScopes() throws Exception
-    {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70, 840);
-        insertAlpha9P25Scope(database, 71, 841);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1, 1, 2000),
-                       (71, 16777211, 65534, 3000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertEquals("70:1:1:2000|71:16777211:65534:3000", scalar(database, """
-            SELECT group_concat(value, '|')
-            FROM (
-                SELECT scope.p25_system_key || ':' || affiliation.radio_id || ':' ||
-                       affiliation.talkgroup_id || ':' || affiliation.confirmed_at_ms AS value
-                FROM trunked_radio_affiliation AS affiliation
-                JOIN trunked_identity_scope AS scope ON scope.scope_id=affiliation.scope_id
-                ORDER BY scope.p25_system_key
-            )
-            """));
-        assertEquals("2", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
-        assertEquals("4", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
     }
 
     @Test
@@ -784,7 +536,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("exact shared v0.6.2 Alpha 8/Alpha 9 tuple"));
+        assertTrue(result.error().contains("exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 tuple"));
         assertEquals("25", metadata(database, "p25_activity_schema_version"));
         assertEquals("1", scalar(database, """
             SELECT COUNT(*) FROM sqlite_schema
@@ -1027,6 +779,22 @@ class ApplicationDatabaseMigratorTest
                 VALUES ('migration-sentinel', '{"preserved":true}', 1000)
                 """);
             statement.executeUpdate("""
+                INSERT INTO configuration_channel_map(id, sort_order, name, config_json)
+                VALUES (77, 1, 'Preserved Map', '{"preserved":true}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_broadcast_stream(
+                    id, sort_order, name, server_type, enabled, host, port, config_json
+                ) VALUES (
+                    77, 1, 'Preserved Stream', 'ICECAST_HTTP', 1,
+                    'stream.example', 8000, '{"preserved":true}'
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO application_icons(key, icons_json, updated_at_ms)
+                VALUES ('migration-sentinel', '{"preserved":true}', 1000)
+                """);
+            statement.executeUpdate("""
                 INSERT INTO p25_control_channel_quality(
                     guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs,
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits,
@@ -1035,6 +803,21 @@ class ApplicationDatabaseMigratorTest
                     'preserved-quality', 851012500, 1000, 2000, -72.5,
                     92.5, 100, 3, 4, 5, 6, 1900
                 )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot(
+                    guid, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('preserved-site', 1000, 2000, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel(
+                    guid, channel_key, descriptor, callsign, confirmed_at_ms
+                ) VALUES ('preserved-site', '12-345', '12-345', 'PRESERVED', 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_summary(
+                    guid, channel_key, descriptor, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('preserved-site', '12-345', '12-345', 1000, 2000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
@@ -1108,6 +891,7 @@ class ApplicationDatabaseMigratorTest
                        (50, 1800002, 44, 8500),
                        (50, 1800003, 43, 9000)
                 """);
+            insertAlpha9DerivedStatistics(statement);
             statement.executeUpdate("""
                 UPDATE database_metadata SET value='1234'
                 WHERE key='trunked_identity_metrics_started_at_ms'
@@ -1115,26 +899,182 @@ class ApplicationDatabaseMigratorTest
         }
     }
 
-    private static void insertAlpha9P25Scope(Path database, int systemKey) throws Exception
+    private static void insertAlpha9DerivedStatistics(Statement statement) throws Exception
     {
-        insertAlpha9P25Scope(database, systemKey, 840);
+        statement.executeUpdate("""
+            INSERT INTO p25_activity_event(
+                id, context_id, observed_at_ms, action_code, source_radio_id, target_id,
+                target_kind_code, frequency_hz, encrypted
+            ) VALUES (77, 50, 5000, 4, 1800001, 43, 1, 851012500, 1)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO activity_event_talkgroup_member(event_id, talkgroup_id)
+            VALUES (77, 44)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_frequency_summary(
+                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, call_count
+            ) VALUES (50, 851012500, 1, 1000, 9000, 7)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_talkgroup_bucket(
+                context_id, talkgroup_id, bucket_start_ms, call_count,
+                encrypted_count, recorded_count, streamed_count
+            ) VALUES (50, 43, 0, 7, 2, 3, 4)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_activity_bucket(
+                context_id, bucket_start_ms, call_count,
+                encrypted_count, recorded_count, streamed_count
+            ) VALUES (50, 0, 7, 2, 3, 4)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO conventional_activity_summary(
+                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms,
+                call_count, encrypted_count, recorded_count, streamed_count
+            ) VALUES (900, 451000000, 1, 1000, 9000, 4, 1, 2, 3)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO conventional_activity_bucket(
+                context_id, frequency_hz, timeslot, bucket_start_ms,
+                call_count, encrypted_count, recorded_count, streamed_count
+            ) VALUES (900, 451000000, 1, 0, 4, 1, 2, 3)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO call_identity_bucket(
+                context_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                identity_id, call_count, encrypted_count, recorded_count, streamed_count
+            ) VALUES (50, 0, 1, 1, 43, 7, 2, 3, 4)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_channel_tag(guid, channel_key, tag, confirmed_at_ms)
+            VALUES ('preserved-site', '12-345', 'CONTROL', 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_channel_tag_summary(
+                guid, channel_key, tag, first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-site', '12-345', 'CONTROL', 1000, 2000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_frequency_band(
+                guid, band, tdma, base_hz, spacing_hz, transmit_offset_hz, timeslots, confirmed_at_ms
+            ) VALUES ('preserved-site', 12, 1, 851000000, 12500, -45000000, 2, 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_frequency_band_summary(
+                guid, band, tdma, base_hz, spacing_hz, transmit_offset_hz, timeslots,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-site', 12, 1, 851000000, 12500, -45000000, 2, 1000, 2000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_foreign_system_band(
+                guid, foreign_wacn, foreign_system_id, band, channel_type,
+                base_hz, spacing_hz, transmit_offset_hz, confirmed_at_ms
+            ) VALUES ('preserved-site', 781824, 841, 12, 1, 851000000, 12500, -45000000, 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_foreign_system_band_summary(
+                guid, foreign_wacn, foreign_system_id, band, channel_type,
+                base_hz, spacing_hz, transmit_offset_hz,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES (
+                'preserved-site', 781824, 841, 12, 1,
+                851000000, 12500, -45000000, 1000, 2000, 2
+            )
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_neighbor(
+                guid, neighbor_key, system_id, rfss, site, channel_descriptor, confirmed_at_ms
+            ) VALUES ('preserved-site', 'neighbor', 840, 1, 3, '12-346', 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_neighbor_summary(
+                guid, neighbor_key, system_id, rfss, site, channel_descriptor,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-site', 'neighbor', 840, 1, 3, '12-346', 1000, 2000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_patch_group(guid, patch_group, version, confirmed_at_ms)
+            VALUES ('preserved-site', 500, 1, 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_patch_group_summary(
+                guid, patch_group, version, first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-site', 500, 1, 1000, 2000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_patch_group_talkgroup(
+                guid, patch_group, talkgroup_id, confirmed_at_ms
+            ) VALUES ('preserved-site', 500, 43, 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_patch_group_talkgroup_summary(
+                guid, patch_group, talkgroup_id, first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-site', 500, 43, 1000, 2000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_patch_group_radio(
+                guid, patch_group, radio_id, confirmed_at_ms
+            ) VALUES ('preserved-site', 500, 1800001, 2000)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO p25_site_patch_group_radio_summary(
+                guid, patch_group, radio_id, first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-site', 500, 1800001, 1000, 2000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO dmr_conventional_talkgroup_summary(
+                context_id, frequency_hz, timeslot, talkgroup_id,
+                first_seen_ms, last_seen_ms, call_count, encrypted_count, last_source_radio_id
+            ) VALUES (900, 451000000, 1, 321, 1000, 9000, 4, 1, 765432)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO dmr_conventional_radio_summary(
+                context_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms,
+                call_count, source_call_count, group_call_count, encrypted_count, last_talkgroup_id
+            ) VALUES (900, 451000000, 1, 765432, 1000, 9000, 4, 4, 4, 1, 321)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO trunked_site_snapshot(
+                guid, snapshot_hash, protocol_code, configured_system, channel_name,
+                network_id, system_id, site_id, first_seen_ms, last_seen_ms, observation_count
+            ) VALUES (
+                'preserved-trunked-site', 'hash', 3, 'Preserved DMR', 'Preserved DMR',
+                1, 2, 3, 1000, 9000, 2
+            )
+            """);
+        statement.executeUpdate("""
+            INSERT INTO trunked_site_channel_summary(
+                guid, channel_number, inbound_channel_number, timeslot, frequency_hz,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-trunked-site', 1, 1, 1, 451000000, 1000, 9000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO trunked_site_neighbor_summary(
+                guid, variant_code, identity_domain_code, network_id, system_id, site_id,
+                channel_number, frequency_hz, first_seen_ms, last_seen_ms, observation_count
+            ) VALUES ('preserved-trunked-site', 0, 0, 1, 2, 4, 2, 452000000, 1000, 9000, 2)
+            """);
+        statement.executeUpdate("""
+            INSERT INTO logger_status(key, value, updated_at_ms)
+            VALUES ('preserved-status', '7', 9000)
+            """);
     }
 
-    private static void insertAlpha9P25Scope(Path database, int systemKey, int systemId) throws Exception
+    private static void assertAllDerivedStatisticsEmpty(Connection connection) throws Exception
     {
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        for(String table: DERIVED_STATISTICS_TABLES)
         {
-            statement.executeUpdate("""
-                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
-                VALUES (%1$d, 781824, %2$d, 1000, 2000)
-                """.formatted(systemKey, systemId));
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope(
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (%1$d, 'p25:test:%2$d', 1, 1, 0, %1$d, 1000, 2000)
-                """.formatted(systemKey, systemId));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM " + table),
+                "The reset migration must leave " + table + " empty");
         }
+    }
+
+    private static void assertPositiveMetadata(Connection connection, String key) throws Exception
+    {
+        String value = metadata(connection, key);
+        assertTrue(value != null && Long.parseLong(value) > 0,
+            "Expected a new positive statistics boundary for " + key);
     }
 
     private static Connection open(Path database) throws Exception

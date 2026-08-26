@@ -233,11 +233,16 @@ const SERVER_TABLE_DEFAULT_SORTS = {
   'conventional-radios': 'calls'
 };
 const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
+const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
+const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
+const SERVICE_STATUS_RETRY_DELAY_MS = 500;
 const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
   'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'recorded', 'streamed',
   'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout', 'relationships', 'last-evidence'
 ]);
 let serviceStatus = null;
+let serviceStatusRequestPending = false;
+let serviceStatusConsecutiveFailures = 0;
 let liveDisplaySettings = null;
 let webClientReloadAttempted = false;
 let tableWidthPreferences = readTableWidthPreferences();
@@ -1619,6 +1624,53 @@ function statsLoggingState() {
     lastSuccessfulWriteMs: 0, state: '', lastError: '' };
 }
 
+function beginServiceStatusRequest() {
+  serviceStatusRequestPending = true;
+}
+
+function acceptServiceStatus(value) {
+  serviceStatus = value;
+  serviceStatusRequestPending = false;
+  serviceStatusConsecutiveFailures = 0;
+}
+
+function rejectServiceStatusRequest() {
+  serviceStatusRequestPending = false;
+  serviceStatusConsecutiveFailures += 1;
+}
+
+function clearServiceStatus() {
+  serviceStatus = null;
+  serviceStatusRequestPending = false;
+  serviceStatusConsecutiveFailures = 0;
+}
+
+function serviceStatusWarningRequired() {
+  return serviceStatusConsecutiveFailures >= SERVICE_STATUS_FAILURE_WARNING_THRESHOLD;
+}
+
+function serviceStatusRetryDelay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function requestServiceStatus() {
+  const attempts = serviceStatus ? 1 : SERVICE_STATUS_INITIAL_ATTEMPTS;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    beginServiceStatusRequest();
+    try {
+      const value = await api('/api/v1/status', {}, { page: false });
+      acceptServiceStatus(value);
+      return value;
+    } catch (error) {
+      lastError = error;
+      rejectServiceStatusRequest();
+    }
+    if (attempt < attempts) await serviceStatusRetryDelay(SERVICE_STATUS_RETRY_DELAY_MS * attempt);
+  }
+  throw lastError;
+}
+
 function detailedHistoryAvailable() {
   const logging = statsLoggingState();
   return !logging.available || logging.historyActive || logging.historyRetained;
@@ -1629,8 +1681,9 @@ function databaseLoggingNotice(view) {
     .includes(view)) return null;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
   const logging = statsLoggingState();
-  if (!logging.available) return node('div', 'logging-notice warning',
+  if (serviceStatusWarningRequired()) return node('div', 'logging-notice warning',
     'Logging status is unavailable. Database-backed views may not be current.');
+  if (!logging.available) return null;
   if (!logging.summaryActive) {
     const state = logging.summaryConfigured && logging.state ? ` (${logging.state.toLowerCase()})` : '';
     const message = logging.summaryConfigured ?
@@ -8302,30 +8355,103 @@ async function renderDashboard() {
   content.lastChild.append(destinations, sources);
 }
 
-function liveEventSelection(tableValue, row) {
+const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT' });
+const LIVE_DETAIL_CONTROL_ROLES = new Set(['CONFIGURED_CONTROL', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL']);
+
+function liveDetailSelection(tableValue, row, bindingRow = row) {
   const configurationId = row?.configuration_id || tableValue?.configuration_id;
   if (!configurationId) return null;
-  const tags = channelTagSet(row?.tags);
-  const siteScope = tableValue.table_id !== 'conventional' &&
-    ['CONFIGURED', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL'].some((tag) => tags.has(tag));
-  const diagnosticFrequencyHz = Number(row?.frequency_hz) || null;
-  const diagnosticTimeslot = Number(row?.timeslot) || null;
-  const frequencyHz = siteScope || !Number(row?.frequency_hz) ? null : Number(row.frequency_hz);
-  const timeslot = siteScope || !Number(row?.timeslot) ? null : Number(row.timeslot);
-  const rowLabelBase = row?.channel_name || row?.lcn ||
-    (diagnosticFrequencyHz ? `${frequency(diagnosticFrequencyHz)} MHz` : '');
-  const rowLabel = diagnosticTimeslot && !/\bTS\s*:?\s*\d+\b/i.test(rowLabelBase) ?
-    `${rowLabelBase} · TS ${diagnosticTimeslot}` : rowLabelBase;
+  const role = String(row?.role || (tableValue?.table_id === 'conventional' ? 'CONVENTIONAL' : '')).toUpperCase();
+  const kind = tableValue?.table_id !== 'conventional' && LIVE_DETAIL_CONTROL_ROLES.has(role) ?
+    LIVE_DETAIL_SELECTION_KINDS.CONTROL : LIVE_DETAIL_SELECTION_KINDS.EXACT;
+  const resolvedRow = kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL ? bindingRow : row;
+  const bindingFrequencyHz = Number(resolvedRow?.frequency_hz) || null;
+  const bindingTimeslot = Number(resolvedRow?.timeslot) || null;
+  const rowLabelBase = resolvedRow?.channel_name || resolvedRow?.lcn ||
+    (bindingFrequencyHz ? `${frequency(bindingFrequencyHz)} MHz` : '');
+  const rowLabel = bindingTimeslot && !/\bTS\s*:?\s*\d+\b/i.test(rowLabelBase) ?
+    `${rowLabelBase} · TS ${bindingTimeslot}` : rowLabelBase;
   const tableLabel = tableValue.title || tableValue.channel_name || tableValue.table_id;
   return {
+    kind,
+    role,
+    logicalKey: kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL ? `CONTROL:${configurationId}` :
+      `EXACT:${configurationId}:${bindingFrequencyHz || ''}:${bindingTimeslot || ''}`,
+    transportKey: `${configurationId}:${bindingFrequencyHz || ''}:${bindingTimeslot || ''}`,
+    rowKey: resolvedRow?.key || null,
     configurationId,
-    frequencyHz,
-    timeslot,
-    diagnosticFrequencyHz,
-    diagnosticTimeslot,
-    label: [tableLabel, siteScope ? '' : rowLabel].filter(Boolean).join(' · '),
+    bindingFrequencyHz,
+    bindingTimeslot,
+    label: [tableLabel, kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL ? '' : rowLabel].filter(Boolean).join(' · '),
     channelLabel: [tableLabel, rowLabel].filter(Boolean).join(' · ')
   };
+}
+
+function liveCurrentControlRow(tableValue) {
+  return (tableValue?.rows || []).find((row) =>
+    String(row?.role || '').toUpperCase() === 'CURRENT_CONTROL') || null;
+}
+
+function liveDetailRowSelection(tableValue, row) {
+  const role = String(row?.role || '').toUpperCase();
+  const controlIntent = tableValue?.table_id !== 'conventional' && LIVE_DETAIL_CONTROL_ROLES.has(role);
+  const controlBinding = controlIntent && tableValue?.control_active === true ?
+    liveCurrentControlRow(tableValue) : null;
+  return liveDetailSelection(tableValue, row, controlIntent ? controlBinding : row);
+}
+
+function liveDetailSelectionDelta(previous, next) {
+  return {
+    logicalChanged: next?.logicalKey !== previous?.logicalKey,
+    transportChanged: next?.transportKey !== previous?.transportKey
+  };
+}
+
+function liveMessageTransportChanged(previous, next) {
+  return String(previous?.configurationId || '') !== String(next?.configurationId || '') ||
+    Number(previous?.bindingFrequencyHz || 0) !== Number(next?.bindingFrequencyHz || 0);
+}
+
+function liveMessageSourceMatchesSelection(selection, subscriptionId, source) {
+  return String(source?.configuration_id || '') === String(selection?.configurationId || '') &&
+    String(source?.subscription_id || '') === String(subscriptionId || '') &&
+    Number(source?.frequency_hz || 0) === Number(selection?.bindingFrequencyHz || 0);
+}
+
+function liveDetailTransportParameters(selection, includeTimeslot = false) {
+  if (!selection?.configurationId || !selection?.bindingFrequencyHz) return null;
+  const parameters = {
+    configuration_id: selection.configurationId,
+    frequency_hz: selection.bindingFrequencyHz
+  };
+  if (includeTimeslot && selection.bindingTimeslot) parameters.timeslot = selection.bindingTimeslot;
+  return parameters;
+}
+
+function liveEventMatchesSelection(selection, event) {
+  if (String(event?.configuration_id || '') !== String(selection?.configurationId || '')) return false;
+  if (selection?.kind !== LIVE_DETAIL_SELECTION_KINDS.EXACT) return true;
+  if (Number(event?.frequency_hz || 0) !== Number(selection?.bindingFrequencyHz || 0)) return false;
+  return selection.bindingTimeslot == null ||
+    Number(event?.timeslot || 0) === Number(selection.bindingTimeslot);
+}
+
+function liveEventScopeMatchesSelection(selection, subscriptionId, source) {
+  if (String(source?.configuration_id || '') !== String(selection?.configurationId || '')) return false;
+  if (String(source?.subscription_id || '') !== String(subscriptionId || '')) return false;
+  const exact = selection?.kind === LIVE_DETAIL_SELECTION_KINDS.EXACT;
+  const expectedFrequencyHz = exact ? Number(selection?.bindingFrequencyHz) || null : null;
+  const expectedTimeslot = exact ? Number(selection?.bindingTimeslot) || null : null;
+  const sourceFrequencyHz = Number(source?.frequency_hz) || null;
+  const sourceTimeslot = Number(source?.timeslot) || null;
+  return sourceFrequencyHz === expectedFrequencyHz && sourceTimeslot === expectedTimeslot;
+}
+
+function liveChannelStateMatchesSelection(selection, subscriptionId, source) {
+  return String(source?.configuration_id || '') === String(selection?.configurationId || '') &&
+    String(source?.subscription_id || '') === String(subscriptionId || '') &&
+    Number(source?.frequency_hz || 0) === Number(selection?.bindingFrequencyHz || 0) &&
+    Number(source?.timeslot || 0) === Number(selection?.bindingTimeslot || 0);
 }
 
 function liveEventDuration(value) {
@@ -8394,24 +8520,28 @@ let liveDetailFilterSequence = 0;
 
 function liveDetailFilterModel(options = {}) {
   let catalog = null;
-  let enabledLeafKeys = new Set();
-  let enabledTimeslots = new Set();
-  let enabledValidity = new Set(['valid', 'invalid']);
+  let excludedLeafKeys = new Set();
+  let excludedTimeslots = new Set();
+  let excludedValidity = new Set();
   let searchText = '';
-  const allLeafKeysEnabled = () => Boolean(catalog) && enabledLeafKeys.size === catalog.leafKeys.length;
+  const enabledLeafCount = () => catalog ?
+    catalog.leafKeys.filter((key) => !excludedLeafKeys.has(key)).length : 0;
+  const enabledTimeslotCount = () => catalog ?
+    catalog.timeslots.filter((value) => !excludedTimeslots.has(value)).length : 0;
+  const enabledValidityCount = () => 2 - excludedValidity.size;
+  const allLeafKeysEnabled = () => Boolean(catalog) && enabledLeafCount() === catalog.leafKeys.length;
   const allTimeslotsEnabled = () => !catalog?.timeslots.length ||
-    enabledTimeslots.size === catalog.timeslots.length;
+    enabledTimeslotCount() === catalog.timeslots.length;
   const resetFilters = () => {
-    if (!catalog) return;
-    enabledLeafKeys = new Set(catalog.leafKeys);
-    enabledTimeslots = new Set(catalog.timeslots);
-    enabledValidity = new Set(['valid', 'invalid']);
+    excludedLeafKeys = new Set();
+    excludedTimeslots = new Set();
+    excludedValidity = new Set();
     searchText = '';
   };
   const leafSelection = (filterNode) => {
     const leafKeys = filterNode.children.length ? filterNode.children.flatMap((child) =>
       leafSelection(child).leafKeys) : [filterNode.key];
-    return { leafKeys, selected: leafKeys.filter((key) => enabledLeafKeys.has(key)).length };
+    return { leafKeys, selected: leafKeys.filter((key) => !excludedLeafKeys.has(key)).length };
   };
   return {
     catalog: () => catalog,
@@ -8421,53 +8551,45 @@ function liveDetailFilterModel(options = {}) {
       if (catalog?.signature === next.signature) return 'same';
       const state = catalog ? 'changed' : 'initial';
       catalog = next;
-      resetFilters();
       return state;
-    },
-    resetForSelection() {
-      catalog = null;
-      enabledLeafKeys.clear();
-      enabledTimeslots.clear();
-      enabledValidity = new Set(['valid', 'invalid']);
-      searchText = '';
     },
     resetFilters,
     leafSelection,
     setLeaves(leafKeys, enabled) {
       leafKeys.forEach((key) => {
-        if (enabled) enabledLeafKeys.add(key);
-        else enabledLeafKeys.delete(key);
+        if (enabled) excludedLeafKeys.delete(key);
+        else excludedLeafKeys.add(key);
       });
     },
     setTimeslot(value, enabled) {
       const key = String(value ?? '').trim();
-      if (enabled) enabledTimeslots.add(key);
-      else enabledTimeslots.delete(key);
+      if (enabled) excludedTimeslots.delete(key);
+      else excludedTimeslots.add(key);
     },
     setValidity(value, enabled) {
-      if (enabled) enabledValidity.add(value);
-      else enabledValidity.delete(value);
+      if (enabled) excludedValidity.delete(value);
+      else excludedValidity.add(value);
     },
     setSearch(value) { searchText = liveDetailText(value); },
-    enabledLeafCount: () => enabledLeafKeys.size,
-    enabledTimeslotCount: () => enabledTimeslots.size,
-    enabledValidityCount: () => enabledValidity.size,
-    isLeafEnabled: (key) => enabledLeafKeys.has(key),
-    isTimeslotEnabled: (value) => enabledTimeslots.has(String(value ?? '').trim()),
-    isValidityEnabled: (value) => enabledValidity.has(value),
+    enabledLeafCount,
+    enabledTimeslotCount,
+    enabledValidityCount,
+    isLeafEnabled: (key) => !excludedLeafKeys.has(key),
+    isTimeslotEnabled: (value) => !excludedTimeslots.has(String(value ?? '').trim()),
+    isValidityEnabled: (value) => !excludedValidity.has(value),
     allLeafKeysEnabled,
     allTimeslotsEnabled,
     matchesLeaf(value) {
-      if (!catalog || allLeafKeysEnabled()) return true;
-      return enabledLeafKeys.has(String(value || '').trim());
+      if (!catalog) return true;
+      return !excludedLeafKeys.has(String(value || '').trim());
     },
     matchesTimeslot(value) {
-      if (!options.timeslots || !catalog?.timeslots.length || allTimeslotsEnabled()) return true;
-      return enabledTimeslots.has(String(value ?? '').trim());
+      if (!options.timeslots || !catalog?.timeslots.length) return true;
+      return !excludedTimeslots.has(String(value ?? '').trim());
     },
     matchesValidity(value) {
-      if (!options.validity || enabledValidity.size === 2) return true;
-      return enabledValidity.has(value === true ? 'valid' : 'invalid');
+      if (!options.validity || excludedValidity.size === 0) return true;
+      return !excludedValidity.has(value === true ? 'valid' : 'invalid');
     },
     query: () => searchText
   };
@@ -8711,12 +8833,6 @@ function liveDetailFilterController(options) {
       updateCompactSummary();
       return state;
     },
-    resetForSelection() {
-      closeModal();
-      model.resetForSelection();
-      expandedKeys.clear();
-      updateCompactSummary();
-    },
     matchesLeaf: model.matchesLeaf,
     matchesTimeslot: model.matchesTimeslot,
     matchesValidity: model.matchesValidity,
@@ -8738,6 +8854,8 @@ function liveMessagesPane() {
   let lastRenderAt = 0;
   let missed = 0;
   let possibleGap = false;
+  let expectedSubscriptionId = null;
+  let transportReady = false;
   let scheduleRender = () => {};
 
   const pane = node('div', 'live-details-pane live-messages-pane');
@@ -8784,7 +8902,7 @@ function liveMessagesPane() {
     if (!selection || !rows.length) {
       const empty = node('tr', 'empty');
       const text = !selection ? 'Select a live row above' :
-        (selection.diagnosticFrequencyHz ? 'No matching messages received since this tab was opened' :
+        (selection.bindingFrequencyHz ? 'No matching messages received since this tab was opened' :
           'Select an active channel');
       const cell = node('td', '', text);
       cell.colSpan = 4;
@@ -8836,6 +8954,8 @@ function liveMessagesPane() {
   };
   const closeStream = () => {
     streamEpoch += 1;
+    transportReady = false;
+    expectedSubscriptionId = null;
     if (!stream) return;
     stream.close();
     liveConnections.delete(stream);
@@ -8856,8 +8976,8 @@ function liveMessagesPane() {
     missed += Math.max(1, Math.trunc(Number(value?.dropped) || 1));
     updateGapNotice();
   };
-  const shouldRun = () => active && !collapsed && selection?.configurationId &&
-    selection?.diagnosticFrequencyHz;
+  const shouldRun = () => active && !collapsed && !document.hidden && selection?.configurationId &&
+    selection?.bindingFrequencyHz;
   const sync = () => {
     if (!shouldRun()) {
       closeStream();
@@ -8865,8 +8985,10 @@ function liveMessagesPane() {
     }
     if (stream) return;
     const epoch = ++streamEpoch;
-    const parameters = { configuration_id: selection.configurationId,
-      frequency_hz: selection.diagnosticFrequencyHz };
+    const parameters = liveDetailTransportParameters(selection);
+    expectedSubscriptionId = randomLiveClientId();
+    parameters.subscription_id = expectedSubscriptionId;
+    transportReady = false;
     let opened = document.hidden;
     let sourceStatusSeen = false;
     let sourceEverBound = false;
@@ -8880,16 +9002,18 @@ function liveMessagesPane() {
       opened = true;
     };
     stream.addEventListener('decode_message', (event) => {
-      if (epoch === streamEpoch) addMessage(JSON.parse(event.data));
+      if (epoch === streamEpoch && transportReady) addMessage(JSON.parse(event.data));
     });
     stream.addEventListener('live_gap', (event) => {
-      if (epoch === streamEpoch) addGap(JSON.parse(event.data));
+      if (epoch === streamEpoch && transportReady) addGap(JSON.parse(event.data));
     });
     stream.addEventListener('source_change', (event) => {
       if (epoch !== streamEpoch) return;
       const change = JSON.parse(event.data);
-      const catalogState = filters.setCatalog(change?.filter_catalog);
-      if (catalogState === 'changed') clearSession();
+      transportReady = false;
+      if (!liveMessageSourceMatchesSelection(selection, expectedSubscriptionId, change)) return;
+      transportReady = true;
+      filters.setCatalog(change?.filter_catalog);
       const bound = change?.bound === true;
       if (!sourceStatusSeen) {
         sourceStatusSeen = true;
@@ -8901,19 +9025,37 @@ function liveMessagesPane() {
     });
   };
   const select = (nextSelection) => {
-    const nextKey = nextSelection ? `${nextSelection.configurationId}:${nextSelection.diagnosticFrequencyHz || ''}:` +
-      `${nextSelection.diagnosticTimeslot || ''}` : '';
-    const currentKey = selection ? `${selection.configurationId}:${selection.diagnosticFrequencyHz || ''}:` +
-      `${selection.diagnosticTimeslot || ''}` : '';
+    const { logicalChanged } = liveDetailSelectionDelta(selection, nextSelection);
+    const transportChanged = liveMessageTransportChanged(selection, nextSelection);
     selection = nextSelection;
     selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
-    if (nextKey !== currentKey) {
+    if (logicalChanged) {
       closeStream();
-      filters.resetForSelection();
       clearSession();
+    } else if (transportChanged) {
+      transportReady = false;
+      if (stream) {
+        possibleGap = true;
+        updateGapNotice();
+      }
+      const parameters = liveDetailTransportParameters(selection);
+      if (stream && parameters) {
+        expectedSubscriptionId = randomLiveClientId();
+        parameters.subscription_id = expectedSubscriptionId;
+        stream.update(parameters);
+      }
+      else if (stream) closeStream();
     }
     sync();
   };
+  const onVisibilityChange = () => {
+    if (document.hidden && stream) {
+      possibleGap = true;
+      updateGapNotice();
+    }
+    sync();
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
   render();
   return {
     element: pane,
@@ -8921,13 +9063,21 @@ function liveMessagesPane() {
     setActive(value) {
       const next = value === true;
       if (active && !next) {
+        possibleGap = Boolean(selection);
+        updateGapNotice();
         closeStream();
-        clearSession();
       }
       active = next;
       sync();
     },
-    setCollapsed(value) { collapsed = value; sync(); },
+    setCollapsed(value) {
+      if (!collapsed && value === true && stream) {
+        possibleGap = true;
+        updateGapNotice();
+      }
+      collapsed = value;
+      sync();
+    },
     setPaused(value) { paused = value; if (!paused) scheduleRender(); },
     close() {
       closeStream();
@@ -8936,6 +9086,7 @@ function liveMessagesPane() {
       messages.clear();
       order.length = 0;
       filters.close();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     }
   };
 }
@@ -8949,6 +9100,8 @@ function liveChannelPane() {
   let streamEpoch = 0;
   let state = null;
   let generation = -1;
+  let awaitingState = false;
+  let expectedSubscriptionId = null;
   let signalSequence = 0;
   let symbolSequence = 0;
   let signalValues = new Float32Array(0);
@@ -9015,7 +9168,7 @@ function liveChannelPane() {
 
   const updateReadouts = () => {
     const centerFrequencyHz = Number(state?.frequency_hz ?? state?.center_frequency_hz ??
-      selection?.diagnosticFrequencyHz);
+      selection?.bindingFrequencyHz);
     updateDiagnosticReadouts(signalDiagnostic.readouts, [
       ['Center', centerFrequencyHz ? `${frequency(centerFrequencyHz)} MHz` : '—'],
       ['Peak', Number.isFinite(signalPeak) ? `${signalPeak.toFixed(1)} dB` : '—'],
@@ -9207,6 +9360,8 @@ function liveChannelPane() {
 
   const closeStream = () => {
     streamEpoch += 1;
+    awaitingState = false;
+    expectedSubscriptionId = null;
     if (!stream) return;
     stream.close();
     liveConnections.delete(stream);
@@ -9215,7 +9370,7 @@ function liveChannelPane() {
   };
 
   const shouldRun = () => active && !collapsed && !paused && !document.hidden &&
-    selection?.configurationId && selection?.diagnosticFrequencyHz;
+    selection?.configurationId && selection?.bindingFrequencyHz;
 
   const sync = () => {
     if (!shouldRun()) {
@@ -9223,7 +9378,7 @@ function liveChannelPane() {
       if (!selection) {
         setStatus('Waiting');
         clearPlots('Select a live row above');
-      } else if (!selection.diagnosticFrequencyHz) {
+      } else if (!selection.bindingFrequencyHz) {
         setStatus('Unavailable');
         clearPlots('The selected row does not have an active frequency.');
       } else if (paused) {
@@ -9236,12 +9391,11 @@ function liveChannelPane() {
     if (stream) return;
     setStatus('Connecting');
     clearPlots('Waiting for channel data…');
+    awaitingState = true;
+    expectedSubscriptionId = randomLiveClientId();
     const epoch = ++streamEpoch;
-    const parameters = {
-      configuration_id: selection.configurationId,
-      frequency_hz: selection.diagnosticFrequencyHz
-    };
-    if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
+    const parameters = liveDetailTransportParameters(selection, true);
+    parameters.subscription_id = expectedSubscriptionId;
     stream = binaryFrameConnection('channel_diagnostics', parameters, {
       onOpen: () => {
         if (epoch === streamEpoch) setStatus('Connected', 'state-current');
@@ -9249,7 +9403,10 @@ function liveChannelPane() {
       onFrame: (frame) => {
         if (epoch !== streamEpoch || frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
         if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
-          state = diagnosticJsonPayload(frame);
+          const nextState = diagnosticJsonPayload(frame);
+          if (!liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)) return;
+          awaitingState = false;
+          state = nextState;
           generation = frame.generation;
           signalSequence = 0;
           symbolSequence = 0;
@@ -9277,6 +9434,7 @@ function liveChannelPane() {
           scheduleDraw();
           return;
         }
+        if (awaitingState) return;
         if (generation >= 0 && frame.generation !== generation) return;
         if (frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL) {
           if (frame.sequence <= signalSequence) return;
@@ -9322,17 +9480,23 @@ function liveChannelPane() {
   };
 
   const select = (nextSelection) => {
-    const nextKey = nextSelection ?
-      `${nextSelection.configurationId}:${nextSelection.diagnosticFrequencyHz || ''}:` +
-        `${nextSelection.diagnosticTimeslot || ''}` : '';
-    const currentKey = selection ?
-      `${selection.configurationId}:${selection.diagnosticFrequencyHz || ''}:` +
-        `${selection.diagnosticTimeslot || ''}` : '';
+    const { logicalChanged, transportChanged } = liveDetailSelectionDelta(selection, nextSelection);
     selection = nextSelection;
     selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
-    if (nextKey !== currentKey) {
+    if (logicalChanged) {
       closeStream();
       clearPlots(selection ? 'Waiting for channel data…' : 'Select a live row above');
+    } else if (transportChanged) {
+      awaitingState = true;
+      setStatus('Connecting');
+      clearPlots('Waiting for channel data…');
+      const parameters = liveDetailTransportParameters(selection, true);
+      if (stream && parameters) {
+        expectedSubscriptionId = randomLiveClientId();
+        parameters.subscription_id = expectedSubscriptionId;
+        stream.update(parameters);
+      }
+      else if (stream) closeStream();
     }
     sync();
   };
@@ -11441,6 +11605,8 @@ function liveEventsPanel(onCollapse) {
   let lastRenderAt = 0;
   let missed = 0;
   let possibleGap = false;
+  let transportReady = false;
+  let expectedSubscriptionId = null;
   let scheduleRender = () => {};
 
   const panel = node('section', 'section live-details');
@@ -11575,6 +11741,8 @@ function liveEventsPanel(onCollapse) {
 
   const closeStream = () => {
     streamEpoch += 1;
+    transportReady = false;
+    expectedSubscriptionId = null;
     if (!stream) return;
     stream.close();
     liveConnections.delete(stream);
@@ -11616,9 +11784,15 @@ function liveEventsPanel(onCollapse) {
     }
     if (stream) return;
     const epoch = ++streamEpoch;
+    const subscriptionId = randomLiveClientId();
     const parameters = { configuration_id: selection.configurationId };
-    if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
-    if (selection.timeslot) parameters.timeslot = selection.timeslot;
+    if (selection.kind === LIVE_DETAIL_SELECTION_KINDS.EXACT && selection.bindingFrequencyHz) {
+      parameters.frequency_hz = selection.bindingFrequencyHz;
+      if (selection.bindingTimeslot) parameters.timeslot = selection.bindingTimeslot;
+    }
+    parameters.subscription_id = subscriptionId;
+    expectedSubscriptionId = subscriptionId;
+    transportReady = false;
     let opened = document.hidden;
     stream = liveConnection('decode_events', parameters);
     stream.onopen = () => {
@@ -11630,36 +11804,36 @@ function liveEventsPanel(onCollapse) {
       opened = true;
     };
     stream.addEventListener('decode_event', (event) => {
-      if (epoch === streamEpoch) addEvent(JSON.parse(event.data));
+      if (epoch !== streamEpoch || !transportReady) return;
+      const value = JSON.parse(event.data);
+      if (liveEventMatchesSelection(selection, value)) addEvent(value);
+    });
+    stream.addEventListener('source_change', (event) => {
+      if (epoch !== streamEpoch) return;
+      const source = JSON.parse(event.data);
+      if (!liveEventScopeMatchesSelection(selection, expectedSubscriptionId, source)) return;
+      transportReady = true;
+      filters.setCatalog(source?.filter_catalog);
     });
     stream.addEventListener('filter_catalog', (event) => {
       if (epoch !== streamEpoch) return;
-      const catalogState = filters.setCatalog(JSON.parse(event.data));
-      if (catalogState === 'changed') clearSession();
+      filters.setCatalog(JSON.parse(event.data));
     });
     stream.addEventListener('live_gap', (event) => {
-      if (epoch === streamEpoch) addGap(JSON.parse(event.data));
+      if (epoch === streamEpoch && transportReady) addGap(JSON.parse(event.data));
     });
   };
 
   const select = (nextSelection) => {
     messagesController.select(nextSelection);
     channelController.select(nextSelection);
-    const nextKey = nextSelection ?
-      `${nextSelection.configurationId}:${nextSelection.frequencyHz || ''}:${nextSelection.timeslot || ''}` : '';
-    const currentKey = selection ?
-      `${selection.configurationId}:${selection.frequencyHz || ''}:${selection.timeslot || ''}` : '';
-    if (nextKey === currentKey) {
-      selection = nextSelection;
-      selectionLabel.textContent = selection?.label || 'Select a live row above';
-      sync();
-      return;
-    }
-    closeStream();
+    const { logicalChanged } = liveDetailSelectionDelta(selection, nextSelection);
     selection = nextSelection;
-    filters.resetForSelection();
-    clearSession();
     selectionLabel.textContent = selection?.label || 'Select a live row above';
+    if (logicalChanged) {
+      closeStream();
+      clearSession();
+    }
     scheduleRender();
     sync();
   };
@@ -11679,8 +11853,9 @@ function liveEventsPanel(onCollapse) {
       channelController.setActive(id === 'channel');
       const nextEventsActive = id === 'events';
       if (eventsActive && !nextEventsActive) {
+        possibleGap = Boolean(selection);
+        updateGapNotice();
         closeStream();
-        clearSession();
       }
       eventsActive = nextEventsActive;
       sync();
@@ -11693,6 +11868,10 @@ function liveEventsPanel(onCollapse) {
 
   collapse.addEventListener('click', () => {
     collapsed = !panel.classList.contains('collapsed');
+    if (collapsed && stream) {
+      possibleGap = true;
+      updateGapNotice();
+    }
     panel.classList.toggle('collapsed', collapsed);
     collapse.textContent = collapsed ? 'Expand' : 'Collapse';
     collapse.setAttribute('aria-expanded', String(!collapsed));
@@ -11708,6 +11887,7 @@ function liveEventsPanel(onCollapse) {
     pause.setAttribute('aria-pressed', String(paused));
     messagesController.setPaused(paused);
     channelController.setPaused(paused);
+    if (!paused) scheduleRender();
   });
   renderEvents();
   return {
@@ -12034,22 +12214,22 @@ function liveSystemsSection(onSelectionChange) {
   const block = section('Live Systems', host);
   block.querySelector('.section-title').append(connection);
   let activeTableId = null;
-  let selectedRowKey = null;
-
-  const currentControlRow = (value) => (value?.rows || []).find((row) =>
-    channelTagSet(row.tags).has('CURRENT_CONTROL')) || null;
+  let selection = null;
 
   const clearSelection = () => {
-    if (selectedRowKey === null) return;
-    selectedRowKey = null;
+    if (!selection) return;
+    selection = null;
+    rowNodes.forEach((candidate) => candidate.classList.remove('selected'));
     onSelectionChange(null);
   };
 
   const selectRow = (value, row) => {
     if (!value || !row) return;
-    selectedRowKey = row.key;
-    rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
-    onSelectionChange(liveEventSelection(value, row));
+    const nextSelection = liveDetailRowSelection(value, row);
+    if (!nextSelection) return;
+    selection = nextSelection;
+    rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selection.rowKey));
+    onSelectionChange(selection);
   };
 
   const cellText = (cell, value) => {
@@ -12104,7 +12284,7 @@ function liveSystemsSection(onSelectionChange) {
       (decodePercent >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
         (decodePercent >= DECODE_DEGRADED_MINIMUM_PERCENT ?
           'quality-warn' : 'quality-bad'));
-    element.classList.toggle('selected', selectedRowKey === row.key);
+    element.classList.toggle('selected', selection?.rowKey === row.key);
   };
 
   const createRow = (row) => {
@@ -12155,7 +12335,7 @@ function liveSystemsSection(onSelectionChange) {
       empty.append(message);
       body.append(empty);
     }
-    const currentControl = value.control_active ? currentControlRow(value) : null;
+    const currentControl = value.control_active ? liveCurrentControlRow(value) : null;
     if (currentControl) selectRow(value, currentControl);
     tabNodes.forEach((tab, id) => tab.classList.toggle('active', id === activeTableId));
   };
@@ -12163,7 +12343,6 @@ function liveSystemsSection(onSelectionChange) {
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
     const incoming = new Map((value.rows || []).map((row) => [row.key, row]));
-    if (selectedRowKey !== null && !incoming.has(selectedRowKey)) clearSelection();
     body.querySelector('.empty')?.remove();
     rowNodes.forEach((element, key) => {
       if (!incoming.has(key)) {
@@ -12181,9 +12360,23 @@ function liveSystemsSection(onSelectionChange) {
         updateRow(element, row);
       }
     });
-    if (selectedRowKey !== null) {
-      const selectedRow = incoming.get(selectedRowKey);
-      if (selectedRow) onSelectionChange(liveEventSelection(value, selectedRow));
+    if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL) {
+      const currentControl = value.control_active ? liveCurrentControlRow(value) : null;
+      if (currentControl) selectRow(value, currentControl);
+      else {
+        const controlIntent = (value.rows || []).find((row) =>
+          LIVE_DETAIL_CONTROL_ROLES.has(String(row?.role || '').toUpperCase())) || {
+          configuration_id: selection.configurationId,
+          role: 'CURRENT_CONTROL'
+        };
+        selection = liveDetailSelection(value, controlIntent, null);
+        rowNodes.forEach((candidate) => candidate.classList.remove('selected'));
+        onSelectionChange(selection);
+      }
+    } else if (selection) {
+      const selectedRow = incoming.get(selection.rowKey);
+      if (selectedRow) selectRow(value, selectedRow);
+      else clearSelection();
     }
     if (liveSort) reorderVisibleRows(value.rows || []);
     if (!rowNodes.size) {
@@ -12246,7 +12439,7 @@ function liveSystemsSection(onSelectionChange) {
     const quality = tab.querySelector('.systems-tab-quality');
     const qualityLinksToSite = value.table_id !== 'conventional' && value.guid &&
       capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS);
-    const currentControl = currentControlRow(value);
+    const currentControl = liveCurrentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
       Date.now() - qualityObservedAt <= SIGNAL_OFFLINE_MILLISECONDS;
@@ -12717,6 +12910,7 @@ function p25SiteDetailRows(site) {
     ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
     ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site_id, 2)],
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
+    ['Active RFSS Network Connection', yesNoKnown(site.active_rfss_network_connection)],
     ['Manufacturer', site.mfid_display],
     ['Configured Decoder Mode', p25DecoderMode(site.p25_decoder_mode)],
     ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
@@ -15061,7 +15255,8 @@ function activateNavigation(view) {
 function loggingAvailabilitySignature() {
   const logging = statsLoggingState();
   const historyMode = logging.historyActive ? 'active' : (logging.historyRetained ? 'retained' : 'unavailable');
-  return [logging.available, logging.summaryActive, historyMode, logging.state].join('|');
+  return [logging.available, logging.summaryActive, historyMode, logging.state,
+    serviceStatusWarningRequired()].join('|');
 }
 
 async function reloadForWebClientRevision() {
@@ -15097,19 +15292,18 @@ async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
   if (await reloadForWebClientRevision()) return;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
-    serviceStatus = null;
+    clearServiceStatus();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Status restricted';
     return;
   }
   try {
-    serviceStatus = await api('/api/v1/status', {}, { page: false });
+    await requestServiceStatus();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Receiver status available';
   } catch (error) {
-    serviceStatus = null;
     const status = document.getElementById('global-status');
-    if (status) status.textContent = 'Receiver status unavailable';
+    if (status) status.textContent = serviceStatus ? 'Receiver status stale' : 'Receiver status unavailable';
   }
 
   const currentView = route.get('view') || 'dashboard';

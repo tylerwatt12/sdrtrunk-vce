@@ -277,7 +277,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"100\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"101\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -973,6 +973,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(filters.contains("`${selected}/${leafKeys.length}`"));
         assertTrue(model.contains("catalog?.signature === next.signature"));
         assertTrue(model.contains("if (!next) return 'ignored'"));
+        assertTrue(model.contains("excludedLeafKeys"));
+        assertFalse(model.contains("resetForSelection"));
         assertTrue(messages.contains("message.filter_key"));
         assertTrue(messages.contains("message.filter_label"));
         assertTrue(events.contains("filters.matchesLeaf(event.event_type)"));
@@ -980,7 +982,21 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("addEventListener('live_gap'"));
         assertTrue(messages.contains("addEventListener('source_change'"));
         assertTrue(messages.contains("filters.setCatalog(change?.filter_catalog)"));
+        assertTrue(messages.contains(
+            "liveMessageSourceMatchesSelection(selection, expectedSubscriptionId, change)"));
+        assertTrue(messages.contains("expectedSubscriptionId = randomLiveClientId()"));
+        assertTrue(messages.contains("parameters.subscription_id = expectedSubscriptionId"));
+        assertTrue(source.contains(
+            "function liveMessageSourceMatchesSelection(selection, subscriptionId, source)"));
+        assertTrue(messages.contains("liveDetailSelectionDelta(selection, nextSelection)"));
+        assertFalse(messages.contains("filters.resetForSelection"));
         assertTrue(events.contains("addEventListener('filter_catalog'"));
+        assertTrue(events.contains("addEventListener('source_change'"));
+        assertTrue(events.contains("liveEventScopeMatchesSelection(selection, expectedSubscriptionId, source)"));
+        assertTrue(events.contains("const subscriptionId = randomLiveClientId()"));
+        assertTrue(events.contains("parameters.subscription_id = subscriptionId"));
+        assertTrue(events.contains("epoch !== streamEpoch || !transportReady"));
+        assertTrue(events.contains("epoch === streamEpoch && transportReady"));
         assertTrue(messages.contains("stream.onopen = () =>"));
         assertTrue(events.contains("stream.onopen = () =>"));
         assertTrue(messages.contains("additional messages may have been missed"));
@@ -988,7 +1004,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(messages.contains("parameters.timeslot"));
         assertFalse(messages.contains("addEventListener('snapshot'"));
         assertFalse(events.contains("addEventListener('snapshot'"));
-        assertFalse(messages.contains("stream.update("));
+        assertTrue(messages.contains("stream.update(parameters)"));
         assertFalse(events.contains("stream.update("));
         assertTrue(css.contains(".read-only-modal.live-filter-modal"));
         assertTrue(css.contains(".live-filter-tree"));
@@ -1057,7 +1073,8 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String css = readText(APP_CSS);
-        String selection = function(source, "function liveEventSelection(tableValue, row)");
+        String selection = function(source, "function liveDetailSelection(tableValue, row, bindingRow = row)");
+        String rowSelection = function(source, "function liveDetailRowSelection(tableValue, row)");
         String events = function(source, "function liveEventsPanel(onCollapse)");
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
@@ -1074,10 +1091,21 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("liveChannelPane()"));
         assertTrue(events.contains("liveConnection('decode_events', parameters)"));
         assertTrue(events.contains("configuration_id: selection.configurationId"));
-        assertTrue(events.contains("parameters.frequency_hz = selection.frequencyHz"));
-        assertTrue(events.contains("parameters.timeslot = selection.timeslot"));
+        assertTrue(events.contains("selection.kind === LIVE_DETAIL_SELECTION_KINDS.EXACT"));
+        assertTrue(events.contains("parameters.frequency_hz = selection.bindingFrequencyHz"));
+        assertTrue(events.contains("parameters.timeslot = selection.bindingTimeslot"));
         assertFalse(events.contains("stream.addEventListener('snapshot'"));
         assertTrue(events.contains("stream.addEventListener('decode_event'"));
+        assertTrue(events.contains("liveEventMatchesSelection(selection, value)"));
+        assertTrue(source.contains("function liveEventMatchesSelection(selection, event)"));
+        assertTrue(source.contains(
+            "function liveEventScopeMatchesSelection(selection, subscriptionId, source)"));
+        assertTrue(source.contains(
+            "function liveChannelStateMatchesSelection(selection, subscriptionId, source)"));
+        assertTrue(source.contains("event?.frequency_hz"));
+        assertTrue(source.contains("event?.timeslot"));
+        assertTrue(events.contains("liveDetailSelectionDelta(selection, nextSelection)"));
+        assertFalse(events.contains("filters.resetForSelection"));
         assertTrue(events.contains("if (!events.has(event.event_id)) order.unshift(event.event_id)"));
         assertTrue(events.contains("while (order.length > liveDetailCaptureLimit())"));
         assertTrue(events.contains("stream.addEventListener('live_gap'"));
@@ -1092,8 +1120,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("node('strong', 'live-event-duration-value', durationText)"));
         assertTrue(messages.contains("liveConnection('decode_messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
-        assertTrue(messages.contains("active && !collapsed && selection?.configurationId"));
+        assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
         assertTrue(channel.contains("binaryFrameConnection('channel_diagnostics', parameters"));
+        assertTrue(channel.contains("expectedSubscriptionId = randomLiveClientId()"));
+        assertTrue(channel.contains("parameters.subscription_id = expectedSubscriptionId"));
+        assertTrue(channel.contains(
+            "liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)"));
         assertEquals(channel.indexOf("binaryFrameConnection('channel_diagnostics', parameters"),
             channel.lastIndexOf("binaryFrameConnection('channel_diagnostics', parameters"));
         assertTrue(channel.contains("frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL"));
@@ -1121,23 +1153,40 @@ class StatsWebInteractionUiContractTest
         assertTrue(channel.contains("nextWaterfallRow = (nextWaterfallRow - 1 + waterfallBuffer.height)"));
         assertTrue(channel.contains("addWaterfallFrame(signalValues)"));
         assertTrue(channel.contains("Connection interrupted. Reconnecting…"));
+        assertTrue(channel.contains("stream.update(parameters)"));
+        assertTrue(channel.contains("liveDetailSelectionDelta(selection, nextSelection)"));
+        assertTrue(channel.contains("if (awaitingState) return"));
+        assertTrue(channel.contains(
+            "liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)"));
+        assertTrue(source.contains("Number(source?.frequency_hz || 0) === " +
+            "Number(selection?.bindingFrequencyHz || 0)"));
         assertFalse(channel.contains("window.setInterval"));
         assertFalse(channel.contains("window.clearInterval(ageTimer)"));
         assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));
         assertFalse(channel.contains("channel-mode-tabs"));
         assertFalse(channel.contains("view: mode"));
         assertTrue(selection.contains("row?.configuration_id || tableValue?.configuration_id"));
-        assertTrue(selection.contains("['CONFIGURED', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL']"));
-        assertTrue(selection.contains("diagnosticFrequencyHz"));
-        assertTrue(selection.contains("TS ${diagnosticTimeslot}"));
+        assertTrue(source.contains("LIVE_DETAIL_CONTROL_ROLES = new Set(['CONFIGURED_CONTROL', " +
+            "'CURRENT_CONTROL', 'ALTERNATE_CONTROL'])"));
+        assertTrue(selection.contains("LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
+        assertTrue(selection.contains("bindingFrequencyHz"));
+        assertTrue(selection.contains("TS ${bindingTimeslot}"));
+        assertTrue(selection.contains("logicalKey:"));
+        assertTrue(selection.contains("transportKey:"));
+        assertTrue(selection.contains("rowKey: resolvedRow?.key || null"));
+        assertTrue(rowSelection.contains("tableValue?.control_active === true"));
+        assertTrue(rowSelection.contains("liveCurrentControlRow(tableValue)"));
         assertTrue(systems.contains("const currentRow = (value?.rows || []).find"));
-        assertTrue(systems.contains("onSelectionChange(liveEventSelection(value, row))"));
-        assertTrue(systems.contains("if (selectedRowKey !== null && !incoming.has(selectedRowKey)) clearSelection()"));
-        assertTrue(systems.contains("const currentControlRow = (value) =>"));
+        assertTrue(systems.contains("liveDetailRowSelection(value, row)"));
+        assertTrue(systems.contains("onSelectionChange(selection)"));
+        assertFalse(systems.contains("selectedRowKey"));
+        assertTrue(source.contains("function liveCurrentControlRow(tableValue)"));
         assertTrue(createRow.contains("selectRow(value, currentRow)"));
-        assertTrue(showTable.contains("value.control_active ? currentControlRow(value) : null"));
+        assertTrue(showTable.contains("value.control_active ? liveCurrentControlRow(value) : null"));
         assertTrue(showTable.contains("selectRow(value, currentControl)"));
-        assertFalse(updateVisibleRows.contains("currentControlRow(value)"));
+        assertTrue(updateVisibleRows.contains("liveCurrentControlRow(value)"));
+        assertTrue(updateVisibleRows.contains("selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
+        assertTrue(updateVisibleRows.contains("liveDetailSelection(value, controlIntent, null)"));
         assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)"));
         assertTrue(css.contains(".live-split.details-collapsed"));
         assertTrue(css.contains(".live-details.collapsed .live-details-body"));
@@ -1469,7 +1518,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("pause.textContent = paused ? 'Resume' : 'Pause'"));
         assertTrue(events.contains("messagesController.setPaused(paused)"));
         assertTrue(events.contains("channelController.setPaused(paused)"));
-        assertTrue(messages.contains("active && !collapsed && selection?.configurationId"));
+        assertTrue(events.contains("if (!paused) scheduleRender()"));
+        assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
+        assertTrue(messages.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
+        assertTrue(messages.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
+        assertTrue(messages.contains("if (document.hidden && stream)"));
+        assertTrue(messages.contains("possibleGap = true"));
         assertTrue(messages.contains("setPaused(value) { paused = value; if (!paused) scheduleRender(); }"));
         assertFalse(messages.contains("badge('Waiting'"));
         assertFalse(messages.contains("setStatus("));

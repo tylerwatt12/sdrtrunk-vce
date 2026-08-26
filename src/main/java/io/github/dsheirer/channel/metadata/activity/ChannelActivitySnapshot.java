@@ -84,9 +84,11 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
                       String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
                       String targetForm, String targetAlias, String targetAliasDescription, String decoder,
-                      String encryptionDetails, Navigation navigation)
+                      String encryptionDetails, Navigation navigation, String role)
     {
-        /** Compatibility constructor for snapshots that do not supply browser navigation metadata. */
+        /**
+         * Compatibility constructor for snapshots that do not supply browser navigation metadata or an explicit role.
+         */
         public Row(String key, String channelName, String configurationId, String status, List<String> tags,
                    String lcn, long frequencyHz, String callsign,
                    Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
@@ -102,11 +104,12 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
                 controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
                 timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
-                targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, null);
+                targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, null, null);
         }
 
         /**
-         * Compatibility constructor for snapshots that do not supply alias descriptions.
+         * Compatibility constructor for snapshots that do not supply alias descriptions, browser navigation
+         * metadata, or an explicit role.
          */
         public Row(String key, String channelName, String configurationId, String status, List<String> tags,
                    String lcn, long frequencyHz, String callsign, Double signalDbfs, Double decodeHealthPercent,
@@ -147,7 +150,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 row.getDecoder(), row.getEncryptionDetails(), new Navigation(ChannelContextKey.configured(channel),
                 channel != null ? channel.getAliasListName() : null, protocol(row.getSource(), row.getTarget()),
                 aliasReferences(row.getSourceAliases()), matcher(row.getSource()),
-                aliasReferences(row.getTargetAliases()), matcher(row.getTarget())));
+                aliasReferences(row.getTargetAliases()), matcher(row.getTarget())), row.getRole().name());
         }
 
         private static String protocol(Identifier<?> first, Identifier<?> second)

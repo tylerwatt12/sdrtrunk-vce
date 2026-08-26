@@ -61,7 +61,7 @@ One mutable row per `(scope, identity kind, numeric ID)`. Kinds are talkgroup, r
 contains first/last observation times; fixed integer counters for the supported Activity actions; source and target
 call counts; encrypted, recorded, and streamed counts; the latest counterpart and encryption facts; and the latest
 typed over-the-air talker alias for a radio. Manual aliases, descriptions, and groups remain administrator-owned
-configuration and are joined at read time. P25 schema v26 also stores a compact identity-evidence state and nullable
+configuration and are joined at read time. P25 schema v27 also stores a compact identity-evidence state and nullable
 home WACN/System/talkgroup values so ordinary, stable fully-qualified, and conflicting observations are not collapsed
 into one false alias identity for positive local talkgroup IDs. Those four fields add no rows or indexes; see
 [Alias Discovery and Unmatched Talkgroup Storage](alias-discovery-storage.md).
@@ -399,7 +399,7 @@ No normal runtime path creates or repairs these tables or indexes. New databases
 at v2, so no public v1 migration is supported. Conventional DMR summaries use the independent
 `dmr_activity_schema_version=1` subsystem. Protocol-neutral identity storage entered P25 activity schema v24 and
 records the positive `trunked_identity_metrics_started_at_ms` boundary so pages do not imply that partially backfilled
-DMR/NXDN totals cover time before collection began. Alpha 10 advances directly from P25 activity schema v24 to v26,
+DMR/NXDN totals cover time before collection began. Alpha 10 advances directly from P25 activity schema v24 to v27,
 which adds qualifier-safe P25 talkgroup evidence plus three bounded protocol-neutral current-affiliation,
 authoritative-site-presence, and lifecycle tables. New databases create every current subsystem in the same global
 routine; existing databases remain validation-only except through the bundled Application Migrator.
@@ -410,17 +410,30 @@ paths do not create or repair it.
 
 Schema v24 removed the obsolete `p25_talkgroup_summary`, `p25_radio_summary`, and
 `p25_radio_talkgroup_summary` tables rather than permanently dual-writing two directory models. P25 identity data is
-projected into the shared tables. Schema v26 likewise replaces `p25_radio_affiliation` instead of retaining a
-compatibility table or dual-write path; `p25_system` and P25 site/band/patch facts remain protocol capabilities.
+projected into the shared tables. Current schema v27 likewise uses the protocol-neutral affiliation tables instead of
+retaining `p25_radio_affiliation` as a compatibility table or dual-write path; `p25_system` and P25 site/band/patch
+facts remain protocol capabilities.
 
-Alpha 8 and Alpha 9 shipped the same P25 activity schema v24 layout and exact schema fingerprint, with no stored
-release provenance. The bundled transition therefore recognizes that one exact source layout rather than attempting
-to distinguish the two release labels. The v24 shared projection cannot establish qualifier-safe P25 history, so the
-clean direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It
-preserves system-wide current P25 affiliations, reconstructs only their required compact ordinary P25 identities and
-relationships within current per-scope admission caps, and leaves authoritative site presence and clear watermarks
-empty because the source layout cannot prove a site or deregistration time. Other activity and supported
-administrator-owned configuration are preserved. Intermediate development schemas are not accepted.
+Schema v27 adds three nullable scalar fields to existing bounded P25 site rows: the current site's advertised System
+ID and active-RFSS status on `p25_site_snapshot`, and callsign on `p25_site_channel_summary`. The Site page reads the
+site-level System ID only when a normalized WACN/System row is not yet available, and reads a retained callsign for the
+current control frequency before falling back to the newest channel callsign. These fields do not add rows, indexes,
+or write fan-out: site values update the one row per receiver GUID, and callsign follows the existing bounded channel
+summary row, Statistics retention, per-site clear, and full-reset lifecycle. The existing GUID/frequency index serves
+the control-channel callsign lookup; the current tables alone cannot answer it after current facts are replaced.
+
+Alpha 8, Alpha 9, and Alpha 10 shipped the same P25 activity schema v24 layout and exact schema fingerprint, with no
+stored release provenance. The bundled transition therefore recognizes that one exact source layout rather than
+attempting to distinguish the three release labels. The Application Migrator creates a safety backup, builds and
+validates a staged copy, and promotes it atomically only after validation succeeds. Supported administrator-owned
+configuration is preserved, including channels, supported Aliases and routes, application settings, and streaming
+definitions.
+
+The migration discards all prior statistics and activity data and creates the current statistics and activity schema
+empty. That reset includes P25, DMR, and NXDN identity summaries, relationships, talker aliases, detailed Activity,
+site facts, quality history, affiliations, site presence, lifecycle state, call/output totals, and all other counters.
+No dynamic identity, affiliation, presence, history, or counter row is copied, re-keyed, or reconstructed.
+Intermediate development schemas are not accepted.
 
 ## Retention
 
@@ -528,5 +541,6 @@ sustained decode loss and is cleared by the quality monitor's inactive shutdown 
 replacement, statistics disablement, or writer shutdown. Samples use the existing bounded statistics queue and single
 database writer. Existing retention, site-specific clear, and full reset paths already operate on this shared
 GUID-keyed table. New databases create the index in the single startup schema routine. The exact shared Alpha 8/Alpha
-9 layout-to-Alpha 10 transition preserves this quality history and its index unchanged; older and intermediate schemas
-are not accepted directly. Ordinary application services never create or repair the index.
+9/Alpha 10 predecessor transition creates the current table and index empty; prior quality samples are not copied.
+Older and intermediate schemas are not accepted directly. Ordinary application services never create or repair the
+index.

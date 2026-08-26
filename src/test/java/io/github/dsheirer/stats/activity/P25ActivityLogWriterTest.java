@@ -12,6 +12,7 @@ import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -136,6 +137,111 @@ class P25ActivityLogWriterTest
         }
     }
 
+    @Test
+    void persistsCurrentSiteIdentityWithoutNetworkWacnAndRetainsPartialFields() throws Exception
+    {
+        Path database = database("site-current-identity.sqlite");
+        P25ActivityLogRecords.SiteSnapshot baseline = siteSnapshot(1_000L, null, 0x321,
+            "current-site-only", false);
+        P25ActivityLogRecords.SiteSnapshot partial = new P25ActivityLogRecords.SiteSnapshot(2_000L,
+            baseline.guid(), baseline.contextKind(), "partial", baseline.protocol(), baseline.channelName(),
+            baseline.aliasListName(), baseline.decoder(), null, null, 0x456, 7, 9, 2, null, baseline.tdma(),
+            baseline.siteStatus(), baseline.primaryFrequencyHertz(), baseline.currentControlHertz(),
+            baseline.channels(), baseline.neighborSites(), baseline.frequencyBands(), baseline.patchGroups(),
+            baseline.foreignSystemBands());
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection, baseline);
+            P25ActivityLogSchema.insertSite(connection, partial);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT system_key, system_id, nac, rfss, site, lra, active_rfss_network_connection
+                    FROM p25_site_snapshot
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(null, resultSet.getObject("system_key"));
+                assertEquals(0x321, resultSet.getInt("system_id"));
+                assertEquals(0x456, resultSet.getInt("nac"));
+                assertEquals(7, resultSet.getInt("rfss"));
+                assertEquals(9, resultSet.getInt("site"));
+                assertEquals(2, resultSet.getInt("lra"));
+                assertEquals(0, resultSet.getInt("active_rfss_network_connection"));
+            }
+
+            assertEquals("WPFF205", scalarText(connection,
+                "SELECT callsign FROM p25_site_channel"));
+            assertEquals("WPFF205", scalarText(connection,
+                "SELECT callsign FROM p25_site_channel_summary"));
+        }
+    }
+
+    @Test
+    void completingWacnForTheSameObservedSystemKeepsTheSiteGeneration() throws Exception
+    {
+        Path database = database("site-system-completion.sqlite");
+        P25ActivityLogRecords.SiteSnapshot first = siteSnapshot(1_000L, null, 0x321,
+            "current-site-only", true);
+        P25ActivityLogRecords.SiteSnapshot completed = siteSnapshot(2_000L, 0xABCDE, 0x321,
+            "network-complete", true);
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection, first);
+            P25ActivityLogSchema.insertSite(connection, completed);
+
+            assertEquals(1_000L, scalar(connection,
+                "SELECT first_seen_ms FROM p25_site_snapshot"));
+            assertEquals(2L, scalar(connection,
+                "SELECT observation_count FROM p25_site_snapshot"));
+            assertEquals(1_000L, scalar(connection,
+                "SELECT first_seen_ms FROM receiver_context WHERE guid IS NOT NULL"));
+            assertEquals(2L, scalar(connection,
+                "SELECT observation_count FROM p25_site_channel_summary"));
+            assertEquals("WPFF205", scalarText(connection,
+                "SELECT callsign FROM p25_site_channel_summary"));
+            assertEquals(0x321L, scalar(connection,
+                "SELECT system_id FROM p25_site_snapshot"));
+            assertEquals(1L, scalar(connection,
+                "SELECT active_rfss_network_connection FROM p25_site_snapshot"));
+            assertEquals(1L, scalar(connection,
+                "SELECT COUNT(*) FROM p25_site_snapshot WHERE system_key IS NOT NULL"));
+        }
+    }
+
+    @Test
+    void changingCurrentSiteOnlySystemStartsANewSiteGeneration() throws Exception
+    {
+        Path database = database("site-system-change.sqlite");
+        P25ActivityLogRecords.SiteSnapshot first = siteSnapshot(1_000L, null, 0x321,
+            "system-a", true);
+        P25ActivityLogRecords.SiteSnapshot changed = siteSnapshot(2_000L, null, 0x654,
+            "system-b", true);
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection, first);
+            P25ActivityLogSchema.insertSite(connection, changed);
+
+            assertEquals(2_000L, scalar(connection,
+                "SELECT first_seen_ms FROM p25_site_snapshot"));
+            assertEquals(1L, scalar(connection,
+                "SELECT observation_count FROM p25_site_snapshot"));
+            assertEquals(2_000L, scalar(connection,
+                "SELECT first_seen_ms FROM receiver_context WHERE guid IS NOT NULL"));
+            assertEquals(2_000L, scalar(connection,
+                "SELECT first_seen_ms FROM p25_site_channel_summary"));
+            assertEquals(1L, scalar(connection,
+                "SELECT observation_count FROM p25_site_channel_summary"));
+            assertEquals(0x654L, scalar(connection,
+                "SELECT system_id FROM p25_site_snapshot"));
+            assertEquals(1L, scalar(connection,
+                "SELECT COUNT(*) FROM receiver_context WHERE system_key IS NULL"));
+        }
+    }
+
     private Path database(String name) throws Exception
     {
         Path database = mTemporaryFolder.resolve(name);
@@ -168,12 +274,38 @@ class P25ActivityLogWriterTest
             P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(), "DMR", true);
     }
 
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long observedAt, Integer wacn,
+                                                                    int systemId, String snapshotHash,
+                                                                    boolean activeRfssNetworkConnection)
+    {
+        List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
+            new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856_137_500L,
+                null, false, 1, "WPFF205"));
+        P25NetworkConfigurationSnapshot.SiteStatus status = new P25NetworkConfigurationSnapshot.SiteStatus(
+            1_784_000_000_000L, 110, true, "Autonomous and by Request", 240, true, 0x90, true);
+
+        return new P25ActivityLogRecords.SiteSnapshot(observedAt,
+            "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
+            snapshotHash, "APCO25", "Example Site", "Example System", "P25-1", wacn, systemId,
+            0x456, 7, 9, 2, activeRfssNetworkConnection, false, status, 856_137_500L, 856_137_500L,
+            channels, List.of(), List.of(), List.of(), List.of());
+    }
+
     private static long scalar(Connection connection, String sql) throws Exception
     {
         try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery(sql))
         {
             assertTrue(resultSet.next());
             return resultSet.getLong(1);
+        }
+    }
+
+    private static String scalarText(Connection connection, String sql) throws Exception
+    {
+        try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery(sql))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getString(1);
         }
     }
 

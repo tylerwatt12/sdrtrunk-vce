@@ -77,7 +77,7 @@ public final class SdrTrunkDatabaseBootstrap
             if(!state.supported())
             {
                 throw new IOException("This release accepts only its exact current database or the exact shared " +
-                    "v0.6.2 Alpha 8/Alpha 9 database layout, not " + state.description() + ". Intermediate " +
+                    "v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout, not " + state.description() + ". Intermediate " +
                     "development and webfirst databases are not supported; keep separate portable data folders " +
                     "for main and webfirst.");
             }

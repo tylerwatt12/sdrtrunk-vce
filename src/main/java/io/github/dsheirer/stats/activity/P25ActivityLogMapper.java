@@ -605,13 +605,17 @@ class P25ActivityLogMapper
 
         Channel channel = event.channel();
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
+        P25NetworkConfigurationSnapshot.CurrentSite currentSite = snapshot.currentSite();
         Integer wacn = snapshot.network() != null ? snapshot.network().wacn() : null;
-        Integer system = snapshot.network() != null ? snapshot.network().system() : null;
-        Integer nac = snapshot.network() != null ? snapshot.network().nac() : null;
-        Integer rfss = snapshot.currentSite() != null ? snapshot.currentSite().rfss() : null;
-        Integer site = snapshot.currentSite() != null ? snapshot.currentSite().site() : null;
-        Integer lra = snapshot.currentSite() != null && snapshot.currentSite().lra() != null ?
-            snapshot.currentSite().lra() : snapshot.network() != null ? snapshot.network().lra() : null;
+        Integer system = snapshot.network() != null && snapshot.network().system() != null ?
+            snapshot.network().system() : currentSite != null ? currentSite.system() : null;
+        Integer nac = snapshot.network() != null && snapshot.network().nac() != null ?
+            snapshot.network().nac() : currentSite != null ? currentSite.nac() : null;
+        Integer rfss = currentSite != null ? currentSite.rfss() : null;
+        Integer site = currentSite != null ? currentSite.site() : null;
+        Integer lra = currentSite != null && currentSite.lra() != null ? currentSite.lra() :
+            snapshot.network() != null ? snapshot.network().lra() : null;
+        Boolean activeRfssNetworkConnection = currentSite != null ? currentSite.activeRfssNetworkConnection() : null;
         Boolean tdma = hasTdma(snapshot);
         Long currentControl = currentControl(snapshot.channels());
         String hash = sha256(String.join("|", safe(snapshot.decoder()), safe(snapshot.network()),
@@ -630,7 +634,8 @@ class P25ActivityLogMapper
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
             TrunkedSiteMetadataMapper.configuredSiteName(channel), blankToNull(channel.getAliasListName()),
             snapshot.decoder(), wacn,
-            system, nac, rfss, site, lra, tdma, snapshot.siteStatus(), currentControl, currentControl,
+            system, nac, rfss, site, lra, activeRfssNetworkConnection, tdma, snapshot.siteStatus(), currentControl,
+            currentControl,
             snapshot.channels(), snapshot.neighborSites(),
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.foreignSystemBands());
     }

@@ -60,8 +60,8 @@ class ApplicationMigrationServiceTest
                 ApplicationMigrationService.ALPHA_9_P25_VERSION, 2, 1);
         assertTrue(alpha9.supported());
         assertTrue(alpha9.requiresMigration());
-        assertTrue(alpha9.requiredChanges().contains("preserve current P25 affiliations"));
-        assertTrue(alpha9.requiredChanges().contains("site presence empty"));
+        assertTrue(alpha9.requiredChanges().contains("reset all statistics"));
+        assertTrue(alpha9.requiredChanges().contains("preserve supported configuration"));
 
         ApplicationMigrationService.MigrationState alpha7 =
             new ApplicationMigrationService.MigrationState(3, 21, 2, null);
@@ -98,13 +98,16 @@ class ApplicationMigrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         Alpha9TestDatabase.create(database);
         insertAlias(database, "Retained Alpha 9 Alias");
+        insertAlpha9ProfileSentinels(database);
 
         ApplicationMigrationService.MigrationResult result =
             new ApplicationMigrationService().migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
         assertTrue(result.sourceState().alpha9());
-        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9 layout migration"));
+        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
+        assertTrue(result.helperOutput().contains("Statistics, activity history, learned site state, affiliations, " +
+            "and presence were reset"));
         assertNotNull(result.safetyBackup());
         assertEquals("4", scalar(result.safetyBackup(), """
             SELECT value FROM database_metadata WHERE key='alias_schema_version'
@@ -113,8 +116,17 @@ class ApplicationMigrationServiceTest
             SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
             """));
         assertEquals(1, count(result.safetyBackup(), "alias"));
+        assertEquals(1, count(result.safetyBackup(), "p25_activity_event"));
+        assertEquals(1, count(result.safetyBackup(), "p25_radio_affiliation"));
         assertEquals(currentState(), ApplicationMigrationService.readMigrationState(database));
         assertEquals(1, count(database, "alias"));
+        assertAlpha9ConfigurationSentinels(database);
+        assertEquals(0, count(database, "p25_activity_event"));
+        assertEquals(0, count(database, "trunked_identity_scope"));
+        assertEquals(0, count(database, "trunked_radio_affiliation"));
+        assertEquals(0, count(database, "p25_control_channel_quality"));
+        assertEquals(0, count(database, "dmr_conventional_talkgroup_summary"));
+        assertEquals(0, count(database, "trunked_site_snapshot"));
         assertEquals("wal", journalMode(database));
     }
 
@@ -125,6 +137,7 @@ class ApplicationMigrationServiceTest
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
         Alpha9TestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Imported Alpha 9 Alias");
+        insertAlpha9ProfileSentinels(sourceDatabase);
         Path sourceJmbe = Files.createDirectories(sourceRoot.resolve("jmbe/nested")).resolve("jmbe-test.jar");
         Path sourceModule = Files.createDirectories(sourceRoot.resolve("modules")).resolve("module-test.jar");
         Files.write(sourceJmbe, new byte[] {1, 2, 3});
@@ -137,11 +150,16 @@ class ApplicationMigrationServiceTest
 
         assertTrue(result.importedPreviousProfile());
         assertTrue(result.sourceState().alpha9());
-        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9 layout migration"));
+        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(currentState(), ApplicationMigrationService.readMigrationState(targetDatabase));
         assertEquals("Imported Alpha 9 Alias", scalar(targetDatabase,
             "SELECT name FROM alias WHERE id=1"));
+        assertAlpha9ConfigurationSentinels(targetDatabase);
+        assertEquals(0, count(targetDatabase, "p25_activity_event"));
+        assertEquals(0, count(targetDatabase, "trunked_radio_affiliation"));
+        assertEquals(0, count(targetDatabase, "dmr_conventional_talkgroup_summary"));
+        assertEquals(0, count(targetDatabase, "trunked_site_snapshot"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertEquals("4", scalar(sourceDatabase, """
             SELECT value FROM database_metadata WHERE key='alias_schema_version'
@@ -149,6 +167,8 @@ class ApplicationMigrationServiceTest
         assertEquals("24", scalar(sourceDatabase, """
             SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
             """));
+        assertEquals(1, count(sourceDatabase, "p25_activity_event"));
+        assertEquals(1, count(sourceDatabase, "p25_radio_affiliation"));
         assertArrayEquals(Files.readAllBytes(sourceJmbe),
             Files.readAllBytes(targetRoot.resolve("jmbe/nested/jmbe-test.jar")));
         assertArrayEquals(Files.readAllBytes(sourceModule),
@@ -305,7 +325,8 @@ class ApplicationMigrationServiceTest
         IOException exception = assertThrows(IOException.class,
             () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 database layout"));
+        assertTrue(exception.getMessage().contains(
+            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
@@ -517,6 +538,98 @@ class ApplicationMigrationServiceTest
                 statement.executeUpdate();
             }
         }
+    }
+
+    private static void insertAlpha9ProfileSentinels(Path database) throws Exception
+    {
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, system_name, site_name, name, alias_list_name,
+                    decoder_type, source_type, primary_frequency_hz, frequency_count, config_json
+                ) VALUES (
+                    700, 1, 'Migration System', 'Migration Site', 'Migration Channel', 'Test',
+                    'P25_PHASE1', 'TUNER', 851012500, 1, '{"preserved":true}'
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel_map(id, sort_order, name, config_json)
+                VALUES (700, 1, 'Migration Map', '{"preserved":true}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_broadcast_stream(
+                    id, sort_order, name, server_type, enabled, host, port, config_json
+                ) VALUES (
+                    700, 1, 'Migration Stream', 'ICECAST_HTTP', 1,
+                    'stream.example', 8000, '{"preserved":true}'
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('alpha9-migration-sentinel', '{"preserved":true}', 1000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO application_icons(key, icons_json, updated_at_ms)
+                VALUES ('alpha9-migration-sentinel', '{"preserved":true}', 1000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
+                VALUES (700, 781824, 840, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_context(
+                    id, context_key, guid, kind_code, protocol_code, channel_name,
+                    alias_list_name, decoder, first_seen_ms, last_seen_ms, system_key,
+                    primary_frequency_hz
+                ) VALUES
+                    (700, 'alpha9-p25', 'alpha9-p25-guid', 1, 1, 'Migration Channel',
+                        'Test', 'P25-1', 1000, 2000, 700, 851012500),
+                    (701, 'alpha9-dmr', 'alpha9-dmr-guid', 2, 3, 'Migration DMR',
+                        'Test', 'DMR', 1000, 2000, NULL, 451000000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event(
+                    context_id, observed_at_ms, action_code, source_radio_id, target_id,
+                    target_kind_code, frequency_hz, encrypted
+                ) VALUES (700, 1500, 4, 1800001, 43, 1, 851012500, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
+                VALUES (700, 1800001, 43, 1500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_control_channel_quality(
+                    guid, frequency_hz, bucket_start_ms, observed_at_ms,
+                    valid_frames, invalid_frames, corrected_bits, sync_loss_bits, dropped_bits
+                ) VALUES ('alpha9-p25-guid', 851012500, 0, 1500, 10, 1, 2, 3, 4)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_talkgroup_summary(
+                    context_id, frequency_hz, timeslot, talkgroup_id,
+                    first_seen_ms, last_seen_ms, call_count
+                ) VALUES (701, 451000000, 1, 321, 1000, 2000, 4)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_snapshot(
+                    guid, snapshot_hash, protocol_code, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('alpha9-trunked-site', 'hash', 3, 1000, 2000, 2)
+                """);
+        }
+    }
+
+    private static void assertAlpha9ConfigurationSentinels(Path database) throws Exception
+    {
+        assertEquals("Migration Channel", scalar(database,
+            "SELECT name FROM configuration_channel WHERE id=700"));
+        assertEquals("Migration Map", scalar(database,
+            "SELECT name FROM configuration_channel_map WHERE id=700"));
+        assertEquals("Migration Stream", scalar(database,
+            "SELECT name FROM configuration_broadcast_stream WHERE id=700"));
+        assertEquals("{\"preserved\":true}", scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='alpha9-migration-sentinel'"));
+        assertEquals("{\"preserved\":true}", scalar(database,
+            "SELECT icons_json FROM application_icons WHERE key='alpha9-migration-sentinel'"));
     }
 
     private static void insertCurrentProfileSentinels(Path database) throws Exception

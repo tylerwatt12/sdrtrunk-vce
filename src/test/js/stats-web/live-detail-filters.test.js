@@ -78,6 +78,7 @@ let lastModalBody = null;
 let modalOpenCount = 0;
 const context = {
   activeReadOnlyModal: null,
+  frequency: (value) => (Number(value) / 1_000_000).toFixed(5),
   node: (tag, className = '', text = '') => new RuntimeNode(tag, className, text),
   openReadOnlyModal: (_title, body, options) => {
     lastModalBody = body;
@@ -97,6 +98,17 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext([
+  "const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT' });",
+  "const LIVE_DETAIL_CONTROL_ROLES = new Set(['CONFIGURED_CONTROL', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL']);",
+  functionSource('function liveDetailSelection(tableValue, row, bindingRow = row)'),
+  functionSource('function liveCurrentControlRow(tableValue)'),
+  functionSource('function liveDetailRowSelection(tableValue, row)'),
+  functionSource('function liveDetailSelectionDelta(previous, next)'),
+  functionSource('function liveMessageTransportChanged(previous, next)'),
+  functionSource('function liveMessageSourceMatchesSelection(selection, subscriptionId, source)'),
+  functionSource('function liveEventMatchesSelection(selection, event)'),
+  functionSource('function liveEventScopeMatchesSelection(selection, subscriptionId, source)'),
+  functionSource('function liveChannelStateMatchesSelection(selection, subscriptionId, source)'),
   functionSource('function liveDetailText(value)'),
   functionSource('function liveDetailFilterCatalog(value)'),
   'let liveDetailFilterSequence = 0;',
@@ -177,23 +189,29 @@ const catalogV2 = {
   groups: [{ key: 'message/new', label: 'New Decoder', children: [
     { key: 'message/new/c', label: 'New Message', children: [] }
   ] }],
-  timeslots: []
+  timeslots: [3]
 };
 model.setSearch('stale');
+model.setTimeslot(1, false);
 assert.equal(model.setCatalog(catalogV2), 'changed');
 assert.notStrictEqual(model.catalog(), beforeRows);
-assert.equal(model.catalog().leafKeys[0], 'message/new/c');
+assert.deepEqual(Array.from(model.catalog().leafKeys), ['message/new/c']);
 assert.equal(model.enabledLeafCount(), 1);
-assert.equal(model.query(), '');
-
-model.setLeaves(['message/new/c'], false);
-model.setSearch('selection');
-model.resetForSelection();
-assert.equal(model.catalog(), null);
-assert.equal(model.enabledLeafCount(), 0);
-assert.equal(model.query(), '');
-assert.equal(model.setCatalog(catalogV1), 'initial');
+assert.equal(model.matchesLeaf('message/root/a'), false);
+assert.equal(model.matchesLeaf('message/new/c'), true);
+assert.equal(model.matchesTimeslot(1), false);
+assert.equal(model.matchesTimeslot(3), true);
+assert.equal(model.query(), 'stale');
+assert.equal(model.setCatalog(catalogV1), 'changed');
+assert.equal(model.matchesLeaf('message/root/a'), false);
+assert.equal(model.matchesLeaf('message/root/b'), true);
+assert.equal(model.matchesTimeslot(1), false);
+assert.equal(model.matchesTimeslot(2), true);
+assert.equal(model.query(), 'stale');
+model.resetFilters();
 assert.equal(model.enabledLeafCount(), 2);
+assert.equal(model.enabledTimeslotCount(), 2);
+assert.equal(model.query(), '');
 
 // The actual compact UI enables from the source catalog and renders every option with zero captured rows.
 const controller = context.liveDetailFilterController({ noun: 'messages', timeslots: true, validity: true });
@@ -237,6 +255,147 @@ trigger.dispatch('click');
 assert.equal(modalOpenCount, 2);
 assert.equal(findAll(lastModalBody,
   (candidate) => candidate.className.split(/\s+/).includes('leaf')).length, 1);
-controller.resetForSelection();
-assert.equal(trigger.disabled, true);
-assert.equal(context.activeReadOnlyModal, null);
+assert.equal(controller.setCatalog(catalogV1), 'changed');
+assert.equal(controller.matchesLeaf('message/root/a'), false);
+assert.equal(typeof controller.resetForSelection, 'undefined');
+controller.close();
+
+// Control selections retain logical identity while their exact transport follows the active control row.
+const site = { table_id: 'site-a', title: 'County · Downtown', configuration_id: 'site-config' };
+const controlA = context.liveDetailSelection(site, {
+  key: 'control-a', role: 'CURRENT_CONTROL', frequency_hz: 851_012_500
+});
+const controlB = context.liveDetailSelection(site, {
+  key: 'control-b', role: 'CURRENT_CONTROL', frequency_hz: 852_012_500
+});
+assert.equal(controlA.kind, 'CONTROL');
+assert.equal(controlA.logicalKey, controlB.logicalKey);
+assert.notEqual(controlA.transportKey, controlB.transportKey);
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(controlA, controlB))), {
+  logicalChanged: false, transportChanged: true
+});
+assert.equal(controlB.bindingFrequencyHz, 852_012_500);
+const currentRow = { key: 'control-b', role: 'CURRENT_CONTROL', frequency_hz: 852_012_500 };
+const alternateRow = { key: 'alternate', role: 'ALTERNATE_CONTROL', frequency_hz: 853_012_500 };
+const alternateIntent = context.liveDetailRowSelection({
+  ...site, control_active: true, rows: [alternateRow, currentRow]
+}, alternateRow);
+assert.equal(alternateIntent.logicalKey, controlB.logicalKey);
+assert.equal(alternateIntent.transportKey, controlB.transportKey);
+assert.equal(alternateIntent.rowKey, 'control-b');
+const inactiveControlIntent = context.liveDetailRowSelection({
+  ...site, control_active: false, rows: [alternateRow, currentRow]
+}, alternateRow);
+assert.equal(inactiveControlIntent.logicalKey, controlB.logicalKey);
+assert.equal(inactiveControlIntent.bindingFrequencyHz, null);
+assert.equal(inactiveControlIntent.rowKey, null);
+const waitingControl = context.liveDetailSelection(site, controlA, null);
+assert.equal(waitingControl.kind, 'CONTROL');
+assert.equal(waitingControl.logicalKey, controlA.logicalKey);
+assert.equal(waitingControl.bindingFrequencyHz, null);
+assert.equal(waitingControl.rowKey, null);
+
+// Traffic and conventional rows remain exact even if legacy display tags suggest control activity.
+const voice = context.liveDetailSelection(site, {
+  key: 'voice-a', role: 'TRAFFIC', tags: ['CURRENT_CONTROL'], frequency_hz: 853_012_500, timeslot: 2
+});
+assert.equal(voice.kind, 'EXACT');
+assert.equal(voice.bindingFrequencyHz, 853_012_500);
+assert.equal(voice.bindingTimeslot, 2);
+const conventional = context.liveDetailSelection({
+  table_id: 'conventional', title: 'Conventional', configuration_id: 'channel-config'
+}, { key: 'channel-a', role: 'CONVENTIONAL', frequency_hz: 155_730_000 });
+assert.equal(conventional.kind, 'EXACT');
+assert.equal(conventional.logicalKey, 'EXACT:channel-config:155730000:');
+const sameFrequencyDifferentConfiguration = context.liveDetailSelection({
+  table_id: 'conventional', title: 'Conventional', configuration_id: 'other-channel-config'
+}, { key: 'channel-b', role: 'CONVENTIONAL', frequency_hz: 155_730_000 });
+assert.notEqual(conventional.logicalKey, sameFrequencyDifferentConfiguration.logicalKey);
+assert.notEqual(conventional.transportKey, sameFrequencyDifferentConfiguration.transportKey);
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(
+  conventional, sameFrequencyDifferentConfiguration))), { logicalChanged: true, transportChanged: true });
+const subscriptionId = 'selection-subscription';
+assert.equal(context.liveMessageTransportChanged(controlA, controlB), true);
+assert.equal(context.liveMessageTransportChanged(voice, { ...voice, bindingTimeslot: 1 }), false);
+assert.equal(context.liveMessageTransportChanged(conventional, sameFrequencyDifferentConfiguration), true);
+assert.equal(context.liveMessageSourceMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, subscription_id: subscriptionId
+}), true);
+assert.equal(context.liveMessageSourceMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, subscription_id: 'stale-subscription'
+}), false);
+assert.equal(context.liveMessageSourceMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'other-site-config', frequency_hz: 853_012_500, subscription_id: subscriptionId
+}), false);
+assert.equal(context.liveMessageSourceMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 854_012_500, subscription_id: subscriptionId
+}), false);
+// A source state missed while hidden cannot pre-arm a reopened A subscription or admit queued B messages.
+const reopenedSubscriptionId = 'reopened-a-subscription';
+let reopenedTransportReady = false;
+const confirmReopenedMessageSource = (source) => {
+  reopenedTransportReady = false;
+  if (context.liveMessageSourceMatchesSelection(controlA, reopenedSubscriptionId, source)) {
+    reopenedTransportReady = true;
+  }
+};
+confirmReopenedMessageSource({
+  configuration_id: 'site-config', frequency_hz: 852_012_500, subscription_id: subscriptionId
+});
+assert.equal(reopenedTransportReady, false);
+confirmReopenedMessageSource({
+  configuration_id: 'site-config', frequency_hz: 851_012_500, subscription_id: reopenedSubscriptionId
+});
+assert.equal(reopenedTransportReady, true);
+
+// Site events remain configuration-wide, while exact selections reject buffered events from another frequency/slot.
+assert.equal(context.liveEventMatchesSelection(controlB, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 2
+}), true);
+assert.equal(context.liveEventMatchesSelection(voice, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 2
+}), true);
+assert.equal(context.liveEventMatchesSelection(voice, {
+  configuration_id: 'site-config', frequency_hz: 854_012_500, timeslot: 2
+}), false);
+assert.equal(context.liveEventMatchesSelection(voice, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 1
+}), false);
+assert.equal(context.liveEventMatchesSelection(voice, {
+  configuration_id: 'other-site-config', frequency_hz: 853_012_500, timeslot: 2
+}), false);
+assert.equal(context.liveEventMatchesSelection(conventional, {
+  configuration_id: 'channel-config', frequency_hz: 155_730_000, timeslot: 1
+}), true);
+assert.equal(context.liveEventScopeMatchesSelection(controlB, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: null, timeslot: null,
+  subscription_id: subscriptionId
+}), true);
+assert.equal(context.liveEventScopeMatchesSelection(controlB, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 852_012_500, timeslot: null,
+  subscription_id: subscriptionId
+}), false);
+assert.equal(context.liveEventScopeMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 2,
+  subscription_id: subscriptionId
+}), true);
+assert.equal(context.liveEventScopeMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: null,
+  subscription_id: subscriptionId
+}), false);
+assert.equal(context.liveEventScopeMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 2,
+  subscription_id: 'stale-subscription'
+}), false);
+assert.equal(context.liveChannelStateMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 2,
+  subscription_id: subscriptionId
+}), true);
+assert.equal(context.liveChannelStateMatchesSelection(voice, subscriptionId, {
+  configuration_id: 'site-config', frequency_hz: 853_012_500, timeslot: 2,
+  subscription_id: 'stale-subscription'
+}), false);
+assert.equal(context.liveChannelStateMatchesSelection(conventional, subscriptionId, {
+  configuration_id: 'other-channel-config', frequency_hz: 155_730_000,
+  subscription_id: subscriptionId
+}), false);

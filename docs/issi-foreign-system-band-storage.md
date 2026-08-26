@@ -33,9 +33,10 @@ The decoder publishes message-scoped facts through the existing bounded statisti
 Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
 path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. Alpha 8 and
 Alpha 9 shipped the same P25 activity schema v24 layout and exact schema fingerprint, and Alpha 10 advances directly
-to v26 with qualifier-safe P25 talkgroup facts plus bounded protocol-neutral current-affiliation and
-authoritative-site-presence state; the foreign-band tables themselves are unchanged. The bundled migration accepts
-that one exact shared source layout, and older or intermediate schema combinations are rejected.
+to v27 with qualifier-safe P25 talkgroup facts plus bounded protocol-neutral current-affiliation and
+authoritative-site-presence state; the current foreign-band table shape is unchanged. The bundled migration accepts
+that one exact shared source layout, but it creates all current statistics tables empty and does not copy prior
+foreign-band observations. Older or intermediate schema combinations are rejected.
 
 ## Query access path
 
