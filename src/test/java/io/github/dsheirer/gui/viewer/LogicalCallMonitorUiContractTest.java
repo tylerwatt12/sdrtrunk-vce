@@ -32,7 +32,6 @@ import java.util.Map;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
-import javafx.scene.control.TreeItem;
 import org.junit.jupiter.api.Test;
 
 class LogicalCallMonitorUiContractTest
@@ -45,13 +44,27 @@ class LogicalCallMonitorUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java");
 
     @Test
-    void monitorUsesBoundedVisibleOnlyPollingAndExpandableCopies() throws Exception
+    void monitorUsesBoundedVisibleOnlyPollingAndTwoPanelCallDetails() throws Exception
     {
         String monitor = Files.readString(MONITOR);
 
         assertTrue(monitor.contains("MAXIMUM_VISIBLE_DECISIONS = 100"));
         assertTrue(monitor.contains("REFRESH_INTERVAL = Duration.seconds(1)"));
-        assertTrue(monitor.contains("new TreeTableView<>(mDecisionRoot)"));
+        assertTrue(monitor.contains("new TableView<>(mDecisionRows)"));
+        assertTrue(monitor.contains("mDecisionTable.setFixedCellSize(28.0d)"),
+            "The call list must keep compact, uniform rows");
+        assertTrue(monitor.contains("new SplitPane(mDecisionTable, detailScrollPane)"));
+        assertTrue(monitor.contains("splitPane.setOrientation(Orientation.VERTICAL)"));
+        assertTrue(monitor.contains("call-matching-two-panel"));
+        assertTrue(monitor.contains("call-matching-selected-details"));
+        assertTrue(monitor.contains("call-matching-details-scroll"));
+        assertTrue(monitor.contains("Select a call above to compare its receiver/site copies."));
+        assertTrue(monitor.contains("mDecisionTable.getSelectionModel().selectedItemProperty().addListener"));
+        assertTrue(monitor.contains("showDecisionDetails(selected != null ? selected.decision() : null)"));
+        assertTrue(monitor.contains("decisionSequence == mDisplayedDecisionSequence"),
+            "A refresh of the selected call must not rebuild and flash the details panel");
+        assertTrue(monitor.contains("Receiver copy comparison"));
+        assertTrue(monitor.contains("decisionComparisonGrid(decision)"));
         assertTrue(monitor.contains("mRefreshTimeline.playFromStart()"));
         assertTrue(monitor.contains("mRefreshTimeline.stop()"));
         assertTrue(monitor.contains("service.snapshot()"));
@@ -69,24 +82,28 @@ class LogicalCallMonitorUiContractTest
         assertTrue(monitor.contains("fecProtectedBitCount()"));
         assertTrue(monitor.contains("retainedAudioSampleCount()"));
         assertTrue(monitor.contains("call-matching-technical-health"));
-        assertTrue(monitor.contains("Discarded; no output"));
-        assertTrue(monitor.contains("mDecisionItemsBySequence.computeIfAbsent"));
-        assertTrue(monitor.contains("reconcileStableItems(mDecisionRoot.getChildren(), items)"));
-        assertTrue(monitor.contains("mDecisionTable.setTreeColumn(callColumn)"));
-        assertTrue(monitor.contains("event.getClickCount() == 2"));
-        assertTrue(monitor.contains("!isDisclosureNode(event.getTarget())"));
+        assertTrue(monitor.contains("mDecisionRowsBySequence.computeIfAbsent"));
+        assertTrue(monitor.contains("reconcileStableItems(mDecisionRows, rows)"));
+        assertTrue(monitor.contains("mSelectedDecisionSequence"));
+        assertTrue(monitor.contains("mReconcilingRows"));
         assertTrue(monitor.contains("shorterCopyOverlapPercent()"));
         assertTrue(monitor.contains("selectedCopyCoveragePercent()"));
         assertTrue(monitor.contains("startOffsetFromSelectedMilliseconds()"));
         assertTrue(monitor.contains("endOffsetFromSelectedMilliseconds()"));
         assertTrue(monitor.contains("case UNKNOWN -> result + \" · encryption unknown\""));
         assertTrue(monitor.contains("column.setSortable(false)"));
-        assertTrue(monitor.contains("addMatchQualityColumn("));
+        assertTrue(monitor.contains("addColumn(\"Match / Quality\""));
         assertTrue(monitor.contains("GridPane"));
-        assertTrue(monitor.contains("setGraphic(null)"),
-            "A reused empty cell must discard the previous structured graphic");
-        assertFalse(monitor.contains("mDecisionRoot.getChildren().setAll(items)"));
-        assertFalse(monitor.contains("addColumn(\"Match / Quality\""));
+        assertFalse(monitor.contains("TreeTableView"));
+        assertFalse(monitor.contains("TreeTableColumn"));
+        assertFalse(monitor.contains("TreeTableRow"));
+        assertFalse(monitor.contains("TreeItem"));
+        assertFalse(monitor.contains("isDisclosureNode"));
+        assertFalse(monitor.contains("event.getClickCount()"));
+        assertFalse(monitor.contains("MouseButton"));
+        assertFalse(monitor.contains("mDecisionRoot"));
+        assertFalse(monitor.contains("item.getChildren().add"));
+        assertFalse(monitor.contains("addMatchQualityColumn("));
         assertFalse(monitor.contains("String quality = ONE_DECIMAL.format(leg.qualityPercent())"),
             "Quality must not return to one long, clipped sentence");
         assertFalse(monitor.contains("LogicalCallDiagnosticPairDecision"));
@@ -229,28 +246,41 @@ class LogicalCallMonitorUiContractTest
     }
 
     @Test
-    void liveRefreshReusesTreeItemsAndPreservesExpansion()
+    void liveRefreshReusesFlatRowsAndPreservesSelectedIdentity()
     {
-        TreeItem<String> newest = new TreeItem<>("newest");
-        TreeItem<String> expanded = new TreeItem<>("expanded");
-        TreeItem<String> oldest = new TreeItem<>("oldest");
-        expanded.getChildren().add(new TreeItem<>("copy"));
-        expanded.setExpanded(true);
-        ObservableList<TreeItem<String>> current = FXCollections.observableArrayList(expanded, oldest);
+        Object newest = new Object();
+        Object selected = new Object();
+        Object oldest = new Object();
+        ObservableList<Object> current = FXCollections.observableArrayList(selected, oldest);
 
-        LogicalCallMonitor.reconcileStableItems(current, List.of(newest, expanded));
+        LogicalCallMonitor.reconcileStableItems(current, List.of(newest, selected));
 
-        assertEquals(List.of(newest, expanded), List.copyOf(current));
-        assertTrue(current.get(1) == expanded, "The existing parent must keep object identity");
-        assertTrue(current.get(1).isExpanded(), "A live insert must not collapse an examined call");
-        assertEquals(1, current.get(1).getChildren().size(), "Child rows must not be rebuilt or duplicated");
+        assertEquals(List.of(newest, selected), List.copyOf(current));
+        assertTrue(current.get(1) == selected, "The selected flat row must keep object identity");
 
-        expanded.setExpanded(false);
-        TreeItem<String> later = new TreeItem<>("later");
-        LogicalCallMonitor.reconcileStableItems(current, List.of(later, newest, expanded));
+        Object later = new Object();
+        LogicalCallMonitor.reconcileStableItems(current, List.of(later, newest, selected));
 
-        assertTrue(current.get(2) == expanded, "The same parent must survive another live insert");
-        assertFalse(current.get(2).isExpanded(), "A deliberately collapsed call must stay collapsed");
+        assertTrue(current.get(2) == selected, "The same selected row must survive another live insert");
+    }
+
+    @Test
+    void comparisonOrdersWinnerRunnerUpAndRemainingCopies()
+    {
+        LogicalCallDiagnosticLeg selected = leg("selected", "T-Cuyahoga Simulcast", 1_000L, 5_000L, true);
+        LogicalCallDiagnosticLeg runnerUp = leg("runner", "T-Elyria", 1_020L, 4_980L, false);
+        LogicalCallDiagnosticLeg firstOther = leg("first-other", "T-Lake", 1_030L, 4_970L, false);
+        LogicalCallDiagnosticLeg secondOther = leg("second-other", "T-Geauga", 1_040L, 4_960L, false);
+        LogicalCallDiagnosticWinner winner = new LogicalCallDiagnosticWinner(selected.legId(), runnerUp.legId(),
+            LogicalCallWinnerCriterion.USABLE_FRAME_COUNT,
+            LogicalCallDiagnosticWinner.CriterionValue.empty(),
+            LogicalCallDiagnosticWinner.CriterionValue.empty());
+        LogicalCallDiagnosticDecision decision = new LogicalCallDiagnosticDecision(1L, 5_100L,
+            new LogicalCallId(1L, 1L), LogicalCallDecisionOutcome.MERGED, null, null, winner,
+            List.of(firstOther, runnerUp, selected, secondOther), LogicalCallDiagnosticEvidence.EMPTY, List.of());
+
+        assertEquals(List.of("selected", "runner", "first-other", "second-other"),
+            LogicalCallMonitor.orderedCopies(decision).stream().map(LogicalCallDiagnosticLeg::legId).toList());
     }
 
     @Test
