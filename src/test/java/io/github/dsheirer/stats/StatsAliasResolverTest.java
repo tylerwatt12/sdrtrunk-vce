@@ -246,8 +246,8 @@ class StatsAliasResolverTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, p25_system_key,
-                    first_seen_ms, last_seen_ms
-                ) VALUES (77, 'p25:BEE00:348', 1, 1, 77, 1, 2)
+                    alias_list_id, first_seen_ms, last_seen_ms
+                ) VALUES (77, 'p25:BEE00:348', 1, 1, 77, 1, 1, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope_context (context_id, scope_id, first_seen_ms, last_seen_ms)

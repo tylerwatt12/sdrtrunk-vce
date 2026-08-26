@@ -12,6 +12,7 @@ package io.github.dsheirer.stats;
 
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
@@ -22,6 +23,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.scanlist.ScanListModel;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -142,8 +144,7 @@ final class StatsWebCallService implements AutoCloseable
             return;
         }
 
-        if(call == null || !call.hasAudio() || snapshot == null || snapshot.duplicate() ||
-            isUnresolvedTrafficCall(snapshot))
+        if(call == null || !call.hasAudio() || snapshot == null || isUnresolvedTrafficCall(snapshot))
         {
             mDroppedInvalidCalls.incrementAndGet();
             return;
@@ -536,14 +537,28 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "lcn", identifierValue(identifiers, IdentifierClass.DECODER, Form.CHANNEL_NAME,
             Role.BROADCAST));
         putIdentifierValue(value, "network_id", identifiers, Form.NETWORK);
-        putIdentifierValue(value, "wacn", identifiers, Form.WACN);
-        putIdentifierValue(value, "system_id", identifiers, Form.SYSTEM);
+        CallLegSource callLegSource = snapshot.callLegSource();
+        P25SiteIdentity learnedP25Site = callLegSource != null ? callLegSource.p25SiteIdentity() : null;
+
+        if(learnedP25Site != null)
+        {
+            putText(value, "wacn", learnedP25Site.wacn());
+            putText(value, "system_id", learnedP25Site.system());
+            putText(value, "rfss_id", learnedP25Site.rfss());
+            putText(value, "site_id", learnedP25Site.site());
+        }
+        else
+        {
+            putIdentifierValue(value, "wacn", identifiers, Form.WACN);
+            putIdentifierValue(value, "system_id", identifiers, Form.SYSTEM);
+            putIdentifierValue(value, "rfss_id", identifiers, Form.RF_SUBSYSTEM);
+            putIdentifierValue(value, "site_id", identifiers, Form.SITE);
+        }
+
         putIdentifierValue(value, "nac", identifiers, Form.NETWORK_ACCESS_CODE);
-        putIdentifierValue(value, "rfss_id", identifiers, Form.RF_SUBSYSTEM);
-        putIdentifierValue(value, "site_id", identifiers, Form.SITE);
         putIdentifierValue(value, "ran", identifiers, Form.RAN);
         value.put("timeslot", snapshot.timeslot());
-        value.put("encrypted", snapshot.encrypted());
+        value.put("encrypted", snapshot.isEncrypted());
         if(snapshot.voiceCallQuality() != null && snapshot.voiceCallQuality().hasMeasurements())
         {
             value.put("vc_quality_pct", snapshot.voiceCallQuality().qualityPercent());

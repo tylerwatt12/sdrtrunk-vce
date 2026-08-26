@@ -48,7 +48,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /**
- * Preference settings for duplicate call audio handling
+ * Preference settings for vector calibration behavior.
  */
 public class VectorCalibrationPreferenceEditor extends HBox
 {

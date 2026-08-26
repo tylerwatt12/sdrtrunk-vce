@@ -88,7 +88,7 @@ class StatsWebSiteUiContractTest
     }
 
     @Test
-    void keepsSiteMetadataAndCallOutcomesDistinct() throws Exception
+    void keepsSiteMetadataAndPhysicalCallObservationsDistinct() throws Exception
     {
         String source = source();
         String siteInfo = function(source, "async function renderSiteInfo(site, renderContext)");
@@ -105,11 +105,11 @@ class StatsWebSiteUiContractTest
         assertFalse(siteInfo.contains("['Name', site.channel_name]"));
         assertFalse(configuredSite.contains("channel_name"));
         assertTrue(siteInfoSite.contains("configuredNameValue(row) ? ''"));
-        assertTrue(talkgroups.contains("section('Talkgroup Call Activity'"));
-        assertTrue(talkgroups.contains("label: 'Calls'"));
-        assertTrue(talkgroups.contains("label: 'Rec'"));
-        assertTrue(talkgroups.contains("label: 'Sent'"));
-        assertTrue(talkgroups.contains("label: 'Enc'"));
+        assertTrue(talkgroups.contains("section('Talkgroup Site Observations'"));
+        assertTrue(talkgroups.contains("label: 'Site Observations'"));
+        assertTrue(talkgroups.contains("fullLabel: 'Encrypted Site Observations'"));
+        assertFalse(talkgroups.contains("recorded_logical_call_count"));
+        assertFalse(talkgroups.contains("stream_submitted_logical_call_count"));
         assertFalse(talkgroups.contains("Last Active"));
         assertTrue(channels.contains("label: 'Seen'"));
         assertTrue(channels.contains("fullLabel: 'Last Seen'"));

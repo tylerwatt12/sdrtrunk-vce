@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -20,7 +21,11 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -50,6 +55,8 @@ class P25ActivityLogWriter implements AutoCloseable
     private static final long FORCED_SHUTDOWN_WAIT_MILLISECONDS = 1000;
     private static final long RETENTION_CLEANUP_INTERVAL_MILLISECONDS = TimeUnit.HOURS.toMillis(1);
     private static final long MAINTENANCE_INTERVAL_MILLISECONDS = TimeUnit.DAYS.toMillis(1);
+    private static final long RESOLVED_CALL_RETENTION_MILLISECONDS = TimeUnit.HOURS.toMillis(24);
+    private static final int MAXIMUM_RESOLVED_CALLS = 65_536;
 
     private final Path mDatabasePath;
     private final ArrayBlockingQueue<QueuedRecord> mQueue;
@@ -65,6 +72,8 @@ class P25ActivityLogWriter implements AutoCloseable
     private final AtomicLong mDroppedRecords = new AtomicLong();
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
+    /* Writer-thread-owned evidence that the matching logical-call counters committed successfully. */
+    private final Map<LogicalCallId,Long> mResolvedLogicalCalls = new LinkedHashMap<>(1024, 0.75f, true);
     private volatile ExecutorService mExecutorService;
     private volatile long mShutdownDrainDeadlineNanos = Long.MIN_VALUE;
     private volatile int mRetentionDays;
@@ -511,6 +520,10 @@ class P25ActivityLogWriter implements AutoCloseable
                     mLastRetentionCleanup = System.currentTimeMillis();
                     mLastMaintenance = System.currentTimeMillis();
                 }
+                else if(request.operation() == P25ActivityLogMaintenance.Operation.RESET_STATS)
+                {
+                    mResolvedLogicalCalls.clear();
+                }
 
                 return result;
             }
@@ -700,6 +713,8 @@ class P25ActivityLogWriter implements AutoCloseable
         try
         {
             int writtenRecords = 0;
+            Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
+            pruneResolvedLogicalCalls(System.currentTimeMillis());
 
             for(P25ActivityLogRecord record: batch)
             {
@@ -728,9 +743,27 @@ class P25ActivityLogWriter implements AutoCloseable
                     P25ActivityLogSchema.insertControlChannelQuality(connection, quality);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.CompletedCallOutput callOutput)
+                else if(record instanceof P25ActivityLogRecords.ConventionalCallOutput callOutput)
                 {
-                    if(P25ActivityLogSchema.applyCompletedCallOutput(connection, callOutput))
+                    if(P25ActivityLogSchema.applyConventionalCallOutput(connection, callOutput))
+                    {
+                        writtenRecords++;
+                    }
+                }
+                else if(record instanceof P25ActivityLogRecords.ResolvedLogicalCall logicalCall)
+                {
+                    LogicalCallId logicalCallId = logicalCall.logicalCallId();
+                    if(!hasResolvedLogicalCall(logicalCallId, acceptedLogicalCalls) &&
+                        P25ActivityLogSchema.recordResolvedLogicalCall(connection, logicalCall))
+                    {
+                        acceptedLogicalCalls.add(logicalCallId);
+                        writtenRecords++;
+                    }
+                }
+                else if(record instanceof P25ActivityLogRecords.LogicalCallOutput logicalOutput)
+                {
+                    if(hasResolvedLogicalCall(logicalOutput.call().logicalCallId(), acceptedLogicalCalls) &&
+                        P25ActivityLogSchema.applyLogicalCallOutput(connection, logicalOutput))
                     {
                         writtenRecords++;
                     }
@@ -777,6 +810,7 @@ class P25ActivityLogWriter implements AutoCloseable
                 Long.toString(successfulWrite));
 
             connection.commit();
+            rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
             mWrittenRecords.addAndGet(writtenRecords);
             mLastSuccessfulWriteMs.set(successfulWrite);
         }
@@ -808,6 +842,43 @@ class P25ActivityLogWriter implements AutoCloseable
         finally
         {
             connection.setAutoCommit(previousAutoCommit);
+        }
+    }
+
+    private boolean hasResolvedLogicalCall(LogicalCallId logicalCallId, Set<LogicalCallId> acceptedLogicalCalls)
+    {
+        return logicalCallId != null && (acceptedLogicalCalls.contains(logicalCallId) ||
+            mResolvedLogicalCalls.get(logicalCallId) != null);
+    }
+
+    private void rememberResolvedLogicalCalls(Set<LogicalCallId> logicalCallIds, long observedAt)
+    {
+        for(LogicalCallId logicalCallId: logicalCallIds)
+        {
+            mResolvedLogicalCalls.put(logicalCallId, observedAt);
+        }
+
+        while(mResolvedLogicalCalls.size() > MAXIMUM_RESOLVED_CALLS)
+        {
+            var iterator = mResolvedLogicalCalls.keySet().iterator();
+            if(iterator.hasNext())
+            {
+                iterator.next();
+                iterator.remove();
+            }
+        }
+    }
+
+    private void pruneResolvedLogicalCalls(long now)
+    {
+        var iterator = mResolvedLogicalCalls.entrySet().iterator();
+        while(iterator.hasNext())
+        {
+            Map.Entry<LogicalCallId,Long> entry = iterator.next();
+            if(now >= entry.getValue() && now - entry.getValue() > RESOLVED_CALL_RETENTION_MILLISECONDS)
+            {
+                iterator.remove();
+            }
         }
     }
 

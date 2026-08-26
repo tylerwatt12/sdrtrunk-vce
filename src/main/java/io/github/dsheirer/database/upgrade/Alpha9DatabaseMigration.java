@@ -51,6 +51,10 @@ final class Alpha9DatabaseMigration
         "dmr_activity_schema_version", Integer.toString(DMR_VERSION));
     private static final String FULLY_QUALIFIED_TALKGROUP = "P25_FULLY_QUALIFIED_TALKGROUP";
     private static final String FULLY_QUALIFIED_RADIO = "P25_FULLY_QUALIFIED_RADIO_ID";
+    private static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY =
+        "p25_call_output_metrics_started_at_ms";
+    private static final String ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
+        "all_mode_call_output_metrics_started_at_ms";
     private static final int MAX_IDENTITIES_PER_SCOPE = 100_000;
     private static final int MAX_RELATIONSHIPS_PER_SCOPE = 500_000;
     private static final int MAX_AFFILIATIONS_PER_SCOPE = 100_000;
@@ -90,8 +94,8 @@ final class Alpha9DatabaseMigration
             }
         }
 
-        requirePositiveMetadata(connection, P25ActivityLogSchema.CALL_OUTPUT_METRICS_STARTED_AT_KEY);
-        requirePositiveMetadata(connection, P25ActivityLogSchema.ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+        requirePositiveMetadata(connection, CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+        requirePositiveMetadata(connection, ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
         requirePositiveMetadata(connection, P25ActivityLogSchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY);
 
         String fingerprint = SqliteSchemaValidator.fingerprint(connection);

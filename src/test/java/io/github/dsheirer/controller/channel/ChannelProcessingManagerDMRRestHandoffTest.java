@@ -28,6 +28,8 @@ import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.IAudioCallProvider;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -325,17 +327,20 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 List.of(FrequencyConfigurationIdentifier.create(CURRENT_FREQUENCY)));
             audioIdentifiers.setTimeslot(1);
             VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
-            AudioCallSnapshot audioSnapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 1), null, null,
+            AudioCallId audioCallId = new AudioCallId(1, 1, 1);
+            AudioCallSnapshot audioSnapshot = new AudioCallSnapshot(audioCallId, null, null,
                 audioIdentifiers, Set.of(), 1_000L, 2_200L, 1, 1, 1_000L, 2_200L,
-                true, false, false, false, false, null, voiceQuality);
+                true, false, CallEncryptionState.CLEAR, false, null, voiceQuality,
+                CallLegId.from(audioCallId), null, null);
             audioProvider.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioSnapshot,
-                new float[160]));
+                new float[160], false, 0L, audioSnapshot.lastActivityTimestamp()));
             assertTrue(awaitCondition(() -> {
                 ChannelActivitySnapshot.Row row = activityRow(manager, CURRENT_FREQUENCY, 1);
                 return row != null && voiceQuality.equals(row.voiceQuality());
             }, 5), "converted traffic activity row did not receive voice quality");
 
-            audioProvider.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, audioSnapshot, null));
+            audioProvider.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, audioSnapshot, null,
+                false, 0L, 0L));
             assertTrue(awaitCondition(() -> {
                 ChannelActivitySnapshot.Row row = activityRow(manager, CURRENT_FREQUENCY, 1);
                 return row != null && row.voiceQuality() == null;

@@ -25,7 +25,7 @@ import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
 import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
 import io.github.dsheirer.preference.decoder.VoiceDecryptionModulePreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.preference.duplicate.CallManagementPreference;
+import io.github.dsheirer.preference.call.CallManagementPreference;
 import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.event.DecodeEventPreference;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
@@ -205,7 +205,7 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
-     * Call management and duplicate call detection preferences
+     * Call routing preferences
      */
     public CallManagementPreference getCallManagementPreference()
     {

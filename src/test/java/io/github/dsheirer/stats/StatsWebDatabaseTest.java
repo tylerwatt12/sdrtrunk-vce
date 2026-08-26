@@ -76,8 +76,8 @@ class StatsWebDatabaseTest
         Map<String,Object> talkgroup = rows(talkgroups).get(0);
         assertEquals("Dispatch", talkgroup.get("alias_name"));
         assertEquals(56132L, number(talkgroup.get("talkgroup_id")));
-        assertEquals(0, number(talkgroup.get("recorded_count")));
-        assertEquals(0, number(talkgroup.get("streamed_count")));
+        assertEquals(0, number(talkgroup.get("recorded_logical_call_count")));
+        assertEquals(0, number(talkgroup.get("stream_submitted_logical_call_count")));
         assertFalse(talkgroup.containsKey("grant_count"));
         assertFalse((Boolean)talkgroups.get("hasMore"));
         assertEquals(1L, number(talkgroups.get("totalCount")));
@@ -166,7 +166,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(talkgroups.get("totalCount")));
         assertEquals(1, rows(talkgroups).size());
         assertEquals(56132L, number(rows(talkgroups).getFirst().get("talkgroup_id")));
-        assertEquals(12L, number(rows(talkgroups).getFirst().get("call_count")),
+        assertEquals(12L, number(rows(talkgroups).getFirst().get("logical_call_count")),
             "Attaching additional site Alias Lists must not multiply the retained identity summary");
 
         Map<String,Object> radios = mDatabase.systemRadios(request(
@@ -174,7 +174,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(radios.get("totalCount")));
         assertEquals(1, rows(radios).size());
         assertEquals(1811332L, number(rows(radios).getFirst().get("radio_id")));
-        assertEquals(8L, number(rows(radios).getFirst().get("call_count")),
+        assertEquals(8L, number(rows(radios).getFirst().get("logical_call_count")),
             "Attaching additional site Alias Lists must not multiply the retained identity summary");
     }
 
@@ -477,13 +477,13 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(county.get("assigned_channel_count")));
 
         Map<String,Object> response = mDatabase.aliases(request(
-            "/api/aliases?list=1&type=talkgroup&sort=call_count&direction=desc"));
+            "/api/aliases?list=1&type=talkgroup&sort=logical_call_count&direction=desc"));
         List<Map<String,Object>> aliases = rows(response);
         assertEquals(List.of("Dispatch", "County Range"), aliases.stream().map(row -> row.get("name")).toList());
         Map<String,Object> dispatch = aliases.getFirst();
         assertEquals("observed", dispatch.get("metrics_state"));
-        assertEquals(12L, number(dispatch.get("call_count")));
-        assertEquals(12L, number(dispatch.get("grant_count")));
+        assertEquals(12L, number(dispatch.get("logical_call_count")));
+        assertEquals(12L, number(dispatch.get("grant_observation_count")));
         assertEquals(1L, number(dispatch.get("relationship_count")));
         assertEquals(1L, number(dispatch.get("join_relationship_count")));
         assertEquals(1L, number(dispatch.get("current_affiliation_count")));
@@ -494,7 +494,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> range = aliases.getLast();
         assertEquals("covered_no_evidence", range.get("metrics_state"));
-        assertEquals(0L, number(range.get("call_count")));
+        assertEquals(0L, number(range.get("logical_call_count")));
         assertEquals(0L, number(range.get("relationship_count")));
 
         Map<String,Object> detail = mDatabase.alias(request("/api/alias?id=1"));
@@ -506,7 +506,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(breakdown.get("alias_list_id")));
 
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
+            "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=logical_call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
         assertEquals("1; 2", csv.getFirst().get("scan_list_ids"));
         assertEquals("Default; Cleveland", csv.getFirst().get("scan_lists"));
@@ -542,7 +542,7 @@ class StatsWebDatabaseTest
 
             try(PreparedStatement evidence = connection.prepareStatement("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count
                 ) VALUES (1, 1, ?, 3000, 4000, 99)
                 """))
             {
@@ -554,13 +554,13 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> sorted = mDatabase.aliases(request(
-            "/api/v1/aliases?list=1&type=talkgroup&q=Bulk&sort=call_count&direction=desc&limit=25"));
+            "/api/v1/aliases?list=1&type=talkgroup&q=Bulk&sort=logical_call_count&direction=desc&limit=25"));
         assertEquals("Bulk Alias 6626", rows(sorted).getFirst().get("name"));
-        assertEquals(99L, number(rows(sorted).getFirst().get("call_count")));
+        assertEquals(99L, number(rows(sorted).getFirst().get("logical_call_count")));
         assertTrue((Boolean)sorted.get("hasMore"));
 
         Map<String,Object> filtered = mDatabase.aliases(request(
-            "/api/v1/aliases?list=1&type=talkgroup&q=Bulk&use=used&sort=call_count&direction=desc"));
+            "/api/v1/aliases?list=1&type=talkgroup&q=Bulk&use=used&sort=logical_call_count&direction=desc"));
         assertEquals(List.of("Bulk Alias 6626"),
             rows(filtered).stream().map(row -> row.get("name")).toList());
         assertFalse((Boolean)filtered.get("hasMore"));
@@ -607,20 +607,20 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> response = mDatabase.aliases(request(
-            "/api/v1/aliases?list=1&type=talkgroup&sort=call_count&direction=desc"));
+            "/api/v1/aliases?list=1&type=talkgroup&sort=logical_call_count&direction=desc"));
         Map<String,Object> dispatch = rows(response).getFirst();
         assertEquals("Dispatch", dispatch.get("name"));
-        assertEquals(12L, number(dispatch.get("call_count")));
+        assertEquals(12L, number(dispatch.get("logical_call_count")));
         assertEquals(fanout + 1L, number(dispatch.get("relationship_count")));
         assertEquals(fanout, number(dispatch.get("join_relationship_count")));
         assertEquals(fanout + 1L, number(dispatch.get("current_affiliation_count")));
         assertEquals(4000L, number(dispatch.get("last_evidence_ms")));
 
         Map<String,Object> radioResponse = mDatabase.aliases(request(
-            "/api/v1/aliases?list=1&type=radio&sort=call_count&direction=desc"));
+            "/api/v1/aliases?list=1&type=radio&sort=logical_call_count&direction=desc"));
         Map<String,Object> engine = rows(radioResponse).getFirst();
         assertEquals("Engine 1", engine.get("name"));
-        assertEquals(8L, number(engine.get("call_count")));
+        assertEquals(8L, number(engine.get("logical_call_count")));
         assertEquals(fanout + 1L, number(engine.get("relationship_count")));
         assertEquals(fanout, number(engine.get("join_relationship_count")));
         assertEquals(1L, number(engine.get("current_affiliation_count")));
@@ -656,8 +656,8 @@ class StatsWebDatabaseTest
             PreparedStatement scopes = connection.prepareStatement("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (?, ?, 1, 1, 0, ?, 1000, 5000)
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (?, ?, 1, 1, 0, 700, ?, 1000, 5000)
                 """);
             PreparedStatement ownership = connection.prepareStatement("""
                 INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
@@ -670,7 +670,7 @@ class StatsWebDatabaseTest
             PreparedStatement identities = connection.prepareStatement("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count
+                    logical_call_count, target_logical_call_count, grant_count
                 ) VALUES (?, 1, ?, 3000, ?, ?, ?, ?)
                 """);
             PreparedStatement relationships = connection.prepareStatement("""
@@ -835,10 +835,10 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> response = mDatabase.aliases(request(
-            "/api/v1/aliases?list=700&type=talkgroup&sort=call_count&direction=desc"));
+            "/api/v1/aliases?list=700&type=talkgroup&sort=logical_call_count&direction=desc"));
         Map<String,Object> busiest = rows(response).getFirst();
         assertEquals("Large Range", busiest.get("name"));
-        assertEquals(1000L, number(busiest.get("call_count")));
+        assertEquals(1000L, number(busiest.get("logical_call_count")));
         assertEquals(1000L, number(busiest.get("relationship_count")));
         assertEquals(1000L, number(busiest.get("join_relationship_count")));
         assertEquals(1000L, number(busiest.get("current_affiliation_count")));
@@ -850,7 +850,7 @@ class StatsWebDatabaseTest
         Map<String,Object> busiestExact = rows(response).stream()
             .filter(row -> "Large Talkgroup 449".equals(row.get("name")))
             .findFirst().orElseThrow();
-        assertEquals(40L, number(busiestExact.get("call_count")));
+        assertEquals(40L, number(busiestExact.get("logical_call_count")));
         assertEquals(40L, number(busiestExact.get("relationship_count")));
         assertEquals(40L, number(busiestExact.get("current_affiliation_count")));
 
@@ -863,7 +863,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> filtered = mDatabase.aliases(request(
             "/api/v1/aliases?list=700&type=talkgroup&evidence=observed&use=used" +
-                "&last_activity_after=4019&sort=call_count&direction=desc"));
+                "&last_activity_after=4019&sort=logical_call_count&direction=desc"));
         assertEquals("Large Range", rows(filtered).getFirst().get("name"));
     }
 
@@ -910,7 +910,7 @@ class StatsWebDatabaseTest
             PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count
+                    logical_call_count, target_logical_call_count, grant_count
                 ) VALUES (1, 1, ?, 1000, 2000, 1, 1, 1)
                 """))
         {
@@ -930,7 +930,7 @@ class StatsWebDatabaseTest
             "/api/v1/aliases?list=1&q=Dispatch&limit=1")));
         assertEquals(1, aliases.size());
         assertEquals("Dispatch", aliases.getFirst().get("name"));
-        assertEquals(12L, number(aliases.getFirst().get("call_count")));
+        assertEquals(12L, number(aliases.getFirst().get("logical_call_count")));
     }
 
     @Test
@@ -965,7 +965,7 @@ class StatsWebDatabaseTest
             try(PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count
+                    logical_call_count, target_logical_call_count, grant_count
                 ) VALUES (?, 1, ?, 1000, 2000, 1, 1, 1)
                 """))
             {
@@ -990,7 +990,7 @@ class StatsWebDatabaseTest
         assertEquals(List.of("Cross North Range", "Cross South Range"),
             aliases.stream().map(row -> row.get("name")).toList());
         assertTrue(aliases.stream().allMatch(row -> "covered_no_evidence".equals(row.get("metrics_state"))));
-        assertTrue(aliases.stream().allMatch(row -> number(row.get("call_count")) == 0));
+        assertTrue(aliases.stream().allMatch(row -> number(row.get("logical_call_count")) == 0));
     }
 
     @Test
@@ -1065,7 +1065,7 @@ class StatsWebDatabaseTest
             try(PreparedStatement evidence = connection.prepareStatement("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count
+                    logical_call_count, target_logical_call_count, grant_count
                 ) VALUES (600, 1, ?, 1000, 2000, 1, 1, 1)
                 """))
             {
@@ -1088,10 +1088,10 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("alias_list_id")) == 600)
             .findFirst().orElseThrow();
         assertEquals("observed", observed.get("metrics_state"));
-        assertEquals(500L, number(observed.get("call_count")));
+        assertEquals(500L, number(observed.get("logical_call_count")));
         assertTrue(aliases.stream().filter(row -> row != observed)
             .allMatch(row -> "covered_no_evidence".equals(row.get("metrics_state")) &&
-                number(row.get("call_count")) == 0));
+                number(row.get("logical_call_count")) == 0));
     }
 
     @Test
@@ -1132,14 +1132,14 @@ class StatsWebDatabaseTest
                 statement.executeUpdate("""
                     INSERT INTO trunked_identity_summary (
                         scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                        call_count, target_call_count, grant_count, join_count
+                        logical_call_count, target_logical_call_count, grant_count, join_count
                     ) VALUES (300, 1, 150, 1000, 3000, 9, 9, 8, 7),
                              (300, 2, 900, 1000, 3000, 9, 0, 8, 7)
                     """);
                 statement.executeUpdate("""
                     INSERT INTO trunked_radio_talkgroup_summary (
                         scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
-                        call_count, grant_count
+                        logical_call_count, grant_count
                     ) VALUES (300, 900, 150, 1, 1000, 3000, 9, 8)
                     """);
             }
@@ -1155,8 +1155,8 @@ class StatsWebDatabaseTest
             assertEquals("observed", alias.get("metrics_state"));
             assertEquals(1L, number(alias.get("coverage_scope_count")));
             assertEquals(1L, number(alias.get("observed_scope_count")));
-            assertEquals(9L, number(alias.get("call_count")));
-            assertEquals(7L, number(alias.get("join_count")));
+            assertEquals(9L, number(alias.get("logical_call_count")));
+            assertEquals(7L, number(alias.get("join_observation_count")));
         }
 
         String scope = "dmr:guid:shared-dmr-a";
@@ -1216,7 +1216,7 @@ class StatsWebDatabaseTest
                 statement.executeUpdate("""
                     INSERT INTO trunked_identity_summary (
                         scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                        call_count, target_call_count
+                        logical_call_count, target_logical_call_count
                     ) VALUES
                         (400, 1, 100, 1000, 3000, 1, 1),
                         (400, 1, 200, 1000, 3000, 1, 1),
@@ -1254,9 +1254,9 @@ class StatsWebDatabaseTest
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, p25_identity_state_code,
                     first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count, join_count, emergency_count,
-                    register_count, logout_count, denial_count, data_count, encrypted_count,
-                    recorded_count, streamed_count
+                    logical_call_count, target_logical_call_count, grant_count, join_count, emergency_count,
+                    register_count, logout_count, denial_count, data_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
                 ) VALUES
                     (1, 1, 56180, 1, 2100, 3100, 7, 7, 6, 2, 1, 3, 1, 1, 4, 2, 3, 2),
                     (1, 3, 56190, 1, 2200, 3200, 5, 5, 5, 1, 0, 0, 0, 0, 0, 0, 1, 1),
@@ -1277,11 +1277,11 @@ class StatsWebDatabaseTest
         assertEquals("P25", firstRows.getFirst().get("protocol"));
         assertEquals(true, firstRows.getFirst().get("promotion_supported"));
         assertEquals("p25:BEE00:348", firstRows.getFirst().get("scope_token"));
-        assertEquals(7L, number(firstRows.getFirst().get("call_count")));
-        assertEquals(3L, number(firstRows.getFirst().get("recorded_count")));
-        assertEquals(2L, number(firstRows.getFirst().get("streamed_count")));
-        assertEquals(6L, number(firstRows.getFirst().get("grant_count")));
-        assertEquals(2L, number(firstRows.getFirst().get("join_count")));
+        assertEquals(7L, number(firstRows.getFirst().get("logical_call_count")));
+        assertEquals(3L, number(firstRows.getFirst().get("recorded_logical_call_count")));
+        assertEquals(2L, number(firstRows.getFirst().get("stream_submitted_logical_call_count")));
+        assertEquals(6L, number(firstRows.getFirst().get("grant_observation_count")));
+        assertEquals(2L, number(firstRows.getFirst().get("join_observation_count")));
         assertEquals("Patch Group", firstRows.getLast().get("identity_kind"));
 
         Map<String,Object> secondPage = mDatabase.observedTalkgroups(request(
@@ -1321,7 +1321,7 @@ class StatsWebDatabaseTest
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, p25_identity_state_code,
                     p25_home_wacn, p25_home_system_id, p25_home_talkgroup_id,
-                    first_seen_ms, last_seen_ms, call_count, target_call_count
+                    first_seen_ms, last_seen_ms, logical_call_count, target_logical_call_count
                 ) VALUES
                     (1, 1, 700, 1, NULL, NULL, NULL, 1000, 2000, 1, 1),
                     (1, 1, 1700, 2, 0xABCDE, 0x123, 700, 1000, 2000, 1, 1),
@@ -1332,7 +1332,7 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO p25_zero_local_fq_talkgroup_summary (
                     scope_id, home_wacn, home_system_id, home_talkgroup_id,
-                    first_seen_ms, last_seen_ms, call_count, recorded_count
+                    first_seen_ms, last_seen_ms, logical_call_count, recorded_output_count
                 ) VALUES
                     (1, 0xABCDE, 0x123, 700, 1000, 2100, 4, 2),
                     (1, 0xABCDE, 0x124, 700, 1100, 2200, 3, 1)
@@ -1384,8 +1384,8 @@ class StatsWebDatabaseTest
         Map<String,Object> exactZero = zeroLocalExact.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 0L).findFirst().orElseThrow();
         assertEquals("none", exactZero.get("match_kind"));
-        assertEquals(4L, number(exactZero.get("call_count")));
-        assertEquals(2L, number(exactZero.get("recorded_count")));
+        assertEquals(4L, number(exactZero.get("logical_call_count")));
+        assertEquals(2L, number(exactZero.get("recorded_logical_call_count")));
         List<Map<String,Object>> qualifiedSearch = rows(mDatabase.observedTalkgroups(request(
             "/api/alias-list/observed-talkgroups?list=1&q=ABCDE-123-701")));
         assertEquals(1, qualifiedSearch.size(), "The displayed fully-qualified identity is searchable");
@@ -1394,7 +1394,7 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
             "/api/aliases?list=1&q=ISSI%20Dispatch")));
         assertEquals(1, aliases.size());
-        assertEquals(1L, number(aliases.getFirst().get("call_count")),
+        assertEquals(1L, number(aliases.getFirst().get("logical_call_count")),
             "Only observations using the configured local talkgroup contribute");
     }
 
@@ -1415,7 +1415,7 @@ class StatsWebDatabaseTest
                          (5, 451012500, 2, 93, 4000, 6000, 6, 2)
                 """);
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
                     call_count, encrypted_count, recorded_count, streamed_count
                 ) VALUES (5, %d, 1, 1, 93, 10, 3, 4, 5)
@@ -1430,13 +1430,13 @@ class StatsWebDatabaseTest
         assertEquals(93L, number(row.get("talkgroup_id")));
         assertEquals("CONVENTIONAL", row.get("topology"));
         assertEquals("none", row.get("match_kind"));
-        assertEquals(10L, number(row.get("call_count")));
-        assertEquals(3L, number(row.get("encrypted_count")));
-        assertEquals(4L, number(row.get("recorded_count")));
-        assertEquals(5L, number(row.get("streamed_count")));
+        assertEquals(10L, number(row.get("logical_call_count")));
+        assertEquals(3L, number(row.get("encrypted_logical_call_count")));
+        assertEquals(4L, number(row.get("recorded_logical_call_count")));
+        assertEquals(5L, number(row.get("stream_submitted_logical_call_count")));
         assertEquals(2L, number(row.get("timeslot_count")));
         assertNull(row.get("timeslot"));
-        assertNull(row.get("grant_count"), "Conventional DMR does not collect grant signaling");
+        assertNull(row.get("grant_observation_count"), "Conventional DMR does not collect grant signaling");
     }
 
     @Test
@@ -1467,7 +1467,7 @@ class StatsWebDatabaseTest
                     (211, 210, 'NXDN Discovery Range', 'TALKGROUP_RANGE', 'NXDN', 200, 300)
                 """);
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
                     call_count, encrypted_count, recorded_count, streamed_count
                 ) VALUES
@@ -1489,15 +1489,15 @@ class StatsWebDatabaseTest
         assertEquals(61001L, number(p25.get("talkgroup_id")));
         assertEquals("range", p25.get("match_kind"));
         assertEquals("P25 Discovery Range", p25.get("matched_alias_name"));
-        assertEquals(5L, number(p25.get("call_count")));
-        assertEquals(1L, number(p25.get("encrypted_count")));
-        assertEquals(1L, number(p25.get("recorded_count")));
-        assertEquals(2L, number(p25.get("streamed_count")));
+        assertEquals(5L, number(p25.get("logical_call_count")));
+        assertEquals(1L, number(p25.get("encrypted_logical_call_count")));
+        assertEquals(1L, number(p25.get("recorded_logical_call_count")));
+        assertEquals(2L, number(p25.get("stream_submitted_logical_call_count")));
         assertEquals(3_600_000L, number(p25.get("first_seen_ms")));
         assertEquals(7_200_000L, number(p25.get("last_seen_ms")));
         assertEquals(154_875_000L, number(p25.get("frequency_hz")));
         assertEquals(1L, number(p25.get("frequency_count")));
-        assertNull(p25.get("grant_count"));
+        assertNull(p25.get("grant_observation_count"));
 
         List<Map<String,Object>> nxdnRows = rows(mDatabase.observedTalkgroups(request(
             "/api/alias-list/observed-talkgroups?list=210")));
@@ -1508,10 +1508,10 @@ class StatsWebDatabaseTest
         assertEquals(250L, number(nxdn.get("talkgroup_id")));
         assertEquals("range", nxdn.get("match_kind"));
         assertEquals("NXDN Discovery Range", nxdn.get("matched_alias_name"));
-        assertEquals(4L, number(nxdn.get("call_count")));
-        assertEquals(2L, number(nxdn.get("encrypted_count")));
-        assertEquals(3L, number(nxdn.get("recorded_count")));
-        assertEquals(1L, number(nxdn.get("streamed_count")));
+        assertEquals(4L, number(nxdn.get("logical_call_count")));
+        assertEquals(2L, number(nxdn.get("encrypted_logical_call_count")));
+        assertEquals(3L, number(nxdn.get("recorded_logical_call_count")));
+        assertEquals(1L, number(nxdn.get("stream_submitted_logical_call_count")));
     }
 
     @Test
@@ -1550,8 +1550,8 @@ class StatsWebDatabaseTest
                 statement.executeUpdate("""
                     INSERT INTO trunked_identity_summary (
                         scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                        call_count, target_call_count, grant_count, encrypted_count,
-                        recorded_count, streamed_count
+                        logical_call_count, target_logical_call_count, grant_count, encrypted_logical_call_count,
+                        recorded_output_count, streamed_output_count
                     ) VALUES (201, 1, 150, 1000, 3000, 4, 4, 4, 1, 2, 3),
                              (202, 1, 250, 1000, 3000, 5, 5, 5, 0, 1, 2)
                     """);
@@ -1755,7 +1755,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
                     call_count, encrypted_count, recorded_count, streamed_count
                 ) VALUES (5, 1, 1, 91, %1$d, 10, 2, 3, 2),
@@ -1769,19 +1769,19 @@ class StatsWebDatabaseTest
         Map<String,Object> dispatch = aliases.stream().filter(row -> "DMR Dispatch".equals(row.get("name")))
             .findFirst().orElseThrow();
         assertEquals("observed", dispatch.get("metrics_state"));
-        assertEquals(10L, number(dispatch.get("call_count")));
-        assertEquals(3L, number(dispatch.get("recorded_count")));
-        assertEquals(2L, number(dispatch.get("streamed_count")));
-        assertEquals(2L, number(dispatch.get("encrypted_evidence_count")));
-        assertNull(dispatch.get("grant_count"));
+        assertEquals(10L, number(dispatch.get("logical_call_count")));
+        assertEquals(3L, number(dispatch.get("recorded_logical_call_count")));
+        assertEquals(2L, number(dispatch.get("stream_submitted_logical_call_count")));
+        assertEquals(2L, number(dispatch.get("encrypted_logical_call_count")));
+        assertNull(dispatch.get("grant_observation_count"));
         assertNull(dispatch.get("relationship_count"));
         assertEquals(1000L, number(dispatch.get("first_evidence_ms")));
         assertEquals(5000L, number(dispatch.get("last_evidence_ms")));
 
         Map<String,Object> radio = aliases.stream().filter(row -> "DMR Engine 1".equals(row.get("name")))
             .findFirst().orElseThrow();
-        assertEquals(10L, number(radio.get("call_count")));
-        assertEquals(3L, number(radio.get("recorded_count")));
+        assertEquals(10L, number(radio.get("logical_call_count")));
+        assertEquals(3L, number(radio.get("recorded_logical_call_count")));
         assertNull(radio.get("current_affiliation_count"));
     }
 
@@ -1797,12 +1797,264 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void retainsSharedP25AliasListIdentityAfterItsConfigurationIsRemoved() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE receiver_context SET alias_list_name=NULL WHERE id=1");
+            statement.executeUpdate("UPDATE p25_site_snapshot SET alias_list_name=NULL WHERE guid='" + GUID + "'");
+            statement.executeUpdate("DELETE FROM alias WHERE alias_list_id=1");
+            statement.executeUpdate("DELETE FROM alias_list WHERE id=1");
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        List<Map<String,Object>> scopeRows = new ArrayList<>();
+        scopeRows.add(rows(mDatabase.systemDirectory(request("/api/systems"))).getFirst());
+        scopeRows.add(map(mDatabase.system(request("/api/system?scope=p25:BEE00:348")), "system"));
+        scopeRows.add(rows(mDatabase.systemSites(request(
+            "/api/system/sites?scope=p25:BEE00:348"))).getFirst());
+        scopeRows.add(map(mDatabase.site(request("/api/site?guid=" + GUID)), "site"));
+        scopeRows.add(rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?scope=p25:BEE00:348"))).getFirst());
+        scopeRows.add(rows(mDatabase.systemRadios(request(
+            "/api/system/radios?scope=p25:BEE00:348"))).getFirst());
+        scopeRows.add(rows(mDatabase.systemTalkerAliases(request(
+            "/api/system/talker-aliases?scope=p25:BEE00:348"))).getFirst());
+        scopeRows.add(map(mDatabase.talkgroup(request(
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=56132")), "group_identity"));
+        scopeRows.add(map(mDatabase.radio(request(
+            "/api/radio?scope=p25:BEE00:348&radio_id=1811332")), "radio"));
+        scopeRows.add(rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/relationships?scope=p25:BEE00:348&radio_id=1811332"))).getFirst());
+
+        for(Map<String,Object> row: scopeRows)
+        {
+            assertEquals(1L, number(row.get("alias_list_id")), row.toString());
+        }
+    }
+
+    @Test
+    void treatsAnUncertainP25ContextLogicalCallAsOneSiteObservation() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        String scopeToken = "p25:uncertain:guid:p25-fallback-guid";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms, rfss, site
+                ) VALUES (900, 'p25-fallback', 'p25-fallback-guid', 1, 1, 'Uncertain P25',
+                    'P25-1', 1000, 3000, 8, 9)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (
+                    guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, decoder, rfss, site
+                ) VALUES ('p25-fallback-guid', 'fallback-hash', 1000, 3000, 1,
+                    'APCO25', 'Uncertain P25', 'P25-1', 8, 9)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (900, '%s', 1, 2, 0, 1000, 3000)
+                """.formatted(scopeToken));
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (
+                    context_id, scope_id, first_seen_ms, last_seen_ms
+                ) VALUES (900, 900, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    logical_call_count, target_logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (900, 1, 77000, 1000, 3000, 1, 1, 1, 1, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_bucket (
+                    scope_id, bucket_start_ms, logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (900, %1$d, 1, 1, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (900, %1$d, 1, 1, 77000, 1, 1, 1, 1)
+                """.formatted(bucket));
+        }
+
+        Map<String,Object> system = map(mDatabase.system(request(
+            "/api/system?scope=" + scopeToken)), "system");
+        assertEquals(2L, number(system.get("scope_kind_code")));
+        assertEquals(1L, number(system.get("logical_call_count")));
+        assertEquals(1L, number(system.get("site_observation_count")));
+        assertEquals(1L, number(system.get("recorded_logical_call_count")));
+        assertEquals(1L, number(system.get("stream_submitted_logical_call_count")));
+        assertNull(system.get("alias_list_id"));
+
+        Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?scope=" + scopeToken))).getFirst();
+        assertEquals(1L, number(talkgroup.get("logical_call_count")));
+        assertEquals(1L, number(talkgroup.get("site_observation_count")));
+
+        Map<String,Object> detail = map(mDatabase.talkgroup(request(
+            "/api/talkgroup?scope=" + scopeToken + "&talkgroup_id=77000")), "group_identity");
+        assertEquals(1L, number(detail.get("logical_call_count")));
+        assertEquals(1L, number(detail.get("site_observation_count")));
+
+        Map<String,Object> site = rows(mDatabase.systemSites(request(
+            "/api/system/sites?scope=" + scopeToken))).getFirst();
+        assertEquals(scopeToken, site.get("scope_token"));
+        assertNull(site.get("alias_list_id"));
+
+        Map<String,Object> siteTalkgroup = rows(mDatabase.siteTalkgroups(request(
+            "/api/site/talkgroups?guid=p25-fallback-guid&range=24h"))).getFirst();
+        assertEquals(77000L, number(siteTalkgroup.get("talkgroup_id")));
+        assertEquals(1L, number(siteTalkgroup.get("site_observation_count")));
+        assertEquals(1L, number(siteTalkgroup.get("encrypted_site_observation_count")));
+        assertFalse(siteTalkgroup.containsKey("logical_call_count"));
+    }
+
+    @Test
+    void reportsOneLogicalCallAndTwoSiteObservationsAcrossEveryPublicSummary() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
+                    decoder, first_seen_ms, last_seen_ms, system_key, rfss, site
+                ) VALUES (901, 'multi-site-2', 'multi-site-2-guid', 1, 1, 'Second Simulcast',
+                    'County', 'P25-1', 1000, 3000, 1, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (
+                    context_id, scope_id, first_seen_ms, last_seen_ms
+                ) VALUES (901, 1, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (
+                    guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, alias_list_name, decoder, system_key, rfss, site
+                ) VALUES ('multi-site-2-guid', 'multi-site-2-hash', 1000, 3000, 1,
+                    'APCO25', 'Second Simulcast', 'County', 'P25-1', 1, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (900, 1, 'Multi-site Call', 'TALKGROUP', 'APCO25', 78000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    logical_call_count, target_logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (1, 1, 78000, 1000, 3000, 1, 1, 1, 1, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_bucket (
+                    scope_id, bucket_start_ms, logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (1, %1$d, 1, 1, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (1, %1$d, 1, 1, 78000, 1, 1, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site (
+                    learned_site_id, system_key, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (901, 1, 1, 1, 1000, 3000),
+                         (902, 1, 1, 2, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_bucket (
+                    scope_id, learned_site_id, bucket_start_ms, observed_call_count,
+                    encrypted_observed_call_count
+                ) VALUES (1, 901, %1$d, 1, 1), (1, 902, %1$d, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket (
+                    scope_id, learned_site_id, bucket_start_ms, identity_role_code,
+                    identity_kind_code, identity_id, observed_call_count,
+                    encrypted_observed_call_count
+                ) VALUES (1, 901, %1$d, 1, 1, 78000, 1, 1),
+                         (1, 902, %1$d, 1, 1, 78000, 1, 1)
+                """.formatted(bucket));
+        }
+
+        Map<String,Object> system = map(mDatabase.system(request(
+            "/api/system?scope=p25:BEE00:348")), "system");
+        assertEquals(1L, number(system.get("logical_call_count")));
+        assertEquals(2L, number(system.get("site_observation_count")));
+        assertEquals(1L, number(system.get("recorded_logical_call_count")));
+        assertEquals(1L, number(system.get("stream_submitted_logical_call_count")));
+
+        Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?scope=p25:BEE00:348&q=78000"))).getFirst();
+        assertEquals(1L, number(talkgroup.get("logical_call_count")));
+        assertEquals(2L, number(talkgroup.get("site_observation_count")));
+        assertEquals(1L, number(talkgroup.get("recorded_logical_call_count")));
+        assertEquals(1L, number(talkgroup.get("stream_submitted_logical_call_count")));
+        assertFalse(talkgroup.containsKey("call_count"));
+        assertFalse(talkgroup.containsKey("recorded_count"));
+        assertFalse(talkgroup.containsKey("streamed_count"));
+
+        Map<String,Object> detail = map(mDatabase.talkgroup(request(
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=78000")), "group_identity");
+        assertEquals(1L, number(detail.get("logical_call_count")));
+        assertEquals(2L, number(detail.get("site_observation_count")));
+
+        for(String guid: List.of(GUID, "multi-site-2-guid"))
+        {
+            Map<String,Object> siteTalkgroup = rows(mDatabase.siteTalkgroups(request(
+                "/api/site/talkgroups?guid=" + guid + "&range=24h"))).stream()
+                .filter(row -> number(row.get("talkgroup_id")) == 78000L).findFirst().orElseThrow();
+            assertEquals(1L, number(siteTalkgroup.get("site_observation_count")));
+            assertFalse(siteTalkgroup.containsKey("recorded_logical_call_count"));
+            assertFalse(siteTalkgroup.containsKey("stream_submitted_logical_call_count"));
+        }
+
+        Map<String,Object> dashboard = rowsFrom(mDatabase.dashboard(), "topDestinations").stream()
+            .filter(row -> number(row.get("identity_id")) == 78000L).findFirst().orElseThrow();
+        assertEquals(1L, number(dashboard.get("logical_call_count")));
+        assertEquals(1L, number(dashboard.get("recorded_logical_call_count")));
+        assertEquals(1L, number(dashboard.get("stream_submitted_logical_call_count")));
+
+        Map<String,Object> alias = rows(mDatabase.aliases(request(
+            "/api/aliases?list=1&q=Multi-site%20Call"))).getFirst();
+        assertEquals(1L, number(alias.get("logical_call_count")));
+        assertEquals(1L, number(alias.get("recorded_logical_call_count")));
+        assertEquals(1L, number(alias.get("stream_submitted_logical_call_count")));
+
+        CSVRecord csv = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-talkgroups&scope=p25:BEE00:348&q=78000"))).getFirst();
+        assertEquals("1", csv.get("logical_calls"));
+        assertEquals("2", csv.get("site_observations"));
+        assertEquals("1", csv.get("recorded_logical_calls"));
+        assertEquals("1", csv.get("stream_submitted_logical_calls"));
+        assertEquals("1", csv.get("alias_list_id"));
+    }
+
+    @Test
     void aliasEvidenceQueriesUseScopeLeadingIndexesAndNeverDetailedEvents() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
             List<String> identityPlan = explain(connection, """
-                SELECT identity_id, call_count
+                SELECT identity_id, logical_call_count
                 FROM trunked_identity_summary
                 WHERE scope_id IN (?)
                 ORDER BY scope_id, identity_kind_code, identity_id
@@ -1864,7 +2116,7 @@ class StatsWebDatabaseTest
 
             assertTrue(java.util.stream.Stream.concat(talkgroupPlan.stream(), sitePlan.stream())
                 .noneMatch(detail -> detail.contains("p25_activity_event") ||
-                    detail.contains("call_identity_bucket")));
+                    detail.contains("conventional_call_identity_bucket")));
         }
     }
 
@@ -1888,13 +2140,13 @@ class StatsWebDatabaseTest
                 PreparedStatement trunkedIdentities = connection.prepareStatement("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, p25_identity_state_code,
-                    first_seen_ms, last_seen_ms, call_count, target_call_count
+                    first_seen_ms, last_seen_ms, logical_call_count, target_logical_call_count
                 ) VALUES (1, 1, ?, 1, 1000, 2000, 1, 1)
                 """);
                 PreparedStatement zeroLocalIdentity = connection.prepareStatement("""
                 INSERT INTO p25_zero_local_fq_talkgroup_summary (
                     scope_id, home_wacn, home_system_id, home_talkgroup_id,
-                    first_seen_ms, last_seen_ms, call_count
+                    first_seen_ms, last_seen_ms, logical_call_count
                 ) VALUES (1, 0xABCDE, 0x123, 1200, 1000, 2000, 1)
                 """);
                 PreparedStatement conventionalContexts = connection.prepareStatement("""
@@ -1910,7 +2162,7 @@ class StatsWebDatabaseTest
                 ) VALUES (?, ?, ?, ?, 1000, 2000, 1, 0)
                 """);
                 PreparedStatement callIdentities = connection.prepareStatement("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code,
                     identity_id, call_count
                 ) VALUES (?, 0, 1, 1, ?, 1)
@@ -2114,8 +2366,8 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count,
-                    target_call_count, encrypted_count, recorded_count, streamed_count,
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count,
+                    target_logical_call_count, encrypted_logical_call_count, recorded_output_count, streamed_output_count,
                     last_counterpart_kind_code, last_counterpart_id
                 ) VALUES
                     (1, 1, 56180, 3000, 3000, 1, 1, 1, 1, 1, 2, 1811332),
@@ -2125,32 +2377,53 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_talkgroup_summary (
                     scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
-                    call_count, encrypted_count
+                    logical_call_count, encrypted_logical_call_count
                 ) VALUES
                     (1, 1811332, 56180, 1, 3000, 3000, 1, 1),
                     (1, 1811332, 56181, 1, 3000, 3000, 1, 1),
                     (1, 1811332, 56182, 3, 3000, 3000, 1, 1)
                 """);
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
-                    context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
-                    call_count, encrypted_count, recorded_count, streamed_count
+                INSERT INTO trunked_logical_call_bucket (
+                    scope_id, bucket_start_ms, logical_call_count, encrypted_logical_call_count,
+                    recorded_output_count, streamed_output_count
+                ) VALUES (1, %d, 1, 1, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    logical_call_count, encrypted_logical_call_count, recorded_output_count,
+                    streamed_output_count
                 ) VALUES
-                    (1, 1, 1, 56180, %1$d, 1, 1, 1, 1),
-                    (1, 1, 1, 56181, %1$d, 1, 1, 1, 1),
-                    (1, 1, 3, 56182, %1$d, 1, 1, 1, 1)
+                    (1, %1$d, 1, 1, 56180, 1, 1, 1, 1),
+                    (1, %1$d, 1, 1, 56181, 1, 1, 1, 1),
+                    (1, %1$d, 1, 3, 56182, 1, 1, 1, 1)
                 """.formatted(bucket));
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket (
-                    context_id, bucket_start_ms, call_count, continue_count, gps_count, encrypted_count,
-                    recorded_count, streamed_count
-                ) VALUES (1, %d, 1, 3, 2, 1, 1, 1)
-                """.formatted(bucket));
-            statement.executeUpdate("""
-                INSERT INTO p25_site_frequency_summary (
-                    context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, call_count, encrypted_count
-                ) VALUES (1, 854187500, 1, 3000, 3000, 1, 1)
+                INSERT INTO p25_learned_site (
+                    learned_site_id, system_key, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (1, 1, 1, 1, 3000, 3000)
                 """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_bucket (
+                    scope_id, learned_site_id, bucket_start_ms, observed_call_count,
+                    encrypted_observed_call_count
+                ) VALUES (1, 1, %d, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket (
+                    scope_id, learned_site_id, bucket_start_ms, identity_role_code,
+                    identity_kind_code, identity_id, observed_call_count, encrypted_observed_call_count
+                ) VALUES
+                    (1, 1, %1$d, 1, 1, 56180, 1, 1),
+                    (1, 1, %1$d, 1, 1, 56181, 1, 1),
+                    (1, 1, %1$d, 1, 3, 56182, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket (
+                    context_id, bucket_start_ms, continue_count, gps_count
+                ) VALUES (1, %d, 3, 2)
+                """.formatted(bucket));
         }
 
         List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
@@ -2160,10 +2433,10 @@ class StatsWebDatabaseTest
 
         for(Map<String,Object> talkgroup: talkgroups)
         {
-            assertEquals(1L, number(talkgroup.get("call_count")));
-            assertEquals(1L, number(talkgroup.get("encrypted_count")));
-            assertEquals(1L, number(talkgroup.get("recorded_count")));
-            assertEquals(1L, number(talkgroup.get("streamed_count")));
+            assertEquals(1L, number(talkgroup.get("logical_call_count")));
+            assertEquals(1L, number(talkgroup.get("encrypted_logical_call_count")));
+            assertEquals(1L, number(talkgroup.get("recorded_logical_call_count")));
+            assertEquals(1L, number(talkgroup.get("stream_submitted_logical_call_count")));
         }
 
         Map<String,Object> patch = map(mDatabase.talkgroup(request(
@@ -2189,25 +2462,27 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("talkgroup_id")) >= 56180L)
             .toList();
         assertEquals(3, siteTalkgroups.size());
-        assertTrue(siteTalkgroups.stream().allMatch(row -> number(row.get("call_count")) == 1L &&
-            number(row.get("encrypted_count")) == 1L && number(row.get("recorded_count")) == 1L &&
-            number(row.get("streamed_count")) == 1L));
+        assertTrue(siteTalkgroups.stream().allMatch(row -> number(row.get("site_observation_count")) == 1L &&
+            number(row.get("encrypted_site_observation_count")) == 1L));
+        assertTrue(siteTalkgroups.stream().allMatch(row -> !row.containsKey("logical_call_count") &&
+            !row.containsKey("recorded_logical_call_count") &&
+            !row.containsKey("stream_submitted_logical_call_count")));
 
         Map<String,Object> systemResponse = mDatabase.system(request(
             "/api/system?scope=p25:BEE00:348"));
         Map<String,Object> system = map(systemResponse, "system");
-        assertEquals(1L, number(system.get("activity_calls")));
-        assertEquals(1L, number(system.get("activity_retained_calls")));
-        assertEquals(1L, number(system.get("activity_recorded")));
-        assertEquals(1L, number(system.get("activity_streamed")));
-        assertEquals(1L, number(system.get("activity_encrypted")));
+        assertEquals(1L, number(system.get("logical_call_count")));
+        assertEquals(1L, number(system.get("site_observation_count")));
+        assertEquals(1L, number(system.get("recorded_logical_call_count")));
+        assertEquals(1L, number(system.get("stream_submitted_logical_call_count")));
+        assertEquals(1L, number(system.get("encrypted_logical_call_count")));
 
         List<Map<String,Object>> actionCounts = rowsFrom(systemResponse, "actionCounts");
         assertEquals(2, actionCounts.size());
         assertEquals("CONTINUE", actionCounts.getFirst().get("action"));
-        assertEquals(3L, number(actionCounts.getFirst().get("count")));
+        assertEquals(3L, number(actionCounts.getFirst().get("observation_count")));
         assertEquals("GPS", actionCounts.get(1).get("action"));
-        assertEquals(2L, number(actionCounts.get(1).get("count")));
+        assertEquals(2L, number(actionCounts.get(1).get("observation_count")));
         assertTrue(actionCounts.stream().noneMatch(row ->
             "CALL".equals(row.get("action")) || "ENCRYPTED".equals(row.get("action"))));
     }
@@ -2223,21 +2498,21 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, join_count
+                    logical_call_count, target_logical_call_count, join_count
                 ) VALUES (1, 1, 60000, 1000, 3000, 2, 2, 4),
                          (1, 3, 60000, 1000, 3000, 3, 3, 5)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_talkgroup_summary (
                     scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
-                    call_count
+                    logical_call_count
                 ) VALUES (1, 1811332, 60000, 1, 1000, 3000, 2),
                          (1, 1811332, 60000, 3, 1000, 3000, 3)
                 """);
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
-                    context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
-                    call_count
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
+                    logical_call_count
                 ) VALUES (1, 1, 1, 60000, %1$d, 2),
                          (1, 1, 3, 60000, %1$d, 3)
                 """.formatted(bucket));
@@ -2258,11 +2533,11 @@ class StatsWebDatabaseTest
         Map<String,Object> patch = map(mDatabase.talkgroup(request(
             "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group")), "group_identity");
         assertEquals(1, number(talkgroup.get("target_kind_code")));
-        assertEquals(2, number(talkgroup.get("call_count")));
+        assertEquals(2, number(talkgroup.get("logical_call_count")));
         assertEquals(1, number(talkgroup.get("affiliated_radios")));
         assertEquals(Boolean.TRUE, map(talkgroup, "capabilities").get("current_affiliations"));
         assertEquals(3, number(patch.get("target_kind_code")));
-        assertEquals(3, number(patch.get("call_count")));
+        assertEquals(3, number(patch.get("logical_call_count")));
         assertEquals(0, number(patch.get("affiliated_radios")));
         assertEquals(Boolean.FALSE, map(patch, "capabilities").get("current_affiliations"));
 
@@ -2279,10 +2554,10 @@ class StatsWebDatabaseTest
             "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=60000&range=24h"));
         Map<String,Object> patchHistory = mDatabase.talkgroupActivity(request(
             "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group&range=24h"));
-        assertEquals(2, number(map(talkgroupHistory, "totals").get("call_count")));
-        assertEquals(4, number(map(talkgroupHistory, "totals").get("join_count")));
-        assertEquals(3, number(map(patchHistory, "totals").get("call_count")));
-        assertEquals(5, number(map(patchHistory, "totals").get("join_count")));
+        assertEquals(2, number(map(talkgroupHistory, "totals").get("logical_call_count")));
+        assertEquals(4, number(map(talkgroupHistory, "totals").get("join_observation_count")));
+        assertEquals(3, number(map(patchHistory, "totals").get("logical_call_count")));
+        assertEquals(5, number(map(patchHistory, "totals").get("join_observation_count")));
 
         assertEquals(1, number(rows(mDatabase.radioTalkgroupRelationships(request(
             "/api/relationships?scope=p25:BEE00:348&talkgroup_id=60000"))).getFirst()
@@ -2514,12 +2789,12 @@ class StatsWebDatabaseTest
         }
 
         List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=p25:BEE00:348&sort=signaling&direction=desc")));
+            "/api/system/talkgroups?scope=p25:BEE00:348&sort=signaling_observation_count&direction=desc")));
         Map<String,Object> affiliatedOnly = talkgroups.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 57000L).findFirst().orElseThrow();
         assertEquals(57000L, number(affiliatedOnly.get("talkgroup_id")));
-        assertEquals(0L, number(affiliatedOnly.get("call_count")));
-        assertEquals(9L, number(affiliatedOnly.get("signaling_count")));
+        assertEquals(0L, number(affiliatedOnly.get("logical_call_count")));
+        assertEquals(9L, number(affiliatedOnly.get("signaling_observation_count")));
         assertFalse(affiliatedOnly.containsKey("join_count"));
         assertFalse(affiliatedOnly.containsKey("evidence_total"));
         assertFalse(affiliatedOnly.containsKey("evidence_label"));
@@ -2543,31 +2818,33 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    recorded_count, streamed_count
+                    recorded_output_count, streamed_output_count
                 ) VALUES (1, 1, 57002, 1000, 3000, 2, 3)
                 """);
         }
 
         List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=p25:BEE00:348&sort=signaling&direction=desc")));
+            "/api/system/talkgroups?scope=p25:BEE00:348&sort=signaling_observation_count&direction=desc")));
         assertEquals(57001L, number(talkgroups.getFirst().get("talkgroup_id")));
         Map<String,Object> signaling = talkgroups.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 57001L).findFirst().orElseThrow();
-        assertEquals(15L, number(signaling.get("signaling_count")));
+        assertEquals(15L, number(signaling.get("signaling_observation_count")));
         assertFalse(signaling.containsKey("denial_count"));
         assertFalse(signaling.containsKey("request_count"));
         assertFalse(signaling.containsKey("evidence_total"));
 
         Map<String,Object> output = talkgroups.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 57002L).findFirst().orElseThrow();
-        assertEquals(0L, number(output.get("signaling_count")));
-        assertEquals(2L, number(output.get("recorded_count")));
-        assertEquals(3L, number(output.get("streamed_count")));
+        assertEquals(0L, number(output.get("signaling_observation_count")));
+        assertEquals(2L, number(output.get("recorded_logical_call_count")));
+        assertEquals(3L, number(output.get("stream_submitted_logical_call_count")));
         assertFalse(output.containsKey("evidence_total"));
 
-        List<Map<String,Object>> compatibilitySort = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=p25:BEE00:348&sort=evidence&direction=desc")));
-        assertEquals(57001L, number(compatibilitySort.getFirst().get("talkgroup_id")));
+        StatsApiException legacySort = assertThrows(StatsApiException.class, () ->
+            mDatabase.systemTalkgroups(request(
+                "/api/system/talkgroups?scope=p25:BEE00:348&sort=evidence&direction=desc")));
+        assertEquals(400, legacySort.status());
+        assertEquals("sort", legacySort.field());
     }
 
     @Test
@@ -2651,7 +2928,7 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count
                 ) VALUES (1, 1, 65000, 1000, 2000, 1)
                 """);
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (70, 'Retired', 'P25')");
@@ -2731,7 +3008,7 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count,
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count,
                     last_counterpart_kind_code, last_counterpart_id, last_talker_alias,
                     last_talker_alias_seen_ms
                 ) VALUES (1, 2, 2000000, 1000, 3000, 1, 2, 65001, 'PRIVATE PEER', 3000)
@@ -2798,7 +3075,7 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    encrypted_count, last_encryption_algorithm_id, last_encryption_key_id,
+                    encrypted_logical_call_count, last_encryption_algorithm_id, last_encryption_key_id,
                     last_talker_alias, last_talker_alias_seen_ms
                 ) VALUES (20, 2, 1234, 1000, 3000, 1, 1, 17, 'DMR UNIT', 3000)
                 """);
@@ -2953,8 +3230,8 @@ class StatsWebDatabaseTest
         assertEquals("DMR Engine 1", dispatch.get("last_source_alias_name"));
         assertEquals(451_012_500L, number(dispatch.get("frequency_hz")));
         assertEquals(1L, number(dispatch.get("timeslot")));
-        assertEquals(10L, number(dispatch.get("call_count")));
-        assertEquals(2L, number(dispatch.get("encrypted_count")));
+        assertEquals(10L, number(dispatch.get("logical_call_count")));
+        assertEquals(2L, number(dispatch.get("encrypted_logical_call_count")));
 
         Map<String,Object> radios = mDatabase.conventionalRadios(request(
             "/api/conventional/radios?context=conventional-dmr-county&sort=radio&direction=asc"));
@@ -2964,8 +3241,8 @@ class StatsWebDatabaseTest
         assertEquals("DMR Engine 1", engine.get("alias_name"));
         assertEquals("DMR Dispatch", engine.get("last_talkgroup_alias_name"));
         assertEquals("DMR Engine 2", engine.get("last_peer_alias_name"));
-        assertEquals(7L, number(engine.get("source_call_count")));
-        assertEquals(3L, number(engine.get("target_call_count")));
+        assertEquals(7L, number(engine.get("source_logical_call_count")));
+        assertEquals(3L, number(engine.get("target_logical_call_count")));
         assertFalse(engine.values().contains("Other Dispatch"));
         assertFalse(engine.values().contains("Other Engine"));
     }
@@ -2976,7 +3253,7 @@ class StatsWebDatabaseTest
         seedDmrConventionalRows(mDatabasePath);
 
         Map<String,Object> firstPage = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=calls&limit=1"));
+            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=logical_call_count&limit=1"));
         assertEquals(92L, number(rows(firstPage).getFirst().get("talkgroup_id")));
         assertEquals(1L, number(firstPage.get("limit")));
         assertEquals(0L, number(firstPage.get("offset")));
@@ -2984,7 +3261,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(firstPage.get("nextOffset")));
 
         Map<String,Object> secondPage = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=calls&limit=1&offset=1"));
+            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=logical_call_count&limit=1&offset=1"));
         assertEquals(91L, number(rows(secondPage).getFirst().get("talkgroup_id")));
         assertFalse((Boolean)secondPage.get("hasMore"));
 
@@ -3007,7 +3284,7 @@ class StatsWebDatabaseTest
         Map<String,Object> otherContext = mDatabase.conventionalTalkgroups(request(
             "/api/conventional/talkgroups?context=conventional-dmr-other"));
         assertEquals(1, rows(otherContext).size());
-        assertEquals(999L, number(rows(otherContext).getFirst().get("call_count")));
+        assertEquals(999L, number(rows(otherContext).getFirst().get("logical_call_count")));
         assertEquals("Other Dispatch", rows(otherContext).getFirst().get("alias_name"));
 
         StatsApiException wrongProtocol = assertThrows(StatsApiException.class,
@@ -3108,9 +3385,9 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket (
-                    context_id, bucket_start_ms, call_count, emergency_count, continue_count, data_count
-                ) VALUES (1, %d, 2, 3, 4, 1)
+                INSERT INTO trunked_signaling_activity_bucket (
+                    context_id, bucket_start_ms, emergency_count, continue_count, data_count
+                ) VALUES (1, %d, 3, 4, 1)
                 """.formatted(currentHour));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_bucket (
@@ -3123,13 +3400,13 @@ class StatsWebDatabaseTest
         Map<String,Object> response = mDatabase.dashboardActivityActions(request(
             "/api/v1/activity/actions?range=24h"));
         assertEquals("24h", response.get("range"));
-        assertEquals(18, number(response.get("total")));
-        assertEquals(9, actionCount(response, "CALL"));
+        assertEquals(9, number(response.get("total_observation_count")));
         assertEquals(8, actionCount(response, "EMERGENCY"));
         assertEquals(1, actionCount(response, "DATA"));
-        assertEquals(22, rows(response).size());
+        assertEquals(21, rows(response).size());
         assertTrue(rows(response).stream().anyMatch(row ->
-            "ACKNOWLEDGE".equals(row.get("action")) && number(row.get("count")) == 0));
+            "ACKNOWLEDGE".equals(row.get("action")) && number(row.get("observation_count")) == 0));
+        assertTrue(rows(response).stream().noneMatch(row -> "CALL".equals(row.get("action"))));
         assertTrue(rows(response).stream().noneMatch(row -> "CONTINUE".equals(row.get("action"))));
     }
 
@@ -3143,7 +3420,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, denial_count)
+                INSERT INTO trunked_signaling_activity_bucket (context_id, bucket_start_ms, denial_count)
                 VALUES (1, %d, 5102)
                 """.formatted(eventHour));
             statement.executeUpdate("""
@@ -3168,16 +3445,16 @@ class StatsWebDatabaseTest
         Map<String,Object> response = mDatabase.dashboardActivityRadios(request(
             "/api/v1/activity/radios?range=24h&action=denial&limit=10"));
         assertEquals("DENIAL", response.get("action"));
-        assertEquals(5102, number(response.get("action_total")));
-        assertEquals(5102, number(response.get("retained_event_count")));
-        assertEquals(5101, number(response.get("identified_event_count")));
-        assertEquals(1, number(response.get("unknown_source_event_count")));
+        assertEquals(5102, number(response.get("action_observation_count")));
+        assertEquals(5102, number(response.get("retained_observation_count")));
+        assertEquals(5101, number(response.get("identified_observation_count")));
+        assertEquals(1, number(response.get("unknown_source_observation_count")));
         assertEquals(1, number(response.get("total_count")));
         assertFalse((Boolean)response.get("hasMore"));
         assertNull(response.get("nextOffset"));
         assertEquals(1, rows(response).size());
         assertEquals(1811332, number(rows(response).getFirst().get("radio_id")));
-        assertEquals(5101, number(rows(response).getFirst().get("event_count")));
+        assertEquals(5101, number(rows(response).getFirst().get("observation_count")));
         assertEquals("Engine 1", rows(response).getFirst().get("alias_name"));
         assertTrue(rows(response).stream().noneMatch(row -> number(row.get("radio_id")) == 1999999));
     }
@@ -3203,7 +3480,7 @@ class StatsWebDatabaseTest
                 VALUES (3, 1, 1000, 2000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, emergency_count)
+                INSERT INTO trunked_signaling_activity_bucket (context_id, bucket_start_ms, emergency_count)
                 VALUES (1, %1$d, 3), (3, %1$d, 1)
                 """.formatted(eventHour));
             statement.executeUpdate("""
@@ -3225,10 +3502,10 @@ class StatsWebDatabaseTest
 
         Map<String,Object> firstPage = mDatabase.dashboardActivityRadios(request(
             "/api/v1/activity/radios?range=24h&action=eMeRgEnCy&limit=2"));
-        assertEquals(5, number(firstPage.get("action_total")));
-        assertEquals(5, number(firstPage.get("retained_event_count")));
-        assertEquals(5, number(firstPage.get("identified_event_count")));
-        assertEquals(0, number(firstPage.get("unknown_source_event_count")));
+        assertEquals(5, number(firstPage.get("action_observation_count")));
+        assertEquals(5, number(firstPage.get("retained_observation_count")));
+        assertEquals(5, number(firstPage.get("identified_observation_count")));
+        assertEquals(0, number(firstPage.get("unknown_source_observation_count")));
         assertEquals(3, number(firstPage.get("total_count")));
         assertEquals(2, number(firstPage.get("limit")));
         assertEquals(0, number(firstPage.get("offset")));
@@ -3237,7 +3514,7 @@ class StatsWebDatabaseTest
         assertEquals(List.of(1811332L, 1811333L), rows(firstPage).stream()
             .map(row -> number(row.get("radio_id"))).toList());
         Map<String,Object> scoped = rows(firstPage).getFirst();
-        assertEquals(3, number(scoped.get("event_count")));
+        assertEquals(3, number(scoped.get("observation_count")));
         assertEquals("p25:BEE00:348", scoped.get("scope_token"));
         assertEquals(GUID, scoped.get("guid"));
         assertEquals("Engine 1", scoped.get("alias_name"));
@@ -3276,9 +3553,9 @@ class StatsWebDatabaseTest
 
         Map<String,Object> response = mDatabase.dashboardActivityRadios(request(
             "/api/v1/activity/radios?range=24h&action=EMERGENCY"));
-        assertEquals(1, number(response.get("action_total")));
-        assertEquals(1, number(response.get("retained_event_count")));
-        assertEquals(1, number(response.get("identified_event_count")));
+        assertEquals(1, number(response.get("action_observation_count")));
+        assertEquals(1, number(response.get("retained_observation_count")));
+        assertEquals(1, number(response.get("identified_observation_count")));
         assertEquals(1, number(response.get("total_count")));
         assertEquals(1, rows(response).size());
         assertEquals(1888000, number(rows(response).getFirst().get("radio_id")));
@@ -3309,12 +3586,12 @@ class StatsWebDatabaseTest
 
         Map<String,Object> response = mDatabase.dashboardActivityRadios(request(
             "/api/v1/activity/radios?range=24h&action=REGISTER"));
-        assertEquals(2, number(response.get("action_total")));
-        assertEquals(1, number(response.get("retained_event_count")));
-        assertEquals(1, number(response.get("identified_event_count")));
+        assertEquals(2, number(response.get("action_observation_count")));
+        assertEquals(1, number(response.get("retained_observation_count")));
+        assertEquals(1, number(response.get("identified_observation_count")));
         assertEquals(1, number(response.get("total_count")));
         assertEquals(1, rows(response).size());
-        assertEquals(1, number(rows(response).getFirst().get("event_count")),
+        assertEquals(1, number(rows(response).getFirst().get("observation_count")),
             "One context-hour slice must not duplicate its retained event across frequency/timeslot buckets");
     }
 
@@ -3337,18 +3614,18 @@ class StatsWebDatabaseTest
 
         StatsApiException excessiveLimit = assertThrows(StatsApiException.class, () ->
             mDatabase.dashboardActivityRadios(request(
-                "/api/v1/activity/radios?action=CALL&limit=501")));
+                "/api/v1/activity/radios?action=GRANT&limit=501")));
         assertEquals(400, excessiveLimit.status());
         assertEquals("limit", excessiveLimit.field());
 
         Map<String,Object> deepPage = mDatabase.dashboardActivityRadios(request(
-            "/api/v1/activity/radios?action=CALL&offset=100001"));
+            "/api/v1/activity/radios?action=GRANT&offset=100001"));
         assertEquals(100001, number(deepPage.get("offset")));
         assertFalse((Boolean)deepPage.get("hasMore"));
         assertTrue(rows(deepPage).isEmpty());
 
         Map<String,Object> maximumOffsetPage = mDatabase.dashboardActivityRadios(request(
-            "/api/v1/activity/radios?action=CALL&offset=" + Long.MAX_VALUE));
+            "/api/v1/activity/radios?action=GRANT&offset=" + Long.MAX_VALUE));
         assertEquals(Long.MAX_VALUE, number(maximumOffsetPage.get("offset")));
         assertFalse((Boolean)maximumOffsetPage.get("hasMore"));
         assertNull(maximumOffsetPage.get("nextOffset"));
@@ -3359,8 +3636,8 @@ class StatsWebDatabaseTest
             List<String> plan = explain(connection, """
                 WITH action_slices AS MATERIALIZED (
                     SELECT bucket.context_id, bucket.bucket_start_ms
-                    FROM p25_site_activity_bucket AS bucket
-                        INDEXED BY idx_p25_site_activity_bucket_time
+                    FROM trunked_signaling_activity_bucket AS bucket
+                        INDEXED BY idx_trunked_signaling_activity_time
                     WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
                       AND bucket.emergency_count > 0
                     UNION
@@ -3373,7 +3650,7 @@ class StatsWebDatabaseTest
                     SELECT ownership.scope_id,
                         CASE WHEN ownership.scope_id IS NULL THEN event.context_id END
                             AS fallback_context_id,
-                        event.source_radio_id AS radio_id, COUNT(*) AS event_count,
+                        event.source_radio_id AS radio_id, COUNT(*) AS observation_count,
                         MAX(event.observed_at_ms) AS last_seen_ms
                     FROM action_slices AS slice
                     CROSS JOIN p25_activity_event AS event
@@ -3388,12 +3665,12 @@ class StatsWebDatabaseTest
                         CASE WHEN ownership.scope_id IS NULL THEN event.context_id END,
                         event.source_radio_id
                 )
-                SELECT scope_id, fallback_context_id, radio_id, event_count, last_seen_ms
+                SELECT scope_id, fallback_context_id, radio_id, observation_count, last_seen_ms
                 FROM grouped
                 WHERE radio_id > 0
                 """, 0, Long.MAX_VALUE, 0, Long.MAX_VALUE, 3_600_000, 10);
             assertTrue(plan.stream().anyMatch(detail ->
-                    detail.contains("idx_p25_site_activity_bucket_time")),
+                    detail.contains("idx_trunked_signaling_activity_time")),
                 () -> "Expected the trunked bucket time index, plan was: " + plan);
             assertTrue(plan.stream().anyMatch(detail ->
                     detail.contains("idx_conventional_bucket_dashboard_time")),
@@ -3421,9 +3698,10 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
-                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
-                ) VALUES (3, %d, 1, 1, 56132, 100)
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    logical_call_count
+                ) VALUES (2, %d, 1, 1, 56132, 100)
                 """.formatted(currentHour));
         }
 
@@ -3464,13 +3742,13 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (2, 'p25:BEE00:49F', 1, 1, 0, 2, 1000, 2000)
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (2, 'p25:BEE00:49F', 1, 1, 0, 999, 2, 1000, 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count
+                    logical_call_count, target_logical_call_count, grant_count
                 ) VALUES (2, 1, 56132, 1000, 2000, 1, 1, 1)
                 """);
         }
@@ -3504,13 +3782,29 @@ class StatsWebDatabaseTest
                            'NXDN', 1000, 2000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket
-                    (context_id, bucket_start_ms, call_count, grant_count, recorded_count, streamed_count,
-                     encrypted_count)
-                VALUES (1, %1$d, 7, 9, 5, 4, 2),
-                       (9, %1$d, 5, 0, 2, 1, 1),
-                       (10, %1$d, 6, 0, 3, 2, 2),
-                       (11, %1$d, 1, 0, 1, 1, 0)
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (3, 'dmr:site-dmr-guid', 3, 2, 0, 1000, 2000),
+                         (4, 'nxdn:site-nxdn-guid', 4, 2, 0, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (
+                    context_id, scope_id, first_seen_ms, last_seen_ms
+                ) VALUES (9, 3, 1000, 2000), (10, 4, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_bucket (
+                    scope_id, bucket_start_ms, logical_call_count, recorded_output_count,
+                    streamed_output_count, encrypted_logical_call_count
+                ) VALUES (1, %1$d, 8, 6, 5, 2),
+                         (3, %1$d, 5, 2, 1, 1),
+                         (4, %1$d, 6, 3, 2, 2)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket (
+                    context_id, bucket_start_ms, grant_count
+                ) VALUES (1, %d, 9)
                 """.formatted(currentHour));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_bucket
@@ -3534,33 +3828,33 @@ class StatsWebDatabaseTest
         assertFalse(dashboard.containsKey("p25CallActivity"));
         Map<String,Object> callActivity = map(dashboard, "callActivity");
         Map<String,Object> totals = map(callActivity, "totals");
-        assertEquals(35, number(totals.get("call_count")));
-        assertEquals(17, number(totals.get("recorded_count")));
-        assertEquals(12, number(totals.get("streamed_count")));
-        assertEquals(9, number(totals.get("encrypted_count")));
+        assertEquals(35, number(totals.get("logical_call_count")));
+        assertEquals(17, number(totals.get("recorded_logical_call_count")));
+        assertEquals(12, number(totals.get("stream_submitted_logical_call_count")));
+        assertEquals(9, number(totals.get("encrypted_logical_call_count")));
         assertFalse(totals.containsKey("non_p25_call_count"));
-        assertTrue(number(callActivity.get("metric_start_ms")) > 0);
+        assertTrue(number(callActivity.get("trunked_logical_metric_start_ms")) > 0);
 
         List<Map<String,Object>> breakdown = rowsFrom(callActivity, "breakdown");
         Map<String,Object> p25Trunked = breakdown.stream()
             .filter(row -> "P25".equals(row.get("protocol")) && "TRUNKED".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
-        assertEquals(8, number(map(p25Trunked, "totals").get("call_count")));
+        assertEquals(8, number(map(p25Trunked, "totals").get("logical_call_count")));
         Map<String,Object> p25Conventional = breakdown.stream()
             .filter(row -> "P25".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
-        assertEquals(2, number(map(p25Conventional, "totals").get("call_count")));
+        assertEquals(2, number(map(p25Conventional, "totals").get("logical_call_count")));
         Map<String,Object> nbfmConventional = breakdown.stream()
             .filter(row -> "NBFM".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
-        assertEquals(3, number(map(nbfmConventional, "totals").get("call_count")));
+        assertEquals(3, number(map(nbfmConventional, "totals").get("logical_call_count")));
         Map<String,Object> amConventional = breakdown.stream()
             .filter(row -> "AM".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
-        assertEquals(0, number(map(amConventional, "totals").get("call_count")));
+        assertEquals(0, number(map(amConventional, "totals").get("logical_call_count")));
         assertFalse(map(p25Conventional, "totals").containsKey("non_p25_call_count"));
 
         List<Map<String,Object>> series = rowsFrom(callActivity, "series");
@@ -3569,60 +3863,60 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("time_ms")) == currentHour &&
                 "P25".equals(row.get("protocol")) && "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
-        assertEquals(2, number(currentP25Conventional.get("call_count")));
-        assertEquals(1, number(currentP25Conventional.get("recorded_count")));
+        assertEquals(2, number(currentP25Conventional.get("logical_call_count")));
+        assertEquals(1, number(currentP25Conventional.get("recorded_logical_call_count")));
         assertTrue(series.stream()
             .filter(row -> "P25".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")) &&
                 number(row.get("time_ms")) < currentHour)
-            .allMatch(row -> number(row.get("call_count")) == 0));
+            .allMatch(row -> number(row.get("logical_call_count")) == 0));
         assertTrue(series.stream()
             .filter(row -> ("P25".equals(row.get("protocol")) || "DMR".equals(row.get("protocol"))) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")) &&
                 number(row.get("time_ms")) < currentHour)
-            .allMatch(row -> row.get("encrypted_count") == null));
+            .allMatch(row -> row.get("encrypted_logical_call_count") == null));
         assertTrue(series.stream()
             .filter(row -> "NBFM".equals(row.get("protocol")))
-            .allMatch(row -> row.get("encrypted_count") == null));
+            .allMatch(row -> row.get("encrypted_logical_call_count") == null));
         Map<String,Object> currentNxdnConventional = series.stream()
             .filter(row -> "NXDN".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")) &&
                 number(row.get("time_ms")) == currentHour)
             .findFirst().orElseThrow();
-        assertEquals(7, number(currentNxdnConventional.get("call_count")));
-        assertEquals(2, number(currentNxdnConventional.get("recorded_count")));
-        assertEquals(1, number(currentNxdnConventional.get("streamed_count")));
-        assertEquals(2, number(currentNxdnConventional.get("encrypted_count")));
+        assertEquals(7, number(currentNxdnConventional.get("logical_call_count")));
+        assertEquals(2, number(currentNxdnConventional.get("recorded_logical_call_count")));
+        assertEquals(1, number(currentNxdnConventional.get("stream_submitted_logical_call_count")));
+        assertEquals(2, number(currentNxdnConventional.get("encrypted_logical_call_count")));
         assertTrue(series.stream()
             .filter(row -> ("DMR".equals(row.get("protocol")) || "NXDN".equals(row.get("protocol"))) &&
                 "TRUNKED".equals(row.get("channel_kind")) &&
                 number(row.get("time_ms")) < currentHour)
-            .allMatch(row -> row.get("call_count") == null && row.get("encrypted_count") == null));
+            .allMatch(row -> row.get("logical_call_count") == null && row.get("encrypted_logical_call_count") == null));
         assertEquals("PARTIAL", rowsFrom(callActivity, "coverage").stream()
             .filter(row -> "DMR".equals(row.get("protocol")) &&
                 "TRUNKED".equals(row.get("channel_kind")))
-            .findFirst().orElseThrow().get("call_count"));
+            .findFirst().orElseThrow().get("logical_call_count"));
         assertEquals("PARTIAL", rowsFrom(callActivity, "coverage").stream()
             .filter(row -> "NXDN".equals(row.get("protocol")) &&
                 "TRUNKED".equals(row.get("channel_kind")))
-            .findFirst().orElseThrow().get("encrypted_count"));
+            .findFirst().orElseThrow().get("encrypted_logical_call_count"));
         Map<String,Object> nxdnConventionalCoverage = rowsFrom(callActivity, "coverage").stream()
             .filter(row -> "NXDN".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
         assertEquals("PARTIAL", nxdnConventionalCoverage.get("status"));
-        assertEquals("PARTIAL", nxdnConventionalCoverage.get("call_count"));
+        assertEquals("PARTIAL", nxdnConventionalCoverage.get("logical_call_count"));
 
         Map<String,Object> sourceActivity = map(dashboard, "sourceActivity24h");
         List<Map<String,Object>> sources = rows(sourceActivity);
-        assertEquals(8, sources.size());
-        assertTrue(sources.stream().allMatch(row -> number(row.get("total_call_count")) == 35));
+        assertEquals(4, sources.size());
+        assertTrue(sources.stream().allMatch(row -> number(row.get("total_logical_call_count")) == 16));
         assertTrue(sources.stream().anyMatch(row -> "P25".equals(row.get("protocol")) &&
             "CONVENTIONAL".equals(row.get("channel_kind")) &&
-            number(row.get("call_count")) == 2));
+            number(row.get("logical_call_count")) == 2));
         assertTrue(sources.stream().anyMatch(row -> "NXDN".equals(row.get("protocol")) &&
             "CONVENTIONAL".equals(row.get("channel_kind")) &&
-            number(row.get("call_count")) == 7));
+            number(row.get("logical_call_count")) == 7));
     }
 
     @Test
@@ -3636,25 +3930,29 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
-                    first_seen_ms, last_seen_ms, system_key, rfss, site)
-                VALUES (3, 'site-lakewood', 'test-site-lakewood', 1, 1, 'Lakewood', 1000, 2000, 1, 1, 2)
+                    first_seen_ms, last_seen_ms, primary_frequency_hz)
+                VALUES (3, 'conventional-lakewood', 'test-channel-lakewood', 10, 10,
+                    'Lakewood Fire', 1000, 2000, 155250000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
-                VALUES (1, %d, 7), (3, %d, 3), (1, %d, 5)
-                """.formatted(currentHour, currentHour, firstHour));
+                INSERT INTO conventional_activity_bucket (
+                    context_id, frequency_hz, timeslot, bucket_start_ms, call_count
+                ) VALUES (2, 154310000, -1, %1$d, 7),
+                         (3, 155250000, -1, %1$d, 3),
+                         (2, 154310000, -1, %2$d, 5)
+                """.formatted(currentHour, firstHour));
         }
 
         Map<String,Object> activity = map(mDatabase.dashboard(), "sourceActivity24h");
         List<Map<String,Object>> rows = rows(activity);
         assertEquals(2, rows.size());
-        assertEquals(GUID, rows.getFirst().get("guid"));
-        assertEquals("P25", rows.getFirst().get("protocol"));
-        assertEquals("TRUNKED", rows.getFirst().get("channel_kind"));
-        assertEquals(12, number(rows.getFirst().get("call_count")));
-        assertEquals("test-site-lakewood", rows.getLast().get("guid"));
-        assertEquals(3, number(rows.getLast().get("call_count")));
-        assertTrue(rows.stream().allMatch(row -> number(row.get("total_call_count")) == 15));
+        assertEquals("conventional-fire", rows.getFirst().get("context_key"));
+        assertEquals("NBFM", rows.getFirst().get("protocol"));
+        assertEquals("CONVENTIONAL", rows.getFirst().get("channel_kind"));
+        assertEquals(12, number(rows.getFirst().get("logical_call_count")));
+        assertEquals("test-channel-lakewood", rows.getLast().get("guid"));
+        assertEquals(3, number(rows.getLast().get("logical_call_count")));
+        assertTrue(rows.stream().allMatch(row -> number(row.get("total_logical_call_count")) == 15));
         assertEquals(firstHour, number(activity.get("from_ms")));
     }
 
@@ -3701,20 +3999,39 @@ class StatsWebDatabaseTest
                     (201, 200, 'NXDN Unit', 'NXDN Units', 65280, 'RADIO_ID', 'NXDN', 700)
                 """);
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
-                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
-                    call_count, encrypted_count, recorded_count, streamed_count
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (3, 'dmr:site-dmr-alias-guid', 3, 2, 0, 1000, 2000),
+                         (4, 'nxdn:site-nxdn-alias-guid', 4, 2, 0, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (
+                    context_id, scope_id, first_seen_ms, last_seen_ms
+                ) VALUES (9, 3, 1000, 2000), (10, 4, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    logical_call_count, encrypted_logical_call_count, recorded_output_count,
+                    streamed_output_count
                 ) VALUES
                     (1, %1$d, 1, 1, 56132, 8, 2, 5, 4),
                     (1, %1$d, 2, 2, 1811332, 8, 2, 5, 4),
+                    (3, %1$d, 1, 1, 91, 9, 1, 2, 1),
+                    (3, %1$d, 2, 2, 123456, 9, 1, 2, 1),
+                    (4, %1$d, 1, 1, 77, 11, 2, 3, 2),
+                    (4, %1$d, 2, 2, 700, 11, 2, 3, 2)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                INSERT INTO conventional_call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    call_count, encrypted_count, recorded_count, streamed_count
+                ) VALUES
                     (5, %1$d, 1, 1, 91, 12, 3, 6, 2),
                     (5, %1$d, 2, 2, 123456, 12, 3, 6, 2),
                     (7, %1$d, 1, 1, 56132, 10, 1, 4, 1),
                     (7, %1$d, 2, 2, 1811332, 10, 1, 4, 1),
-                    (9, %1$d, 1, 1, 91, 9, 1, 2, 1),
-                    (9, %1$d, 2, 2, 123456, 9, 1, 2, 1),
-                    (10, %1$d, 1, 1, 77, 11, 2, 3, 2),
-                    (10, %1$d, 2, 2, 700, 11, 2, 3, 2),
                     (2, %1$d, 1, 0, 0, 4, 0, 1, 0)
                 """.formatted(currentHour));
         }
@@ -3735,25 +4052,26 @@ class StatsWebDatabaseTest
         assertEquals("Talkgroup", dmrDestination.get("identity_kind"));
         assertEquals("DMR Dispatch", dmrDestination.get("alias_name"));
         assertEquals("conventional-talkgroups", dmrDestination.get("identity_detail_view"));
-        assertEquals(12, number(dmrDestination.get("call_count")));
-        assertEquals(6, number(dmrDestination.get("recorded_count")));
-        assertEquals(2, number(dmrDestination.get("streamed_count")));
+        assertEquals(12, number(dmrDestination.get("logical_call_count")));
+        assertEquals(6, number(dmrDestination.get("recorded_logical_call_count")));
+        assertEquals(2, number(dmrDestination.get("stream_submitted_logical_call_count")));
 
         Map<String,Object> nxdnDestination = destinations.stream()
             .filter(row -> "NXDN".equals(row.get("protocol"))).findFirst().orElseThrow();
         assertEquals("NXDN Dispatch", nxdnDestination.get("alias_name"));
         assertEquals("NXDN County", nxdnDestination.get("alias_list_name"));
-        assertEquals(0, number(nxdnDestination.get("identity_detail_available")));
+        assertEquals("talkgroup", nxdnDestination.get("identity_detail_view"));
+        assertEquals(1, number(nxdnDestination.get("identity_detail_available")));
         Map<String,Object> nxdnSource = sources.stream()
             .filter(row -> "NXDN".equals(row.get("protocol"))).findFirst().orElseThrow();
         assertEquals("NXDN Unit", nxdnSource.get("alias_name"));
 
         Map<String,Object> dmrTrunkedDestination = destinations.stream()
-            .filter(row -> "site-dmr-alias".equals(row.get("context_key"))).findFirst().orElseThrow();
+            .filter(row -> "dmr:site-dmr-alias-guid".equals(row.get("scope_token"))).findFirst().orElseThrow();
         assertEquals("DMR Dispatch", dmrTrunkedDestination.get("alias_name"));
         assertEquals("County DMR", dmrTrunkedDestination.get("alias_list_name"));
         Map<String,Object> dmrTrunkedSource = sources.stream()
-            .filter(row -> "site-dmr-alias".equals(row.get("context_key"))).findFirst().orElseThrow();
+            .filter(row -> "dmr:site-dmr-alias-guid".equals(row.get("scope_token"))).findFirst().orElseThrow();
         assertEquals("DMR Engine 1", dmrTrunkedSource.get("alias_name"));
 
         Map<String,Object> p25Conventional = destinations.stream()
@@ -3793,16 +4111,28 @@ class StatsWebDatabaseTest
             connection.setAutoCommit(false);
             try(PreparedStatement contexts = connection.prepareStatement("""
                 INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, first_seen_ms,
-                    last_seen_ms, system_key) VALUES (?, ?, 1, 1, 1000, 2000, 1)
+                    last_seen_ms) VALUES (?, ?, 10, 10, 1000, 2000)
                 """);
                 PreparedStatement buckets = connection.prepareStatement("""
-                    INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
-                    VALUES (?, ?, ?)
+                    INSERT INTO conventional_activity_bucket (
+                        context_id, frequency_hz, timeslot, bucket_start_ms, call_count
+                    ) VALUES (?, ?, -1, ?, 1)
                     """);
                 PreparedStatement identities = connection.prepareStatement("""
-                    INSERT INTO call_identity_bucket (
+                    INSERT INTO conventional_call_identity_bucket (
                         context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
                     ) VALUES (?, ?, 1, 1, ?, 1)
+                    """);
+                PreparedStatement trunkedBuckets = connection.prepareStatement("""
+                    INSERT INTO trunked_logical_call_bucket (
+                        scope_id, bucket_start_ms, logical_call_count
+                    ) VALUES (1, ?, 1)
+                    """);
+                PreparedStatement trunkedIdentities = connection.prepareStatement("""
+                    INSERT INTO trunked_logical_call_identity_bucket (
+                        scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                        logical_call_count
+                    ) VALUES (1, ?, 1, 1, 56132, 1)
                     """))
             {
                 for(int context = 100; context < 150; context++)
@@ -3814,8 +4144,8 @@ class StatsWebDatabaseTest
                     for(int hour = 0; hour < 48; hour++)
                     {
                         buckets.setInt(1, context);
-                        buckets.setLong(2, previousFirstHour + hour * 3_600_000L);
-                        buckets.setInt(3, 1);
+                        buckets.setLong(2, 150_000_000L + context);
+                        buckets.setLong(3, previousFirstHour + hour * 3_600_000L);
                         buckets.addBatch();
 
                         identities.setInt(1, context);
@@ -3825,22 +4155,38 @@ class StatsWebDatabaseTest
                     }
                 }
 
+                for(int hour = 0; hour < 48; hour++)
+                {
+                    long bucketStart = previousFirstHour + hour * 3_600_000L;
+                    trunkedBuckets.setLong(1, bucketStart);
+                    trunkedBuckets.addBatch();
+                    trunkedIdentities.setLong(1, bucketStart);
+                    trunkedIdentities.addBatch();
+                }
+
                 contexts.executeBatch();
                 buckets.executeBatch();
                 identities.executeBatch();
+                trunkedBuckets.executeBatch();
+                trunkedIdentities.executeBatch();
             }
             connection.commit();
 
-            for(String sql: List.of(StatsWebDatabase.DASHBOARD_CALL_ACTIVITY_SQL,
-                StatsWebDatabase.DASHBOARD_SOURCE_ACTIVITY_SQL))
+            for(Map.Entry<String,Integer> query: Map.of(
+                StatsWebDatabase.DASHBOARD_CALL_ACTIVITY_SQL, 4,
+                StatsWebDatabase.DASHBOARD_SOURCE_ACTIVITY_SQL, 2).entrySet())
             {
                 List<String> plan = new ArrayList<>();
-                try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
+                try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " +
+                    query.getKey()))
                 {
                     statement.setLong(1, firstHour);
                     statement.setLong(2, currentHour + 3_600_000L);
-                    statement.setLong(3, firstHour);
-                    statement.setLong(4, currentHour + 3_600_000L);
+                    if(query.getValue() == 4)
+                    {
+                        statement.setLong(3, firstHour);
+                        statement.setLong(4, currentHour + 3_600_000L);
+                    }
                     try(ResultSet resultSet = statement.executeQuery())
                     {
                         while(resultSet.next())
@@ -3850,9 +4196,12 @@ class StatsWebDatabaseTest
                     }
                 }
 
-                assertTrue(plan.stream().anyMatch(
-                        detail -> detail.contains("idx_p25_site_activity_bucket_time")),
-                    () -> "Expected time-indexed trunked bucket scan, plan was: " + plan);
+                if(query.getValue() == 4)
+                {
+                    assertTrue(plan.stream().anyMatch(
+                            detail -> detail.contains("idx_trunked_logical_call_bucket_time")),
+                        () -> "Expected time-indexed trunked logical-call scan, plan was: " + plan);
+                }
                 assertTrue(plan.stream().anyMatch(
                         detail -> detail.contains("idx_conventional_bucket_dashboard_time")),
                     () -> "Expected indexed conventional bucket scan, plan was: " + plan);
@@ -3866,7 +4215,10 @@ class StatsWebDatabaseTest
                 statement.setLong(1, firstHour);
                 statement.setLong(2, currentHour + 3_600_000L);
                 statement.setInt(3, 1);
-                statement.setInt(4, 20);
+                statement.setLong(4, firstHour);
+                statement.setLong(5, currentHour + 3_600_000L);
+                statement.setInt(6, 1);
+                statement.setInt(7, 20);
                 try(ResultSet resultSet = statement.executeQuery())
                 {
                     while(resultSet.next())
@@ -3877,8 +4229,11 @@ class StatsWebDatabaseTest
             }
 
             assertTrue(identityPlan.stream().anyMatch(
-                    detail -> detail.contains("idx_call_identity_bucket_dashboard_time")),
+                    detail -> detail.contains("idx_conventional_call_identity_dashboard_time")),
                 () -> "Expected indexed identity bucket scan, plan was: " + identityPlan);
+            assertTrue(identityPlan.stream().anyMatch(
+                    detail -> detail.contains("idx_trunked_logical_identity_dashboard_time")),
+                () -> "Expected indexed trunked logical-identity scan, plan was: " + identityPlan);
             assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
         }
     }
@@ -4053,11 +4408,11 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket
-                    (context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
-                     call_count, recorded_count, streamed_count)
+                INSERT INTO trunked_logical_call_identity_bucket
+                    (scope_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
+                     logical_call_count, recorded_output_count, streamed_output_count)
                 VALUES (1, 1, 1, 56132, %d, 7, 5, 4),
-                       (3, 1, 1, 56132, %d, 100, 90, 80),
+                       (2, 1, 1, 56132, %d, 100, 90, 80),
                        (1, 1, 1, 56132, %d, 999, 999, 999)
                 """.formatted(currentHour, currentHour, currentHour + 100L * 3_600_000L));
             statement.executeUpdate("""
@@ -4072,24 +4427,24 @@ class StatsWebDatabaseTest
             "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=56132&range=24h"));
         assertEquals("24h", response.get("range"));
         assertEquals(3_600_000L, number(response.get("bucket_ms")));
-        assertEquals(metadataValue(mDatabasePath, "trunked_identity_metrics_started_at_ms"),
-            number(response.get("metric_start_ms")));
+        assertEquals(metadataValue(mDatabasePath, "trunked_logical_call_metrics_started_at_ms"),
+            number(response.get("logical_metric_start_ms")));
         List<Map<String,Object>> series = rowsFrom(response, "series");
         Map<String,Object> current = series.stream()
             .filter(row -> number(row.get("time_ms")) == currentHour)
             .findFirst().orElseThrow();
-        assertEquals(7, number(current.get("call_count")));
+        assertEquals(7, number(current.get("logical_call_count")));
         assertFalse(current.containsKey("emergency_count"));
-        assertEquals(5, number(current.get("recorded_count")));
-        assertEquals(4, number(current.get("streamed_count")));
+        assertEquals(5, number(current.get("recorded_logical_call_count")));
+        assertEquals(4, number(current.get("stream_submitted_logical_call_count")));
         assertFalse(current.containsKey("grant_count"));
-        assertTrue(series.stream().anyMatch(row -> number(row.get("call_count")) == 0));
+        assertTrue(series.stream().anyMatch(row -> number(row.get("logical_call_count")) == 0));
         Map<String,Object> totals = map(response, "totals");
-        assertEquals(7, number(totals.get("call_count")));
-        assertEquals(5, number(totals.get("recorded_count")));
-        assertEquals(4, number(totals.get("streamed_count")));
-        assertEquals(12, number(totals.get("grant_count")));
-        assertEquals(1, number(totals.get("emergency_count")));
+        assertEquals(7, number(totals.get("logical_call_count")));
+        assertEquals(5, number(totals.get("recorded_logical_call_count")));
+        assertEquals(4, number(totals.get("stream_submitted_logical_call_count")));
+        assertEquals(12, number(totals.get("grant_observation_count")));
+        assertEquals(1, number(totals.get("emergency_observation_count")));
 
         StatsApiException error = assertThrows(StatsApiException.class, () -> mDatabase.talkgroupActivity(request(
             "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=56132&range=forever")));
@@ -4106,15 +4461,20 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket
-                    (context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
-                     call_count, encrypted_count, recorded_count, streamed_count)
-                VALUES (1, 1, 1, 56132, %d, 7, 1, 2, 3),
-                       (1, 1, 1, 56132, %d, 5, 2, 4, 1),
-                       (1, 1, 1, 60000, %d, 20, 0, 0, 0),
-                       (1, 1, 1, 56132, %d, 50, 0, 50, 50),
-                       (3, 1, 1, 56132, %d, 100, 0, 90, 80),
-                       (1, 1, 1, 56132, %d, 999, 0, 999, 999)
+                INSERT INTO p25_learned_site (
+                    learned_site_id, system_key, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (1, 1, 1, 1, 1000, 3000), (2, 2, 1, 1, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket
+                    (scope_id, learned_site_id, identity_role_code, identity_kind_code, identity_id,
+                     bucket_start_ms, observed_call_count, encrypted_observed_call_count)
+                VALUES (1, 1, 1, 1, 56132, %d, 7, 1),
+                       (1, 1, 1, 1, 56132, %d, 5, 2),
+                       (1, 1, 1, 1, 60000, %d, 20, 0),
+                       (1, 1, 1, 1, 56132, %d, 50, 0),
+                       (2, 2, 1, 1, 56132, %d, 100, 0),
+                       (1, 1, 1, 1, 56132, %d, 999, 0)
                 """.formatted(currentHour - 3_600_000L, currentHour, currentHour,
                     currentHour - 25L * 3_600_000L, currentHour,
                     currentHour + 100L * 3_600_000L));
@@ -4132,10 +4492,10 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("talkgroup_id")) == 56132L)
             .findFirst().orElseThrow();
         assertEquals("Dispatch", dispatch.get("alias_name"));
-        assertEquals(12L, number(dispatch.get("call_count")));
-        assertEquals(6L, number(dispatch.get("recorded_count")));
-        assertEquals(4L, number(dispatch.get("streamed_count")));
-        assertEquals(3L, number(dispatch.get("encrypted_count")));
+        assertEquals(12L, number(dispatch.get("site_observation_count")));
+        assertEquals(3L, number(dispatch.get("encrypted_site_observation_count")));
+        assertFalse(dispatch.containsKey("recorded_logical_call_count"));
+        assertFalse(dispatch.containsKey("stream_submitted_logical_call_count"));
         assertEquals(currentHour, number(dispatch.get("last_active_ms")));
         assertFalse(dispatch.containsKey("first_seen_ms"));
 
@@ -4144,9 +4504,8 @@ class StatsWebDatabaseTest
         Map<String,Object> currentDispatch = rows(oneHour).stream()
             .filter(row -> number(row.get("talkgroup_id")) == 56132L)
             .findFirst().orElseThrow();
-        assertEquals(5L, number(currentDispatch.get("call_count")));
-        assertEquals(4L, number(currentDispatch.get("recorded_count")));
-        assertEquals(1L, number(currentDispatch.get("streamed_count")));
+        assertEquals(5L, number(currentDispatch.get("site_observation_count")));
+        assertEquals(2L, number(currentDispatch.get("encrypted_site_observation_count")));
     }
 
     @Test
@@ -4234,13 +4593,14 @@ class StatsWebDatabaseTest
                     '{"decodeConfiguration":{"modulation":"AUTO","autoPreferredModulation":"CQPSK"}}')
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
-                VALUES (1, %d, 3)
+                INSERT INTO trunked_logical_call_bucket (
+                    scope_id, bucket_start_ms, logical_call_count
+                ) VALUES (1, %d, 3)
                 """.formatted(currentHour));
             statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
-                    context_id, bucket_start_ms, identity_role_code, identity_kind_code,
-                    identity_id, call_count
+                INSERT INTO trunked_logical_call_identity_bucket (
+                    scope_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_id, logical_call_count
                 ) VALUES (1, %d, 1, 1, 56132, 3)
                 """.formatted(currentHour));
             statement.executeUpdate("""
@@ -4276,14 +4636,14 @@ class StatsWebDatabaseTest
             .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Cuyahoga County", recent.get("configured_site"));
         assertEquals("MARCS Cleveland Simulcast", recent.get("configured_name"));
-        Map<String,Object> sourceActivity = rows(map(dashboard, "sourceActivity24h")).stream()
-            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
-        assertEquals("Cuyahoga County", sourceActivity.get("configured_site"));
-        assertEquals("MARCS Cleveland Simulcast", sourceActivity.get("configured_name"));
+        assertTrue(rows(map(dashboard, "sourceActivity24h")).stream()
+            .noneMatch(row -> GUID.equals(row.get("guid"))),
+            "Global trunked logical calls must not be attributed to one receiver site");
         Map<String,Object> destination = rowsFrom(dashboard, "topDestinations").stream()
-            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
-        assertEquals("Cuyahoga County", destination.get("configured_site"));
-        assertEquals("MARCS Cleveland Simulcast", destination.get("configured_name"));
+            .filter(row -> "p25:BEE00:348".equals(row.get("scope_token")) &&
+                number(row.get("identity_id")) == 56132).findFirst().orElseThrow();
+        assertEquals("Dispatch", destination.get("alias_name"));
+        assertNull(destination.get("guid"));
 
         Map<String,Object> directoryChild = rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=MARCS%20Cleveland%20Simulcast"))).stream()
@@ -4694,10 +5054,10 @@ class StatsWebDatabaseTest
             "/api/system/talkgroups?scope=p25:BEE00:348&sort=group&direction=asc&limit=1")))
             .getFirst().get("alias_name"));
         assertEquals(100, number(rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=p25:BEE00:348&sort=recorded&direction=desc&limit=1")))
+            "/api/system/talkgroups?scope=p25:BEE00:348&sort=recorded_logical_call_count&direction=desc&limit=1")))
             .getFirst().get("talkgroup_id")));
         assertEquals(100, number(rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=p25:BEE00:348&sort=streamed&direction=desc&limit=1")))
+            "/api/system/talkgroups?scope=p25:BEE00:348&sort=stream_submitted_logical_call_count&direction=desc&limit=1")))
             .getFirst().get("talkgroup_id")));
 
         assertEquals("Engine 1", rows(mDatabase.systemRadios(request(
@@ -4744,8 +5104,8 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (3, 'p25:00001:FFF', 1, 1, 0, 3, 1000, 4000)
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (3, 'p25:00001:FFF', 1, 1, 0, 1, 3, 1000, 4000)
                 """);
             seedP25Context(connection, 31, "earlier-child", 1);
             seedP25Context(connection, 32, "unknown-child", 1);
@@ -4854,7 +5214,7 @@ class StatsWebDatabaseTest
                 statement.executeUpdate("""
                     INSERT INTO trunked_identity_summary (
                         scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                        call_count, source_call_count, target_call_count, last_counterpart_kind_code,
+                        logical_call_count, source_logical_call_count, target_logical_call_count, last_counterpart_kind_code,
                         last_counterpart_id, last_talker_alias, last_talker_alias_seen_ms
                     ) VALUES (101, 1, 91, 1000, 3000, 3, 0, 3, 2, 1234, NULL, NULL),
                              (101, 2, 1234, 1000, 3000, 3, 3, 0, 1, 91, 'DMR UNIT', 3000),
@@ -4864,7 +5224,7 @@ class StatsWebDatabaseTest
                 statement.executeUpdate("""
                     INSERT INTO trunked_radio_talkgroup_summary (
                         scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
-                        call_count
+                        logical_call_count
                     ) VALUES (103, 14358, 24921, 1, 1000, 3000, 2)
                     """);
             }
@@ -5299,7 +5659,7 @@ class StatsWebDatabaseTest
     {
         return rows(response).stream()
             .filter(row -> action.equals(row.get("action")))
-            .map(row -> number(row.get("count")))
+            .map(row -> number(row.get("observation_count")))
             .findFirst().orElseThrow();
     }
 
@@ -5466,6 +5826,7 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
             statement.executeUpdate("DELETE FROM alias_list");
+            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (1, 'County', 'P25')");
             statement.executeUpdate("INSERT INTO p25_system VALUES (1, " + WACN + ", " + SYSTEM + ", " +
                 (now - 10_000) + ", " + now + ")");
             statement.executeUpdate("""
@@ -5478,8 +5839,8 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (1, 'p25:BEE00:348', 1, 1, 0, 1, 1000, 2000)
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (1, 'p25:BEE00:348', 1, 1, 0, 1, 1, 1000, 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope_context (context_id, scope_id, first_seen_ms, last_seen_ms)
@@ -5600,21 +5961,21 @@ class StatsWebDatabaseTest
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, p25_identity_state_code,
                     first_seen_ms, last_seen_ms,
-                    call_count, target_call_count, grant_count, encrypted_count,
+                    logical_call_count, target_logical_call_count, grant_count, encrypted_logical_call_count,
                     last_counterpart_kind_code, last_counterpart_id
                 ) VALUES (1, 1, 56132, 1, 1000, 2000, 12, 12, 12, 2, 2, 1811332)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    call_count, source_call_count, grant_count, encrypted_count,
+                    logical_call_count, source_logical_call_count, grant_count, encrypted_logical_call_count,
                     last_counterpart_kind_code, last_counterpart_id,
                     last_talker_alias, last_talker_alias_seen_ms
                 ) VALUES (1, 2, 1811332, 1000, 2000, 8, 8, 8, 1, 1, 56132, 'CAR 201', 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_talkgroup_summary (scope_id, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
+                    first_seen_ms, last_seen_ms, logical_call_count, grant_count, encrypted_logical_call_count)
                 VALUES (1, 1811332, 56132, 1, 1000, 2000, 8, 8, 1)
                 """);
             statement.executeUpdate("INSERT INTO trunked_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
@@ -5629,11 +5990,6 @@ class StatsWebDatabaseTest
                 INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, encrypted)
                 VALUES (1, 2001, 0, 0, NULL, 1811332, 2, 856137500, 0)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_list
-                    (id, name, family)
-                VALUES (1, 'County', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
@@ -5725,6 +6081,7 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (2, 'Second', 'P25')");
             statement.executeUpdate("INSERT INTO p25_system VALUES (2, " + WACN + ", " + SECOND_SYSTEM +
                 ", 1000, 3000)");
             statement.executeUpdate("""
@@ -5744,8 +6101,8 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (2, 'p25:BEE00:49F', 1, 1, 0, 2, 1000, 3000)
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (2, 'p25:BEE00:49F', 1, 1, 0, 2, 2, 1000, 3000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
@@ -5753,8 +6110,8 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count,
-                    target_call_count, grant_count, encrypted_count, last_counterpart_kind_code,
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count,
+                    target_logical_call_count, grant_count, encrypted_logical_call_count, last_counterpart_kind_code,
                     last_counterpart_id
                 ) VALUES (2, 1, 56132, 1000, 3000, 100, 100, 100, 0, 2, 1811332),
                          (2, 2, 1811332, 1000, 3000, 100, 0, 100, 0, 1, 56132)
@@ -5762,18 +6119,13 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_talkgroup_summary (
                     scope_id, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count
+                    first_seen_ms, last_seen_ms, logical_call_count, grant_count, encrypted_logical_call_count
                 ) VALUES (2, 1811332, 56132, 1, 1000, 3000, 100, 100, 0)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, encrypted)
                 VALUES (3, 3000, 0, 0, 1811332, 56132, 1, 855612500, 0)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_list
-                    (id, name, family)
-                VALUES (2, 'Second', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
@@ -5794,9 +6146,9 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count,
-                    source_call_count, target_call_count, grant_count, encrypted_count, recorded_count,
-                    streamed_count, last_counterpart_kind_code, last_counterpart_id,
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count,
+                    source_logical_call_count, target_logical_call_count, grant_count, encrypted_logical_call_count, recorded_output_count,
+                    streamed_output_count, last_counterpart_kind_code, last_counterpart_id,
                     last_talker_alias, last_talker_alias_seen_ms
                 ) VALUES (1, 1, 100, 1000, 3000, 100, 0, 100, 100, 0, 10, 12, 2, 100, NULL, NULL),
                          (1, 2, 100, 1000, 3000, 100, 100, 0, 100, 0, 0, 0, 1, 56132, 'AAA', 3000)
@@ -5804,7 +6156,7 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_talkgroup_summary (
                     scope_id, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
+                    first_seen_ms, last_seen_ms, logical_call_count, grant_count, encrypted_logical_call_count)
                 VALUES (1, 100, 56132, 1, 1000, 3000, 100, 100, 0),
                        (1, 1811332, 100, 1, 1000, 3000, 100, 100, 0)
                 """);

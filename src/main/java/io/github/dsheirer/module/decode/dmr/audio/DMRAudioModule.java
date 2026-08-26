@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.dmr.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionKeyResolver;
@@ -53,7 +54,9 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import jmbe.iface.IAudioWithMetadata;
@@ -66,10 +69,11 @@ import org.slf4j.LoggerFactory;
 public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRAudioModule.class);
+    static final int MAX_PENDING_AMBE_FRAMES = 300;
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private ToneMetadataProcessor mToneMetadataProcessor = new ToneMetadataProcessor();
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateNotificationListener;
-    private List<byte[]> mQueuedAmbeFrames = new ArrayList<>();
+    private final Deque<byte[]> mQueuedAmbeFrames = new ArrayDeque<>(MAX_PENDING_AMBE_FRAMES);
     private boolean mEncryptedCallStateEstablished = false;
     private boolean mEncryptedCall = false;
     private Listener<IMessage> mMessageListener;
@@ -77,6 +81,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
     private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private VoiceEncryptionContext mPendingEncryptionContext;
+    private boolean mVoicePayloadObserved;
 
     /**
      * Constructs an instance
@@ -86,7 +91,13 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
      */
     public DMRAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
     {
-        super(userPreferences, aliasList, timeslot);
+        this(userPreferences, aliasList, timeslot, CallLegSource.UNKNOWN);
+    }
+
+    public DMRAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot,
+                          CallLegSource callLegSource)
+    {
+        super(userPreferences, aliasList, timeslot, callLegSource);
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
             .getVoiceDecryptionModulePreference().getModuleManager());
@@ -109,6 +120,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         mQueuedAmbeFrames.clear();
         mVoiceFrameDecryptor = null;
         mPendingEncryptionContext = null;
+        mVoicePayloadObserved = false;
     }
 
     @Override
@@ -122,93 +134,145 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
      */
     public void receive(IMessage message)
     {
-        if(hasAudioCodec() && message.getTimeslot() == getTimeslot())
+        if(message == null || message.getTimeslot() != getTimeslot())
         {
-            if(message instanceof PiHeader pi && pi.getLCMessage() instanceof EncryptionParameters ep &&
-                ep.isValid())
+            return;
+        }
+
+        //DMR can repeat the voice header before the first voice burst.  Once voice payload has arrived, however, a
+        //new valid voice header is a protocol-level start for the next transmission.  Use that boundary to recover
+        //when the preceding terminator was lost without splitting the repeated headers at the start of one call.
+        if(message instanceof VoiceHeader voiceHeader && voiceHeader.isValid())
+        {
+            if(mVoicePayloadObserved && getCurrentAudioCall() != null)
+            {
+                closeAudioSegment(message.getTimestamp());
+                reset();
+            }
+
+            mVoicePayloadObserved = false;
+        }
+
+        if(message instanceof PiHeader pi && pi.getLCMessage() instanceof EncryptionParameters ep &&
+            ep.isValid())
+        {
+            mEncryptedCallStateEstablished = true;
+            mEncryptedCall = true;
+            mPendingEncryptionContext = null;
+            mVoiceFrameDecryptor = hasAudioCodec() ? createDecryptor(createContext(ep)) : null;
+        }
+
+        if(message instanceof VoiceMessage voiceMessage && isVoiceSuperframeStart(voiceMessage) &&
+            mPendingEncryptionContext != null)
+        {
+            mVoiceFrameDecryptor = hasAudioCodec() ? createDecryptor(mPendingEncryptionContext) : null;
+            mPendingEncryptionContext = null;
+        }
+
+        VoiceEncryptionContext embeddedContext = createEmbeddedContext(message);
+
+        if(embeddedContext != null)
+        {
+            mEncryptedCallStateEstablished = true;
+            mEncryptedCall = true;
+            mPendingEncryptionContext = embeddedContext;
+        }
+
+        //Attempt to set the audio encryption state from certain types of messages
+        if(!mEncryptedCallStateEstablished)
+        {
+            //DCDM doesn't provide FLCs or EMBs ... assume that the call is unencrypted.
+            if(message instanceof VoiceMessage vm && vm.getSyncPattern().isDirect())
             {
                 mEncryptedCallStateEstablished = true;
-                mEncryptedCall = true;
-                mPendingEncryptionContext = null;
-                mVoiceFrameDecryptor = createDecryptor(createContext(ep));
+                mEncryptedCall = false;
             }
-
-            if(message instanceof VoiceMessage voiceMessage && isVoiceSuperframeStart(voiceMessage) &&
-                mPendingEncryptionContext != null)
+            //Both Motorola and Hytera signal their Basic Privacy (BP) scrambling in some of the Voice B-F frames
+            //in the EMB field.
+            else if(message instanceof VoiceEMBMessage voice)
             {
-                mVoiceFrameDecryptor = createDecryptor(mPendingEncryptionContext);
-                mPendingEncryptionContext = null;
+                if(voice.hasEmbeddedParameters() &&
+                   voice.getEmbeddedParameters().getShortBurst() instanceof EmbeddedEncryptionParameters)
+                {
+                    mEncryptedCallStateEstablished = true;
+                    mEncryptedCall = true;
+                }
+                else if(voice.getEMB().isValid())
+                {
+                    mEncryptedCallStateEstablished = true;
+                    mEncryptedCall = voice.getEMB().isEncrypted();
+                }
             }
-
-            VoiceEncryptionContext embeddedContext = createEmbeddedContext(message);
-
-            if(embeddedContext != null)
+            else if(message instanceof VoiceHeader vh && vh.getLCMessage() instanceof AbstractVoiceChannelUser vcu &&
+                    vcu.isValid())
             {
                 mEncryptedCallStateEstablished = true;
-                mEncryptedCall = true;
-                mPendingEncryptionContext = embeddedContext;
+                mEncryptedCall = vcu.getServiceOptions().isEncrypted();
             }
-
-            //Attempt to set the audio encryption state from certain types of messages
-            if(!mEncryptedCallStateEstablished)
+            //Note: the DMRMessageProcessor extracts Full Link Control messages from Voice Frames B-C and sends them
+            // independent of any DMR Burst messaging.  When encountered, it can be assumed that they are part of
+            // an ongoing call and can be used to establish encryption state when the FLC is a voice channel user.
+            else if(message instanceof AbstractVoiceChannelUser avcu && avcu.isValid())
             {
-                //DCDM doesn't provide FLCs or EMBs ... assume that the call is unencrypted.
-                if(message instanceof VoiceMessage vm && vm.getSyncPattern().isDirect())
-                {
-                    mEncryptedCallStateEstablished = true;
-                    mEncryptedCall = false;
-                }
-                //Both Motorola and Hytera signal their Basic Privacy (BP) scrambling in some of the Voice B-F frames
-                //in the EMB field.
-                else if(message instanceof VoiceEMBMessage voice)
-                {
-                    if(voice.hasEmbeddedParameters() &&
-                       voice.getEmbeddedParameters().getShortBurst() instanceof EmbeddedEncryptionParameters)
-                    {
-                        mEncryptedCallStateEstablished = true;
-                        mEncryptedCall = true;
-                    }
-                    else if(voice.getEMB().isValid())
-                    {
-                        mEncryptedCallStateEstablished = true;
-                        mEncryptedCall = voice.getEMB().isEncrypted();
-                    }
-                }
-                else if(message instanceof VoiceHeader vh && vh.getLCMessage() instanceof AbstractVoiceChannelUser vcu &&
-                        vcu.isValid())
-                {
-                    mEncryptedCallStateEstablished = true;
-                    mEncryptedCall = vcu.getServiceOptions().isEncrypted();
-                }
-                //Note: the DMRMessageProcessor extracts Full Link Control messages from Voice Frames B-C and sends them
-                // independent of any DMR Burst messaging.  When encountered, it can be assumed that they are part of
-                // an ongoing call and can be used to establish encryption state when the FLC is a voice channel user.
-                else if(message instanceof AbstractVoiceChannelUser avcu && avcu.isValid())
-                {
-                    mEncryptedCallStateEstablished = true;
-                    mEncryptedCall = avcu.getServiceOptions().isEncrypted();
-                }
-
-                if(mEncryptedCall)
-                {
-                    mQueuedAmbeFrames.clear();
-                }
+                mEncryptedCallStateEstablished = true;
+                mEncryptedCall = avcu.getServiceOptions().isEncrypted();
             }
 
-            //Queue or process audio frames.  Note: audio frames are held/queued until encrypted state is established
-            //before any audio is generated for the audio segment.
-            if(message instanceof VoiceMessage voiceMessage)
+            if(mEncryptedCall)
+            {
+                mQueuedAmbeFrames.clear();
+            }
+        }
+
+        boolean voiceActivity = message instanceof VoiceMessage || message instanceof VoiceHeader && message.isValid();
+
+        if(voiceActivity)
+        {
+            observeVoiceActivity(message.getTimestamp());
+
+            if(mEncryptedCall)
+            {
+                markCurrentCallEncrypted(message.getTimestamp());
+            }
+        }
+        else if(mEncryptedCall && getCurrentAudioCall() != null)
+        {
+            markCurrentCallEncrypted(message.getTimestamp());
+        }
+
+        //Queue or process audio frames only when a codec is usable.  Signaling lifecycle above remains active even
+        //without JMBE so encrypted/no-audio calls still reach completion statistics.
+        if(message instanceof VoiceMessage voiceMessage)
+        {
+            mVoicePayloadObserved = true;
+
+            if(hasAudioCodec())
             {
                 List<byte[]> frames = voiceMessage.getAMBEFrames();
+
                 for(byte[] frame: frames)
                 {
                     processAudio(frame, message.getTimestamp());
                 }
             }
-            else if(message instanceof Terminator)
-            {
-                reset();
-            }
+        }
+        else if(message instanceof Terminator)
+        {
+            closeAudioSegment(message.getTimestamp());
+            reset();
+        }
+    }
+
+    private void observeVoiceActivity(long timestamp)
+    {
+        if(getCurrentAudioCall() == null)
+        {
+            beginCurrentAudioSegment(timestamp);
+            beginCurrentAudioBurst(timestamp);
+        }
+        else
+        {
+            touchCurrentAudioSegment(timestamp);
         }
     }
 
@@ -223,10 +287,9 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
             //Process any ambe frames that were queued awaiting encryption state determination
             if(!mQueuedAmbeFrames.isEmpty())
             {
-                List<byte[]> queuedFrames = List.copyOf(mQueuedAmbeFrames);
-                mQueuedAmbeFrames.clear();
+                byte[] queuedFrame;
 
-                for(byte[] queuedFrame: queuedFrames)
+                while((queuedFrame = mQueuedAmbeFrames.pollFirst()) != null)
                 {
                     produceAudioFrame(queuedFrame, timestamp);
                 }
@@ -236,7 +299,12 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         }
         else
         {
-            mQueuedAmbeFrames.add(frame);
+            if(mQueuedAmbeFrames.size() >= MAX_PENDING_AMBE_FRAMES)
+            {
+                mQueuedAmbeFrames.pollFirst();
+            }
+
+            mQueuedAmbeFrames.offerLast(frame);
         }
     }
 
@@ -270,7 +338,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         try
         {
             IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(frame);
-            addAudio(audioWithMetadata.getAudio(), getVoiceFrameQuality(audioWithMetadata));
+            addAudio(audioWithMetadata.getAudio(), getVoiceFrameQuality(audioWithMetadata), timestamp);
             processMetadata(audioWithMetadata, timestamp);
         }
         catch(Exception e)
@@ -441,6 +509,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
             if(event.getTimeslot() == getTimeslot() && event.getSquelchState() == SquelchState.SQUELCH)
             {
                 closeAudioSegment();
+                reset();
             }
         }
     }

@@ -22,6 +22,7 @@ package io.github.dsheirer.audio.call;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -31,44 +32,24 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                                 IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
                                 long startTimestamp, long lastActivityTimestamp, int burstCount,
                                 long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
-                                boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                                boolean duplicate,
-                                AudioCallRecordingMetadata recordingMetadata, VoiceCallQuality voiceCallQuality)
+                                boolean burstActive, boolean complete, CallEncryptionState encryptionState,
+                                boolean recordAudio,
+                                AudioCallRecordingMetadata recordingMetadata, VoiceCallQuality voiceCallQuality,
+                                CallLegId callLegId, CallLegSource callLegSource,
+                                CallEncryptionEvidence callEncryptionEvidence)
 {
-    public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
-                             IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
-                             long startTimestamp, long lastActivityTimestamp, int burstCount,
-                             long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
-                             boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                             boolean duplicate)
-    {
-        this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
-            lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
-            burstActive, complete, encrypted, recordAudio, duplicate,
-            AudioCallRecordingMetadata.captureAtSnapshot(aliasList, identifierCollection), VoiceCallQuality.EMPTY);
-    }
-
-    public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
-                             IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
-                             long startTimestamp, long lastActivityTimestamp, int burstCount,
-                             long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
-                             boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                             boolean duplicate, AudioCallRecordingMetadata recordingMetadata)
-    {
-        this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
-            lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
-            burstActive, complete, encrypted, recordAudio, duplicate, recordingMetadata,
-            VoiceCallQuality.EMPTY);
-    }
-
     public AudioCallSnapshot
     {
+        encryptionState = encryptionState != null ? encryptionState : CallEncryptionState.UNKNOWN;
+
         if(recordingMetadata == null)
         {
             recordingMetadata = AudioCallRecordingMetadata.captureAtSnapshot(aliasList, identifierCollection);
         }
 
         voiceCallQuality = voiceCallQuality != null ? voiceCallQuality : VoiceCallQuality.EMPTY;
+        Objects.requireNonNull(callLegId, "Call leg id is required");
+        callLegSource = callLegSource != null ? callLegSource : CallLegSource.UNKNOWN;
     }
 
     public int timeslot()
@@ -76,29 +57,19 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
         return callId != null ? callId.timeslot() : 0;
     }
 
-    public boolean isLinked()
-    {
-        return linkedCallId != null;
-    }
-
     public boolean hasBroadcastChannels()
     {
         return broadcastChannels != null && !broadcastChannels.isEmpty();
     }
 
-    public AudioCallSnapshot withDuplicate(boolean newDuplicate)
+    public boolean isEncryptionKnown()
     {
-        return new AudioCallSnapshot(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels,
-            startTimestamp, lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp,
-            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, newDuplicate,
-            recordingMetadata, voiceCallQuality);
+        return encryptionState.isKnown();
     }
 
-    public AudioCallSnapshot withVoiceCallQuality(VoiceCallQuality quality)
+    public boolean isEncrypted()
     {
-        return new AudioCallSnapshot(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels,
-            startTimestamp, lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp,
-            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, duplicate,
-            recordingMetadata, quality);
+        return encryptionState.isEncrypted();
     }
+
 }

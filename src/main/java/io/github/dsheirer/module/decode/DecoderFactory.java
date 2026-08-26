@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.AudioModule;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.State;
@@ -259,8 +260,9 @@ public class DecoderFactory
         decoderState2.setCurrentChannel(channelDescriptor);
         modules.add(decoderState1);
         modules.add(decoderState2);
-        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList));
-        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList));
+        CallLegSource callLegSource = createCallLegSource(channel, aliasList);
+        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList, callLegSource));
+        modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList, callLegSource));
 
         //Add a channel rotation monitor when control channel rotation is configured or can be learned at runtime
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
@@ -286,7 +288,7 @@ public class DecoderFactory
         }
 
         modules.add(new P25P1DecoderState(channel, null));
-        modules.add(new P25P1AudioModule(userPreferences, aliasList));
+        modules.add(new P25P1AudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
     }
 
     /**
@@ -326,7 +328,7 @@ public class DecoderFactory
             mLog.warn("Expected non-null traffic channel manager for channel " + channel.getName());
         }
 
-        modules.add(new P25P1AudioModule(userPreferences, aliasList));
+        modules.add(new P25P1AudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
 
         //Add a channel rotation monitor when control channel rotation is configured or can be learned at runtime
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
@@ -356,6 +358,21 @@ public class DecoderFactory
         }
     }
 
+    /**
+     * Captures immutable configured and learned source evidence before decoder callbacks begin.
+     */
+    static CallLegSource createCallLegSource(Channel channel, AliasList aliasList)
+    {
+        DecodeConfiguration decodeConfiguration = channel != null ? channel.getDecodeConfiguration() : null;
+        return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
+            channel != null ? channel.getConfigurationId() : null,
+            channel != null ? channel.getName() : null,
+            channel != null ? channel.getRadresGuid() : null,
+            aliasList != null ? aliasList.getId() : 0L,
+            channel != null ? channel.getP25SiteIdentity() : null,
+            channel != null && channel.getChannelType() == ChannelType.TRAFFIC);
+    }
+
     private static boolean shouldAddP25ControlChannelRotationMonitor(Channel channel,
                                                                     SourceConfigTunerMultipleFrequency sourceConfig)
     {
@@ -382,7 +399,7 @@ public class DecoderFactory
             }
 
             modules.add(new NXDNDecoder(configNXDN));
-            modules.add(new NXDNAudioModule(userPreferences, aliasList));
+            modules.add(new NXDNAudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
 
             if(channel.getChannelType() == ChannelType.STANDARD)
             {
@@ -507,8 +524,9 @@ public class DecoderFactory
 
         modules.add(state1);
         modules.add(state2);
-        modules.add(new DMRAudioModule(userPreferences, aliasList, DMRMessage.TIMESLOT_1));
-        modules.add(new DMRAudioModule(userPreferences, aliasList, DMRMessage.TIMESLOT_2));
+        CallLegSource callLegSource = createCallLegSource(channel, aliasList);
+        modules.add(new DMRAudioModule(userPreferences, aliasList, DMRMessage.TIMESLOT_1, callLegSource));
+        modules.add(new DMRAudioModule(userPreferences, aliasList, DMRMessage.TIMESLOT_2, callLegSource));
 
         //Add a channel rotation monitor when we have multiple control channel frequencies specified
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&

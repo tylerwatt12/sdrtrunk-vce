@@ -571,9 +571,8 @@ public class AudioStreamingManager
 
     private boolean isEligibleForStreaming(CompletedAudioCall completedAudioCall)
     {
-        return mAudioRecordingListener != null && completedAudioCall.snapshot().hasBroadcastChannels() &&
-            !(completedAudioCall.snapshot().duplicate() && mUserPreferences.getCallManagementPreference()
-                .isDuplicateStreamingSuppressionEnabled());
+        return mAudioRecordingListener != null && completedAudioCall.hasAudio() &&
+            completedAudioCall.snapshot().hasBroadcastChannels();
     }
 
     public StreamingQueueStatus getQueueStatus()

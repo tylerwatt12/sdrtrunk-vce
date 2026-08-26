@@ -166,14 +166,14 @@ class StatsApiV1HttpContractTest
         assertEquals("24h", actions.at("/meta/range").textValue(), actionsResponse.body());
         assertTrue(actions.at("/meta/from_ms").isIntegralNumber(), actionsResponse.body());
         assertTrue(actions.at("/meta/to_ms").isIntegralNumber(), actionsResponse.body());
-        assertTrue(actions.at("/meta/total").isIntegralNumber(), actionsResponse.body());
+        assertTrue(actions.at("/meta/total_observation_count").isIntegralNumber(), actionsResponse.body());
         assertFalse(actions.path("meta").has("group_by"), actionsResponse.body());
 
         for(JsonNode row: actions.path("data"))
         {
             assertEquals(2, row.size(), actionsResponse.body());
             assertTrue(row.path("action").isTextual(), actionsResponse.body());
-            assertTrue(row.path("count").isIntegralNumber(), actionsResponse.body());
+            assertTrue(row.path("observation_count").isIntegralNumber(), actionsResponse.body());
             assertFalse("continue".equals(row.path("action").textValue()), actionsResponse.body());
             assertFalse(row.has("detail_supported"), actionsResponse.body());
         }
@@ -189,10 +189,10 @@ class StatsApiV1HttpContractTest
         assertEquals("grant", radios.at("/meta/action").textValue(), radiosResponse.body());
         assertTrue(radios.at("/meta/from_ms").isIntegralNumber(), radiosResponse.body());
         assertTrue(radios.at("/meta/to_ms").isIntegralNumber(), radiosResponse.body());
-        assertTrue(radios.at("/meta/action_total").isIntegralNumber(), radiosResponse.body());
-        assertTrue(radios.at("/meta/retained_event_count").isIntegralNumber(), radiosResponse.body());
-        assertTrue(radios.at("/meta/identified_event_count").isIntegralNumber(), radiosResponse.body());
-        assertTrue(radios.at("/meta/unknown_source_event_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/action_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/retained_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/identified_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/unknown_source_observation_count").isIntegralNumber(), radiosResponse.body());
         assertTrue(radios.at("/meta/total_count").isIntegralNumber(), radiosResponse.body());
         assertEquals(1, radios.at("/meta/limit").intValue(), radiosResponse.body());
         assertEquals(0, radios.at("/meta/offset").intValue(), radiosResponse.body());
@@ -208,6 +208,11 @@ class StatsApiV1HttpContractTest
         assertTrue(systems.at("/meta/has_more").isBoolean(), systemsResponse.body());
         assertFalse(systems.at("/meta").has("hasMore"), systemsResponse.body());
         assertFalse(systems.at("/data/0").has("site_preview"), systemsResponse.body());
+        assertEquals(71, systems.at("/data/0/alias_list_id").intValue(), systemsResponse.body());
+        assertEquals("HTTP Aliases", systems.at("/data/0/alias_list_name").textValue(),
+            systemsResponse.body());
+        assertEquals("linked_system", systems.at("/data/0/scope_kind").textValue(),
+            systemsResponse.body());
 
         HttpResponse<String> systemPreviewResponse = get(StatsApiV1.SYSTEMS +
             "?include_site_preview=true&limit=25");
@@ -225,6 +230,7 @@ class StatsApiV1HttpContractTest
         assertEquals("p25", previewSite.path("protocol").textValue(), systemPreviewResponse.body());
         assertEquals("trunked", previewSite.path("site_kind").textValue(), systemPreviewResponse.body());
         assertEquals(2, previewSite.path("site_id").intValue(), systemPreviewResponse.body());
+        assertEquals(71, previewSite.path("alias_list_id").intValue(), systemPreviewResponse.body());
         assertFalse(previewSite.has("scope_id"), systemPreviewResponse.body());
         assertFalse(previewSite.has("protocol_code"), systemPreviewResponse.body());
 
@@ -527,19 +533,21 @@ class StatsApiV1HttpContractTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            statement.executeUpdate("INSERT INTO alias_list (id, name, family) " +
+                "VALUES (71, 'HTTP Aliases', 'P25')");
             statement.executeUpdate("INSERT INTO p25_system VALUES (1, 1, 71, 1000, 2000)");
             statement.executeUpdate("""
                 INSERT INTO receiver_context (
-                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
                     first_seen_ms, last_seen_ms, system_key, rfss, site, current_control_hz
-                ) VALUES (1, 'http-site', 'http-site-guid', 1, 1, 'HTTP Site', 'P25-1',
+                ) VALUES (1, 'http-site', 'http-site-guid', 1, 1, 'HTTP Site', 'HTTP Aliases', 'P25-1',
                     1000, 2000, 1, 1, 2, 851012500)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (1, 'p25:00001:047', 1, 1, 0, 1, 1000, 2000)
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (1, 'p25:00001:047', 1, 1, 0, 71, 1, 1000, 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)

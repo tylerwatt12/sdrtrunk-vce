@@ -57,14 +57,16 @@ class StatsWebConventionalUiContractTest
         String talkgroups = function(source, "function conventionalTalkgroupColumns()");
         String radios = function(source, "function conventionalRadioColumns()");
 
-        for(String field: new String[]{"talkgroup_id", "alias_name", "frequency_hz", "timeslot", "call_count",
-            "encrypted_count", "last_source_radio_id", "last_source_alias_name", "first_seen_ms", "last_seen_ms"})
+        for(String field: new String[]{"talkgroup_id", "alias_name", "frequency_hz", "timeslot",
+            "logical_call_count", "encrypted_logical_call_count", "last_source_radio_id",
+            "last_source_alias_name", "first_seen_ms", "last_seen_ms"})
         {
             assertTrue(talkgroups.contains(field), () -> "Missing DMR talkgroup field " + field);
         }
 
-        for(String field: new String[]{"radio_id", "alias_name", "frequency_hz", "timeslot", "call_count",
-            "source_call_count", "target_call_count", "group_call_count", "private_call_count", "encrypted_count",
+        for(String field: new String[]{"radio_id", "alias_name", "frequency_hz", "timeslot", "logical_call_count",
+            "source_logical_call_count", "target_logical_call_count", "group_logical_call_count",
+            "private_logical_call_count", "encrypted_logical_call_count",
             "last_talkgroup_id", "last_talkgroup_alias_name", "last_peer_radio_id", "last_peer_alias_name",
             "first_seen_ms", "last_seen_ms"})
         {
@@ -85,12 +87,14 @@ class StatsWebConventionalUiContractTest
         assertTrue(list.contains("apiPage('/api/v1/conventional-contexts', pageParameters())"));
         assertTrue(list.indexOf("beginPage(renderContext") < list.indexOf("await directory.load("));
         assertTrue(detail.contains("decoderDisplay(context.decoder)"));
-        assertTrue(detail.contains("label: 'Calls'"));
+        assertTrue(detail.contains("label: 'Logical Calls'"));
         assertTrue(detail.contains("label: 'Rec'"));
-        assertTrue(detail.contains("label: 'Sent'"));
+        assertTrue(detail.contains("label: 'Submitted'"));
         assertTrue(detail.contains("label: 'Enc'"));
-        assertTrue(radios.indexOf("id: 'encrypted'") > radios.indexOf("id: 'calls'"));
-        assertTrue(radios.indexOf("id: 'encrypted'") < radios.indexOf("id: 'source-calls'"));
+        assertTrue(radios.indexOf("id: 'encrypted-logical-calls'") >
+            radios.indexOf("id: 'logical-calls'"));
+        assertTrue(radios.indexOf("id: 'encrypted-logical-calls'") <
+            radios.indexOf("id: 'source-logical-calls'"));
     }
 
     private static String source() throws Exception

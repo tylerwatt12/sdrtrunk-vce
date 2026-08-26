@@ -16,8 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -136,6 +141,70 @@ class P25ActivityLogServiceLifecycleTest
             assertTrue(elapsedMs < 500, "bounded offers took " + elapsedMs + " ms");
             assertTrue(service.getObservationDropCount() > 0);
             assertFalse(decoderThread == projectionThread.get());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void outputAfterDroppedResolvedNotificationCannotCreateOrphanTotals() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel blockerChannel = new Channel("Logical output saturation", Channel.ChannelType.STANDARD);
+        blockerChannel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                projectionEntered.countDown();
+                try
+                {
+                    releaseProjection.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return super.getEventType();
+            }
+        };
+        DecodeEvent filler = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis()).build();
+        CompletedAudioCall call = uncertainP25TrafficCall(9001, System.currentTimeMillis());
+
+        try
+        {
+            service.getDecodeEventListener().accept(blockerChannel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            for(int index = 0; index < P25ActivityLogService.OBSERVATION_QUEUE_SIZE; index++)
+            {
+                service.getDecodeEventListener().accept(blockerChannel, filler);
+            }
+            long dropsBefore = service.getObservationDropCount();
+            service.receiveResolvedCall(call);
+            assertTrue(service.getObservationDropCount() > dropsBefore,
+                "the full observer queue must drop the resolved notification");
+
+            releaseProjection.countDown();
+            awaitObservationQueueEmpty(service);
+            service.receiveRecordedCall(call);
+            awaitObservationQueueEmpty(service);
+            disposeAndAwait(service);
+
+            assertEquals(0, scalar(database,
+                "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
+            assertEquals(0, scalar(database,
+                "SELECT COALESCE(SUM(recorded_output_count), 0) FROM trunked_logical_call_bucket"));
         }
         finally
         {
@@ -371,7 +440,7 @@ class P25ActivityLogServiceLifecycleTest
         {
             service.getDecodeEventListener().accept(channel, context);
             awaitCount(database, "p25_activity_event", 1);
-            assertEquals(new P25ActivityLogMapper().mapCompletedCallOutput(current.snapshot(),
+            assertEquals(new P25ActivityLogMapper().mapConventionalCallOutput(current.snapshot(),
                     P25ActivityLogRecords.CallOutput.RECORDED).contextKey(),
                 scalarText(database, "SELECT context_key FROM receiver_context LIMIT 1"));
 
@@ -390,9 +459,9 @@ class P25ActivityLogServiceLifecycleTest
             assertFalse(staleProducer.isAlive());
             assertEquals(null, producerFailure.get());
             var retiredOutput = retiredIngress.poll();
-            assertTrue(retiredOutput != null && retiredOutput.first() instanceof AudioCallSnapshot,
-                "the bounded statistics queue must retain only compact call metadata");
-            assertFalse(retiredOutput.first() instanceof CompletedAudioCall,
+            assertTrue(retiredOutput != null && retiredOutput.first() instanceof CompletedAudioCall,
+                "the bounded statistics queue must retain the resolved logical-call metadata");
+            assertFalse(((CompletedAudioCall)retiredOutput.first()).hasAudio(),
                 "completed-call audio buffers must never be retained by statistics ingress");
 
             service.receiveRecordedCall(current);
@@ -527,10 +596,37 @@ class P25ActivityLogServiceLifecycleTest
         identifiers.update(SiteGuidConfigurationIdentifier.create(guid));
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(sequence, sequence + 1, 0), null, null,
+        AudioCallId callId = new AudioCallId(sequence, sequence + 1, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), timestamp, timestamp + 100L, 1, 1, timestamp, timestamp + 100L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
+    }
+
+    private static CompletedAudioCall uncertainP25TrafficCall(long sequence, long timestamp)
+    {
+        AudioCallId callId = new AudioCallId(99, sequence, 1);
+        CallLegId callLegId = CallLegId.from(callId);
+        IdentifierCollection identifiers = new IdentifierCollection();
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "uncertain-config",
+            "Uncertain Site", "uncertain-guid", 0, null, true);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
+            timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
+            CallEncryptionState.UNKNOWN, true,
+            AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers), VoiceCallQuality.EMPTY,
+            callLegId, source, null);
+        return new CompletedAudioCall(snapshot, List.of(new float[800]));
+    }
+
+    private static void awaitObservationQueueEmpty(P25ActivityLogService service) throws Exception
+    {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
+        while(service.getPendingObservationCount() > 0 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(10);
+        }
+        assertEquals(0, service.getPendingObservationCount());
     }
 
     private static Thread observationProducer(P25ActivityLogService service, Channel channel, DecodeEvent event,

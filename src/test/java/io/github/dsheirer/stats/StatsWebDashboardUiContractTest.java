@@ -42,9 +42,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.contains("'Monitored Coverage'"));
         assertTrue(dashboard.contains("'Recent Sites / Channels'"));
         assertTrue(dashboard.contains("dashboard.recent_receivers"));
-        assertTrue(dashboard.contains("'Call Totals · Last 24 Hours'"));
+        assertTrue(dashboard.contains("'Logical Call Totals · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Call Activity · Last 24 Hours'"));
-        assertTrue(dashboard.contains("'Calls by Site / Channel · Last 24 Hours'"));
+        assertTrue(dashboard.contains("'Logical Calls by Conventional Channel · Last 24 Hours'"));
         assertTrue(dashboard.contains("dashboard.source_activity_24h"));
         assertTrue(dashboard.contains("dashboard.top_destinations"));
         assertTrue(dashboard.contains("dashboard.top_sources"));
@@ -78,7 +78,7 @@ class StatsWebDashboardUiContractTest
         String failure = function(source, "function asyncSectionFailure(error, fallbackMessage, retry)");
 
         assertTrue(source.contains("['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']"));
-        assertTrue(source.contains("series.field !== 'continue_count'"));
+        assertTrue(source.contains("series.field !== 'continue_observation_count'"));
         assertTrue(source.contains("{ action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' }"));
         assertTrue(actionRows.contains("row.action !== 'CONTINUE'"));
         assertTrue(mix.contains("class: 'dashboard-activity-donut'"));
@@ -114,7 +114,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(columns.contains("label: 'System / Channel'"));
         assertTrue(columns.contains("label: 'Radio'"));
         assertTrue(columns.contains("label: 'Alias'"));
-        assertTrue(columns.contains("label: 'Events'"));
+        assertTrue(columns.contains("label: 'Observations'"));
         assertTrue(columns.contains("label: 'Last Seen'"));
         assertTrue(system.contains("row.resolved_channel_name"));
         assertTrue(system.contains("row.context_key"));
@@ -129,11 +129,11 @@ class StatsWebDashboardUiContractTest
         assertTrue(pager.contains("page.next_offset"));
         assertTrue(pager.contains("page.total_count"));
         assertTrue(pager.contains("navigation.tabIndex = -1"));
-        assertTrue(note.contains("Hourly ${actionLabel.toLowerCase()} total"));
-        assertTrue(note.contains("page.action_total"));
-        assertTrue(note.contains("page.retained_event_count"));
-        assertTrue(note.contains("page.identified_event_count"));
-        assertTrue(note.contains("page.unknown_source_event_count"));
+        assertTrue(note.contains("Hourly ${actionLabel.toLowerCase()} observations"));
+        assertTrue(note.contains("page.action_observation_count"));
+        assertTrue(note.contains("page.retained_observation_count"));
+        assertTrue(note.contains("page.identified_observation_count"));
+        assertTrue(note.contains("page.unknown_source_observation_count"));
         assertFalse(activity.contains("/api/v1/activity-analytics"));
         assertFalse(activity.contains("group_by"));
         assertFalse(activity.contains("detailedHistoryAvailable()"));
@@ -161,16 +161,18 @@ class StatsWebDashboardUiContractTest
         assertFalse(health.contains("label: 'Protocol'"));
         assertFalse(health.contains("label: 'Topology'"));
 
-        assertTrue(calls.contains("label: 'Site / Channel'"));
+        assertTrue(calls.contains("label: 'Conventional Channel'"));
         assertTrue(calls.contains("label: 'Mode'"));
-        assertTrue(calls.contains("label: 'Calls'"));
+        assertTrue(calls.contains("label: 'Logical Calls'"));
         assertTrue(calls.contains("label: 'Recorded'"));
-        assertTrue(calls.contains("label: 'Sent'"));
+        assertTrue(calls.contains("label: 'Submitted'"));
         assertFalse(calls.contains("label: 'Type'"));
         assertFalse(calls.contains("label: 'Enc'"));
         assertFalse(calls.contains("Latest Hour"));
         assertTrue(identities.contains("label: identityLabel"));
-        assertTrue(identities.contains("...dashboardCallSourceColumns"));
+        assertTrue(identities.contains("label: 'System / Channel'"));
+        assertTrue(identities.contains("label: 'Logical Calls'"));
+        assertFalse(identities.contains("...dashboardCallSourceColumns"));
         String identity = function(source, "function dashboardIdentity(row)");
         assertTrue(identity.contains("dashboard-identity-context"));
         assertTrue(identity.contains("last_talker_alias"));

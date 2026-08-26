@@ -86,20 +86,18 @@ final class StatsAliasCatalog
         "group", "lower(coalesce(alias.group_name, ''))"
     );
     private static final Map<String,String> METRIC_SORT_FIELDS = Map.ofEntries(
-        Map.entry("calls", "call_count"), Map.entry("call_count", "call_count"),
-        Map.entry("recorded", "recorded_count"), Map.entry("recorded_count", "recorded_count"),
-        Map.entry("streamed", "streamed_count"), Map.entry("streamed_count", "streamed_count"),
-        Map.entry("encrypted", "encrypted_evidence_count"),
-        Map.entry("encrypted_evidence_count", "encrypted_evidence_count"),
-        Map.entry("grants", "grant_count"), Map.entry("grant_count", "grant_count"),
-        Map.entry("joins", "join_count"), Map.entry("join_count", "join_count"),
-        Map.entry("emergencies", "emergency_count"), Map.entry("emergency_count", "emergency_count"),
-        Map.entry("registrations", "register_count"), Map.entry("register_count", "register_count"),
-        Map.entry("logouts", "logout_count"), Map.entry("logout_count", "logout_count"),
-        Map.entry("denials", "denial_count"), Map.entry("denial_count", "denial_count"),
-        Map.entry("data", "data_count"), Map.entry("data_count", "data_count"),
-        Map.entry("other_signaling", "other_signaling_count"),
-        Map.entry("other_signaling_count", "other_signaling_count"),
+        Map.entry("logical_call_count", "logical_call_count"),
+        Map.entry("recorded_logical_call_count", "recorded_logical_call_count"),
+        Map.entry("stream_submitted_logical_call_count", "stream_submitted_logical_call_count"),
+        Map.entry("encrypted_logical_call_count", "encrypted_logical_call_count"),
+        Map.entry("grant_observation_count", "grant_observation_count"),
+        Map.entry("join_observation_count", "join_observation_count"),
+        Map.entry("emergency_observation_count", "emergency_observation_count"),
+        Map.entry("register_observation_count", "register_observation_count"),
+        Map.entry("logout_observation_count", "logout_observation_count"),
+        Map.entry("denial_observation_count", "denial_observation_count"),
+        Map.entry("data_observation_count", "data_observation_count"),
+        Map.entry("other_signaling_observation_count", "other_signaling_observation_count"),
         Map.entry("relationships", "relationship_count"),
         Map.entry("relationship_count", "relationship_count"),
         Map.entry("join_relationships", "join_relationship_count"),
@@ -112,9 +110,11 @@ final class StatsAliasCatalog
         Map.entry("last_evidence_ms", "last_evidence_ms")
     );
     private static final List<String> METRIC_FIELDS = List.of(
-        "call_count", "recorded_count", "streamed_count", "encrypted_evidence_count",
-        "grant_count", "join_count", "emergency_count", "register_count", "logout_count",
-        "denial_count", "data_count", "other_signaling_count", "relationship_count",
+        "logical_call_count", "recorded_logical_call_count", "stream_submitted_logical_call_count",
+        "encrypted_logical_call_count", "grant_observation_count", "join_observation_count",
+        "emergency_observation_count", "register_observation_count", "logout_observation_count",
+        "denial_observation_count", "data_observation_count", "other_signaling_observation_count",
+        "relationship_count",
         "join_relationship_count", "current_affiliation_count");
     private static final String OTHER_SIGNALING_SQL = "summary.acknowledge_count + summary.active_count + " +
         "summary.busy_count + summary.check_count + summary.check_ack_count + summary.continue_count + " +
@@ -299,8 +299,8 @@ final class StatsAliasCatalog
         Long before = optionalTimestamp(request, "last_activity_before");
 
         rows.removeIf(row -> evidence != null && !evidence.equals(lower(text(row.get("metrics_state")))) ||
-            "used".equals(use) && !(row.get("call_count") instanceof Number count && count.longValue() > 0) ||
-            "unused".equals(use) && !(row.get("call_count") instanceof Number count && count.longValue() == 0) ||
+            "used".equals(use) && !(row.get("logical_call_count") instanceof Number count && count.longValue() > 0) ||
+            "unused".equals(use) && !(row.get("logical_call_count") instanceof Number count && count.longValue() == 0) ||
             after != null && !(row.get("last_evidence_ms") instanceof Number last && last.longValue() >= after) ||
             before != null && !(row.get("last_evidence_ms") instanceof Number last && last.longValue() <= before));
     }
@@ -1096,12 +1096,19 @@ final class StatsAliasCatalog
             SELECT summary.scope_id, summary.identity_kind_code, summary.identity_id,
                 summary.p25_identity_state_code, summary.p25_home_wacn,
                 summary.p25_home_system_id, summary.p25_home_talkgroup_id,
-                summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
-                summary.recorded_count, summary.streamed_count,
-                summary.encrypted_count AS encrypted_evidence_count,
-                summary.grant_count, summary.join_count, summary.emergency_count,
-                summary.register_count, summary.logout_count, summary.denial_count, summary.data_count,
-                %s AS other_signaling_count, scope.protocol_code, scope.p25_system_key AS system_key,
+                summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
+                summary.recorded_output_count AS recorded_logical_call_count,
+                summary.streamed_output_count AS stream_submitted_logical_call_count,
+                summary.encrypted_logical_call_count,
+                summary.grant_count AS grant_observation_count,
+                summary.join_count AS join_observation_count,
+                summary.emergency_count AS emergency_observation_count,
+                summary.register_count AS register_observation_count,
+                summary.logout_count AS logout_observation_count,
+                summary.denial_count AS denial_observation_count,
+                summary.data_count AS data_observation_count,
+                %s AS other_signaling_observation_count,
+                scope.protocol_code, scope.p25_system_key AS system_key,
                 system.wacn, system.system_id
             FROM trunked_identity_summary summary
             JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
@@ -1119,12 +1126,19 @@ final class StatsAliasCatalog
                 2 AS p25_identity_state_code, summary.home_wacn AS p25_home_wacn,
                 summary.home_system_id AS p25_home_system_id,
                 summary.home_talkgroup_id AS p25_home_talkgroup_id,
-                summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
-                summary.recorded_count, summary.streamed_count,
-                summary.encrypted_count AS encrypted_evidence_count,
-                summary.grant_count, summary.join_count, summary.emergency_count,
-                summary.register_count, summary.logout_count, summary.denial_count, summary.data_count,
-                %s AS other_signaling_count, scope.protocol_code, scope.p25_system_key AS system_key,
+                summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
+                summary.recorded_output_count AS recorded_logical_call_count,
+                summary.streamed_output_count AS stream_submitted_logical_call_count,
+                summary.encrypted_logical_call_count,
+                summary.grant_count AS grant_observation_count,
+                summary.join_count AS join_observation_count,
+                summary.emergency_count AS emergency_observation_count,
+                summary.register_count AS register_observation_count,
+                summary.logout_count AS logout_observation_count,
+                summary.denial_count AS denial_observation_count,
+                summary.data_count AS data_observation_count,
+                %s AS other_signaling_observation_count,
+                scope.protocol_code, scope.p25_system_key AS system_key,
                 system.wacn, system.system_id
             FROM p25_zero_local_fq_talkgroup_summary summary
             JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
@@ -1164,12 +1178,16 @@ final class StatsAliasCatalog
         targets.appendCte(sql, parameters, false);
         sql.append("""
             SELECT summary.context_id, 1 AS identity_kind_code, summary.talkgroup_id AS identity_id,
-                summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
-                NULL AS recorded_count, NULL AS streamed_count,
-                summary.encrypted_count AS encrypted_evidence_count,
-                NULL AS grant_count, NULL AS join_count, NULL AS emergency_count,
-                NULL AS register_count, NULL AS logout_count, NULL AS denial_count,
-                NULL AS data_count, NULL AS other_signaling_count, 3 AS protocol_code
+                summary.first_seen_ms, summary.last_seen_ms,
+                summary.call_count AS logical_call_count,
+                NULL AS recorded_logical_call_count,
+                NULL AS stream_submitted_logical_call_count,
+                summary.encrypted_count AS encrypted_logical_call_count,
+                NULL AS grant_observation_count, NULL AS join_observation_count,
+                NULL AS emergency_observation_count, NULL AS register_observation_count,
+                NULL AS logout_observation_count, NULL AS denial_observation_count,
+                NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                3 AS protocol_code
             FROM dmr_conventional_talkgroup_summary summary
             WHERE summary.context_id IN (%1$s)
               AND
@@ -1181,12 +1199,16 @@ final class StatsAliasCatalog
             UNION ALL
 
             SELECT summary.context_id, 2 AS identity_kind_code, summary.radio_id AS identity_id,
-                summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
-                NULL AS recorded_count, NULL AS streamed_count,
-                summary.encrypted_count AS encrypted_evidence_count,
-                NULL AS grant_count, NULL AS join_count, NULL AS emergency_count,
-                NULL AS register_count, NULL AS logout_count, NULL AS denial_count,
-                NULL AS data_count, NULL AS other_signaling_count, 3 AS protocol_code
+                summary.first_seen_ms, summary.last_seen_ms,
+                summary.call_count AS logical_call_count,
+                NULL AS recorded_logical_call_count,
+                NULL AS stream_submitted_logical_call_count,
+                summary.encrypted_count AS encrypted_logical_call_count,
+                NULL AS grant_observation_count, NULL AS join_observation_count,
+                NULL AS emergency_observation_count, NULL AS register_observation_count,
+                NULL AS logout_observation_count, NULL AS denial_observation_count,
+                NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                3 AS protocol_code
             FROM dmr_conventional_radio_summary summary
             WHERE summary.context_id IN (%1$s)
               AND
@@ -1250,12 +1272,16 @@ final class StatsAliasCatalog
         sql.append("""
             SELECT bucket.context_id, bucket.identity_kind_code, bucket.identity_id,
                 NULL AS first_seen_ms, NULL AS last_seen_ms,
-                NULL AS call_count, sum(bucket.recorded_count) AS recorded_count,
-                sum(bucket.streamed_count) AS streamed_count, NULL AS encrypted_evidence_count,
-                NULL AS grant_count, NULL AS join_count, NULL AS emergency_count,
-                NULL AS register_count, NULL AS logout_count, NULL AS denial_count,
-                NULL AS data_count, NULL AS other_signaling_count, 3 AS protocol_code
-            FROM call_identity_bucket bucket
+                NULL AS logical_call_count,
+                sum(bucket.recorded_count) AS recorded_logical_call_count,
+                sum(bucket.streamed_count) AS stream_submitted_logical_call_count,
+                NULL AS encrypted_logical_call_count,
+                NULL AS grant_observation_count, NULL AS join_observation_count,
+                NULL AS emergency_observation_count, NULL AS register_observation_count,
+                NULL AS logout_observation_count, NULL AS denial_observation_count,
+                NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                3 AS protocol_code
+            FROM conventional_call_identity_bucket bucket
             JOIN receiver_context context ON context.id = bucket.context_id
             WHERE bucket.context_id IN (%s) AND context.kind_code <> 1 AND context.protocol_code = 3
               AND bucket.identity_kind_code IN (1, 2)
@@ -2143,18 +2169,19 @@ final class StatsAliasCatalog
 
         private void addEvidence(Map<String,Object> row)
         {
-            callCount += number(row.get("call_count"));
-            encryptedEvidenceCount += number(row.get("encrypted_evidence_count"));
-            recordedCount = addNullable(recordedCount, row.get("recorded_count"));
-            streamedCount = addNullable(streamedCount, row.get("streamed_count"));
-            grantCount = addNullable(grantCount, row.get("grant_count"));
-            joinCount = addNullable(joinCount, row.get("join_count"));
-            emergencyCount = addNullable(emergencyCount, row.get("emergency_count"));
-            registerCount = addNullable(registerCount, row.get("register_count"));
-            logoutCount = addNullable(logoutCount, row.get("logout_count"));
-            denialCount = addNullable(denialCount, row.get("denial_count"));
-            dataCount = addNullable(dataCount, row.get("data_count"));
-            otherSignalingCount = addNullable(otherSignalingCount, row.get("other_signaling_count"));
+            callCount += number(row.get("logical_call_count"));
+            encryptedEvidenceCount += number(row.get("encrypted_logical_call_count"));
+            recordedCount = addNullable(recordedCount, row.get("recorded_logical_call_count"));
+            streamedCount = addNullable(streamedCount, row.get("stream_submitted_logical_call_count"));
+            grantCount = addNullable(grantCount, row.get("grant_observation_count"));
+            joinCount = addNullable(joinCount, row.get("join_observation_count"));
+            emergencyCount = addNullable(emergencyCount, row.get("emergency_observation_count"));
+            registerCount = addNullable(registerCount, row.get("register_observation_count"));
+            logoutCount = addNullable(logoutCount, row.get("logout_observation_count"));
+            denialCount = addNullable(denialCount, row.get("denial_observation_count"));
+            dataCount = addNullable(dataCount, row.get("data_observation_count"));
+            otherSignalingCount = addNullable(otherSignalingCount,
+                row.get("other_signaling_observation_count"));
             observe(row.get("first_seen_ms"), row.get("last_seen_ms"));
         }
 
@@ -2204,18 +2231,18 @@ final class StatsAliasCatalog
         {
             return switch(field)
             {
-                case "call_count" -> callCount;
-                case "recorded_count" -> recordedCount;
-                case "streamed_count" -> streamedCount;
-                case "encrypted_evidence_count" -> encryptedEvidenceCount;
-                case "grant_count" -> grantCount;
-                case "join_count" -> joinCount;
-                case "emergency_count" -> emergencyCount;
-                case "register_count" -> registerCount;
-                case "logout_count" -> logoutCount;
-                case "denial_count" -> denialCount;
-                case "data_count" -> dataCount;
-                case "other_signaling_count" -> otherSignalingCount;
+                case "logical_call_count" -> callCount;
+                case "recorded_logical_call_count" -> recordedCount;
+                case "stream_submitted_logical_call_count" -> streamedCount;
+                case "encrypted_logical_call_count" -> encryptedEvidenceCount;
+                case "grant_observation_count" -> grantCount;
+                case "join_observation_count" -> joinCount;
+                case "emergency_observation_count" -> emergencyCount;
+                case "register_observation_count" -> registerCount;
+                case "logout_observation_count" -> logoutCount;
+                case "denial_observation_count" -> denialCount;
+                case "data_observation_count" -> dataCount;
+                case "other_signaling_observation_count" -> otherSignalingCount;
                 case "relationship_count" -> relationshipCount;
                 case "join_relationship_count" -> joinRelationshipCount;
                 case "current_affiliation_count" -> currentAffiliationCount;

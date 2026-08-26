@@ -24,8 +24,11 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
-import io.github.dsheirer.audio.call.DuplicateCallPriorityProvider;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputEvent;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputType;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
@@ -45,6 +48,7 @@ import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.startup.CoordinatedStartupDialog;
 import io.github.dsheirer.gui.theme.ThemeManager;
+import io.github.dsheirer.gui.viewer.ViewLogicalCallMonitorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -133,6 +137,7 @@ public class SDRTrunk
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
+    private LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private P25ActivityLogService mP25ActivityLogService;
     private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
@@ -159,6 +164,7 @@ public class SDRTrunk
     private JMenuItem mCheckForUpdatesMenuItem;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
+    private JButton mCallMatchingMonitorShortcutButton;
     private JButton mWebInterfaceButton;
     private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
@@ -224,12 +230,15 @@ public class SDRTrunk
 
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
 
+        mLogicalCallDiagnosticService = new LogicalCallDiagnosticService(
+            mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
+
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
-            mP25ActivityLogService::receiveRecordedCall);
+            this::receiveRecordedCall);
         mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
-            mUserPreferences, mP25ActivityLogService::receiveStreamedCall);
+            mUserPreferences, this::receiveStreamedCall);
         mAudioStreamingManager.start();
 
         mDecodeEventViewService = new DecodeEventViewService(
@@ -247,8 +256,16 @@ public class SDRTrunk
             mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
         }
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
-        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioRecordingManager,
-            mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE);
+        mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
+            mStatsWebServerService::receive, mP25ActivityLogService::receiveResolvedCall,
+            mLogicalCallDiagnosticService);
+
+        if(mJavaFxWindowManager != null)
+        {
+            mJavaFxWindowManager.setLogicalCallDiagnostics(mLogicalCallDiagnosticService, mAudioCallCoordinator,
+                path -> EventQueue.invokeLater(() -> openFileExplorer(path.toFile())));
+        }
+
         mStatsWebServerService.setReceiverHealthOutputSources(mAudioCallCoordinator, mAudioRecordingManager,
             mAudioStreamingManager);
 
@@ -531,6 +548,13 @@ public class SDRTrunk
         recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
         viewMenu.add(recordingViewerMenu);
 
+        JMenuItem logicalCallMonitorMenu = new JMenuItem("Call Matching Monitor");
+        logicalCallMonitorMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.SITEMAP, 12));
+        logicalCallMonitorMenu.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_M, ActionEvent.ALT_MASK));
+        logicalCallMonitorMenu.addActionListener(e ->
+            MyEventBus.getGlobalEventBus().post(new ViewLogicalCallMonitorRequest()));
+        viewMenu.add(logicalCallMonitorMenu);
+
         JMenuItem viewScreenCapturesMenu = new JMenuItem("Screen Captures");
         viewScreenCapturesMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
         viewScreenCapturesMenu.addActionListener(arg0 ->
@@ -719,9 +743,45 @@ public class SDRTrunk
         });
     }
 
-    /**
-     * Performs shutdown operations
-     */
+    /** Records the completed local file action and preserves the existing activity-statistics callback. */
+    private void receiveRecordedCall(CompletedAudioCall completedAudioCall)
+    {
+        try
+        {
+            mP25ActivityLogService.receiveRecordedCall(completedAudioCall);
+        }
+        finally
+        {
+            offerDiagnosticOutput(completedAudioCall, LogicalCallDiagnosticOutputType.RECORDED);
+        }
+    }
+
+    /** Records local streamer submission, not acknowledgement or publication by a remote provider. */
+    private void receiveStreamedCall(CompletedAudioCall completedAudioCall)
+    {
+        try
+        {
+            mP25ActivityLogService.receiveStreamedCall(completedAudioCall);
+        }
+        finally
+        {
+            offerDiagnosticOutput(completedAudioCall, LogicalCallDiagnosticOutputType.STREAM_SUBMITTED);
+        }
+    }
+
+    private void offerDiagnosticOutput(CompletedAudioCall completedAudioCall,
+                                       LogicalCallDiagnosticOutputType outputType)
+    {
+        LogicalCallDiagnosticService diagnosticService = mLogicalCallDiagnosticService;
+
+        if(diagnosticService != null && completedAudioCall != null && completedAudioCall.logicalCallId() != null)
+        {
+            diagnosticService.offerOutput(new LogicalCallDiagnosticOutputEvent(
+                completedAudioCall.logicalCallId().sequence(), System.currentTimeMillis(), outputType));
+        }
+    }
+
+    /** Opens a local directory with the platform file browser. */
     private void openFileExplorer(File directory)
     {
         try
@@ -767,6 +827,12 @@ public class SDRTrunk
                 mControlChannelQualityRegistry);
         }
         mConfigurationManager.getChannelProcessingManager().close();
+        if(mAudioCallCoordinator != null)
+        {
+            //Channel close emits terminal call events. Resolve and hand those calls to statistics/output consumers
+            //before disposing the activity writer or the downstream recording and streaming queues.
+            mAudioCallCoordinator.dispose();
+        }
         if(mP25ActivityLogService != null)
         {
             mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
@@ -776,7 +842,6 @@ public class SDRTrunk
             mConfigurationManager.getChannelProcessingManager().removeSiteMetadataListener(mP25ActivityLogService);
             mConfigurationManager.getChannelProcessingManager()
                 .removeProtocolSiteMetadataListener(mP25ActivityLogService);
-            mP25ActivityLogService.dispose();
         }
         if(mDecodeEventViewService != null)
         {
@@ -785,15 +850,25 @@ public class SDRTrunk
             mDecodeEventViewService.close();
         }
         EventLogger.flushPendingWrites();
-        if(mAudioCallCoordinator != null)
-        {
-            mAudioCallCoordinator.dispose();
-        }
         if(mAudioStreamingManager != null)
         {
             mAudioStreamingManager.stop();
         }
         mAudioRecordingManager.stop();
+
+        if(mP25ActivityLogService != null)
+        {
+            //Resolved calls can still be completing their recording and streaming work during the final drains.
+            //Keep the statistics writer alive until those local output confirmations have been accepted.
+            mP25ActivityLogService.dispose();
+        }
+
+        if(mLogicalCallDiagnosticService != null)
+        {
+            //Output managers report their final recorded/stream-submitted confirmations while draining.
+            mLogicalCallDiagnosticService.close();
+        }
+
         if(mControlChannelQualityRegistry != null)
         {
             mControlChannelQualityRegistry.clear();
@@ -867,9 +942,10 @@ public class SDRTrunk
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][][grow,fill]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
+        panel.add(getCallMatchingMonitorShortcutButton());
         panel.add(getWebInterfaceButton());
         panel.add(new JPanel(), "grow");
         return panel;
@@ -916,6 +992,21 @@ public class SDRTrunk
         }
 
         return mWebInterfaceButton;
+    }
+
+    private JButton getCallMatchingMonitorShortcutButton()
+    {
+        if(mCallMatchingMonitorShortcutButton == null)
+        {
+            mCallMatchingMonitorShortcutButton = new JButton("Call Monitor",
+                IconFontSwing.buildIcon(FontAwesome.SITEMAP, 14));
+            mCallMatchingMonitorShortcutButton.setFocusable(false);
+            mCallMatchingMonitorShortcutButton.setToolTipText("Call Matching Monitor");
+            mCallMatchingMonitorShortcutButton.addActionListener(event ->
+                MyEventBus.getGlobalEventBus().post(new ViewLogicalCallMonitorRequest()));
+        }
+
+        return mCallMatchingMonitorShortcutButton;
     }
 
     private void openWebInterface()

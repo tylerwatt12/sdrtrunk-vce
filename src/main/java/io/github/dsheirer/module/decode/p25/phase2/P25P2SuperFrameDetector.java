@@ -47,6 +47,7 @@ import java.util.List;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
+    private static final double DIBITS_PER_SECOND = 6000.0;
     /**
      * Current acquisition/tracking states.
      *
@@ -130,6 +131,8 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      */
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
+    private long mReferenceTimestamp;
+    private long mDibitsSinceTimestamp;
     private SyncState mSyncState = SyncState.SEARCHING_SYNC;
     private ISyncDetectListener mSyncDetectListener;
     private boolean mObservedFirstDibit;
@@ -180,12 +183,23 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         mSyncDetector.setSampleRate(sampleRate);
     }
 
+    /**
+     * Sets the timestamp at the start of the next incoming sample buffer.
+     */
+    public void setTimestamp(long timestamp)
+    {
+        mReferenceTimestamp = timestamp;
+        mDibitsSinceTimestamp = 0;
+    }
+
     public void reset()
     {
         mSyncDetector = new P25P2SyncDetector(this);
         mSyncDetectionDelayBuffer = new DibitDelayBuffer(160 + FRAGMENT_BUFFER_OVERSIZE);
         mFragmentBuffer = new DibitDelayBuffer(FRAGMENT_DIBIT_LENGTH + (2 * FRAGMENT_BUFFER_OVERSIZE));
         mDibitsProcessed = 0;
+        mReferenceTimestamp = 0;
+        mDibitsSinceTimestamp = 0;
         mSyncState = SyncState.SEARCHING_SYNC;
         mObservedFirstDibit = false;
     }
@@ -212,11 +226,11 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
     }
 
-    private long getCurrentTimestamp()
+    long getCurrentTimestamp()
     {
-        //TODO: implement a dibit counter and timestamp calculator.  We should receive a timestamp update with each
-        //TODO: buffer that arrives.  Use the timestamp dibit counter to calculate the exact timestamp of where we're at.
-        return System.currentTimeMillis();
+        return mReferenceTimestamp > 0 ?
+            mReferenceTimestamp + (long)(1000.0 * mDibitsSinceTimestamp / DIBITS_PER_SECOND) :
+            System.currentTimeMillis();
     }
 
     @Override
@@ -228,6 +242,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
 
         mDibitsProcessed++;
+        mDibitsSinceTimestamp++;
 
         mFragmentBuffer.put(dibit);
 

@@ -20,6 +20,9 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
@@ -36,6 +39,7 @@ import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
@@ -51,16 +55,14 @@ import io.github.dsheirer.scanlist.ScanListModel;
 import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.AbstractList;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class StatsWebCallServiceTest
@@ -150,6 +152,40 @@ class StatsWebCallServiceTest
             assertEquals("RIFF", new String(cached.wave(), 0, 4, StandardCharsets.US_ASCII));
             assertEquals("WAVE", new String(cached.wave(), 8, 4, StandardCharsets.US_ASCII));
             assertEquals(44 + 800 * Short.BYTES, cached.wave().length);
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void publishesLearnedP25SiteIdentityInsteadOfGenericCallIdentifiers() throws Exception
+    {
+        StatsWebCallService service = new StatsWebCallService();
+        service.start();
+        CompletedAudioCall template = call();
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "configured-channel", "Traffic",
+            "learned-site-guid", 1L, new P25SiteIdentity(0xABCDE, 0x348, 0x02, 0x17), true);
+        AudioCallSnapshot snapshot = template.snapshot();
+        AudioCallSnapshot learned = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
+            snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
+            snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
+            snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
+            snapshot.burstActive(), snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality(), snapshot.callLegId(), source,
+            snapshot.callEncryptionEvidence());
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        {
+            service.receive(new CompletedAudioCall(learned, template.audioBuffers()));
+            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
+            assertNotNull(event);
+            Map<String,Object> metadata = metadata(event);
+            assertEquals(String.valueOf(0xABCDE), metadata.get("wacn"));
+            assertEquals(String.valueOf(0x348), metadata.get("system_id"));
+            assertEquals(String.valueOf(0x02), metadata.get("rfss_id"));
+            assertEquals(String.valueOf(0x17), metadata.get("site_id"));
         }
         finally
         {
@@ -439,24 +475,33 @@ class StatsWebCallServiceTest
     }
 
     @Test
-    void blockedEncodeFromPreviousRunCannotPopulateOrPublishRestartedRun() throws Exception
+    void queuedEncodeFromPreviousRunCannotPopulateOrPublishRestartedRun() throws Exception
     {
         StatsWebCallService service = new StatsWebCallService();
-        CountDownLatch encodeStarted = new CountDownLatch(1);
-        CountDownLatch releaseEncode = new CountDownLatch(1);
-        CompletedAudioCall template = call();
-        CompletedAudioCall blocked = new CompletedAudioCall(template.snapshot(),
-            new BlockingAudioBuffers(new float[400], encodeStarted, releaseEncode));
+        CountDownLatch blockerStarted = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
         service.start();
 
         try(StatsLiveEventHub.Subscription subscription = service.subscribe())
         {
-            service.receive(blocked);
-            assertTrue(encodeStarted.await(5, TimeUnit.SECONDS));
+            encoderExecutor(service).execute(() -> {
+                blockerStarted.countDown();
+
+                try
+                {
+                    releaseBlocker.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertTrue(blockerStarted.await(5, TimeUnit.SECONDS));
+            service.receive(call());
             service.stop();
             service.start();
             service.receive(call());
-            releaseEncode.countDown();
+            releaseBlocker.countDown();
 
             StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
             assertNotNull(event);
@@ -469,7 +514,7 @@ class StatsWebCallServiceTest
         }
         finally
         {
-            releaseEncode.countDown();
+            releaseBlocker.countDown();
             service.close();
         }
     }
@@ -651,7 +696,8 @@ class StatsWebCallServiceTest
     {
         CompletedAudioCall template = call();
         ResolvedCallPolicy.MatchContext context = new ResolvedCallPolicy.MatchContext(null, 10, "County",
-            "Test System", List.of(), matchedAliasIds, false, false, Set.of());
+            "Test System", List.of(), matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE,
+            false, false, Set.of());
         return new CompletedAudioCall(template.snapshot(), template.audioBuffers(),
             new ResolvedCallPolicy(false, false, Set.of(), List.of(context)));
     }
@@ -673,7 +719,9 @@ class StatsWebCallServiceTest
             snapshot.identifierCollection(), snapshot.broadcastChannels(), snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
-            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate());
+            snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(), null,
+            snapshot.voiceCallQuality(), snapshot.callLegId(), snapshot.callLegSource(),
+            snapshot.callEncryptionEvidence());
         return new CompletedAudioCall(captured, template.audioBuffers());
     }
 
@@ -731,10 +779,11 @@ class StatsWebCallServiceTest
             identifiers.add(DecoderLogicalChannelNameIdentifier.create("0-737", Protocol.APCO25));
         }
 
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 2, 0), null, null,
+        AudioCallId callId = new AudioCallId(1, 2, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             new IdentifierCollection(identifiers), Set.of(), 1_000L, 1_100L, 1, 1L, 1_000L, 1_100L,
-            false, true, false, true, false, null,
-            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850));
+            false, true, CallEncryptionState.CLEAR, true, null,
+            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850), CallLegId.from(callId), CallLegSource.UNKNOWN, null);
         float[] audio = new float[800];
 
         for(int index = 0; index < audio.length; index++)
@@ -766,55 +815,10 @@ class StatsWebCallServiceTest
         return buffers;
     }
 
-    private static class BlockingAudioBuffers extends AbstractList<float[]>
+    private static ThreadPoolExecutor encoderExecutor(StatsWebCallService service) throws Exception
     {
-        private final float[] mAudio;
-        private final CountDownLatch mEncodeStarted;
-        private final CountDownLatch mReleaseEncode;
-        private final AtomicInteger mIteratorCount = new AtomicInteger();
-
-        private BlockingAudioBuffers(float[] audio, CountDownLatch encodeStarted, CountDownLatch releaseEncode)
-        {
-            mAudio = audio;
-            mEncodeStarted = encodeStarted;
-            mReleaseEncode = releaseEncode;
-        }
-
-        @Override
-        public float[] get(int index)
-        {
-            if(index != 0)
-            {
-                throw new IndexOutOfBoundsException(index);
-            }
-
-            return mAudio;
-        }
-
-        @Override
-        public int size()
-        {
-            return 1;
-        }
-
-        @Override
-        public Iterator<float[]> iterator()
-        {
-            if(mIteratorCount.incrementAndGet() == 2)
-            {
-                mEncodeStarted.countDown();
-
-                try
-                {
-                    mReleaseEncode.await();
-                }
-                catch(InterruptedException exception)
-                {
-                    Thread.currentThread().interrupt();
-                }
-            }
-
-            return List.of(mAudio).iterator();
-        }
+        var field = StatsWebCallService.class.getDeclaredField("mEncoderExecutor");
+        field.setAccessible(true);
+        return (ThreadPoolExecutor)field.get(service);
     }
 }

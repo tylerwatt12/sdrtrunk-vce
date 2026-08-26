@@ -164,6 +164,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         //Process the buffer for power measurements
         mPowerMonitor.process(i, q);
 
+        mMessageFramer.setTimestamp(samples.timestamp());
         mQPSKDemodulator.receive(new ComplexSamples(i, q, samples.timestamp()));
     }
 

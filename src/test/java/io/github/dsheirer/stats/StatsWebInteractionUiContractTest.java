@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -228,8 +229,11 @@ class StatsWebInteractionUiContractTest
     void keepsCrossPageLinksInsideTheirAccessBoundaries() throws Exception
     {
         String source = source();
-        assertTrue(function(source, "function aliasListLink(name, id)")
-            .contains("aliasAdminAllowed()"));
+        String aliasList = function(source, "function aliasListLink(name, id)");
+        assertTrue(aliasList.contains("aliasAdminAllowed()"));
+        assertTrue(aliasList.contains("Alias List #${aliasListId}"));
+        assertTrue(function(source, "function scopeAliasListLabel(row)")
+            .contains("Alias List #${id}"));
         assertTrue(function(source, "function systemLink(row, label = systemValue(row))")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertTrue(function(source, "function siteLink(row, label = siteValue(row))")
@@ -327,18 +331,18 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("key: 'talkgroup_alias_description'"));
         assertTrue(source.contains("fullLabel: 'Signaling observations'"));
         assertTrue(source.contains("render: talkgroupSignaling, className: 'numeric'"));
-        assertTrue(source.contains("sort: 'signaling'"));
+        assertTrue(source.contains("sort: 'signaling_observation_count'"));
         assertTrue(function(source, "function talkgroupSignaling(row)")
             .contains("return total > 0 ? number(total) : '—'"));
         assertTrue(function(source, "function talkgroupSignalingSortValue(row)")
-            .contains("row.signaling_count"));
+            .contains("row.signaling_observation_count"));
         assertTrue(function(source, "function signalingCounts(row)")
             .contains(".sort((left, right) => right[1] - left[1])"));
         assertTrue(function(source, "function talkgroupActivityChart(response, seriesConfigurations, ariaLabel)")
             .contains("const largest = configurations.reduce"));
-        assertTrue(source.contains("section('Retained Call Activity'"));
+        assertTrue(source.contains("section('Logical Call Activity'"));
         assertTrue(source.contains("section('Retained Signaling Observations'"));
-        assertTrue(source.contains("section('Collected Call Activity'"));
+        assertTrue(source.contains("section('Call Activity'"));
         assertTrue(source.contains("section('Collected Signaling Observations'"));
         assertTrue(source.contains("section('Retained Signaling Totals'"));
         assertTrue(source.contains("TALKGROUP_CALL_ACTIVITY_SERIES"));
@@ -546,7 +550,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
         assertTrue(source.contains("render: (row) => identifierNumber(row.radio_id)"));
-        assertTrue(source.contains("render: (row) => number(row.call_count)"));
+        assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
     }
 
     @Test
@@ -591,7 +595,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=83"));
+        assertTrue(html.contains("/assets/app.css?v=84"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -795,6 +799,8 @@ class StatsWebInteractionUiContractTest
         String css = Files.readString(APP_CSS);
         String scanner = function(source, "function renderScanner()");
         String scannerCall = function(source, "function renderScannerCall(host, state, site)");
+        String networkSite = function(source, "function scannerNetworkSiteIdentity(call)");
+        String callQuality = function(source, "function scannerCallQuality(call)");
         String voiceMeter = function(source, "function scannerVoiceMeter(call)");
         String configuration = function(source, "async function renderConfiguration()");
         String scanLists = function(source, "async function renderAdminScanLists()");
@@ -830,21 +836,40 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("View coverage tree"));
         assertTrue(source.contains("scannerParticipant('Target'"));
         assertTrue(source.contains("scannerParticipant('Source'"));
-        assertTrue(source.contains("scannerField('Identifier'"));
+        assertTrue(scannerCall.contains("scannerField('Network / Site'"));
         assertTrue(source.contains("scannerField('Frequency'"));
         assertTrue(source.contains("scannerField('Modulation'"));
         assertTrue(source.contains("function scannerVoiceMeter(call)"));
         assertTrue(source.contains("function scannerParticipant("));
         assertTrue(source.contains("scannerField('Matched Scan Lists'"));
-        assertTrue(source.contains("['System Identity', call.system_identity]"));
-        assertTrue(source.contains("['Site Identity', call.site_identity]"));
-        assertTrue(source.contains("['Channel Identity', call.channel_identity]"));
+        assertTrue(networkSite.contains("`${wacn}-${system}`"));
+        assertTrue(networkSite.contains("`${rfss}-${site}`"));
+        assertTrue(networkSite.contains(".join(' · ')"));
+        assertTrue(networkSite.contains("scannerHex(call?.wacn, 5)"));
+        assertTrue(networkSite.contains("scannerHex(call?.system_id, 3)"));
+        assertTrue(networkSite.contains("scannerHex(call?.rfss_id, 2)"));
+        assertTrue(networkSite.contains("scannerHex(call?.site_id, 2)"));
+        assertTrue(scannerCall.contains("engineer.append(scannerCallQuality(call))"));
+        for(String field: List.of("Decoded", "Repeated", "Concealed", "Missing", "FEC Errors", "FEC Protected"))
+        {
+            assertTrue(callQuality.contains("['" + field + "'"), () -> "Missing grouped quality field " + field);
+        }
+        for(String removed: List.of("Configuration ID", "Channel Identity", "System Identity", "Site Identity",
+            "Site GUID", "Completed"))
+        {
+            assertFalse(scannerCall.contains("['" + removed + "'"), () -> "Scanner still displays " + removed);
+        }
+        assertFalse(scannerCall.contains("scannerField('Identifier'"));
         assertFalse(scanner.contains("Squelch"));
         assertFalse(scanner.contains("Tune"));
         assertFalse(scanner.contains("RF Signal"));
         assertTrue(css.contains(".scanner-player-host > .playback-bar {"));
         assertTrue(css.contains(".scanner-chassis {"));
         assertTrue(css.contains(".scanner-field-grid {"));
+        assertTrue(css.contains("height: clamp(380px, 46vh, 460px);"));
+        assertTrue(css.contains("scrollbar-gutter: stable;"));
+        assertTrue(css.contains(".scanner-idle {\n  height: 100%;"));
+        assertTrue(css.contains(".scanner-call-quality-values {"));
         assertFalse(css.contains(".scanner-quality-meter {"));
         assertTrue(css.contains(".scanner-quality-bars {"));
         assertFalse(voiceMeter.contains("Voice Quality"));
@@ -853,6 +878,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(scannerCall.contains("for (let index = 0; index < 24; index++)"));
         assertTrue(scannerCall.contains("node('div', 'scanner-call-instruments')"));
         assertTrue(scannerCall.contains("intro.append(copy, instruments)"));
+        assertTrue(scannerCall.contains("host.dataset.renderKey === renderKey"));
         assertTrue(scanner.contains("player.readAudioWaveform(waveformLevels)"));
         assertTrue(scanner.contains("window.cancelAnimationFrame(waveformFrame)"));
         assertFalse(css.contains("@keyframes scanner-audio-wave"));

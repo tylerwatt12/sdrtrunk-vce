@@ -12,7 +12,6 @@
 package io.github.dsheirer.stats.activity;
 
 import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
@@ -64,6 +63,8 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogService.class);
     private static final long DEDUPE_RETENTION_MILLISECONDS = 60000;
+    private static final long LOGICAL_NOTIFICATION_RETENTION_MILLISECONDS = TimeUnit.HOURS.toMillis(24);
+    private static final int MAXIMUM_LOGICAL_NOTIFICATIONS = 65_536;
     static final long PROTOCOL_SIGNAL_DEDUPE_WINDOW_MILLISECONDS = 500;
     static final int OBSERVATION_QUEUE_SIZE = 4_096;
     private static final int MAXIMUM_DRAIN_PER_RUN = 1_024;
@@ -73,13 +74,12 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private final UserPreferences mUserPreferences;
     private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
     private final TrunkedCallActivityMapper mTrunkedCallMapper = new TrunkedCallActivityMapper();
-    private final CallAttributionTracker mCallAttributionTracker = new CallAttributionTracker();
-    private final CallOutputDeduplicator mCallOutputDeduplicator = new CallOutputDeduplicator();
     private final P25GrantFactConfirmationTracker mGrantFactConfirmationTracker =
         new P25GrantFactConfirmationTracker();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receiveDecodeEvent;
     private final Listener<ControlChannelQualitySnapshot> mQualityListener = this::receiveControlChannelQuality;
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
+    private final Map<String,Long> mRecentLogicalNotifications = new LinkedHashMap<>(1024, 0.75f, true);
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
     /* One preallocated queue per collection epoch preserves callback order across all observation types. */
     private volatile BoundedMpscPairQueue<Object,Object> mObservationIngress =
@@ -206,25 +206,88 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
     {
-        offerObservation(call != null ? call.snapshot() : null, output);
+        offerObservation(withoutAudio(call), output);
     }
 
-    private void processCallOutput(AudioCallSnapshot snapshot, P25ActivityLogRecords.CallOutput output)
+    /** Receives the one global winner after all eligible receiver legs have been resolved. */
+    public void receiveResolvedCall(CompletedAudioCall call)
+    {
+        offerObservation(withoutAudio(call));
+    }
+
+    private static CompletedAudioCall withoutAudio(CompletedAudioCall call)
+    {
+        return call != null ? new CompletedAudioCall(call.logicalCallId(), call.snapshot(), List.of(),
+            call.resolvedPolicy(), call.callLegSummaries()) : null;
+    }
+
+    private void processResolvedCall(CompletedAudioCall call)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
-
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.CompletedCallOutput completedCallOutput =
-            mMapper.mapCompletedCallOutput(snapshot, output);
-
-        if(completedCallOutput != null &&
-            mCallOutputDeduplicator.firstOutput(snapshot, output, System.currentTimeMillis()))
+        P25ActivityLogRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
+        if(resolved != null && firstLogicalNotification(resolved.logicalCallId().toString() + "|resolved"))
         {
-            enqueueObservation(writer, completedCallOutput);
+            enqueueObservation(writer, resolved);
+        }
+    }
+
+    private void processCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
+    {
+        P25ActivityLogWriter writer = getCollectionWriter();
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
+        P25ActivityLogRecords.ConventionalCallOutput conventional = resolved == null ?
+            mMapper.mapConventionalCallOutput(call, output) : null;
+        if(resolved != null && firstLogicalNotification(resolved.logicalCallId() + "|" + output.name()))
+        {
+            enqueueObservation(writer, new P25ActivityLogRecords.LogicalCallOutput(resolved, output));
+        }
+        else if(conventional != null && call != null &&
+            firstLogicalNotification(call.logicalCallId() + "|conventional|" + output.name()))
+        {
+            enqueueObservation(writer, conventional);
+        }
+    }
+
+    private boolean firstLogicalNotification(String key)
+    {
+        long now = System.currentTimeMillis();
+        //Logical output retries may arrive much later than signaling repeats, so they have a separate bounded
+        //24-hour idempotency window instead of the short protocol-event cache.
+        synchronized(mRecentLogicalNotifications)
+        {
+            Iterator<Map.Entry<String,Long>> iterator = mRecentLogicalNotifications.entrySet().iterator();
+            while(iterator.hasNext())
+            {
+                Map.Entry<String,Long> entry = iterator.next();
+                if(now >= entry.getValue() && now - entry.getValue() > LOGICAL_NOTIFICATION_RETENTION_MILLISECONDS)
+                {
+                    iterator.remove();
+                }
+            }
+            if(mRecentLogicalNotifications.put(key, now) != null)
+            {
+                return false;
+            }
+            while(mRecentLogicalNotifications.size() > MAXIMUM_LOGICAL_NOTIFICATIONS)
+            {
+                Iterator<String> keys = mRecentLogicalNotifications.keySet().iterator();
+                if(keys.hasNext())
+                {
+                    keys.next();
+                    keys.remove();
+                }
+            }
+            return true;
         }
     }
 
@@ -547,19 +610,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         P25ActivityLogRecords.ActivityEvent record = mMapper.map(channel, event);
 
-        if(record != null)
+        if(record != null && shouldLog(record))
         {
-            CallAttributionTracker.AttributionResult attribution = mCallAttributionTracker.enrich(record);
-
-            if(attribution.attribution() != null)
-            {
-                enqueueObservation(writer, attribution.attribution());
-            }
-
-            if(!attribution.tracked() && shouldLog(record))
-            {
-                enqueueObservation(writer, record);
-            }
+            enqueueObservation(writer, record);
         }
     }
 
@@ -627,9 +680,8 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private void clearObservationStateOnWorker()
     {
         mGrantFactConfirmationTracker.reset();
-        mCallAttributionTracker.clear();
-        mCallOutputDeduplicator.clear();
         mRecentDedupeKeys.clear();
+        mRecentLogicalNotifications.clear();
         mObservedTrunkedSites.clear();
     }
 
@@ -670,10 +722,10 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
                 {
                     processDecodeEvent(channel, event);
                 }
-                else if(observation.first() instanceof AudioCallSnapshot snapshot &&
+                else if(observation.first() instanceof CompletedAudioCall call &&
                     observation.second() instanceof P25ActivityLogRecords.CallOutput output)
                 {
-                    processCallOutput(snapshot, output);
+                    processCallOutput(call, output);
                 }
             }
             finally
@@ -700,6 +752,10 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         if(observation instanceof ControlChannelQualitySnapshot quality)
         {
             processControlChannelQuality(quality);
+        }
+        else if(observation instanceof CompletedAudioCall call)
+        {
+            processResolvedCall(call);
         }
         else if(observation instanceof P25CallStartEvent callStart)
         {
@@ -792,7 +848,6 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            mCallAttributionTracker.register(record);
             enqueueObservation(writer, record);
         }
     }

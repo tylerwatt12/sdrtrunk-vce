@@ -145,8 +145,10 @@ class ResolvedCallPolicyTest
     private static AudioCallSnapshot snapshot(AliasList aliasList, IdentifierCollection identifiers)
     {
         long now = System.currentTimeMillis();
-        return new AudioCallSnapshot(new AudioCallId(1, 1, 0), null, aliasList,
+        AudioCallId callId = new AudioCallId(1, 1, 0);
+        return new AudioCallSnapshot(callId, null, aliasList,
             identifiers, Set.of(), now, now, 1, 1, now, now,
-            false, false, false, false, false);
+            false, false, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
     }
 }

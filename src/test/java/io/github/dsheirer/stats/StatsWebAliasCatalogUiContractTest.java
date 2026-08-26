@@ -79,9 +79,10 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertTrue(configuration.contains("'" + facet + "'"), () -> "Missing custom Alias facet " + facet);
         }
-        for(String field: new String[]{"call_count", "recorded_count", "streamed_count",
-            "encrypted_evidence_count", "grant_count", "join_count", "emergency_count", "register_count",
-            "logout_count", "relationship_count", "current_affiliation_count", "metrics_state",
+        for(String field: new String[]{"logical_call_count", "recorded_logical_call_count",
+            "stream_submitted_logical_call_count", "encrypted_logical_call_count", "grant_observation_count",
+            "join_observation_count", "emergency_observation_count", "register_observation_count",
+            "logout_observation_count", "relationship_count", "current_affiliation_count", "metrics_state",
             "first_evidence_ms", "last_evidence_ms"})
         {
             assertTrue(optional.contains(field), () -> "Missing evidence field " + field);

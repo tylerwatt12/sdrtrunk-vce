@@ -28,23 +28,46 @@ import org.jspecify.annotations.Nullable;
  *
  * @param continuationExpected true when a completed audio segment is immediately followed by a linked segment for
  * the same continuing call
+ * @param voiceFrameTimestamp carrier timestamp for the vocoder frame fingerprint, or zero when the event does not
+ * carry voice-frame evidence
  */
 public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot,
-                             float @Nullable [] audioFrame, boolean continuationExpected)
+                             float @Nullable [] audioFrame, boolean continuationExpected,
+                             long voiceFrameFingerprint, long voiceFrameTimestamp)
 {
-    public AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, float @Nullable [] audioFrame)
-    {
-        this(eventType, snapshot, audioFrame, false);
-    }
-
     public AudioCallEvent
     {
+        Objects.requireNonNull(eventType, "Audio call event type is required");
+        Objects.requireNonNull(snapshot, "Audio call snapshot is required");
+
+        if(eventType == AudioCallEventType.AUDIO_FRAME)
+        {
+            if(audioFrame == null)
+            {
+                throw new IllegalArgumentException("An audio-frame event requires decoded audio");
+            }
+
+            if(voiceFrameTimestamp <= 0L)
+            {
+                throw new IllegalArgumentException("An audio-frame event requires its carrier timestamp");
+            }
+        }
+        else if(audioFrame != null || voiceFrameFingerprint != 0L || voiceFrameTimestamp != 0L)
+        {
+            throw new IllegalArgumentException("Only an audio-frame event can carry audio or voice-frame evidence");
+        }
+
+        if(continuationExpected && eventType != AudioCallEventType.CALL_COMPLETED)
+        {
+            throw new IllegalArgumentException("Only a completed call can expect a continuation");
+        }
+
         audioFrame = audioFrame != null ? audioFrame.clone() : null;
     }
 
     public AudioCallId callId()
     {
-        return snapshot != null ? snapshot.callId() : null;
+        return snapshot.callId();
     }
 
     @Override
@@ -77,6 +100,8 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
         }
 
         return continuationExpected == that.continuationExpected &&
+            voiceFrameFingerprint == that.voiceFrameFingerprint &&
+            voiceFrameTimestamp == that.voiceFrameTimestamp &&
             eventType == that.eventType &&
             Objects.equals(snapshot, that.snapshot) &&
             Arrays.equals(audioFrame, that.audioFrame);
@@ -85,7 +110,8 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(eventType, snapshot, continuationExpected);
+        int result = Objects.hash(eventType, snapshot, continuationExpected, voiceFrameFingerprint,
+            voiceFrameTimestamp);
         result = 31 * result + Arrays.hashCode(audioFrame);
         return result;
     }
@@ -98,6 +124,8 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
             ", snapshot=" + snapshot +
             ", audioFrame=" + Arrays.toString(audioFrame) +
             ", continuationExpected=" + continuationExpected +
+            ", voiceFrameFingerprint=" + voiceFrameFingerprint +
+            ", voiceFrameTimestamp=" + voiceFrameTimestamp +
             "]";
     }
 }

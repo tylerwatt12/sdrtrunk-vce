@@ -40,6 +40,8 @@ import java.util.List;
  */
 public class SuperFrameFragment implements IMessage
 {
+    /** TIA-102.BBAB clause 5.1 defines each physical radio slot as 30 ms. */
+    private static final long RADIO_SLOT_DURATION_MILLISECONDS = 30L;
     private static final int CHANNEL_A_ISCH_START = 0;
     private static final int TIMESLOT_A_START = 40;
 
@@ -309,7 +311,10 @@ public class SuperFrameFragment implements IMessage
     {
         CorrectedBinaryMessage message = getMessage().getSubMessage(start, end);
         BinaryMessage timeslotSequence = mScramblingSequence.getTimeslotSequence(getTimeslotOffset() + index);
-        return TimeslotFactory.getTimeslot(message, timeslotSequence, timeslot, getTimestamp());
+        long remainingSlots = 3L - index;
+        long timeslotTimestamp = Math.max(1L,
+            getTimestamp() - remainingSlots * RADIO_SLOT_DURATION_MILLISECONDS);
+        return TimeslotFactory.getTimeslot(message, timeslotSequence, timeslot, timeslotTimestamp);
     }
 
     /**

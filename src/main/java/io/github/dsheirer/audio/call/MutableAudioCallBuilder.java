@@ -27,7 +27,6 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
-import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.sample.Listener;
 import java.util.Collection;
 import java.util.Collections;
@@ -48,6 +47,8 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private AudioCallRecordingMetadata.DestinationDecision mRecordingDestination;
     private AudioCallRecordingMetadata.SourceDecision mRecordingSource;
     private AudioCallRecordingMetadata mRecordingMetadata;
+    private CallEncryptionEvidence mCallEncryptionEvidence;
+    private CallEncryptionState mEncryptionState = CallEncryptionState.UNKNOWN;
     private long mStartTimestamp = System.currentTimeMillis();
     private long mLastActivityTimestamp = mStartTimestamp;
     private long mLastBurstStartTimestamp;
@@ -55,10 +56,10 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private long mSampleCount;
     private long mBurstGeneration;
     private boolean mStartTimestampPinned;
+    private boolean mLastActivityTimestampPinned;
     private boolean mBurstActive;
     private boolean mComplete;
-    private boolean mDuplicate;
-    private boolean mEncrypted;
+    private boolean mEncryptionStateConflicted;
     private boolean mRecordAudioOverride;
     private boolean mRecordAudio;
     private int mBurstCount;
@@ -121,19 +122,68 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
         return mComplete;
     }
 
-    public boolean isEncrypted()
+    public CallEncryptionState getEncryptionState()
     {
-        return mEncrypted;
+        return mEncryptionState;
     }
 
-    public boolean isDuplicate()
+    /**
+     * Applies an authoritative encryption observation.  Opposing known observations make the state permanently
+     * unknown for this physical leg so that downstream matching fails open instead of trusting damaged signaling.
+     *
+     * @return true when the published state changed
+     */
+    public boolean observeEncryptionState(CallEncryptionState encryptionState)
     {
-        return mDuplicate;
+        if(encryptionState == null || !encryptionState.isKnown() || mEncryptionStateConflicted)
+        {
+            return false;
+        }
+
+        if(!mEncryptionState.isKnown())
+        {
+            mEncryptionState = encryptionState;
+            return true;
+        }
+
+        if(mEncryptionState == encryptionState)
+        {
+            return false;
+        }
+
+        mEncryptionState = CallEncryptionState.UNKNOWN;
+        mEncryptionStateConflicted = true;
+        return true;
     }
 
-    public void setDuplicate(boolean duplicate)
+    public CallEncryptionEvidence getCallEncryptionEvidence()
     {
-        mDuplicate = duplicate;
+        return mCallEncryptionEvidence;
+    }
+
+    /**
+     * Freezes the first usable message indicator for this physical call leg.  A later update can fill a previously
+     * missing indicator, but it cannot replace an already captured one as encryption synchronization advances.
+     *
+     * @return true when the retained evidence or encrypted state changed
+     */
+    public boolean setCallEncryptionEvidence(CallEncryptionEvidence evidence)
+    {
+        CallEncryptionEvidence previousEvidence = mCallEncryptionEvidence;
+        CallEncryptionState previousState = mEncryptionState;
+
+        if(evidence != null && (mCallEncryptionEvidence == null ||
+            !mCallEncryptionEvidence.hasMessageIndicator() && evidence.hasMessageIndicator()))
+        {
+            mCallEncryptionEvidence = evidence;
+        }
+
+        if(evidence != null)
+        {
+            observeEncryptionState(CallEncryptionState.ENCRYPTED);
+        }
+
+        return previousEvidence != mCallEncryptionEvidence || previousState != mEncryptionState;
     }
 
     public boolean isRecordAudio()
@@ -193,53 +243,93 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
     public void touch()
     {
-        mLastActivityTimestamp = System.currentTimeMillis();
+        touch(System.currentTimeMillis());
+    }
+
+    /**
+     * Marks carrier activity at the supplied decoder-message timestamp.
+     */
+    public void touch(long timestamp)
+    {
+        updateLastActivity(resolveTimestamp(timestamp));
     }
 
     public void begin()
     {
-        long now = System.currentTimeMillis();
+        begin(System.currentTimeMillis());
+    }
+
+    /**
+     * Begins this call at the supplied decoder-message timestamp.
+     */
+    public void begin(long timestamp)
+    {
+        long observedTimestamp = resolveTimestamp(timestamp);
 
         if(!mStartTimestampPinned)
         {
-            mStartTimestamp = now;
+            mStartTimestamp = observedTimestamp;
             mStartTimestampPinned = true;
         }
 
-        mLastActivityTimestamp = now;
+        updateLastActivity(observedTimestamp);
     }
 
     public void beginBurst()
     {
-        long now = System.currentTimeMillis();
+        beginBurst(System.currentTimeMillis());
+    }
+
+    /**
+     * Begins a talk burst at the supplied decoder-message timestamp.
+     */
+    public void beginBurst(long timestamp)
+    {
+        long observedTimestamp = resolveTimestamp(timestamp);
 
         if(!mBurstActive)
         {
             mBurstActive = true;
             mBurstCount++;
             mBurstGeneration++;
-            mLastBurstStartTimestamp = now;
+            mLastBurstStartTimestamp = observedTimestamp;
         }
 
-        mLastActivityTimestamp = now;
+        updateLastActivity(observedTimestamp);
     }
 
     public void endBurst()
     {
+        endBurst(System.currentTimeMillis());
+    }
+
+    /**
+     * Ends a talk burst at the supplied decoder-message timestamp.
+     */
+    public void endBurst(long timestamp)
+    {
         if(mBurstActive)
         {
-            long now = System.currentTimeMillis();
+            long observedTimestamp = resolveTimestamp(timestamp);
             mBurstActive = false;
-            mLastBurstEndTimestamp = now;
-            mLastActivityTimestamp = now;
+            mLastBurstEndTimestamp = observedTimestamp;
+            updateLastActivity(observedTimestamp);
         }
     }
 
     public void complete()
     {
+        complete(System.currentTimeMillis());
+    }
+
+    /**
+     * Completes this call at the supplied decoder-message timestamp.
+     */
+    public void complete(long timestamp)
+    {
         if(!mComplete)
         {
-            endBurst();
+            endBurst(timestamp);
             mComplete = true;
         }
     }
@@ -254,19 +344,53 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
     public void addAudio(float[] audioBuffer)
     {
+        addAudio(audioBuffer, System.currentTimeMillis());
+    }
+
+    /**
+     * Adds decoded audio associated with the supplied carrier timestamp.
+     */
+    public void addAudio(float[] audioBuffer, long timestamp)
+    {
         if(audioBuffer == null)
         {
             throw new IllegalArgumentException("Can't add null audio buffer");
         }
 
+        long observedTimestamp = resolveTimestamp(timestamp);
+
         if(mAudioBufferCount == 0 && !mStartTimestampPinned)
         {
-            mStartTimestamp = System.currentTimeMillis() - 20;
+            mStartTimestamp = Math.max(0, observedTimestamp - 20);
+            mStartTimestampPinned = true;
         }
 
         mAudioBufferCount++;
         mSampleCount += audioBuffer.length;
-        mLastActivityTimestamp = System.currentTimeMillis();
+
+        //Committed audio is a known clear call unless authoritative signaling has already marked it encrypted.
+        //Decrypted calls are marked encrypted before their first decoded frame reaches this builder.
+        if(audioBuffer.length > 0 && !mEncryptionState.isKnown() && !mEncryptionStateConflicted)
+        {
+            mEncryptionState = CallEncryptionState.CLEAR;
+        }
+
+        updateLastActivity(observedTimestamp);
+    }
+
+    private void updateLastActivity(long timestamp)
+    {
+        if(!mLastActivityTimestampPinned || timestamp > mLastActivityTimestamp)
+        {
+            mLastActivityTimestamp = timestamp;
+        }
+
+        mLastActivityTimestampPinned = true;
+    }
+
+    private static long resolveTimestamp(long timestamp)
+    {
+        return timestamp > 0 ? timestamp : System.currentTimeMillis();
     }
 
     public void addVoiceFrameQuality(VoiceFrameQualityObservation observation)
@@ -297,7 +421,7 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
         }
     }
 
-    private void addIdentifier(Identifier<?> identifier)
+    public void addIdentifier(Identifier<?> identifier)
     {
         if(AudioCallRecordingMetadata.isDestination(identifier))
         {
@@ -325,11 +449,6 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
         }
 
         mRecordingMetadata = null;
-
-        if(identifier instanceof EncryptionKeyIdentifier encryptionKeyIdentifier)
-        {
-            mEncrypted = encryptionKeyIdentifier.isEncrypted();
-        }
 
         recomputeAliasActions();
     }

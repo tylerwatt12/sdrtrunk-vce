@@ -12,12 +12,17 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.CallEncryptionEvidence;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
@@ -46,6 +51,9 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import jmbe.iface.IAudioCodec;
+import jmbe.iface.IAudioWithMetadata;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -88,6 +96,13 @@ class P25P2AudioModuleTest
         List<AudioCallEvent> completed = completedEvents();
         assertEquals(2, completed.size());
         assertNotEquals(completed.get(0).callId(), completed.get(1).callId());
+        assertNotEquals(completed.get(0).snapshot().callLegId(), completed.get(1).snapshot().callLegId());
+        assertEquals(1_000L, completed.get(0).snapshot().startTimestamp());
+        assertEquals(2_000L, completed.get(0).snapshot().lastActivityTimestamp());
+        assertEquals(1_000L, completed.get(0).snapshot().lastBurstStartTimestamp());
+        assertEquals(2_000L, completed.get(0).snapshot().lastBurstEndTimestamp());
+        assertEquals(CallEncryptionState.CLEAR, completed.get(0).snapshot().encryptionState());
+        assertEquals(CallEncryptionState.CLEAR, completed.get(1).snapshot().encryptionState());
         assertEquals("1001", completed.get(0).snapshot().recordingMetadata().sourceValue());
         assertEquals("2002", completed.get(1).snapshot().recordingMetadata().sourceValue());
     }
@@ -145,6 +160,52 @@ class P25P2AudioModuleTest
     }
 
     @Test
+    void undecryptableEncryptedPushToTalkCompletesMetadataOnlyCall()
+    {
+        mAudioModule.receive(encryptedPushToTalk(1_000L, 0x84, 0xBEEF, 1_880_997, 56_132));
+        mAudioModule.receive(endPushToTalk(2_000L));
+
+        AudioCallEvent completed = completedEvents().getFirst();
+        CallEncryptionEvidence evidence = completed.snapshot().callEncryptionEvidence();
+        assertEquals(CallEncryptionState.ENCRYPTED, completed.snapshot().encryptionState());
+        assertEquals(1_000L, completed.snapshot().startTimestamp());
+        assertEquals(2_000L, completed.snapshot().lastActivityTimestamp());
+        assertEquals(0x84, evidence.algorithmId());
+        assertEquals(0xBEEF, evidence.keyId());
+        assertTrue(evidence.hasMessageIndicator());
+        assertFalse(mEvents.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME));
+    }
+
+    @Test
+    void malformedEncryptedPushToTalkStillCompletesAsEncryptedWithoutEvidence()
+    {
+        mAudioModule.receive(malformedEncryptedPushToTalk(1_000L));
+        mAudioModule.receive(endPushToTalk(2_000L));
+
+        AudioCallEvent completed = completedEvents().getFirst();
+        assertEquals(CallEncryptionState.ENCRYPTED, completed.snapshot().encryptionState());
+        assertNull(completed.snapshot().callEncryptionEvidence());
+        assertEquals(1_000L, completed.snapshot().startTimestamp());
+        assertEquals(2_000L, completed.snapshot().lastActivityTimestamp());
+        assertFalse(mEvents.stream().anyMatch(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME));
+    }
+
+    @Test
+    void newPushToTalkCompletesOldCallWhenTerminatorWasMissed()
+    {
+        mAudioModule.receive(pushToTalk(1_000L));
+        mAudioModule.receive(pushToTalk(2_000L));
+        mAudioModule.receive(endPushToTalk(3_000L));
+
+        List<AudioCallEvent> completed = completedEvents();
+        assertEquals(2, completed.size());
+        assertEquals(2_000L, completed.getFirst().snapshot().lastActivityTimestamp());
+        assertEquals(2_000L, completed.getLast().snapshot().startTimestamp());
+        assertNotEquals(completed.getFirst().callId(), completed.getLast().callId());
+        assertNotEquals(completed.getFirst().snapshot().callLegId(), completed.getLast().snapshot().callLegId());
+    }
+
+    @Test
     void repeatedEndPushToTalkDoesNotCompleteAnotherCall()
     {
         mAudioModule.receive(pushToTalk(1_000L));
@@ -175,6 +236,56 @@ class P25P2AudioModuleTest
         assertEquals(1, pendingVoiceTimeslotCount());
         mAudioModule.receive(hangtime(4_000L));
         assertEquals(0, pendingVoiceTimeslotCount());
+    }
+
+    @Test
+    void pendingLateEntryTimeslotsDropOldestAtFixedBound() throws ReflectiveOperationException
+    {
+        for(int index = 0; index < P25P2AudioModule.MAX_PENDING_VOICE_TIMESLOTS + 20; index++)
+        {
+            mAudioModule.receive(voiceTimeslot(1_000L + index));
+        }
+
+        assertEquals(P25P2AudioModule.MAX_PENDING_VOICE_TIMESLOTS, pendingVoiceTimeslotCount());
+        mAudioModule.receive(endPushToTalk(2_000L));
+        assertEquals(0, pendingVoiceTimeslotCount());
+    }
+
+    @Test
+    void publishesDistinctTwentyMillisecondCarrierTimesForAmbeFrames()
+    {
+        IAudioCodec codec = new TestAudioCodec();
+        P25P2AudioModule module = new P25P2AudioModule(new UserPreferences(), TIMESLOT,
+            AliasList.empty("timing"))
+        {
+            @Override
+            protected boolean hasAudioCodec()
+            {
+                return true;
+            }
+
+            @Override
+            public IAudioCodec getAudioCodec()
+            {
+                return codec;
+            }
+        };
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+
+        try
+        {
+            module.receive(pushToTalk(1_000L));
+            module.receive(voiceTimeslot(1_060L));
+            List<Long> timestamps = events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME)
+                .map(AudioCallEvent::voiceFrameTimestamp).toList();
+            assertEquals(List.of(1_040L, 1_060L), timestamps);
+        }
+        finally
+        {
+            module.dispose();
+        }
     }
 
     private void updateSource(int radio)
@@ -217,6 +328,26 @@ class P25P2AudioModuleTest
         return new MacMessage(TIMESLOT, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new PushToTalk(bits));
     }
 
+    private static MacMessage malformedEncryptedPushToTalk(long timestamp)
+    {
+        CorrectedBinaryMessage bits = messageBits(1);
+        PushToTalk pushToTalk = new PushToTalk(bits)
+        {
+            @Override
+            public boolean isEncrypted()
+            {
+                return true;
+            }
+
+            @Override
+            public IEncryptionSyncParameters getEncryptionSyncParameters()
+            {
+                return null;
+            }
+        };
+        return new MacMessage(TIMESLOT, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, pushToTalk);
+    }
+
     private static MacMessage endPushToTalk(long timestamp)
     {
         CorrectedBinaryMessage bits = messageBits(2);
@@ -243,5 +374,50 @@ class P25P2AudioModuleTest
         CorrectedBinaryMessage bits = new CorrectedBinaryMessage(320);
         bits.setInt(pduType, IntField.range(0, 2));
         return bits;
+    }
+
+    private static final class TestAudioCodec implements IAudioCodec
+    {
+        @Override
+        public String getCodecName()
+        {
+            return "TEST AMBE";
+        }
+
+        @Override
+        public float[] getAudio(byte[] frame)
+        {
+            return new float[160];
+        }
+
+        @Override
+        public IAudioWithMetadata getAudioWithMetadata(byte[] frame)
+        {
+            return new IAudioWithMetadata()
+            {
+                @Override
+                public float[] getAudio()
+                {
+                    return new float[160];
+                }
+
+                @Override
+                public boolean hasMetadata()
+                {
+                    return false;
+                }
+
+                @Override
+                public Map<String,String> getMetadata()
+                {
+                    return Map.of();
+                }
+            };
+        }
+
+        @Override
+        public void reset()
+        {
+        }
     }
 }
