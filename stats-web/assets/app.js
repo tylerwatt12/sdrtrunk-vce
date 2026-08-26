@@ -234,11 +234,16 @@ const SERVER_TABLE_DEFAULT_SORTS = {
   'conventional-radios': 'calls'
 };
 const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
+const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
+const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
+const SERVICE_STATUS_RETRY_DELAY_MS = 500;
 const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
   'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'recorded', 'streamed',
   'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout', 'relationships', 'last-evidence'
 ]);
 let serviceStatus = null;
+let serviceStatusRequestPending = false;
+let serviceStatusConsecutiveFailures = 0;
 let liveDisplaySettings = null;
 let webClientReloadAttempted = false;
 let tableWidthPreferences = readTableWidthPreferences();
@@ -1609,6 +1614,53 @@ function statsLoggingState() {
     lastSuccessfulWriteMs: 0, state: '', lastError: '' };
 }
 
+function beginServiceStatusRequest() {
+  serviceStatusRequestPending = true;
+}
+
+function acceptServiceStatus(value) {
+  serviceStatus = value;
+  serviceStatusRequestPending = false;
+  serviceStatusConsecutiveFailures = 0;
+}
+
+function rejectServiceStatusRequest() {
+  serviceStatusRequestPending = false;
+  serviceStatusConsecutiveFailures += 1;
+}
+
+function clearServiceStatus() {
+  serviceStatus = null;
+  serviceStatusRequestPending = false;
+  serviceStatusConsecutiveFailures = 0;
+}
+
+function serviceStatusWarningRequired() {
+  return serviceStatusConsecutiveFailures >= SERVICE_STATUS_FAILURE_WARNING_THRESHOLD;
+}
+
+function serviceStatusRetryDelay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function requestServiceStatus() {
+  const attempts = serviceStatus ? 1 : SERVICE_STATUS_INITIAL_ATTEMPTS;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    beginServiceStatusRequest();
+    try {
+      const value = await api('/api/v1/status', {}, { page: false });
+      acceptServiceStatus(value);
+      return value;
+    } catch (error) {
+      lastError = error;
+      rejectServiceStatusRequest();
+    }
+    if (attempt < attempts) await serviceStatusRetryDelay(SERVICE_STATUS_RETRY_DELAY_MS * attempt);
+  }
+  throw lastError;
+}
+
 function detailedHistoryAvailable() {
   const logging = statsLoggingState();
   return !logging.available || logging.historyActive || logging.historyRetained;
@@ -1619,8 +1671,9 @@ function databaseLoggingNotice(view) {
     .includes(view)) return null;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
   const logging = statsLoggingState();
-  if (!logging.available) return node('div', 'logging-notice warning',
+  if (serviceStatusWarningRequired()) return node('div', 'logging-notice warning',
     'Logging status is unavailable. Database-backed views may not be current.');
+  if (!logging.available) return null;
   if (!logging.summaryActive) {
     const state = logging.summaryConfigured && logging.state ? ` (${logging.state.toLowerCase()})` : '';
     const message = logging.summaryConfigured ?
@@ -14964,7 +15017,8 @@ function activateNavigation(view) {
 function loggingAvailabilitySignature() {
   const logging = statsLoggingState();
   const historyMode = logging.historyActive ? 'active' : (logging.historyRetained ? 'retained' : 'unavailable');
-  return [logging.available, logging.summaryActive, historyMode, logging.state].join('|');
+  return [logging.available, logging.summaryActive, historyMode, logging.state,
+    serviceStatusWarningRequired()].join('|');
 }
 
 async function reloadForWebClientRevision() {
@@ -15000,19 +15054,18 @@ async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
   if (await reloadForWebClientRevision()) return;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
-    serviceStatus = null;
+    clearServiceStatus();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Status restricted';
     return;
   }
   try {
-    serviceStatus = await api('/api/v1/status', {}, { page: false });
+    await requestServiceStatus();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Receiver status available';
   } catch (error) {
-    serviceStatus = null;
     const status = document.getElementById('global-status');
-    if (status) status.textContent = 'Receiver status unavailable';
+    if (status) status.textContent = serviceStatus ? 'Receiver status stale' : 'Receiver status unavailable';
   }
 
   const currentView = route.get('view') || 'dashboard';
