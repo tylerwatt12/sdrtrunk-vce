@@ -152,7 +152,8 @@ class StatsWebDatabase
                 'TRUNKED' AS channel_kind,
                 coalesce(context.channel_name, trunked.channel_name) AS channel_name,
                 context.decoder, context.primary_frequency_hz, context.current_control_hz,
-                context.system_key, system.wacn, system.system_id, context.rfss, context.site,
+                context.system_key, system.wacn,
+                coalesce(system.system_id, p25.system_id) AS system_id, context.rfss, context.site,
                 trunked.configured_system, trunked.network_id, trunked.site_id, trunked.ran,
                 CASE WHEN EXISTS (
                     SELECT 1 FROM p25_site_snapshot detail WHERE detail.guid = context.guid
@@ -166,6 +167,8 @@ class StatsWebDatabase
             FROM p25_site_activity_bucket AS bucket INDEXED BY idx_p25_site_activity_bucket_time
             JOIN receiver_context context ON context.id = bucket.context_id
             LEFT JOIN p25_system system ON system.system_key = context.system_key
+            LEFT JOIN p25_site_snapshot p25
+              ON p25.guid = context.guid AND context.kind_code = 1 AND context.protocol_code IN (1, 2)
             LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
             WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
             GROUP BY context.id, context.context_key, context.guid,
@@ -176,7 +179,7 @@ class StatsWebDatabase
                 END,
                 coalesce(context.channel_name, trunked.channel_name), context.decoder,
                 context.primary_frequency_hz, context.current_control_hz, context.system_key,
-                system.wacn, system.system_id, context.rfss, context.site,
+                system.wacn, system.system_id, p25.system_id, context.rfss, context.site,
                 trunked.configured_system, trunked.network_id, trunked.site_id, trunked.ran
 
             UNION ALL
@@ -249,7 +252,8 @@ class StatsWebDatabase
             config.configured_site, config.configured_name,
             coalesce(context.alias_list_name, trunked.alias_list_name) AS alias_list_name,
             context.decoder, context.primary_frequency_hz,
-            context.current_control_hz, context.system_key, system.wacn, system.system_id,
+            context.current_control_hz, context.system_key, system.wacn,
+            coalesce(system.system_id, p25.system_id) AS system_id,
             context.rfss, context.site, trunked.configured_system, trunked.network_id,
             trunked.site_id, trunked.ran, trunked.variant_code,
             coalesce(scope.identity_domain_code, trunked.identity_domain_code, 0) AS identity_domain_code,
@@ -278,6 +282,8 @@ class StatsWebDatabase
         LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = context.id
         LEFT JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
         LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+        LEFT JOIN p25_site_snapshot p25
+          ON p25.guid = context.guid AND context.kind_code = 1 AND context.protocol_code IN (1, 2)
         LEFT JOIN trunked_identity_summary radio
           ON bucket.identity_role_code = 2
          AND bucket.identity_kind_code = 2
@@ -2389,8 +2395,8 @@ class StatsWebDatabase
                     coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
                     coalesce(current.tdma, summary.tdma) AS tdma,
                     coalesce(current.timeslots, summary.timeslots) AS timeslots,
-                    substr(current.callsign, 1, 256) AS callsign,
-                    length(current.callsign) > 256 AS callsign_truncated,
+                    substr(coalesce(current.callsign, summary.callsign), 1, 256) AS callsign,
+                    length(coalesce(current.callsign, summary.callsign)) > 256 AS callsign_truncated,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count,
                     CASE WHEN coalesce(current.downlink_hz, summary.downlink_hz) > 0
@@ -2836,7 +2842,9 @@ class StatsWebDatabase
             requireCurrentP25Site(connection, guid);
             Map<String,Object> response = new LinkedHashMap<>();
             List<Map<String,Object>> groups = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, current.patch_group, current.version,
+                SELECT system.system_key, system.wacn,
+                    coalesce(system.system_id, site.system_id) AS system_id,
+                    current.patch_group, current.version,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count,
                     (SELECT COUNT(*) FROM p25_site_patch_group_talkgroup member
@@ -2883,7 +2891,8 @@ class StatsWebDatabase
                 talkgroupParameters.add(MAXIMUM_PATCH_MEMBER_ROWS + 1);
                 talkgroups = queryRows(connection, """
                     WITH ranked AS (
-                        SELECT system.system_key, system.wacn, system.system_id, current.patch_group,
+                        SELECT system.system_key, system.wacn,
+                            coalesce(system.system_id, site.system_id) AS system_id, current.patch_group,
                             current.talkgroup_id, current.confirmed_at_ms, summary.first_seen_ms,
                             summary.last_seen_ms, summary.observation_count,
                             row_number() OVER (PARTITION BY current.patch_group
@@ -2913,7 +2922,8 @@ class StatsWebDatabase
                 radioParameters.add(MAXIMUM_PATCH_MEMBER_ROWS + 1);
                 radios = queryRows(connection, """
                     WITH ranked AS (
-                        SELECT system.system_key, system.wacn, system.system_id, current.patch_group,
+                        SELECT system.system_key, system.wacn,
+                            coalesce(system.system_id, site.system_id) AS system_id, current.patch_group,
                             current.radio_id, current.confirmed_at_ms, summary.first_seen_ms,
                             summary.last_seen_ms, summary.observation_count,
                             row_number() OVER (PARTITION BY current.patch_group
@@ -3198,7 +3208,7 @@ class StatsWebDatabase
                 CASE WHEN paged.scope_id IS NULL THEN context.alias_list_name
                     ELSE %s END AS alias_list_name,
                 coalesce(scope.p25_system_key, context.system_key) AS system_key,
-                system.wacn, coalesce(system.system_id, trunked.system_id) AS system_id,
+                system.wacn, coalesce(system.system_id, p25.system_id, trunked.system_id) AS system_id,
                 trunked.configured_system, trunked.network_id,
                 context.nac AS resolved_nac, context.rfss AS resolved_rfss,
                 context.site AS resolved_site,
@@ -3210,6 +3220,8 @@ class StatsWebDatabase
             LEFT JOIN receiver_context context ON context.id = paged.representative_context_id
             LEFT JOIN p25_system system
                 ON system.system_key = coalesce(scope.p25_system_key, context.system_key)
+            LEFT JOIN p25_site_snapshot p25
+              ON p25.guid = context.guid AND context.kind_code = 1 AND context.protocol_code IN (1, 2)
             LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
             ORDER BY paged.event_count DESC, paged.last_seen_ms DESC,
                 CASE WHEN paged.scope_id IS NULL THEN 1 ELSE 0 END,
@@ -4018,8 +4030,10 @@ class StatsWebDatabase
                 site.alias_list_name,
                 (SELECT list.id FROM alias_list list
                  WHERE list.name = site.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
-                site.decoder, system.wacn, system.system_id, site.nac, site.rfss, site.site,
-                site.lra, site.mfid, site.broadcast_clock_ms, site.micro_slots, site.data_service,
+                site.decoder, system.wacn, coalesce(system.system_id, site.system_id) AS system_id,
+                site.nac, site.rfss, site.site,
+                site.lra, site.active_rfss_network_connection, site.mfid, site.broadcast_clock_ms,
+                site.micro_slots, site.data_service,
                 site.data_access, site.wuid_lease_minutes, site.registration_service, site.tdma,
                 site.voice_service,
                 site.primary_frequency_hz, site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
@@ -4027,9 +4041,14 @@ class StatsWebDatabase
                 coalesce(
                     (SELECT max(channel.callsign) FROM p25_site_channel channel
                      WHERE channel.guid = site.guid AND channel.downlink_hz = site.current_control_hz),
+                    (SELECT max(channel.callsign) FROM p25_site_channel_summary channel
+                     WHERE channel.guid = site.guid AND channel.downlink_hz = site.current_control_hz),
                     (SELECT channel.callsign FROM p25_site_channel channel
                      WHERE channel.guid = site.guid AND channel.callsign IS NOT NULL
-                     ORDER BY channel.confirmed_at_ms DESC LIMIT 1)
+                     ORDER BY channel.confirmed_at_ms DESC LIMIT 1),
+                    (SELECT channel.callsign FROM p25_site_channel_summary channel
+                     WHERE channel.guid = site.guid AND channel.callsign IS NOT NULL
+                     ORDER BY channel.last_seen_ms DESC LIMIT 1)
                 ) AS callsign,
                 (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
                     THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
@@ -4054,7 +4073,8 @@ class StatsWebDatabase
             , candidates AS (
                 SELECT site.guid, site.channel_name, site.nac, site.rfss, site.site,
                     site.current_control_hz, site.last_seen_ms AS site_last_seen_ms,
-                    system.wacn, system.system_id, 1 AS protocol_code, 'P25' AS protocol,
+                    system.wacn, coalesce(system.system_id, site.system_id) AS system_id,
+                    1 AS protocol_code, 'P25' AS protocol,
                     'trunked' AS site_kind, NULL AS configured_system, NULL AS network_id,
                     NULL AS site_id, NULL AS ran, NULL AS variant_code, NULL AS identity_domain_code
                 FROM p25_site_snapshot site
@@ -4333,7 +4353,7 @@ class StatsWebDatabase
                     coalesce(context.channel_name, site.channel_name) AS channel_name,
                     coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
                     coalesce(context.decoder, site.decoder) AS decoder, NULL AS configured_system,
-                    system.wacn, system.system_id, NULL AS network_id,
+                    system.wacn, coalesce(system.system_id, site.system_id) AS system_id, NULL AS network_id,
                     coalesce(site.nac, context.nac) AS nac, site.rfss, site.site,
                     NULL AS site_id, NULL AS ran, NULL AS variant_code, NULL AS identity_domain_code,
                     coalesce(context.primary_frequency_hz, site.primary_frequency_hz) AS primary_frequency_hz,

@@ -1154,6 +1154,14 @@ final class TrunkedIdentitySchema
         }
     }
 
+    /** Clears receiver-owned identity evidence and its scope mapping when a newer site generation is known but its
+     * complete normalized system key is not yet available. */
+    static void clearContextGeneration(Connection connection, int contextId) throws SQLException
+    {
+        clearContextIdentityState(connection, contextId);
+        clearContext(connection, contextId);
+    }
+
     static int deleteOlderThan(Connection connection, long cutoff) throws SQLException
     {
         int deleted = 0;

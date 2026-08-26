@@ -345,6 +345,11 @@ final class StatsLiveService implements AutoCloseable
             row.put("quality_observed_at_ms", snapshot.qualityObservedAtMs());
         }
 
+        if(snapshot.controlLastValidDecodeMs() > 0)
+        {
+            row.put("cc_last_valid_decode_ms", snapshot.controlLastValidDecodeMs());
+        }
+
         put(row, "timeslot", snapshot.timeslot());
         putText(row, "source_id", snapshot.sourceId(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "source_form", snapshot.sourceForm(), MAXIMUM_LIVE_TEXT_LENGTH);

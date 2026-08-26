@@ -175,8 +175,10 @@ class StatsApiV1PayloadTest
         assertEquals("p25", p25.get("protocol").textValue());
 
         JsonNode site = StatsApiV1Payload.present(Map.of(
-            "protocol_code", 1, "guid", "site-guid", "rfss", 2, "site", 7));
+            "protocol_code", 1, "guid", "site-guid", "rfss", 2, "site", 7,
+            "active_rfss_network_connection", 1));
         assertEquals(7, site.get("site_id").intValue());
+        assertTrue(site.get("active_rfss_network_connection").booleanValue());
         assertFalse(site.has("site"));
     }
 

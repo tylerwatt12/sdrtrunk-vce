@@ -651,7 +651,8 @@ final class P25ActivityLogRecords
     record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,
                         String protocol, String channelName, String aliasListName, String decoder,
                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
-                        Integer lra, Boolean tdma, P25NetworkConfigurationSnapshot.SiteStatus siteStatus,
+                        Integer lra, Boolean activeRfssNetworkConnection, Boolean tdma,
+                        P25NetworkConfigurationSnapshot.SiteStatus siteStatus,
                         Long primaryFrequencyHertz, Long currentControlHertz,
                         List<P25NetworkConfigurationSnapshot.Channel> channels,
                         List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
@@ -660,34 +661,6 @@ final class P25ActivityLogRecords
                         List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignSystemBands)
         implements P25ActivityLogRecord
     {
-        SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,
-                     String protocol, String channelName, String aliasListName, String decoder,
-                     Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
-                     Integer lra, Boolean tdma, P25NetworkConfigurationSnapshot.SiteStatus siteStatus,
-                     Long primaryFrequencyHertz, Long currentControlHertz,
-                     List<P25NetworkConfigurationSnapshot.Channel> channels,
-                     List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
-                     List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
-                     List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups)
-        {
-            this(observedAtEpochMilliseconds, guid, contextKind, snapshotHash, protocol, channelName, aliasListName,
-                decoder, wacn, systemId, nac, rfss, site, lra, tdma, siteStatus, primaryFrequencyHertz,
-                currentControlHertz, channels, neighborSites, frequencyBands, patchGroups, List.of());
-        }
-
-        SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,
-                     String protocol, String channelName, String aliasListName, String decoder,
-                     Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
-                     Long primaryFrequencyHertz, Long currentControlHertz,
-                     List<P25NetworkConfigurationSnapshot.Channel> channels,
-                     List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
-                     List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
-                     List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups)
-        {
-            this(observedAtEpochMilliseconds, guid, contextKind, snapshotHash, protocol, channelName, aliasListName,
-                decoder, wacn, systemId, nac, rfss, site, null, null, null, primaryFrequencyHertz,
-                currentControlHertz, channels, neighborSites, frequencyBands, patchGroups, List.of());
-        }
     }
 
     record ControlChannelQuality(long observedAtEpochMilliseconds, String guid, long frequencyHertz,

@@ -297,6 +297,7 @@ class P25ActivityLogMapperTest
         assertEquals(101, record.encryptionKeyId());
         assertEquals(0xBEE00, record.wacn());
         assertEquals(0x348, record.systemId());
+        assertEquals(0x348, record.nac());
         assertEquals(2, record.rfss());
         assertEquals(1, record.site());
         assertEquals(GUID, record.guid());
@@ -1029,8 +1030,10 @@ class P25ActivityLogMapperTest
         assertEquals(856137500L, record.currentControlHertz());
         assertEquals(0xBEE00, record.wacn());
         assertEquals(0x348, record.systemId());
+        assertEquals(0x348, record.nac());
         assertEquals(2, record.rfss());
         assertEquals(1, record.site());
+        assertEquals(Boolean.TRUE, record.activeRfssNetworkConnection());
         assertEquals(1, record.channels().size());
         assertEquals("primary_control", record.channels().get(0).role());
         assertEquals(1, record.patchGroups().size());
@@ -1038,6 +1041,27 @@ class P25ActivityLogMapperTest
         assertEquals(1, record.foreignSystemBands().size());
         assertEquals(0x9EF, record.foreignSystemBands().getFirst().system());
         assertNotNull(record.snapshotHash());
+    }
+
+    @Test
+    void mapsCurrentSiteIdentityWithoutNetworkStatus()
+    {
+        Channel channel = new Channel("Control", ChannelType.STANDARD);
+        channel.setRadresGuid(GUID);
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25-1", null,
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x321, 0x456, 7, 9, 2, false),
+            List.of(), List.of(), List.of(), List.of(), List.of());
+
+        P25ActivityLogRecords.SiteSnapshot record =
+            new P25ActivityLogMapper().map(new SiteMetadataEvent(channel, snapshot, 5_000L));
+
+        assertNotNull(record);
+        assertEquals(0x321, record.systemId());
+        assertEquals(0x456, record.nac());
+        assertEquals(7, record.rfss());
+        assertEquals(9, record.site());
+        assertEquals(2, record.lra());
+        assertEquals(Boolean.FALSE, record.activeRfssNetworkConnection());
     }
 
     @Test

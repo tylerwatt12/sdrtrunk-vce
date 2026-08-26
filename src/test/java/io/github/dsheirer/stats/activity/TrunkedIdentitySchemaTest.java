@@ -1827,7 +1827,7 @@ class TrunkedIdentitySchemaTest
     {
         return new P25ActivityLogRecords.SiteSnapshot(observedAt, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, hash, "APCO25", guid, "P25 System", "P25-1",
-            0xBEE00, systemId, 0x293, 1, 2, null, false, null, frequency, frequency,
+            0xBEE00, systemId, 0x293, 1, 2, null, null, false, null, frequency, frequency,
             List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", channel, frequency,
                 null, false, 1)), List.of(), List.of(), List.of(), List.of());
     }

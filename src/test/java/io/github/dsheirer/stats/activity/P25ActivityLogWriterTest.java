@@ -1755,7 +1755,8 @@ class P25ActivityLogWriterTest
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
                     SELECT observation_count, lra, mfid, broadcast_clock_ms, micro_slots, data_service,
-                        data_access, wuid_lease_minutes, registration_service, tdma, voice_service
+                        data_access, wuid_lease_minutes, registration_service, active_rfss_network_connection,
+                        system_id, tdma, voice_service
                     FROM p25_site_snapshot
                     """))
             {
@@ -1769,6 +1770,8 @@ class P25ActivityLogWriterTest
                 assertEquals("Autonomous and by Request", resultSet.getString("data_access"));
                 assertEquals(240, resultSet.getInt("wuid_lease_minutes"));
                 assertEquals(1, resultSet.getInt("registration_service"));
+                assertEquals(1, resultSet.getInt("active_rfss_network_connection"));
+                assertEquals(0x348, resultSet.getInt("system_id"));
                 assertEquals(1, resultSet.getInt("tdma"));
                 assertEquals(1, resultSet.getInt("voice_service"));
             }
@@ -1807,6 +1810,157 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void persistsCurrentSiteIdentityWithoutNetworkWacnAndRetainsPartialFields() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-current-identity.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogRecords.SiteSnapshot baseline = siteSnapshot(1_000L);
+        P25ActivityLogRecords.SiteSnapshot currentSiteOnly = new P25ActivityLogRecords.SiteSnapshot(
+            baseline.observedAtEpochMilliseconds(), baseline.guid(), baseline.contextKind(), baseline.snapshotHash(),
+            baseline.protocol(), baseline.channelName(), baseline.aliasListName(), baseline.decoder(), null, 0x321,
+            0x456, 7, 9, 2, false, baseline.tdma(), baseline.siteStatus(), baseline.primaryFrequencyHertz(),
+            baseline.currentControlHertz(), baseline.channels(), baseline.neighborSites(), baseline.frequencyBands(),
+            baseline.patchGroups(), baseline.foreignSystemBands());
+        P25ActivityLogRecords.SiteSnapshot partial = new P25ActivityLogRecords.SiteSnapshot(2_000L,
+            baseline.guid(), baseline.contextKind(), "partial", baseline.protocol(), baseline.channelName(),
+            baseline.aliasListName(), baseline.decoder(), null, null, 0x456, 7, 9, 2, null, baseline.tdma(),
+            baseline.siteStatus(), baseline.primaryFrequencyHertz(), baseline.currentControlHertz(),
+            baseline.channels(), baseline.neighborSites(), baseline.frequencyBands(), baseline.patchGroups(),
+            baseline.foreignSystemBands());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, currentSiteOnly);
+            P25ActivityLogSchema.insertSite(connection, partial);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT system_key, system_id, nac, rfss, site, lra, active_rfss_network_connection
+                    FROM p25_site_snapshot
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(null, resultSet.getObject("system_key"));
+                assertEquals(0x321, resultSet.getInt("system_id"));
+                assertEquals(0x456, resultSet.getInt("nac"));
+                assertEquals(7, resultSet.getInt("rfss"));
+                assertEquals(9, resultSet.getInt("site"));
+                assertEquals(2, resultSet.getInt("lra"));
+                assertEquals(0, resultSet.getInt("active_rfss_network_connection"));
+            }
+        }
+    }
+
+    @Test
+    void completingWacnForTheSameObservedSystemKeepsTheSiteGeneration() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-system-completion.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
+            null, 0x321, "current-site-only");
+        P25ActivityLogRecords.SiteSnapshot completed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
+            0xABCDE, 0x321, "network-complete");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, first);
+            P25ActivityLogSchema.insertSite(connection, completed);
+
+            assertEquals(1_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM p25_site_snapshot"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_snapshot"));
+            assertEquals(1_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM receiver_context WHERE guid IS NOT NULL"));
+            assertEquals(1_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM p25_site_channel_summary"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_channel_summary"));
+            assertEquals("WPFF205", scalarString(connection,
+                "SELECT callsign FROM p25_site_channel_summary"));
+            assertEquals(0x321L, scalarLong(connection,
+                "SELECT system_id FROM p25_site_snapshot"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_site_snapshot WHERE system_key IS NOT NULL"));
+        }
+    }
+
+    @Test
+    void changingCurrentSiteOnlySystemStartsANewSiteGeneration() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-system-change.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
+            null, 0x321, "system-a");
+        P25ActivityLogRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
+            null, 0x654, "system-b");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, first);
+            P25ActivityLogSchema.insertSite(connection, changed);
+
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM p25_site_snapshot"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_snapshot"));
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM receiver_context WHERE guid IS NOT NULL"));
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM p25_site_channel_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_channel_summary"));
+            assertEquals(0x654L, scalarLong(connection,
+                "SELECT system_id FROM p25_site_snapshot"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT COUNT(*) FROM receiver_context WHERE system_key IS NULL"));
+        }
+    }
+
+    @Test
+    void changingFromResolvedSystemToCurrentSiteOnlySystemClearsReceiverGeneration() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-resolved-to-current-only-change.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
+            null, 0x654, "system-b");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L));
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(1_500L, P25ActivityLogRecords.Action.CALL), true);
+            assertCount(connection, "trunked_identity_scope_context", 1);
+            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "p25_site_activity_bucket", 1);
+            assertCount(connection, "call_identity_bucket", 2);
+
+            P25ActivityLogSchema.insertSite(connection, changed);
+
+            assertCount(connection, "trunked_identity_scope_context", 0);
+            assertCount(connection, "p25_activity_event", 0);
+            assertCount(connection, "p25_site_activity_bucket", 0);
+            assertCount(connection, "call_identity_bucket", 0);
+            assertEquals(2_000L, scalarLong(connection, """
+                SELECT first_seen_ms FROM receiver_context WHERE guid IS NOT NULL
+                """));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT COUNT(*) FROM receiver_context WHERE system_key IS NULL
+                """));
+            assertEquals(0x654L, scalarLong(connection,
+                "SELECT system_id FROM p25_site_snapshot"));
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM p25_site_snapshot"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_snapshot"));
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT first_seen_ms FROM p25_site_channel_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_channel_summary"));
+        }
+    }
+
+    @Test
     void createsNewSystemAndSiteWithCurrentAndAlternateControlChannels() throws Exception
     {
         Path database = mTemporaryFolder.resolve("new-system-site-controls.sqlite");
@@ -1821,7 +1975,7 @@ class P25ActivityLogWriterTest
                 null, false, 1));
         P25ActivityLogRecords.SiteSnapshot snapshot = new P25ActivityLogRecords.SiteSnapshot(1_000L, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "new-system-site", "APCO25", "New Site",
-            "New System", "P25-1", 0x00001, 0x047, 0x123, 50, 50, null, false, null,
+            "New System", "P25-1", 0x00001, 0x047, 0x123, 50, 50, null, null, false, null,
             770_306_250L, 770_306_250L, channels, List.of(), List.of(), List.of(), List.of());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -2000,7 +2154,7 @@ class P25ActivityLogWriterTest
             P25ActivityLogRecords.SiteSnapshot empty = new P25ActivityLogRecords.SiteSnapshot(2000L,
                 "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
                 "changed", "APCO25", "Example Site", "Example System", "P25-1", 0xBEE00, 0x348, 0x348, 2, 1,
-                856137500L, null, List.of(), List.of(), List.of(), List.of());
+                null, null, null, null, 856137500L, null, List.of(), List.of(), List.of(), List.of(), List.of());
             P25ActivityLogSchema.insertSite(connection, empty);
 
             assertCount(connection, "p25_site_channel", 0);
@@ -2011,6 +2165,14 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_site_neighbor_summary", 1);
             assertCount(connection, "p25_foreign_system_band_summary", 3);
             assertCount(connection, "p25_site_patch_group_summary", 1);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(
+                    "SELECT callsign FROM p25_site_channel_summary"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("WPFF205", resultSet.getString("callsign"));
+            }
         }
     }
 
@@ -3589,7 +3751,7 @@ class P25ActivityLogWriterTest
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
-            0xBEE00, 0x348, 0x348, rfss, site, 0, true,
+            0xBEE00, 0x348, 0x348, rfss, site, 0, true, true,
             new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
                 "Autonomous and by Request", 240, true, 0x90, true),
             856137500L, 856137500L, channels, neighbors, bands, patches, foreignBands);
@@ -3612,9 +3774,23 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
             snapshot.snapshotHash(), snapshot.protocol(), snapshot.channelName(), snapshot.aliasListName(),
             snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(), snapshot.rfss(), snapshot.site(),
-            snapshot.lra(), snapshot.tdma(), updatedStatus, snapshot.primaryFrequencyHertz(),
+            snapshot.lra(), snapshot.activeRfssNetworkConnection(), snapshot.tdma(), updatedStatus,
+            snapshot.primaryFrequencyHertz(),
             snapshot.currentControlHertz(), snapshot.channels(), snapshot.neighborSites(), snapshot.frequencyBands(),
             snapshot.patchGroups(), snapshot.foreignSystemBands());
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot withSystemIdentity(
+        P25ActivityLogRecords.SiteSnapshot snapshot, long timestamp, Integer wacn, Integer systemId,
+        String snapshotHash)
+    {
+        return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
+            snapshotHash, snapshot.protocol(), snapshot.channelName(), snapshot.aliasListName(), snapshot.decoder(),
+            wacn, systemId, snapshot.nac(), snapshot.rfss(), snapshot.site(), snapshot.lra(),
+            snapshot.activeRfssNetworkConnection(), snapshot.tdma(), snapshot.siteStatus(),
+            snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(), snapshot.channels(),
+            snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
+            snapshot.foreignSystemBands());
     }
 
     private static P25ActivityLogRecords.SiteSnapshot withSnapshotHash(
@@ -3623,7 +3799,8 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), snapshotHash, snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
-            snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.tdma(), snapshot.siteStatus(),
+            snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.activeRfssNetworkConnection(),
+            snapshot.tdma(), snapshot.siteStatus(),
             snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(), snapshot.channels(),
             snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
             snapshot.foreignSystemBands());
@@ -3635,7 +3812,8 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
             snapshotHash, snapshot.protocol(), snapshot.channelName(), aliasListName, snapshot.decoder(),
             snapshot.wacn(), snapshot.systemId(), snapshot.nac(), snapshot.rfss(), snapshot.site(), snapshot.lra(),
-            snapshot.tdma(), snapshot.siteStatus(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
+            snapshot.activeRfssNetworkConnection(), snapshot.tdma(), snapshot.siteStatus(),
+            snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
             snapshot.channels(), snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
             snapshot.foreignSystemBands());
     }
@@ -3656,8 +3834,10 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), "duplicate-channel-hash", snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
-            snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
-            channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups());
+            snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.activeRfssNetworkConnection(), snapshot.tdma(),
+            snapshot.siteStatus(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(), channels,
+            snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
+            snapshot.foreignSystemBands());
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithConflictingChannels(long timestamp)
@@ -3673,7 +3853,9 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), "conflicting-channel-hash", snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
-            snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
-            channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups());
+            snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.activeRfssNetworkConnection(), snapshot.tdma(),
+            snapshot.siteStatus(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(), channels,
+            snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
+            snapshot.foreignSystemBands());
     }
 }

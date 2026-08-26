@@ -157,7 +157,9 @@ presence points to that site. The former `/api/v1/systems/{scope}/affiliations` 
 Site channel pages collapse multiple logical observations of one physical downlink into one row. Each row carries
 one bounded representative channel key, descriptor, and callsign plus `logical_channel_count`,
 `logical_channels_included`, and `logical_channels_truncated`; tags are fixed protocol categories rather than an
-unbounded aggregate of source strings.
+unbounded aggregate of source strings. P25 site details expose `active_rfss_network_connection` and retain a
+current-site System ID even when a Network Status Broadcast has not supplied a WACN. Callsigns remain available from
+retained channel evidence after the current site facts are cleared.
 
 Quality history uses `range`, `points`, and `include_history`. `points` must be between 60 and 360. Historical points
 require a site-scoped request; this prevents a site count multiplied by a history count from creating an oversized
@@ -212,7 +214,9 @@ Historical Activity views use bounded `GET /api/v1/activity` polling and are not
 Channel-activity table snapshots include protocol-neutral `system_name`, `site_name`, and `channel_name` context plus
 an `identifiers` list of `{group, label, value}` fields learned from the active protocol. Activity rows expose the
 available callsign, source and target forms/IDs/aliases, talker alias, LCN, timeslot, signal level, decoder, and call
-role without requiring a consumer to infer those fields from protocol-specific text.
+role without requiring a consumer to infer those fields from protocol-specific text. When control-channel quality is
+available, `cc_last_valid_decode_ms` carries the last-valid-decode epoch-millisecond timestamp from the same immutable
+activity snapshot.
 Channel diagnostic state keeps the normalized `protocol` separate from the human-readable `decoder_profile`, which
 may include the currently selected demodulator profile for an automatic decoder. Selected-channel diagnostics carry
 a shared 512-bin signal FFT at five frames per second and bounded batches of demodulated symbols when the decoder

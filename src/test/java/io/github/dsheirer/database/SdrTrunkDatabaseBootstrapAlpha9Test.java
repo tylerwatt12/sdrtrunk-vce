@@ -132,7 +132,8 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         SQLException exception = assertThrows(SQLException.class,
             () -> SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true));
 
-        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 schema layout"));
+        assertTrue(exception.getMessage().contains(
+            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
@@ -150,7 +151,8 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         SQLException exception = assertThrows(SQLException.class, () -> SdrTrunkDatabaseBootstrap.run(
             new String[]{"--upgrade-data", sourceRoot.toString()}, targetRoot, true));
 
-        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 schema layout"));
+        assertTrue(exception.getMessage().contains(
+            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
         assertArrayEquals(before, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);

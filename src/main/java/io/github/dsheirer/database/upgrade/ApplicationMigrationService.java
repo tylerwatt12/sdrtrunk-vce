@@ -318,7 +318,7 @@ public final class ApplicationMigrationService
             throw new IOException("This release accepts only the complete current database (Alias v" +
                 CURRENT_ALIAS_VERSION + ", P25 activity v" + CURRENT_P25_VERSION +
                 ", trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION +
-                ") or the exact shared v0.6.2 Alpha 8/Alpha 9 database layout. Found " +
+                ") or the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout. Found " +
                 state.description() + ".");
         }
 

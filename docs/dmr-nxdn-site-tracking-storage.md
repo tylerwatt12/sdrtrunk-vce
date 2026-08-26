@@ -413,9 +413,17 @@ Schema v24 removed the obsolete `p25_talkgroup_summary`, `p25_radio_summary`, an
 projected into the shared tables. Schema v26 likewise replaces `p25_radio_affiliation` instead of retaining a
 compatibility table or dual-write path; `p25_system` and P25 site/band/patch facts remain protocol capabilities.
 
-Alpha 8 and Alpha 9 shipped the same P25 activity schema v24 layout and exact schema fingerprint, with no stored
-release provenance. The bundled transition therefore recognizes that one exact source layout rather than attempting
-to distinguish the two release labels. The v24 shared projection cannot establish qualifier-safe P25 history, so the
+Schema v27 adds three nullable scalar fields to existing bounded P25 site rows: the current site's advertised System
+ID and active-RFSS status on `p25_site_snapshot`, and callsign on `p25_site_channel_summary`. The Site page reads the
+site-level System ID only when a normalized WACN/System row is not yet available, and reads a retained callsign for the
+current control frequency before falling back to the newest channel callsign. These fields do not add rows, indexes,
+or write fan-out: site values update the one row per receiver GUID, and callsign follows the existing bounded channel
+summary row, Statistics retention, per-site clear, and full-reset lifecycle. The existing GUID/frequency index serves
+the control-channel callsign lookup; the current tables alone cannot answer it after current facts are replaced.
+
+Alpha 8, Alpha 9, and Alpha 10 shipped the same P25 activity schema v24 layout and exact schema fingerprint, with no
+stored release provenance. The bundled transition therefore recognizes that one exact source layout rather than
+attempting to distinguish the three release labels. The v24 shared projection cannot establish qualifier-safe P25 history, so the
 clean direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It
 preserves system-wide current P25 affiliations, reconstructs only their required compact ordinary P25 identities and
 relationships within current per-scope admission caps, and leaves authoritative site presence and clear watermarks

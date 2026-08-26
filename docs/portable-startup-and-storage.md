@@ -35,10 +35,11 @@ Older macOS `.app` releases remain supported migration sources. The setup workfl
 and use its sibling `<app-name>-data` folder without changing that old installation. Current macOS console packages
 store their active data only under `<install>/data`, unless an explicit `sdrtrunk.vce.data.root` override is supplied.
 
-Alpha 10 accepts its own exact current schema or one exact predecessor layout: Alias v4/P25 v24 as shipped unchanged
-by Alpha 8 and Alpha 9. Those releases have the same schema fingerprint and store no release provenance, so an exact
-profile from either is structurally indistinguishable and satisfies the same single source gate. The transition
-advances Alias storage to v5 and P25 activity storage directly to v26. It converts only a single plain, unambiguous
+Current main and Alpha 11 builds accept their own exact current schema or one exact public predecessor layout: Alias
+v4/P25 v24 as shipped unchanged by Alpha 8, Alpha 9, and Alpha 10. Those releases have the same schema fingerprint and
+store no release provenance, so an exact profile from any of them is structurally indistinguishable and satisfies the
+same single source gate. The transition advances Alias storage to v6 and P25 activity storage directly to v27. It
+converts only a single plain, unambiguous
 full-domain talkgroup catch-all per Alias list into the list-owned unmatched-talkgroup policy and removes retired P25
 fully-qualified Alias rows and their dependent routes. The v24 shared projection cannot establish qualifier-safe P25
 history. The clean direct migration rebuilds that shared storage instead of retaining partial projection state, so
@@ -49,8 +50,8 @@ because the source layout cannot prove them. The staged migration refuses invali
 instead of truncating it. Mixed schemas, intermediate development schemas including v25, and `webfirst` databases
 remain unsupported.
 
-See the version-matched Alpha 10 What's New document for the exact preserved and reset data. Layouts older than the
-shared Alpha 8/Alpha 9 boundary must be upgraded sequentially until they reach that exact source layout.
+See the version-matched What's New document for the exact preserved and reset data. Layouts older than the shared
+Alpha 8/Alpha 9/Alpha 10 boundary must be upgraded sequentially until they reach that exact source layout.
 
 ## Recording Storage
 

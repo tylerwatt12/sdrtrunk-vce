@@ -56,7 +56,15 @@ public abstract class RfssStatusBroadcast extends MacStructure
 
     public String getNetworkConnectionStatus()
     {
-        return getMessage().get(A + getOffset()) ? "NETWORK CONNECTED" : "NETWORK DISCONNECTED";
+        return isActiveNetworkConnectionToRfssControllerSite() ? "NETWORK CONNECTED" : "NETWORK DISCONNECTED";
+    }
+
+    /**
+     * Indicates if the site has an active network connection to the RFSS controller.
+     */
+    public boolean isActiveNetworkConnectionToRfssControllerSite()
+    {
+        return getMessage().get(A + getOffset());
     }
 
     public String getRoamingRadioReaccessMethod()

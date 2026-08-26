@@ -15,9 +15,10 @@ import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.Statement;
 
-/** Exact shared schema emitted by published v0.6.2 Alpha 8 and Alpha 9, for release-boundary tests only. */
+/** Exact shared schema emitted by published v0.6.2 Alpha 8, Alpha 9, and Alpha 10, for release-boundary tests only. */
 public final class Alpha9TestDatabase
 {
     private static final String ACTION_COUNTS = """
@@ -64,6 +65,7 @@ public final class Alpha9TestDatabase
             {
                 replaceAliasSchema(statement);
                 replaceTrunkedIdentitySchema(statement);
+                replaceP25SiteProjectionSchema(statement);
                 statement.executeUpdate("UPDATE database_metadata SET value='4' WHERE key='alias_schema_version'");
                 statement.executeUpdate(
                     "UPDATE database_metadata SET value='24' WHERE key='p25_activity_schema_version'");
@@ -86,7 +88,8 @@ public final class Alpha9TestDatabase
 
             if(!Alpha9DatabaseMigration.SOURCE_SCHEMA_FINGERPRINT.equals(fingerprint))
             {
-                throw new IllegalStateException("Alpha 8/Alpha 9 fixture fingerprint mismatch: " + fingerprint);
+                throw new IllegalStateException(
+                    "Alpha 8/Alpha 9/Alpha 10 fixture fingerprint mismatch: " + fingerprint);
             }
         }
 
@@ -208,6 +211,49 @@ public final class Alpha9TestDatabase
                   'RADIO_ID', 'RADIO_ID_RANGE', 'P25_FULLY_QUALIFIED_RADIO_ID'
             )
             """);
+    }
+
+    private static void replaceP25SiteProjectionSchema(Statement statement) throws Exception
+    {
+        String resolvedViewSql;
+
+        try(ResultSet resultSet = statement.executeQuery("""
+            SELECT sql
+            FROM sqlite_schema
+            WHERE type = 'view' AND name = 'p25_activity_event_resolved'
+            """))
+        {
+            if(!resultSet.next())
+            {
+                throw new IllegalStateException("Current resolved P25 activity view is missing");
+            }
+
+            resolvedViewSql = resultSet.getString(1);
+        }
+
+        String currentProjection = "coalesce(ps.system_id, p25.system_id)";
+        String predecessorProjection = "ps.system_id";
+        int joinStart = resolvedViewSql.indexOf("LEFT JOIN p25_site_snapshot p25");
+        int joinPredicate = resolvedViewSql.indexOf(
+            "ON p25.guid = rc.guid AND rc.kind_code = 1 AND rc.protocol_code IN (1, 2)", joinStart);
+
+        if(!resolvedViewSql.contains(currentProjection) || joinStart < 0 || joinPredicate < 0)
+        {
+            throw new IllegalStateException("Current resolved P25 activity projection is not recognized");
+        }
+
+        int joinLineStart = resolvedViewSql.lastIndexOf('\n', joinStart) + 1;
+        int joinLineEnd = resolvedViewSql.indexOf('\n', joinPredicate);
+        joinLineEnd = joinLineEnd < 0 ? resolvedViewSql.length() : joinLineEnd + 1;
+        String predecessorViewSql = (resolvedViewSql.substring(0, joinLineStart) +
+            resolvedViewSql.substring(joinLineEnd)).replace(currentProjection, predecessorProjection);
+
+        statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
+        statement.executeUpdate("ALTER TABLE p25_site_snapshot DROP COLUMN system_id");
+        statement.executeUpdate(
+            "ALTER TABLE p25_site_snapshot DROP COLUMN active_rfss_network_connection");
+        statement.executeUpdate("ALTER TABLE p25_site_channel_summary DROP COLUMN callsign");
+        statement.executeUpdate(predecessorViewSql);
     }
 
     private static void replaceTrunkedIdentitySchema(Statement statement) throws Exception

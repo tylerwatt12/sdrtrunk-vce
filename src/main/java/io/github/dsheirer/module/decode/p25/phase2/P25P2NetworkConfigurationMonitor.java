@@ -474,7 +474,8 @@ public class P25P2NetworkConfigurationMonitor
     {
         return new P25NetworkConfigurationSnapshot.CurrentSite(intValue(rfssStatusBroadcast.getSystem()), null,
             intValue(rfssStatusBroadcast.getRFSS()), intValue(rfssStatusBroadcast.getSite()),
-            intValue(rfssStatusBroadcast.getLRA()), null);
+            intValue(rfssStatusBroadcast.getLRA()),
+            rfssStatusBroadcast.isActiveNetworkConnectionToRfssControllerSite());
     }
 
     private P25NetworkConfigurationSnapshot.CurrentSite getCurrentSiteSnapshot(
@@ -482,7 +483,8 @@ public class P25P2NetworkConfigurationMonitor
     {
         return new P25NetworkConfigurationSnapshot.CurrentSite(intValue(rfssStatusBroadcast.getSystem()), null,
             intValue(rfssStatusBroadcast.getRFSS()), intValue(rfssStatusBroadcast.getSite()),
-            intValue(rfssStatusBroadcast.getLRA()), null);
+            intValue(rfssStatusBroadcast.getLRA()),
+            rfssStatusBroadcast.isActiveNetworkConnectionToRfssControllerSite());
     }
 
     private List<P25NetworkConfigurationSnapshot.NeighborSite> getNeighborSiteSnapshots()

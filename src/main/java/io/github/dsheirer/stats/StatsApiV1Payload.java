@@ -36,6 +36,7 @@ final class StatsApiV1Payload
         "status_flags", "last_event_type_code");
     private static final Set<String> BOOLEAN_FIELDS = Set.of(
         "data_service", "registration_service", "tdma", "voice_service", "encrypted", "record_enabled",
+        "active_rfss_network_connection",
         "ranged", "exact", "overlap", "has_fdma", "has_tdma", "has_unknown", "detail_available",
         "identity_detail_available", "site_names_truncated", "talkgroups_truncated", "radios_truncated",
         "members_truncated", "channel_key_truncated", "descriptor_truncated", "callsign_truncated",

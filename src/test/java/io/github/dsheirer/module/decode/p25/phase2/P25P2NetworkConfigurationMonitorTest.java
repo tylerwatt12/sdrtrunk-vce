@@ -22,6 +22,8 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessageFactory;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RfssStatusBroadcastExplicit;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RfssStatusBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SNDCPDataChannelAnnouncement;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SynchronizationBroadcast;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -30,6 +32,36 @@ import org.junit.jupiter.api.Test;
 
 class P25P2NetworkConfigurationMonitorTest
 {
+    @Test
+    void projectsConnectedRfssStatusFromImplicitBroadcast()
+    {
+        MacMessage message = rfssStatusBroadcastImplicit(true);
+        RfssStatusBroadcastImplicit status = (RfssStatusBroadcastImplicit)message.getMacStructure();
+
+        assertTrue(status.isActiveNetworkConnectionToRfssControllerSite());
+
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor();
+        P25NetworkConfigurationSnapshot observation = monitor.processMacMessage(message);
+
+        assertTrue(observation.currentSite().activeRfssNetworkConnection());
+        assertTrue(monitor.getSnapshot().currentSite().activeRfssNetworkConnection());
+    }
+
+    @Test
+    void projectsDisconnectedRfssStatusFromExplicitBroadcast()
+    {
+        MacMessage message = rfssStatusBroadcastExplicit(false);
+        RfssStatusBroadcastExplicit status = (RfssStatusBroadcastExplicit)message.getMacStructure();
+
+        assertFalse(status.isActiveNetworkConnectionToRfssControllerSite());
+
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor();
+        P25NetworkConfigurationSnapshot observation = monitor.processMacMessage(message);
+
+        assertFalse(observation.currentSite().activeRfssNetworkConnection());
+        assertFalse(monitor.getSnapshot().currentSite().activeRfssNetworkConnection());
+    }
+
     @Test
     void ignoresSndcpChannelFieldsWhenAutonomousAccessIsClear()
     {
@@ -128,6 +160,36 @@ class P25P2NetworkConfigurationMonitorTest
         message.setInt(34, IntField.range(53 + offset, 58 + offset));
         message.setInt(microSlots, IntField.range(59 + offset, 71 + offset));
         SynchronizationBroadcast structure = new SynchronizationBroadcast(message, offset);
+        return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
+    }
+
+    private static MacMessage rfssStatusBroadcastImplicit(boolean connected)
+    {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        message.setInt(122, IntField.length8(offset));
+
+        if(connected)
+        {
+            message.set(19 + offset);
+        }
+
+        RfssStatusBroadcastImplicit structure = new RfssStatusBroadcastImplicit(message, offset);
+        return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
+    }
+
+    private static MacMessage rfssStatusBroadcastExplicit(boolean connected)
+    {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        message.setInt(250, IntField.length8(offset));
+
+        if(connected)
+        {
+            message.set(19 + offset);
+        }
+
+        RfssStatusBroadcastExplicit structure = new RfssStatusBroadcastExplicit(message, offset);
         return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
     }
 

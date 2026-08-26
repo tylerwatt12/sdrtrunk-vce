@@ -12829,6 +12829,7 @@ function p25SiteDetailRows(site) {
     ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
     ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site_id, 2)],
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
+    ['Active RFSS Network Connection', yesNoKnown(site.active_rfss_network_connection)],
     ['Manufacturer', site.mfid_display],
     ['Configured Decoder Mode', p25DecoderMode(site.p25_decoder_mode)],
     ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],

@@ -121,11 +121,11 @@ Startup validation checks the tuple table's exact DDL and column set, its four-c
 foreign key, and both indexes including column order and descending recency direction. Normal application services do
 not create or repair a missing or mismatched table or index.
 
-## Alpha 8/Alpha 9 layout to Alpha 10 migration boundary
+## Alpha 8/Alpha 9/Alpha 10 layout to current migration boundary
 
-The bundled Application Migrator converts one exact Alias v4/P25 v24 source layout directly to Alpha 10 Alias v5/P25
-v26 on a backed-up staged copy. Alpha 8 and Alpha 9 shipped that same layout and schema fingerprint, with no stored
-release provenance, so an exact profile from either release satisfies the same single source gate. It converts only
+The bundled Application Migrator converts one exact Alias v4/P25 v24 source layout directly to current Alias v6/P25
+v27 on a backed-up staged copy. Alpha 8, Alpha 9, and Alpha 10 shipped that same layout and schema fingerprint, with
+no stored release provenance, so an exact profile from any of those releases satisfies the same single source gate. It converts only
 one plain, structurally unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls
 remain aliases for manual review. The v24 shared projection cannot establish qualifier-safe P25 history, so the clean
 direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It then
@@ -141,7 +141,7 @@ accepted.
 
 ## Development migration boundary
 
-Alias v6 and P25 activity v26 are the clean current schemas during unreleased development. Normal startup validates
+Alias v6 and P25 activity v27 are the clean current schemas during unreleased development. Normal startup validates
 them and does not upgrade an Alias v5 database. Existing Alias v5 development profiles require the narrowly scoped
 external staged-copy candidate before they can use this branch. The candidate creates `Default`, maps every Alias
 whose effective priority is not `-1` into it, maps every Alias List whose unmatched-talkgroup priority is not `-1` to

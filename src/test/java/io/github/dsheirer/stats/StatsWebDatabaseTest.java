@@ -2302,6 +2302,7 @@ class StatsWebDatabaseTest
         assertEquals("Motorola (0x90)", site.get("mfid_display"));
         assertEquals(110L, number(site.get("micro_slots")));
         assertEquals("Autonomous and by Request", site.get("data_access"));
+        assertEquals(1L, number(site.get("active_rfss_network_connection")));
         assertEquals("trunked", site.get("site_kind"));
         assertFalse(site.containsKey("site_type"));
         Map<String,Object> capabilities = map(site, "capabilities");
@@ -2400,6 +2401,125 @@ class StatsWebDatabaseTest
         Map<String,Object> radioTargetEvent = rows(radioActivity).get(0);
         assertEquals(2L, number(radioTargetEvent.get("target_kind_code")));
         assertEquals("Engine 1", radioTargetEvent.get("target_alias_name"));
+    }
+
+    @Test
+    void retainsP25CallsignAfterCurrentSiteFactsAreCleared() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM p25_site_channel WHERE guid = '" + GUID + "'");
+        }
+
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        assertEquals("WPFF205", site.get("callsign"));
+        Map<String,Object> controlChannel = rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=" + GUID))).stream()
+            .filter(row -> "0-821".equals(row.get("channel_key"))).findFirst().orElseThrow();
+        assertEquals("WPFF205", controlChannel.get("callsign"));
+    }
+
+    @Test
+    void exposesCurrentSiteSystemIdentityWithoutNetworkWacn() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE p25_site_snapshot
+                SET system_key = NULL, system_id = 0x321, nac = 0x456
+                WHERE guid = 'test-site-guid'
+                """);
+            statement.executeUpdate("""
+                UPDATE receiver_context
+                SET system_key = NULL
+                WHERE id = 1
+                """);
+            statement.executeUpdate("DELETE FROM trunked_identity_scope_context WHERE context_id = 1");
+            statement.executeUpdate("""
+                INSERT INTO p25_site_activity_bucket (
+                    context_id, bucket_start_ms, call_count, denial_count
+                ) VALUES (1, %1$d, 1, 1)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_id, call_count
+                ) VALUES (1, %1$d, 1, 1, 65000, 1),
+                         (1, %1$d, 2, 2, 16770000, 1)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (
+                    context_id, observed_at_ms, action_code, event_type_code,
+                    source_radio_id, target_id, target_kind_code
+                ) VALUES (1, %d, 9, 1, 16770000, 65000, 1)
+                """.formatted(currentHour + 1_000L));
+        }
+
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        assertEquals(0x321L, number(site.get("system_id")));
+        assertEquals(0x456L, number(site.get("nac")));
+        Map<String,Object> quality = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?guid=" + GUID + "&include_history=false")), "sites").getFirst();
+        assertEquals(0x321L, number(quality.get("system_id")));
+        Map<String,Object> recent = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals(0x321L, number(recent.get("system_id")));
+        Map<String,Object> patches = mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID));
+        assertEquals(0x321L, number(rowsFrom(patches, "groups").getFirst().get("system_id")));
+        assertEquals(0x321L, number(rowsFrom(patches, "talkgroups").getFirst().get("system_id")));
+        assertEquals(0x321L, number(rowsFrom(patches, "radios").getFirst().get("system_id")));
+
+        Map<String,Object> activity = rows(mDatabase.activity(request(
+            "/api/activity?guid=" + GUID + "&limit=1"))).getFirst();
+        assertEquals(0x321L, number(activity.get("system_id")));
+
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        Map<String,Object> sourceActivity = rows(map(dashboard, "sourceActivity24h")).stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals(0x321L, number(sourceActivity.get("system_id")));
+        Map<String,Object> destination = rowsFrom(dashboard, "topDestinations").stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals(0x321L, number(destination.get("system_id")));
+        Map<String,Object> source = rowsFrom(dashboard, "topSources").stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals(0x321L, number(source.get("system_id")));
+
+        Map<String,Object> denialRadio = rows(mDatabase.dashboardActivityRadios(request(
+            "/api/v1/activity/radios?range=24h&action=denial&limit=10"))).getFirst();
+        assertEquals(0x321L, number(denialRadio.get("system_id")));
+    }
+
+    @Test
+    void callsignFallbackUsesTheGuidFrequencyIndex() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement query = connection.prepareStatement("""
+                EXPLAIN QUERY PLAN
+                SELECT max(callsign)
+                FROM p25_site_channel_summary
+                WHERE guid = ? AND downlink_hz = ?
+                """))
+        {
+            query.setString(1, GUID);
+            query.setLong(2, 856_137_500L);
+            List<String> plan = new ArrayList<>();
+
+            try(ResultSet resultSet = query.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    plan.add(resultSet.getString("detail"));
+                }
+            }
+
+            assertTrue(plan.stream().anyMatch(
+                    detail -> detail.contains("idx_p25_site_channel_summary_guid_frequency")),
+                () -> "Expected GUID/frequency-indexed callsign fallback, plan was: " + plan);
+        }
     }
 
     @Test
@@ -5488,10 +5608,11 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
-                    lra, mfid, broadcast_clock_ms, micro_slots, data_service, data_access, wuid_lease_minutes,
+                    lra, active_rfss_network_connection, mfid, broadcast_clock_ms, micro_slots, data_service,
+                    data_access, wuid_lease_minutes,
                     registration_service, tdma, voice_service, primary_frequency_hz, current_control_hz)
                 VALUES ('test-site-guid', 'hash', 1000, 2000, 10, 'APCO25', 'Cleveland Simulcast', 'County',
-                    'P25-1', 1, 0x49F, 1, 1, 0, 0x90, 1784000000000, 110, 1,
+                    'P25-1', 1, 0x49F, 1, 1, 0, 1, 0x90, 1784000000000, 110, 1,
                     'Autonomous and by Request', 240, 1, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
@@ -5509,9 +5630,9 @@ class StatsWebDatabaseTest
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
-                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
+                    tdma, timeslots, callsign, first_seen_ms, last_seen_ms, observation_count)
                 VALUES ('test-site-guid', '0-821', '0-821', 856137500, 811137500,
-                    0, 1, 1000, 2000, 10)
+                    0, 1, 'WPFF205', 1000, 2000, 10)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,

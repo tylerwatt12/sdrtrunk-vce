@@ -104,7 +104,7 @@ class ApplicationMigrationServiceTest
 
         assertFalse(result.importedPreviousProfile());
         assertTrue(result.sourceState().alpha9());
-        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9 layout migration"));
+        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
         assertNotNull(result.safetyBackup());
         assertEquals("4", scalar(result.safetyBackup(), """
             SELECT value FROM database_metadata WHERE key='alias_schema_version'
@@ -137,7 +137,7 @@ class ApplicationMigrationServiceTest
 
         assertTrue(result.importedPreviousProfile());
         assertTrue(result.sourceState().alpha9());
-        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9 layout migration"));
+        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(currentState(), ApplicationMigrationService.readMigrationState(targetDatabase));
         assertEquals("Imported Alpha 9 Alias", scalar(targetDatabase,
@@ -305,7 +305,8 @@ class ApplicationMigrationServiceTest
         IOException exception = assertThrows(IOException.class,
             () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 database layout"));
+        assertTrue(exception.getMessage().contains(
+            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }

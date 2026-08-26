@@ -580,7 +580,7 @@ public final class ApplicationDatabaseMigrator
                 "Expected the complete current tuple (Alias v" + ALIAS_TARGET_VERSION +
                     ", P25 activity v" + P25_TARGET_VERSION +
                     ", trunked-site v" + TRUNKED_SITE_TARGET_VERSION + ", DMR activity v" +
-                    DMR_TARGET_VERSION + ") or the exact shared v0.6.2 Alpha 8/Alpha 9 tuple (Alias v" +
+                    DMR_TARGET_VERSION + ") or the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 tuple (Alias v" +
                     Alpha9DatabaseMigration.ALIAS_VERSION + ", P25 activity v" +
                     Alpha9DatabaseMigration.P25_VERSION + ", trunked-site v" +
                     Alpha9DatabaseMigration.TRUNKED_SITE_VERSION + ", DMR activity v" +

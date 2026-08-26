@@ -67,7 +67,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void migratesExactPublishedAlpha9DirectlyToCurrentSchema() throws Exception
+    void migratesExactPublishedAlpha8Alpha9Alpha10LayoutDirectlyToCurrentSchema() throws Exception
     {
         Path database = Alpha9TestDatabase.create(newStagedDatabase());
         insertAlpha9MigrationCases(database);
@@ -87,7 +87,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database, sourceRoot, targetRoot);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("Alpha 8/Alpha 9 layout migration"));
+        assertTrue(result.output().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
         assertTrue(result.output().contains("converted 4 unmatched-talkgroup"));
         assertTrue(result.output().contains("removed 1 retired fully-qualified talkgroup"));
         assertTrue(result.output().contains("1 retired fully-qualified radio"));
@@ -259,6 +259,26 @@ class ApplicationDatabaseMigratorTest
             assertEquals("92.5", scalar(connection, """
                 SELECT decode_health_pct FROM p25_control_channel_quality WHERE guid='preserved-quality'
                 """));
+            assertEquals("PRESERVED", scalar(connection, """
+                SELECT callsign
+                FROM p25_site_channel_summary
+                WHERE guid='preserved-site' AND channel_key='12-345'
+                """));
+            assertEquals("1:1:1", scalar(connection, """
+                SELECT
+                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_snapshot')
+                     WHERE name='active_rfss_network_connection') || ':' ||
+                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_snapshot')
+                     WHERE name='system_id') || ':' ||
+                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_channel_summary')
+                     WHERE name='callsign')
+                """));
+            assertEquals("NULL:NULL", scalar(connection, """
+                SELECT COALESCE(CAST(active_rfss_network_connection AS TEXT), 'NULL') || ':' ||
+                       COALESCE(CAST(system_id AS TEXT), 'NULL')
+                FROM p25_site_snapshot
+                WHERE guid='preserved-site'
+                """));
             assertEquals("{\"preserved\":true}", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='migration-sentinel'
                 """));
@@ -268,6 +288,7 @@ class ApplicationDatabaseMigratorTest
             assertEquals(targetRoot.resolve("recordings").toString(),
                 preferences.path("directories").path("directory.recording").asText());
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
 
             long insertedId;
             try(ResultSet resultSet = statement.executeQuery("""
@@ -301,7 +322,8 @@ class ApplicationDatabaseMigratorTest
         try(Connection migrated = open(database); Connection current = open(exactCurrent))
         {
             assertEquals(SqliteSchemaValidator.fingerprint(current), SqliteSchemaValidator.fingerprint(migrated),
-                "The direct Alpha 9 transition must produce the exact current schema, not a compatibility layout");
+                "The direct Alpha 8/Alpha 9/Alpha 10 transition must produce the exact current schema, not a " +
+                    "compatibility layout");
         }
     }
 
@@ -318,7 +340,8 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("not the exact shared v0.6.2 Alpha 8/Alpha 9 schema layout"));
+        assertTrue(result.error().contains(
+            "not the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
         try(Connection connection = open(database))
         {
             assertEquals("4", metadata(connection, "alias_schema_version"));
@@ -784,7 +807,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("exact shared v0.6.2 Alpha 8/Alpha 9 tuple"));
+        assertTrue(result.error().contains("exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 tuple"));
         assertEquals("25", metadata(database, "p25_activity_schema_version"));
         assertEquals("1", scalar(database, """
             SELECT COUNT(*) FROM sqlite_schema
@@ -1035,6 +1058,21 @@ class ApplicationDatabaseMigratorTest
                     'preserved-quality', 851012500, 1000, 2000, -72.5,
                     92.5, 100, 3, 4, 5, 6, 1900
                 )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot(
+                    guid, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('preserved-site', 1000, 2000, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel(
+                    guid, channel_key, descriptor, callsign, confirmed_at_ms
+                ) VALUES ('preserved-site', '12-345', '12-345', 'PRESERVED', 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_summary(
+                    guid, channel_key, descriptor, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('preserved-site', '12-345', '12-345', 1000, 2000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)

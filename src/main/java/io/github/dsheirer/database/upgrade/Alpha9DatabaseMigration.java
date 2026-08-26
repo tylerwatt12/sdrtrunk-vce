@@ -25,12 +25,12 @@ import java.sql.Statement;
 import java.util.Map;
 
 /**
- * Exact shared v0.6.2 Alpha 8/Alpha 9 layout to current-main database transition.
+ * Exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 layout to current-main database transition.
  *
  * <p>This runs only against the application's backed-up staged copy. It consolidates the complete public-release
- * boundary directly, without accepting or creating any intermediate development schema. Alpha 8 and Alpha 9 shipped
- * the same schema fingerprint and no release-provenance marker, so an otherwise exact database from either release is
- * intentionally handled by this one structural gate.</p>
+ * boundary directly, without accepting or creating any intermediate development schema. Alpha 8, Alpha 9, and Alpha
+ * 10 shipped the same schema fingerprint and no release-provenance marker, so an otherwise exact database from any of
+ * those releases is intentionally handled by this one structural gate.</p>
  */
 final class Alpha9DatabaseMigration
 {
@@ -98,8 +98,8 @@ final class Alpha9DatabaseMigration
 
         if(!SOURCE_SCHEMA_FINGERPRINT.equals(fingerprint))
         {
-            throw new SQLException("SQLite database is not the exact shared v0.6.2 Alpha 8/Alpha 9 schema layout (" +
-                fingerprint + ")");
+            throw new SQLException("SQLite database is not the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 " +
+                "schema layout (" + fingerprint + ")");
         }
 
         validateAffiliationSource(connection);
@@ -118,6 +118,7 @@ final class Alpha9DatabaseMigration
         long affiliationCount = scalarLong(connection, "SELECT COUNT(*) FROM p25_radio_affiliation");
 
         int convertedCatchalls = migrateAliases(connection);
+        migrateP25SiteProjection(connection);
         migrateTrunkedIdentityProjection(connection);
         validateAffiliationTarget(connection, affiliationCount);
         return new Summary(convertedCatchalls, removedTalkgroups, removedRadios, resetIdentityRows,
@@ -338,6 +339,39 @@ final class Alpha9DatabaseMigration
                 WHERE source.name = '%s'
                   AND NOT EXISTS (SELECT 1 FROM sqlite_sequence target WHERE target.name = '%s')
                 """.formatted(table, table));
+        }
+    }
+
+    /**
+     * Adds the bounded P25 site fields introduced after the shared Alpha 8/9/10 schema. A currently advertised
+     * callsign can be recovered into the historical channel summary; the active-RFSS state and site system ID were
+     * not stored by the predecessor schema and therefore remain unknown until observed again.
+     */
+    private static void migrateP25SiteProjection(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(
+                "ALTER TABLE p25_site_snapshot ADD COLUMN active_rfss_network_connection INTEGER");
+            statement.executeUpdate("ALTER TABLE p25_site_snapshot ADD COLUMN system_id INTEGER");
+            statement.executeUpdate("ALTER TABLE p25_site_channel_summary ADD COLUMN callsign TEXT");
+            statement.executeUpdate("""
+                UPDATE p25_site_channel_summary AS summary
+                SET callsign = (
+                    SELECT current.callsign
+                    FROM p25_site_channel AS current
+                    WHERE current.guid = summary.guid
+                      AND current.channel_key = summary.channel_key
+                )
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM p25_site_channel AS current
+                    WHERE current.guid = summary.guid
+                      AND current.channel_key = summary.channel_key
+                      AND current.callsign IS NOT NULL
+                )
+                """);
+            P25ActivityLogSchema.recreateResolvedActivityView(statement);
         }
     }
 
@@ -616,7 +650,7 @@ final class Alpha9DatabaseMigration
     {
         String releaseSummary()
         {
-            return "Alpha 8/Alpha 9 layout migration: converted " + convertedCatchalls +
+            return "Alpha 8/Alpha 9/Alpha 10 layout migration: converted " + convertedCatchalls +
                 " unmatched-talkgroup catch-all alias(es), removed " + removedFullyQualifiedTalkgroups +
                 " retired fully-qualified talkgroup alias(es) and " + removedFullyQualifiedRadios +
                 " retired fully-qualified radio alias(es), reset " + resetIdentityRows +
