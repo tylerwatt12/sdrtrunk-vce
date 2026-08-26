@@ -21,10 +21,14 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDecisionOutcome;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticDecision;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticEvidence;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticLeg;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticWinner;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallMergeProof;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallWinnerCriterion;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
@@ -77,13 +81,98 @@ class LogicalCallMonitorUiContractTest
         assertTrue(monitor.contains("endOffsetFromSelectedMilliseconds()"));
         assertTrue(monitor.contains("case UNKNOWN -> result + \" · encryption unknown\""));
         assertTrue(monitor.contains("column.setSortable(false)"));
+        assertTrue(monitor.contains("addMatchQualityColumn("));
+        assertTrue(monitor.contains("GridPane"));
+        assertTrue(monitor.contains("setGraphic(null)"),
+            "A reused empty cell must discard the previous structured graphic");
         assertFalse(monitor.contains("mDecisionRoot.getChildren().setAll(items)"));
+        assertFalse(monitor.contains("addColumn(\"Match / Quality\""));
+        assertFalse(monitor.contains("String quality = ONE_DECIMAL.format(leg.qualityPercent())"),
+            "Quality must not return to one long, clipped sentence");
         assertFalse(monitor.contains("LogicalCallDiagnosticPairDecision"));
         assertFalse(monitor.contains("alias-list #"));
         assertFalse(monitor.contains("siteGuid()"));
         assertFalse(monitor.contains("Files."));
         assertFalse(monitor.contains("Database"));
         assertFalse(monitor.contains("HttpClient"));
+    }
+
+    @Test
+    void structuredMatchQualityComparesTheLiveShapedWinnerAndRunnerUp()
+    {
+        LogicalCallDiagnosticLeg selected = qualityLeg("selected", "T-Cuyahoga Simulcast", 1, 1_000L,
+            4_600L, 171L, 167L, 167L, 3L, 1L, 9L, 101L, 23_427L, 28_800L, true);
+        LogicalCallDiagnosticLeg runnerUp = qualityLeg("runner", "T-Elyria", 2, 1_048L,
+            4_590L, 171L, 164L, 164L, 7L, 0L, 9L, 704L, 23_427L, 28_640L, false);
+        LogicalCallDiagnosticWinner winner = new LogicalCallDiagnosticWinner(selected.legId(), runnerUp.legId(),
+            LogicalCallWinnerCriterion.USABLE_FRAME_COUNT,
+            new LogicalCallDiagnosticWinner.CriterionValue("167/180 (92.778%)", 167L, 180L),
+            new LogicalCallDiagnosticWinner.CriterionValue("164/180 (91.111%)", 164L, 180L));
+        LogicalCallDiagnosticEvidence evidence = new LogicalCallDiagnosticEvidence(1L, 0L, 0L,
+            Map.of(LogicalCallMergeProof.SHARED_VOICE_CONTENT, 1L), Map.of());
+        LogicalCallDiagnosticDecision decision = new LogicalCallDiagnosticDecision(1L, 4_700L,
+            new LogicalCallId(1L, 1L), LogicalCallDecisionOutcome.MERGED, null, null, winner,
+            List.of(selected, runnerUp), evidence, List.of());
+
+        var parent = LogicalCallMonitor.decisionMatchQuality(decision);
+        assertEquals(List.of("Match", "Selected by", "Selected", "Runner-up"),
+            parent.lines().stream().map(line -> line.label()).toList());
+        assertTrue(parent.lines().get(0).value().contains("matching voice frames"));
+        assertTrue(parent.lines().get(0).value().contains("3.5 s shared"));
+        assertEquals("Most usable voice frames", parent.lines().get(1).value());
+        assertTrue(parent.lines().get(2).value().contains("Cuyahoga Simulcast"));
+        assertTrue(parent.lines().get(2).value().contains("167/180 (92.778%)"));
+        assertTrue(parent.lines().get(3).value().contains("Elyria"));
+        assertTrue(parent.lines().get(3).value().contains("164/180 (91.111%)"));
+
+        var selectedDetails = LogicalCallMonitor.copyMatchQuality(decision, selected);
+        var runnerDetails = LogicalCallMonitor.copyMatchQuality(decision, runnerUp);
+        List<String> expectedLabels = List.of("Match", "Usable", "Observed / decoded",
+            "Missing + concealed", "Repeated", "FEC", "Retained audio", "Damage");
+        assertEquals(expectedLabels, selectedDetails.lines().stream().map(line -> line.label()).toList());
+        assertEquals(expectedLabels, runnerDetails.lines().stream().map(line -> line.label()).toList());
+
+        assertTrue(selectedDetails.lines().get(0).value().contains("Overlap reference"));
+        assertTrue(runnerDetails.lines().get(0).value().contains("3.5 s shared"));
+        assertTrue(runnerDetails.lines().get(0).value().contains("100.0% of shorter copy"));
+        assertTrue(runnerDetails.lines().get(0).value().contains("98.4% of selected copy"));
+        assertTrue(runnerDetails.lines().get(0).value().contains("starts 48 ms later"));
+        assertTrue(runnerDetails.lines().get(0).value().contains("ends 10 ms earlier"));
+
+        assertTrue(selectedDetails.lines().get(1).value().contains("167/180"));
+        assertTrue(selectedDetails.lines().get(1).value().contains("92.8%"));
+        assertTrue(runnerDetails.lines().get(1).value().contains("164/180"));
+        assertTrue(runnerDetails.lines().get(1).value().contains("91.1%"));
+        assertTrue(selectedDetails.lines().get(1).emphasized());
+        assertTrue(runnerDetails.lines().get(1).emphasized());
+        assertTrue(selectedDetails.lines().stream()
+            .filter(line -> !"Usable".equals(line.label())).noneMatch(line -> line.emphasized()));
+        assertTrue(runnerDetails.lines().stream()
+            .filter(line -> !"Usable".equals(line.label())).noneMatch(line -> line.emphasized()));
+
+        assertTrue(selectedDetails.lines().get(2).value().contains("171 observed"));
+        assertTrue(selectedDetails.lines().get(2).value().contains("167 decoded"));
+        assertTrue(runnerDetails.lines().get(2).value().contains("171 observed"));
+        assertTrue(runnerDetails.lines().get(2).value().contains("164 decoded"));
+        assertTrue(selectedDetails.lines().get(3).value().contains("10/180"));
+        assertTrue(selectedDetails.lines().get(3).value().contains("5.6%"));
+        assertTrue(selectedDetails.lines().get(3).value().contains("9 missing"));
+        assertTrue(selectedDetails.lines().get(3).value().contains("1 concealed"));
+        assertTrue(runnerDetails.lines().get(3).value().contains("9/180"));
+        assertTrue(runnerDetails.lines().get(3).value().contains("5.0%"));
+        assertTrue(runnerDetails.lines().get(3).value().contains("0 concealed"));
+        assertTrue(selectedDetails.lines().get(4).value().contains("3/180"));
+        assertTrue(selectedDetails.lines().get(4).value().contains("1.7%"));
+        assertTrue(runnerDetails.lines().get(4).value().contains("7/180"));
+        assertTrue(runnerDetails.lines().get(4).value().contains("3.9%"));
+        assertTrue(selectedDetails.lines().get(5).value().contains("101/23,427"));
+        assertTrue(selectedDetails.lines().get(5).value().contains("0.43%"));
+        assertTrue(runnerDetails.lines().get(5).value().contains("704/23,427"));
+        assertTrue(runnerDetails.lines().get(5).value().contains("3.01%"));
+        assertTrue(selectedDetails.lines().get(6).value().contains("28.8k samples"));
+        assertTrue(runnerDetails.lines().get(6).value().contains("28.6k samples"));
+        assertEquals("None", selectedDetails.lines().get(7).value());
+        assertEquals("None", runnerDetails.lines().get(7).value());
     }
 
     @Test
@@ -256,5 +345,18 @@ class LogicalCallMonitorUiContractTest
         return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, channelName, "site-guid-" + id, 42L,
             0xBEE00, 0x123, 1, 2, start, end, Math.max(0L, end - start), 0L, 0L, 0L, 0L, 0L, 0L, 0L,
             0L, 0L, 0.0d, 0.0d, 0.0d, 0.0d, 0L, false, false, selected);
+    }
+
+    private static LogicalCallDiagnosticLeg qualityLeg(String id, String channelName, int site, long start,
+                                                        long end, long observed, long usable, long decoded,
+                                                        long repeated, long concealed, long missing, long fecErrors,
+                                                        long fecProtectedBits, long retainedSamples, boolean selected)
+    {
+        long expected = 180L;
+        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, channelName, "site-guid-" + id, 42L,
+            0xBEE00, 0x123, 1, site, start, end, Math.max(0L, end - start), expected, observed, usable, decoded,
+            repeated, concealed, missing, fecErrors, fecProtectedBits, 100.0d * usable / expected,
+            (double)(missing + concealed) / expected, (double)repeated / expected,
+            (double)fecErrors / fecProtectedBits, retainedSamples, false, false, selected);
     }
 }

@@ -49,6 +49,8 @@ import java.util.function.Consumer;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
+import javafx.beans.binding.Bindings;
+import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -66,8 +68,11 @@ import javafx.scene.control.TreeTableView;
 import javafx.scene.control.TitledPane;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
@@ -240,14 +245,14 @@ public class LogicalCallMonitor extends BorderPane
         mDecisionTable.setPlaceholder(new Label("No logical-call decisions have been captured in this session."));
         mDecisionTable.setColumnResizePolicy(TreeTableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
 
-        addColumn("Time", 105, MonitorRow::time);
-        TreeTableColumn<MonitorRow,String> callColumn = addColumn("Call", 155, MonitorRow::result);
-        addColumn("Talkgroup", 170, MonitorRow::destination);
-        addColumn("Radio", 145, MonitorRow::source);
-        addColumn("Site", 210, MonitorRow::site);
-        addColumn("Duration", 120, MonitorRow::timing);
-        addColumn("Match / Quality", 310, MonitorRow::details);
-        addColumn("Outputs", 180, MonitorRow::outputs);
+        addColumn("Time", 95, MonitorRow::time);
+        TreeTableColumn<MonitorRow,String> callColumn = addColumn("Call", 145, MonitorRow::result);
+        addColumn("Talkgroup", 150, MonitorRow::destination);
+        addColumn("Radio", 120, MonitorRow::source);
+        addColumn("Site", 180, MonitorRow::site);
+        addColumn("Duration", 105, MonitorRow::timing);
+        addMatchQualityColumn(455);
+        addColumn("Outputs", 150, MonitorRow::outputs);
         mDecisionTable.setTreeColumn(callColumn);
         mDecisionTable.setRowFactory(ignored -> {
             TreeTableRow<MonitorRow> row = new TreeTableRow<>();
@@ -298,6 +303,83 @@ public class LogicalCallMonitor extends BorderPane
         });
         mDecisionTable.getColumns().add(column);
         return column;
+    }
+
+    private void addMatchQualityColumn(double width)
+    {
+        TreeTableColumn<MonitorRow,MatchQualityDetails> column = new TreeTableColumn<>("Match / Quality");
+        column.setPrefWidth(width);
+        column.setSortable(false);
+        column.setCellValueFactory(features -> {
+            MonitorRow row = features.getValue().getValue();
+            return new ReadOnlyObjectWrapper<>(row != null ? row.matchQuality() : MatchQualityDetails.EMPTY);
+        });
+        column.setCellFactory(ignored -> new TreeTableCell<>()
+        {
+            private final GridPane mDetailsGrid = createMatchQualityGrid();
+
+            {
+                mDetailsGrid.prefWidthProperty().bind(Bindings.createDoubleBinding(
+                    () -> Math.max(0.0d, getWidth() - 16.0d), widthProperty()));
+                setAlignment(Pos.TOP_LEFT);
+            }
+
+            @Override
+            protected void updateItem(MatchQualityDetails details, boolean empty)
+            {
+                super.updateItem(details, empty);
+                setText(null);
+                setTooltip(null);
+                mDetailsGrid.getChildren().clear();
+
+                if(empty || details == null || details.lines().isEmpty())
+                {
+                    setGraphic(null);
+                    return;
+                }
+
+                int row = 0;
+
+                for(MatchQualityLine line : details.lines())
+                {
+                    Label caption = new Label(line.label());
+                    caption.setStyle("-fx-font-size: 9px; -fx-opacity: 0.70;" +
+                        (line.emphasized() ? " -fx-font-weight: bold;" : ""));
+                    caption.setMinWidth(112);
+                    caption.setMaxWidth(112);
+                    caption.setWrapText(true);
+                    caption.setAlignment(Pos.TOP_RIGHT);
+                    Label value = new Label(line.value());
+                    value.setWrapText(true);
+                    value.setMaxWidth(Double.MAX_VALUE);
+                    value.setStyle("-fx-font-size: 11px;" +
+                        (line.emphasized() ? " -fx-font-weight: bold;" : ""));
+                    GridPane.setHgrow(value, Priority.ALWAYS);
+                    mDetailsGrid.add(caption, 0, row);
+                    mDetailsGrid.add(value, 1, row++);
+                }
+
+                setGraphic(mDetailsGrid);
+            }
+        });
+        mDecisionTable.getColumns().add(column);
+    }
+
+    private static GridPane createMatchQualityGrid()
+    {
+        GridPane grid = new GridPane();
+        grid.setHgap(8);
+        grid.setVgap(2);
+        grid.setPadding(new Insets(2, 0, 2, 0));
+        grid.setMaxWidth(Double.MAX_VALUE);
+        ColumnConstraints caption = new ColumnConstraints();
+        caption.setMinWidth(112);
+        caption.setMaxWidth(112);
+        ColumnConstraints value = new ColumnConstraints();
+        value.setHgrow(Priority.ALWAYS);
+        value.setFillWidth(true);
+        grid.getColumnConstraints().addAll(caption, value);
+        return grid;
     }
 
     private static boolean isDisclosureNode(Object target)
@@ -597,14 +679,13 @@ public class LogicalCallMonitor extends BorderPane
     private TreeItem<MonitorRow> decisionItem(LogicalCallDiagnosticDecision decision)
     {
         LogicalCallDiagnosticCallIdentity identity = decision.callIdentity();
-        LogicalCallDiagnosticWinner winner = decision.winner();
         MonitorRow row = new MonitorRow(decision.decisionSequence(), formatTime(decision.decidedAtMs()),
             decisionResult(decision, identity),
             identityValue(identity != null ? identity.destinationAlias() : null,
                 identity != null ? identity.destinationValue() : null),
             identityValue(identity != null ? identity.sourceAlias() : null,
                 identity != null ? identity.sourceValue() : null),
-            decisionSiteSummary(decision), decisionTiming(identity), decisionDetails(decision, winner),
+            decisionSiteSummary(decision), decisionTiming(identity), decisionMatchQuality(decision),
             outputSummary(decision.outputPolicy()));
         TreeItem<MonitorRow> item = new TreeItem<>(row);
 
@@ -626,36 +707,12 @@ public class LogicalCallMonitor extends BorderPane
             state += " · damaged";
         }
 
-        String quality = ONE_DECIMAL.format(leg.qualityPercent()) + "% usable · decoded " +
-            leg.decodedFrameCount() + " · observed " + leg.observedFrameCount() + " · expected " +
-            leg.expectedFrameCount() + " · usable frames " + leg.usableFrameCount() + " · missing " +
-            leg.missingFrameCount() + " · concealed " +
-            leg.concealedFrameCount() + " · missing/concealed rate " +
-            formatRate(leg.missingAndConcealedRate()) + " · repeated " + leg.repeatedFrameCount() + " (" +
-            formatRate(leg.repeatedFrameRate()) + ") · corrected-bit errors " + leg.fecErrorCount() + "/" +
-            leg.fecProtectedBitCount() + " (" + formatRate(leg.normalizedFecErrorRate()) + ") · retained " +
-            formatSamples(leg.retainedAudioSampleCount());
         String timing = formatDuration(leg.durationMilliseconds()) + " · " +
             formatTime(leg.startTimestamp()) + " - " + formatTime(leg.endTimestamp());
         String outputs = aborted ? "Discarded; no output" : leg.winner() ?
             outputSummary(decision.outputPolicy()) : "Not sent separately";
-        String evidence = copyEvidence(decision, leg);
-        String overlap = copyOverlap(decision, leg);
-
-        if(leg.ingressLoss())
-        {
-            evidence += " · receiver input loss";
-        }
-
-        if(leg.audioTruncated())
-        {
-            evidence += " · audio was truncated";
-        }
-
-        String details = overlap != null ? overlap + " · " + quality + " · " + evidence :
-            quality + " · " + evidence;
         return new MonitorRow(decision.decisionSequence(), "", state, "", "",
-            copySite(leg), timing, details, outputs);
+            copySite(leg), timing, copyMatchQuality(decision, leg), outputs);
     }
 
     private static String decisionSiteSummary(LogicalCallDiagnosticDecision decision)
@@ -713,70 +770,225 @@ public class LogicalCallMonitor extends BorderPane
             formatDuration(identity.resolutionWaitMilliseconds());
     }
 
-    private static String winnerSummary(LogicalCallDiagnosticWinner winner)
+    static MatchQualityDetails decisionMatchQuality(LogicalCallDiagnosticDecision decision)
     {
-        if(winner == null)
+        if(decision == null)
         {
-            return "No selected-copy details";
+            return MatchQualityDetails.EMPTY;
         }
 
-        if(winner.criterion() == null || winner.criterion() == LogicalCallWinnerCriterion.SINGLE_LEG)
-        {
-            return "Only copy received";
-        }
-
-        if(winner.criterion() == LogicalCallWinnerCriterion.SITE_GUID ||
-            winner.criterion() == LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID ||
-            winner.criterion() == LogicalCallWinnerCriterion.CALL_LEG_ID)
-        {
-            return "Quality tied; stable receiver order selected the copy";
-        }
-
-        String values = winner.winnerValue() != null && winner.winnerValue().display() != null ?
-            ": " + winner.winnerValue().display() : "";
-        String runnerUp = winner.runnerUpValue() != null && winner.runnerUpValue().display() != null ?
-            " vs " + winner.runnerUpValue().display() : "";
-        return winnerCriterion(winner.criterion()) + values + runnerUp;
-    }
-
-    private static String decisionDetails(LogicalCallDiagnosticDecision decision, LogicalCallDiagnosticWinner winner)
-    {
-        LinkedHashSet<String> values = new LinkedHashSet<>();
+        List<MatchQualityLine> lines = new ArrayList<>();
 
         if(decision.outcome() == LogicalCallDecisionOutcome.MERGED)
         {
+            LogicalCallDiagnosticWinner winner = decision.winner();
+            LogicalCallDiagnosticLeg selected = findLeg(decision, winner != null ? winner.winnerLegId() : null,
+                true);
+            LogicalCallDiagnosticLeg runnerUp = findLeg(decision,
+                winner != null ? winner.runnerUpLegId() : null, false);
             LinkedHashSet<String> proofs = new LinkedHashSet<>();
             decision.evidence().mergeProofCounts().keySet().forEach(proof -> proofs.add(mergeProof(proof)));
-
-            if(!proofs.isEmpty())
-            {
-                values.add("Matched by " + String.join(", ", proofs));
-            }
-
-            String overlap = decisionOverlapSummary(decision);
+            String match = proofs.isEmpty() ? "Confirmed duplicate" : String.join(", ", proofs);
+            LogicalCallDiagnosticOverlap overlap = runnerUp != null ?
+                LogicalCallDiagnosticOverlap.forCopy(decision, runnerUp).orElse(null) : null;
 
             if(overlap != null)
             {
-                values.add(overlap);
+                match += " · " + formatDuration(overlap.overlapMilliseconds()) + " shared · " +
+                    formatPercent(overlap.shorterCopyOverlapPercent()) + " of shorter copy";
             }
 
-            values.add("Selected by " + winnerSummary(winner));
-        }
-        else if(decision.outcome() == LogicalCallDecisionOutcome.FAIL_OPEN)
-        {
-            decision.decisionReasons().stream().filter(LogicalCallSeparationReason::isFailOpen)
-                .map(LogicalCallMonitor::separationReason).forEach(values::add);
-        }
-        else if(decision.outcome() == LogicalCallDecisionOutcome.ABORTED)
-        {
-            decision.decisionReasons().stream().map(LogicalCallMonitor::separationReason).forEach(values::add);
+            lines.add(new MatchQualityLine("Match", match, false));
+
+            if(winner != null && winner.criterion() != LogicalCallWinnerCriterion.SINGLE_LEG)
+            {
+                lines.add(new MatchQualityLine("Selected by", capitalize(winnerCriterion(winner.criterion())),
+                    false));
+            }
+
+            if(selected != null)
+            {
+                lines.add(new MatchQualityLine("Selected", copyComparisonValue(selected,
+                    winner != null ? winner.winnerValue() : null, winner), true));
+            }
+
+            if(runnerUp != null)
+            {
+                lines.add(new MatchQualityLine("Runner-up", copyComparisonValue(runnerUp,
+                    winner != null ? winner.runnerUpValue() : null, winner), true));
+            }
+
+            int additionalCopies = Math.max(0, decision.legs().size() - 2);
+
+            if(additionalCopies > 0)
+            {
+                lines.add(new MatchQualityLine("More", additionalCopies + " additional cop" +
+                    (additionalCopies == 1 ? "y" : "ies") + " below", false));
+            }
         }
         else
         {
-            values.add("No matching copy found");
+            LinkedHashSet<String> reasons = new LinkedHashSet<>();
+
+            if(decision.outcome() == LogicalCallDecisionOutcome.FAIL_OPEN)
+            {
+                decision.decisionReasons().stream().filter(LogicalCallSeparationReason::isFailOpen)
+                    .map(LogicalCallMonitor::separationReason).forEach(reasons::add);
+            }
+            else if(decision.outcome() == LogicalCallDecisionOutcome.ABORTED)
+            {
+                decision.decisionReasons().stream().map(LogicalCallMonitor::separationReason)
+                    .forEach(reasons::add);
+            }
+            else
+            {
+                reasons.add("No matching copy found");
+            }
+
+            lines.add(new MatchQualityLine("Match", reasons.isEmpty() ?
+                "Kept separate because the match was uncertain" : String.join(" · ", reasons), false));
+            LogicalCallDiagnosticLeg copy = decision.legs().isEmpty() ? null : decision.legs().getFirst();
+
+            if(copy != null)
+            {
+                lines.add(new MatchQualityLine("Quality", usableValue(copy), false));
+            }
         }
 
-        return values.isEmpty() ? "Kept separate because the match was uncertain" : String.join(" · ", values);
+        return new MatchQualityDetails(lines);
+    }
+
+    static MatchQualityDetails copyMatchQuality(LogicalCallDiagnosticDecision decision,
+                                                 LogicalCallDiagnosticLeg leg)
+    {
+        if(decision == null || leg == null)
+        {
+            return MatchQualityDetails.EMPTY;
+        }
+
+        List<MatchQualityLine> lines = new ArrayList<>();
+        String overlap = compactCopyOverlap(decision, leg);
+        String evidence = copyEvidence(decision, leg);
+        lines.add(new MatchQualityLine("Match", overlap != null ? overlap + " · " + evidence : evidence, false));
+
+        LogicalCallWinnerCriterion criterion = comparisonCriterion(decision, leg);
+        lines.add(new MatchQualityLine("Usable", usableValue(leg),
+            criterion == LogicalCallWinnerCriterion.USABLE_FRAME_COUNT));
+        lines.add(new MatchQualityLine("Observed / decoded", formatCount(leg.observedFrameCount()) + " observed · " +
+            formatCount(leg.decodedFrameCount()) + " decoded", false));
+        lines.add(new MatchQualityLine("Missing + concealed",
+            formatCount(leg.missingFrameCount() + leg.concealedFrameCount()) + "/" +
+                formatCount(leg.expectedFrameCount()) + " (" + formatRate(leg.missingAndConcealedRate()) + ") · " +
+                formatCount(leg.missingFrameCount()) + " missing · " +
+                formatCount(leg.concealedFrameCount()) + " concealed",
+            criterion == LogicalCallWinnerCriterion.MISSING_AND_CONCEALED_RATE));
+        lines.add(new MatchQualityLine("Repeated", formatCount(leg.repeatedFrameCount()) + "/" +
+            formatCount(leg.expectedFrameCount()) + " (" + formatRate(leg.repeatedFrameRate()) + ")",
+            criterion == LogicalCallWinnerCriterion.REPEATED_FRAME_RATE));
+        String fec = leg.fecProtectedBitCount() > 0L ? formatCount(leg.fecErrorCount()) + "/" +
+            formatCount(leg.fecProtectedBitCount()) + " (" + formatFineRate(leg.normalizedFecErrorRate()) + ")" :
+            "Not measured";
+        lines.add(new MatchQualityLine("FEC", fec,
+            criterion == LogicalCallWinnerCriterion.NORMALIZED_FEC_ERROR_RATE));
+        lines.add(new MatchQualityLine("Retained audio", formatSamples(leg.retainedAudioSampleCount()),
+            criterion == LogicalCallWinnerCriterion.RETAINED_AUDIO_SAMPLE_COUNT));
+        List<String> damage = new ArrayList<>();
+
+        if(leg.ingressLoss())
+        {
+            damage.add("Receiver input loss");
+        }
+
+        if(leg.audioTruncated())
+        {
+            damage.add("Audio truncated");
+        }
+
+        lines.add(new MatchQualityLine("Damage", damage.isEmpty() ? "None" : String.join(" · ", damage),
+            criterion == LogicalCallWinnerCriterion.INGRESS_LOSS_OR_AUDIO_TRUNCATION));
+        return new MatchQualityDetails(lines);
+    }
+
+    private static LogicalCallDiagnosticLeg findLeg(LogicalCallDiagnosticDecision decision, String legId,
+                                                     boolean selectedFallback)
+    {
+        if(legId != null)
+        {
+            LogicalCallDiagnosticLeg identified = decision.legs().stream()
+                .filter(leg -> legId.equals(leg.legId())).findFirst().orElse(null);
+
+            if(identified != null)
+            {
+                return identified;
+            }
+        }
+
+        return decision.legs().stream().filter(leg -> leg.winner() == selectedFallback).findFirst().orElse(null);
+    }
+
+    private static String copyComparisonValue(LogicalCallDiagnosticLeg leg,
+                                              LogicalCallDiagnosticWinner.CriterionValue value,
+                                              LogicalCallDiagnosticWinner winner)
+    {
+        String result = copySite(leg);
+
+        if(winner != null && !isStableTieBreaker(winner.criterion()) && value != null &&
+            value.display() != null && !value.display().isBlank())
+        {
+            result += " · " + value.display();
+        }
+
+        return result;
+    }
+
+    private static boolean isStableTieBreaker(LogicalCallWinnerCriterion criterion)
+    {
+        return criterion == LogicalCallWinnerCriterion.SITE_GUID ||
+            criterion == LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID ||
+            criterion == LogicalCallWinnerCriterion.CALL_LEG_ID;
+    }
+
+    private static LogicalCallWinnerCriterion comparisonCriterion(LogicalCallDiagnosticDecision decision,
+                                                                   LogicalCallDiagnosticLeg leg)
+    {
+        LogicalCallDiagnosticWinner winner = decision.winner();
+
+        if(winner == null || winner.criterion() == null ||
+            (!Objects.equals(leg.legId(), winner.winnerLegId()) &&
+                !Objects.equals(leg.legId(), winner.runnerUpLegId())))
+        {
+            return LogicalCallWinnerCriterion.SINGLE_LEG;
+        }
+
+        return winner.criterion();
+    }
+
+    private static String usableValue(LogicalCallDiagnosticLeg leg)
+    {
+        return formatCount(leg.usableFrameCount()) + "/" + formatCount(leg.expectedFrameCount()) + " (" +
+            formatPercent(leg.qualityPercent()) + ")";
+    }
+
+    private static String compactCopyOverlap(LogicalCallDiagnosticDecision decision,
+                                             LogicalCallDiagnosticLeg leg)
+    {
+        LogicalCallDiagnosticOverlap overlap = LogicalCallDiagnosticOverlap.forCopy(decision, leg).orElse(null);
+
+        if(overlap == null)
+        {
+            return null;
+        }
+
+        if(leg.winner())
+        {
+            return "Overlap reference";
+        }
+
+        return formatDuration(overlap.overlapMilliseconds()) + " shared · " +
+            formatPercent(overlap.shorterCopyOverlapPercent()) + " of shorter copy · " +
+            formatPercent(overlap.selectedCopyCoveragePercent()) + " of selected copy · " +
+            formatSignedOffset("starts", overlap.startOffsetFromSelectedMilliseconds()) + " · " +
+            formatSignedOffset("ends", overlap.endOffsetFromSelectedMilliseconds());
     }
 
     static String decisionOverlapSummary(LogicalCallDiagnosticDecision decision)
@@ -1035,6 +1247,16 @@ public class LogicalCallMonitor extends BorderPane
         return ONE_DECIMAL.format(Math.max(0.0d, rate) * 100.0d) + "%";
     }
 
+    private static String formatFineRate(double rate)
+    {
+        return String.format(Locale.ROOT, "%.2f%%", Math.max(0.0d, rate) * 100.0d);
+    }
+
+    private static String formatCount(long value)
+    {
+        return String.format(Locale.ROOT, "%,d", Math.max(0L, value));
+    }
+
     private static String formatPercent(double percent)
     {
         return ONE_DECIMAL.format(Math.max(0.0d, Math.min(100.0d, percent))) + "%";
@@ -1049,6 +1271,12 @@ public class LogicalCallMonitor extends BorderPane
 
         String normalized = value.name().toLowerCase(Locale.ROOT).replace('_', ' ');
         return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
+    }
+
+    private static String capitalize(String value)
+    {
+        return value == null || value.isBlank() ? "Unknown" :
+            Character.toUpperCase(value.charAt(0)) + value.substring(1);
     }
 
     private static String winnerCriterion(LogicalCallWinnerCriterion criterion)
@@ -1142,8 +1370,27 @@ public class LogicalCallMonitor extends BorderPane
         label.setTextFill(color);
     }
 
+    record MatchQualityDetails(List<MatchQualityLine> lines)
+    {
+        private static final MatchQualityDetails EMPTY = new MatchQualityDetails(List.of());
+
+        MatchQualityDetails
+        {
+            lines = lines != null ? List.copyOf(lines) : List.of();
+        }
+    }
+
+    record MatchQualityLine(String label, String value, boolean emphasized)
+    {
+        MatchQualityLine
+        {
+            label = label != null ? label : "";
+            value = value != null ? value : "";
+        }
+    }
+
     private record MonitorRow(long decisionSequence, String time, String result, String destination, String source,
-                              String site, String timing, String details, String outputs)
+                              String site, String timing, MatchQualityDetails matchQuality, String outputs)
     {
     }
 }
