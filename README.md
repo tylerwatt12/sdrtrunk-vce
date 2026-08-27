@@ -5,9 +5,13 @@
 Java desktop features while adding a better activity screen, a built-in website, portable storage, more playback
 controls, long-term statistics, and performance improvements.
 
-This project is currently an **alpha release**. Back up your receiver data before installing or upgrading.
+This project has two release channels. Back up your receiver data before installing or upgrading.
 
-- [Download the latest release](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
+- [Download Alpha 10](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/v0.6.2-alpha-10): the more stable,
+  deliberately maintained line. Alphas receive selected fixes after review and testing and can intentionally omit
+  newer Nightly features.
+- [Download the current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly): the rolling build
+  from `main`, with the newest features and fixes and a higher chance of change or regression.
 - [Sponsor development](https://github.com/sponsors/tylerwatt12)
 - [Report a problem or request a feature](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
 
@@ -104,14 +108,15 @@ Click any screenshot to view it at full size.
   </table>
 </details>
 
-## Which Branch Should I Use?
+## Which Release Channel Should I Use?
 
-| Branch | Use it for |
-| --- | --- |
-| [`main`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/main) | The supported Java desktop release branch and source of shared receiver, tuner, decoder, audio, recording, streaming, database, migration, and protocol work. |
-| [`webfirst`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/webfirst) | The newer browser-first interface. New interface features will be added here, all configuration will be done through the web. The application is completely headless. |
+| Channel | Source | Use it for |
+| --- | --- | --- |
+| **Alpha** | [`release/0.6.2-alpha`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/release/0.6.2-alpha) | Numbered, reviewed builds intended for users who value stability over getting every new feature immediately. |
+| **Nightly** | [`main`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/main) | A rolling development build for trying the newest features and fixes. It can change more often and may need additional testing. |
 
-Features that improve reception, fix errors in decoding, data and statistics handling will be added to both branches.
+New work lands in Nightly first. A selected fix reaches Alpha only after it is reviewed, tested, and backported to the
+Alpha line. The two channels therefore have intentionally different feature sets.
 
 ## Coming From Regular SDRTrunk?
 
@@ -148,10 +153,11 @@ After importing:
 
 ## Updating VCE
 
-VCE checks for a newer release when the desktop app starts. You can also use **Help > Check for Updates**. If an update
-is available, the app opens the matching `main` or `webfirst` release page.
+VCE checks for a newer build in its own release channel when the desktop app starts. You can also use
+**Help > Check for Updates**. Alpha builds check only for newer Alphas, and Nightly builds check only for newer
+Nightlies.
 
-The update check does **not** download, install, replace files, change the database, restart VCE, or switch branches.
+The update check does **not** download, install, replace files, change the database, restart VCE, or switch channels.
 You always choose when to install an update.
 
 Recommended update steps:
@@ -169,8 +175,9 @@ it before the new version starts. The old installation is left unchanged, making
 Existing logs, recordings, screenshots, event logs, and streaming output are not copied into the new installation.
 Check the saved folder locations before deleting an old version.
 
-Each release supports upgrading from the immediately previous release on the same branch. If you skipped releases,
-upgrade through them in order. Do not copy a newer database into an older version.
+Follow the target release's migration instructions. Database changes move forward: a newer Nightly may use a database
+format that the current Alpha does not know, so do not copy a newer database into an older build. Keep separate data
+folders when testing both channels, and never run both builds against the same data folder.
 
 ## Where VCE Stores Data
 
@@ -200,7 +207,7 @@ These older or experimental features are not included:
 
 ## Installation
 
-1. Download a package from [GitHub Releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases).
+1. Choose a numbered Alpha or the rolling Nightly from [GitHub Releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases).
 2. Extract it into a new writable folder.
 3. Start `sdrtrunk-vce.app` on macOS, `bin/sdrtrunk-vce` on Linux, or `bin\sdrtrunk-vce.bat` on Windows.
 4. Import XML, migrate a previous VCE setup, or start fresh.
