@@ -80,7 +80,7 @@ public final class DatabaseFormatCatalog
             "Create logical-call and site-observation summaries with fresh boundaries"));
     private static final FormatDescriptor FORMAT_4 = descriptor(4, "logical-call-site-observation-v28",
         "Logical-call and P25 site-observation database format", FORMAT_4_FINGERPRINT, 6, 28,
-        List.of("codex/integrate-multisite-stats pre-publication candidate"),
+        List.of("406b992e8"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format4TestDatabase.java",
         List.of("Current format; no schema migration required"));
 
