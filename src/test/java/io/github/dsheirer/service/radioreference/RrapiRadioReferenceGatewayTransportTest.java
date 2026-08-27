@@ -419,13 +419,14 @@ class RrapiRadioReferenceGatewayTransportTest
             response(talkgroupsBody).getBytes(StandardCharsets.UTF_8),
             response(categoriesBody).getBytes(StandardCharsets.UTF_8));
         AtomicInteger requestIndex = new AtomicInteger();
+        CountDownLatch firstResponseFinished = new CountDownLatch(1);
 
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
             int index = requestIndex.getAndIncrement();
 
             try
             {
-                Thread.sleep(150);
+                Thread.sleep(index == 0 ? 3_000 : 150);
                 byte[] response = responses.get(index);
                 exchange.sendResponseHeaders(200, response.length);
                 exchange.getResponseBody().write(response);
@@ -440,11 +441,16 @@ class RrapiRadioReferenceGatewayTransportTest
             }
             finally
             {
+                if(index == 0)
+                {
+                    firstResponseFinished.countDown();
+                }
+
                 exchange.close();
             }
         });
             SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
-                Duration.ofMillis(50), 8 * 1024 * 1024);
+                Duration.ofSeconds(2), 8 * 1024 * 1024);
             SecureRadioReferenceService service = new SecureRadioReferenceService(client))
         {
             RadioReferenceException timeout = assertThrows(RadioReferenceException.class, service::getUserInfo);
@@ -452,6 +458,7 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals(RadioReferenceGatewayException.Kind.TIMEOUT,
                 ((RadioReferenceGatewayException)timeout.getCause()).kind());
             assertFalse(timeout.toString().contains("dummy-password"));
+            assertTrue(firstResponseFinished.await(5, TimeUnit.SECONDS));
 
             assertEquals("Large Statewide System", service.getSystemInformation(6643).getName());
             assertEquals(222, service.getSites(6643).size());
