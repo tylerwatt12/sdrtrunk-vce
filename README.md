@@ -5,9 +5,13 @@
 Java configuration tools while adding a browser activity screen, a built-in website, portable storage, browser
 scan-list listening, long-term statistics, and performance improvements.
 
-This project is currently an **alpha release**. Back up your receiver data before installing or upgrading.
+This project is currently pre-release software with two intentionally different release lines. Numbered **Alpha**
+builds are the more conservative line; **Nightly** builds contain the current `main` feature set. Back up your
+receiver data before installing or upgrading.
 
-- [Download the latest release](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
+- [Download the numbered Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest)
+- [Download the current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly)
+- [Choose a release channel](docs/release-channels.md)
 - [Sponsor development](https://github.com/sponsors/tylerwatt12)
 - [Report a problem or request a feature](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
 
@@ -35,9 +39,10 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Desktop and mobile listening:** The full desktop website and a separate touch-friendly mobile listener share the
   same completed-call audio service, scan-list subscriptions, queue limits, and playback state.
 
-## What’s New in Alpha 10
+## Current Nightly Feature Set
 
-Alpha 10 expands the built-in website and strengthens P25 decoding.
+Current `main` and Nightly builds expand the built-in website and strengthen P25 decoding. Numbered Alpha builds may
+omit these newer features until they are deliberately included in that release line.
 
 - **Secure web administration** adds automatic HTTPS, Public/User/Admin access tiers, user management, and custom
   certificate import without manually stopping the server.
@@ -55,9 +60,9 @@ Alpha 10 expands the built-in website and strengthens P25 decoding.
   retired fully-qualified P25 Alias rows are removed, and qualifier-sensitive identity summaries rebuild from new
   traffic.
 
-Read the complete [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md) before upgrading. It explains the exact
-shared Alpha 8/Alpha 9 schema boundary, the P25/DMR/NXDN trunked-identity reset, and the removed fully-qualified P25
-Alias matchers.
+This section describes the rolling Nightly line, not Alpha 10. For shipped Alpha behavior, use the version-matched
+[Alpha release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases). The checked-in
+[Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md) remains the historical document for that exact release.
 
 ## Screenshots
 
@@ -109,14 +114,15 @@ Click any screenshot to view it at full size.
   </table>
 </details>
 
-## Which Branch Should I Use?
+## Which Release Channel Should I Use?
 
-| Branch | Use it for |
-| --- | --- |
-| [`main`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/main) | The supported development and release branch for the desktop application, web interface, receivers, tuners, decoders, audio, recording, streaming, databases, migrations, and protocol support. |
+| Channel | What you get | Download |
+| --- | --- | --- |
+| **Numbered Alpha** | A more conservative feature set that advances through reviewed fixes and release preparation. | [Latest Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest) |
+| **Nightly** | The latest completed `main` build, including newer features that may not be in Alpha yet. | [Current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly) |
 
-`webfirst` is no longer an active build or release branch. Useful completed work from it may be reviewed and
-selectively brought into `main`, but new fixes and features are developed, tested, and released from `main`.
+These are the only active release channels. See [Release Channels](docs/release-channels.md) for updater and database
+compatibility details.
 
 ## Coming From Regular SDRTrunk?
 
@@ -153,11 +159,13 @@ After importing:
 
 ## Updating VCE
 
-VCE checks for a newer release when the desktop app starts. You can also use **Help > Check for Updates**. If an update
-is available, the app opens the `main` release page.
+VCE checks for a newer build on the installed package's release channel when the desktop app starts. You can also use
+**Help > Check for Updates**. An Alpha package checks only the Alpha feed; a Nightly package checks only the Nightly
+feed.
 
-The update check does **not** download, install, replace files, change the database, restart VCE, or switch branches.
-You always choose when to install an update.
+The update check does **not** download, install, replace files, change the database, restart VCE, or switch channels.
+You always choose when to install an update. Alpha 10 and older Nightlies used the same legacy update identity, so
+entering the separated channels requires one manual download from the Alpha or Nightly link above.
 
 Recommended update steps:
 
@@ -174,10 +182,9 @@ it before the new version starts. The old installation is left unchanged, making
 Existing logs, recordings, screenshots, event logs, and streaming output are not copied into the new installation.
 Check the saved folder locations before deleting an old version.
 
-Each release normally supports upgrading from the immediately previous release on the same branch. If you skipped
-releases, upgrade through them in order unless the release notes explicitly document that those releases share the
-same accepted schema layout, as Alpha 8 and Alpha 9 do for Alpha 10. Do not copy a newer database into an older
-version.
+Alpha and Nightly are different feature channels, not different database universes. Follow the exact version-matched
+upgrade notes for the build you install. Database changes are forward-only: never open or copy a database used by a
+newer build into an older build, including when switching from Nightly to Alpha.
 
 ## Where VCE Stores Data
 
@@ -208,7 +215,8 @@ These older or experimental features are not included:
 
 ## Installation
 
-1. Download a package from [GitHub Releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases).
+1. Choose a [numbered Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest) or the
+   [current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly).
 2. Extract it into a new writable folder.
 3. Start `bin/sdrtrunk-vce` on macOS or Linux, or `bin\sdrtrunk-vce.bat` on Windows.
 4. Import XML, migrate a previous VCE setup, or start fresh.
@@ -222,7 +230,7 @@ Development builds require Java 25.
 
 ```bash
 ./gradlew test
-./gradlew clean build -PprojectVersion=local-dev
+./gradlew clean build -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
 
 Use an explicit non-public version such as `local-dev` for development packages. Numbered package tasks stop while
@@ -231,15 +239,16 @@ their version-matched release notes are still marked as a draft.
 Package tasks:
 
 ```bash
-./gradlew runtimeZipCurrent -PprojectVersion=local-dev
-./gradlew --no-configuration-cache runtimeZipWindows -PprojectVersion=local-dev
-./gradlew --no-configuration-cache runtimeZipOthers -PprojectVersion=local-dev
+./gradlew runtimeZipCurrent -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+./gradlew --no-configuration-cache runtimeZipWindows -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+./gradlew --no-configuration-cache runtimeZipOthers -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
 
 Build output is written under `build/image`.
 
 ## More Information
 
+- [Release channels](docs/release-channels.md)
 - [Release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
 - [Portable startup and storage](docs/portable-startup-and-storage.md)
 - [How talker aliases work](docs/talker-alias-implementation.md)

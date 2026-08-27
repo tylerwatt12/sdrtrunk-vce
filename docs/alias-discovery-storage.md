@@ -1,5 +1,8 @@
 # Alias Discovery and Unmatched Talkgroup Storage
 
+> **Release scope:** This design describes current `main` and Nightly behavior. Numbered Alpha builds may omit these
+> newer Alias and website features.
+
 ## User-visible purpose
 
 The Alias page's Discover tab calls `/api/v1/alias-lists/{id}/observed-talkgroups` to show P25, DMR, and NXDN talkgroups or

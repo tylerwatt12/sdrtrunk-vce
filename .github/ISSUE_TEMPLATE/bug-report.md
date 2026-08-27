@@ -9,7 +9,8 @@ assignees: ''
 
 ## sdrtrunk-vce version
 
-Provide the release version or commit ID. Write `main branch` if you built the current `main` branch.
+Provide the numbered Alpha version/tag, or the Nightly build date and commit ID. If you built from source, include the
+branch and exact commit ID.
 
 ## Describe the bug
 
