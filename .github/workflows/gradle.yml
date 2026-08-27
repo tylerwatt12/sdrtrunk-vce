@@ -44,4 +44,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Build with Gradle
-        run: ${{ matrix.gradle_command }} --no-configuration-cache clean build -PprojectVersion=local-dev
+        run: >-
+          ${{ matrix.gradle_command }} --no-configuration-cache clean build
+          -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
