@@ -165,8 +165,7 @@ class ApplicationMigrationSuccessDialogTest
         String replacement = ApplicationMigrationSuccessDialog.replacementImportReport(current, source);
         assertEquals("SQLite database import complete. The selected database replaced the active database after " +
             "staged migration and validation. The selected source file and its neighboring files were left " +
-            "unchanged.\n\nStored portable paths were not remapped. If the imported database did not contain " +
-            "an administrator, setup will request a new administrator password after restart.\n\n" + helper +
+            "unchanged.\n\nStored portable paths were not remapped.\n\n" + helper +
             "\n\nSelected source:\n" + source.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + backup +
             "\n\nSDRTrunk will restart automatically.", replacement);

@@ -36,8 +36,13 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
+import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog;
+import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog.PreparedImport;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.bugreport.BugReportDialog;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
@@ -85,6 +90,7 @@ import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.awt.Robot;
+import java.awt.Toolkit;
 import java.awt.desktop.QuitResponse;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
@@ -100,8 +106,11 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
+import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
@@ -146,6 +155,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final int MAIN_SPECTRAL_MINIMUM_HEIGHT = 120;
     private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
+    private static final String APPLICATION_MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
@@ -186,6 +196,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mSpectralPanelVisible;
     private boolean mSystemsVisible;
     private boolean mMainSplitPaneDividerRestored;
+    private volatile boolean mDatabaseReplacementInProgress;
     private PortableDataRootLock mDataRootLock;
 
     private String mTitle;
@@ -546,10 +557,19 @@ public class SDRTrunk implements Listener<TunerEvent>
         importLegacyPlaylistMenu.addActionListener(event -> LegacyPlaylistImportDialog.show(mMainGui,
             mConfigurationManager, mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot()));
         fileMenu.add(importLegacyPlaylistMenu);
+
+        JMenuItem importSqliteDatabaseMenu = new JMenuItem("Import SQLite Database...");
+        importSqliteDatabaseMenu.addActionListener(event -> importSqliteDatabase());
+        fileMenu.add(importSqliteDatabaseMenu);
         fileMenu.addSeparator();
 
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {
+                if(mDatabaseReplacementInProgress)
+                {
+                    Toolkit.getDefaultToolkit().beep();
+                    return;
+                }
                 processShutdown();
                 System.exit(0);
             }
@@ -818,7 +838,155 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
     }
 
+    /**
+     * Replaces the complete active SQLite profile at a restart boundary. A database replacement cannot use the
+     * lighter live configuration-reload path because preferences, authentication, statistics, and other services
+     * also own state in the same file.
+     */
+    private void importSqliteDatabase()
+    {
+        Path dataRoot = mDataRootLock != null ? mDataRootLock.getDataRoot() : PortableApplicationPaths.getDataRoot();
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        PreparedImport prepared = SqliteDatabaseImportDialog.choose(mMainGui, activeDatabase,
+            mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
+
+        if(prepared == null)
+        {
+            return;
+        }
+
+        mDatabaseReplacementInProgress = true;
+        mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+
+        try
+        {
+            flushConfigurationForDatabaseReplacement();
+        }
+        catch(Exception | LinkageError e)
+        {
+            JOptionPane.showMessageDialog(mMainGui,
+                "The current configuration could not be saved, so the database was not replaced.\n\n" +
+                    exceptionMessage(e), "SQLite Database Import Cancelled", JOptionPane.ERROR_MESSAGE);
+            mDatabaseReplacementInProgress = false;
+            mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            return;
+        }
+
+        boolean replacementSucceeded = false;
+
+        try
+        {
+            //Keep the portable-root lock while services are closed and the staged replacement is running so another
+            //application process cannot enter the data folder between shutdown and promotion.
+            processShutdown(false);
+            ApplicationMigrationService service = new ApplicationMigrationService();
+            ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(mMainGui,
+                APPLICATION_MIGRATOR_TITLE,
+                progress -> service.replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.plan(),
+                    progress));
+            replacementSucceeded = true;
+            ApplicationMigrationSuccessDialog.show(mMainGui, APPLICATION_MIGRATOR_TITLE,
+                ApplicationMigrationSuccessDialog.replacementImportReport(migration, prepared.sourceDatabase()));
+        }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            showDatabaseReplacementFailure(e);
+        }
+        catch(Exception | LinkageError e)
+        {
+            showDatabaseReplacementFailure(e);
+        }
+
+        if(!replacementSucceeded)
+        {
+            releaseDataRootLock();
+            System.exit(1);
+            return;
+        }
+
+        try
+        {
+            releaseDataRootLock();
+            ApplicationRelauncher.relaunch();
+        }
+        catch(IOException e)
+        {
+            JOptionPane.showMessageDialog(mMainGui,
+                (replacementSucceeded ? "The database was replaced successfully" :
+                    "The database replacement did not complete") +
+                    ", but SDRTrunk could not restart automatically. Start it again manually.\n\n" +
+                    exceptionMessage(e), "SDRTrunk Restart Required", JOptionPane.ERROR_MESSAGE);
+        }
+
+        System.exit(replacementSucceeded ? 0 : 1);
+    }
+
+    private void flushConfigurationForDatabaseReplacement() throws Exception
+    {
+        if(Platform.isFxApplicationThread())
+        {
+            mConfigurationManager.flushConfiguration();
+            return;
+        }
+
+        FutureTask<Void> task = new FutureTask<>(() -> {
+            mConfigurationManager.flushConfiguration();
+            return null;
+        });
+        Platform.runLater(task);
+
+        try
+        {
+            task.get();
+        }
+        catch(ExecutionException e)
+        {
+            Throwable cause = e.getCause();
+
+            if(cause instanceof Exception exception)
+            {
+                throw exception;
+            }
+
+            if(cause instanceof Error error)
+            {
+                throw error;
+            }
+
+            throw e;
+        }
+    }
+
+    private void showDatabaseReplacementFailure(Throwable throwable)
+    {
+        JOptionPane.showMessageDialog(mMainGui,
+            "The SQLite database import failed. SDRTrunk will not restart automatically because the final active " +
+                "database state could not be confirmed. If a safety backup was completed, it remains in the " +
+                "database/backups folder. Review the error and restart SDRTrunk manually.\n\n" +
+                exceptionMessage(throwable),
+            "SQLite Database Import Failed", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private static String exceptionMessage(Throwable throwable)
+    {
+        Throwable cause = throwable;
+
+        while(cause.getCause() != null)
+        {
+            cause = cause.getCause();
+        }
+
+        return cause.getMessage() != null && !cause.getMessage().isBlank() ?
+            cause.getMessage() : cause.getClass().getSimpleName();
+    }
+
     private void processShutdown()
+    {
+        processShutdown(true);
+    }
+
+    private void processShutdown(boolean releaseDataRootLock)
     {
         if(mShutdownProcessed)
         {
@@ -901,6 +1069,14 @@ public class SDRTrunk implements Listener<TunerEvent>
         mApplicationLog.stop();
         SqlitePreferencesFactory.shutdown();
 
+        if(releaseDataRootLock)
+        {
+            releaseDataRootLock();
+        }
+    }
+
+    private void releaseDataRootLock()
+    {
         if(mDataRootLock != null)
         {
             try
@@ -931,6 +1107,13 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         desktop.setQuitHandler((quitEvent, quitResponse) -> {
+            if(mDatabaseReplacementInProgress)
+            {
+                Toolkit.getDefaultToolkit().beep();
+                quitResponse.cancelQuit();
+                return;
+            }
+
             try
             {
                 processShutdown();
@@ -1231,7 +1414,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         @Override
         public void windowClosing(WindowEvent e)
         {
-            processShutdown();
+            if(!mDatabaseReplacementInProgress)
+            {
+                processShutdown();
+            }
         }
     }
 

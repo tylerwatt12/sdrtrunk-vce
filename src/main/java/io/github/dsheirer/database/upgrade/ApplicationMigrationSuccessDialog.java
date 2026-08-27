@@ -160,8 +160,7 @@ public final class ApplicationMigrationSuccessDialog
     {
         return "SQLite database import complete. The selected database replaced the active database after staged " +
             "migration and validation. The selected source file and its neighboring files were left unchanged.\n\n" +
-            "Stored portable paths were not remapped. If the imported database did not contain an administrator, " +
-            "setup will request a new administrator password after restart.\n\n" + migration.helperOutput() +
+            "Stored portable paths were not remapped.\n\n" + migration.helperOutput() +
             "\n\nSelected source:\n" + sourceDatabase.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + migration.safetyBackup() +
             "\n\nSDRTrunk will restart automatically.";
