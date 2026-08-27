@@ -22,8 +22,8 @@ class JavaFxWindowLoadingShellUiContractTest
     @Test
     void playlistAndSettingsRevealAThemeAwareLoadingShellBeforeBuildingTheirEditors() throws Exception
     {
-        String manager = Files.readString(WINDOW_MANAGER);
-        String configuration = Files.readString(CONFIGURATION_EDITOR);
+        String manager = normalizedSource(WINDOW_MANAGER);
+        String configuration = normalizedSource(CONFIGURATION_EDITOR);
         String configurationStage = block(manager, "private Stage getConfigurationStage()",
             "/**\n     * Processes a configuration editor request");
         String preferencesStage = block(manager, "private Stage getUserPreferencesStage()",
@@ -73,5 +73,10 @@ class JavaFxWindowLoadingShellUiContractTest
         assertTrue(start >= 0, startMarker);
         assertTrue(end > start, endMarker);
         return source.substring(start, end);
+    }
+
+    private static String normalizedSource(Path path) throws Exception
+    {
+        return Files.readString(path).replace("\r\n", "\n");
     }
 }
