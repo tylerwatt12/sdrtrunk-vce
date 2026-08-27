@@ -11,7 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Checks the small update manifest published in the current build track.
@@ -20,12 +20,14 @@ public class UpdateCheckService
 {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(8);
-    private static final Set<String> TRACKS = Set.of("main", "webfirst");
-    private static final String MANIFEST_URL =
-        "https://raw.githubusercontent.com/tylerwatt12/sdrtrunk-vce/%s/.github/update.properties";
+    private static final Map<String, URI> MANIFEST_URIS = Map.of(
+        "alpha", URI.create("https://raw.githubusercontent.com/tylerwatt12/sdrtrunk-vce/" +
+            "release/0.6.2-alpha/.github/update.properties"),
+        "nightly", URI.create("https://github.com/tylerwatt12/sdrtrunk-vce/" +
+            "releases/download/nightly/update.properties"));
     private final HttpClient mHttpClient;
     private final String mTrack;
-    private final int mCurrentBuild;
+    private final long mCurrentBuild;
 
     public UpdateCheckService()
     {
@@ -33,7 +35,7 @@ public class UpdateCheckService
             ApplicationInfo.getUpdateTrack(), parseBuild(ApplicationInfo.getUpdateBuild()));
     }
 
-    UpdateCheckService(HttpClient httpClient, String track, int currentBuild)
+    UpdateCheckService(HttpClient httpClient, String track, long currentBuild)
     {
         mHttpClient = httpClient;
         mTrack = track;
@@ -47,7 +49,7 @@ public class UpdateCheckService
 
     public UpdateCheckResult check()
     {
-        if(!TRACKS.contains(mTrack) || mCurrentBuild < 0)
+        if(!MANIFEST_URIS.containsKey(mTrack) || mCurrentBuild < 0)
         {
             return UpdateCheckResult.unavailable("This build does not contain valid update metadata");
         }
@@ -80,8 +82,13 @@ public class UpdateCheckService
         }
     }
 
-    static UpdateCheckResult evaluate(String track, int currentBuild, UpdateManifest manifest)
+    static UpdateCheckResult evaluate(String track, long currentBuild, UpdateManifest manifest)
     {
+        if(!track.equals(manifest.track()))
+        {
+            return UpdateCheckResult.unavailable("Update manifest is for a different release channel");
+        }
+
         return manifest.build() > currentBuild ?
             UpdateCheckResult.available(track, manifest.version(), manifest.releaseUri()) :
             UpdateCheckResult.current(track, manifest.version());
@@ -89,19 +96,21 @@ public class UpdateCheckService
 
     static URI manifestUri(String track)
     {
-        if(!TRACKS.contains(track))
+        URI manifestUri = MANIFEST_URIS.get(track);
+
+        if(manifestUri == null)
         {
             throw new IllegalArgumentException("Unsupported update track: " + track);
         }
 
-        return URI.create(MANIFEST_URL.formatted(track));
+        return manifestUri;
     }
 
-    private static int parseBuild(String build)
+    private static long parseBuild(String build)
     {
         try
         {
-            return build != null ? Integer.parseInt(build) : -1;
+            return build != null ? Long.parseLong(build) : -1;
         }
         catch(NumberFormatException e)
         {

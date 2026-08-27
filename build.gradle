@@ -75,11 +75,11 @@ if(javafxPlatform == "win") {
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
-def updateTrack = (project.findProperty('updateTrack') ?: 'main').toString()
+def updateTrack = (project.findProperty('updateTrack') ?: 'none').toString()
 def updateBuild = (project.findProperty('updateBuild') ?: '0').toString()
 
-if(!(updateTrack in ['main', 'webfirst'])) {
-    throw new GradleException("updateTrack must be 'main' or 'webfirst'")
+if(!(updateTrack in ['alpha', 'nightly', 'none'])) {
+    throw new GradleException("updateTrack must be 'alpha', 'nightly', or 'none'")
 }
 
 if(!(updateBuild ==~ /\d+/)) {

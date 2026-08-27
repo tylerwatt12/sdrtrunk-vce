@@ -13,9 +13,10 @@ import java.util.Properties;
 /**
  * Minimal remotely published update description.
  */
-record UpdateManifest(int build, String version, URI releaseUri)
+record UpdateManifest(int format, String track, long build, String version, URI releaseUri)
 {
     private static final int MAX_MANIFEST_LENGTH = 16_384;
+    private static final int CURRENT_FORMAT = 2;
 
     static UpdateManifest parse(String content) throws IOException
     {
@@ -27,11 +28,34 @@ record UpdateManifest(int build, String version, URI releaseUri)
         Properties properties = new Properties();
         properties.load(new StringReader(content));
 
-        int build;
+        int format;
 
         try
         {
-            build = Integer.parseInt(required(properties, "build"));
+            format = Integer.parseInt(required(properties, "format"));
+        }
+        catch(NumberFormatException e)
+        {
+            throw new IOException("Update manifest format is not an integer", e);
+        }
+
+        if(format != CURRENT_FORMAT)
+        {
+            throw new IOException("Unsupported update manifest format: " + format);
+        }
+
+        String track = required(properties, "track");
+
+        if(track.length() > 32)
+        {
+            throw new IOException("Update manifest track is too long");
+        }
+
+        long build;
+
+        try
+        {
+            build = Long.parseLong(required(properties, "build"));
         }
         catch(NumberFormatException e)
         {
@@ -69,7 +93,7 @@ record UpdateManifest(int build, String version, URI releaseUri)
             throw new IOException("Update manifest release URL is not an allowed sdrtrunk-vce release page");
         }
 
-        return new UpdateManifest(build, version, releaseUri);
+        return new UpdateManifest(format, track, build, version, releaseUri);
     }
 
     private static String required(Properties properties, String key) throws IOException
