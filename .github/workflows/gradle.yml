@@ -5,14 +5,18 @@
 # This workflow will build a Java project with Gradle and cache/restore any dependencies to improve the workflow execution time
 # For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-gradle
 
-name: Java CI with Gradle
+name: Main CI
 
 on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Main build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -47,3 +51,15 @@ jobs:
         run: >-
           ${{ matrix.gradle_command }} --no-configuration-cache clean build
           -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+
+  gate:
+    name: Main CI gate
+    if: ${{ always() }}
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every main platform build
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: test "$BUILD_RESULT" = "success"
