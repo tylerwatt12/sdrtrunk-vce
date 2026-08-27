@@ -39,11 +39,12 @@ the catalog entries and their fixtures directly. If a known distributed build ca
 safe signature, record it as unresolved and obtain an exact database sample; do not claim complete Alpha 8+ support or
 guess a route until the entry is resolved.
 
-The replacement audit recovered five formats from successful Alpha 8-or-newer alpha, nightly, and main builds: the
+The replacement audit recovered six formats from successful Alpha 8-or-newer alpha, nightly, and main builds: the
 shared Alpha 8/9/10 and early-nightly baseline, the scan-list/P25-v26 format, the P25-v27 site-projection format, the
-P25-v28 logical-call/site-observation format, and the current normalized web-user/saved-channel-identity format. The
-runtime catalog is the sole exact inventory of their fingerprints, subsystem metadata, source references, fixtures,
-and data policies; this document intentionally does not duplicate those values.
+P25-v28 logical-call/site-observation format, the normalized web-user/saved-channel-identity format, and the current
+canonical conventional-context identity format. The runtime catalog is the sole exact inventory of their
+fingerprints, subsystem metadata, source references, fixtures, and data policies; this document intentionally does
+not duplicate those values.
 
 Seven intermediate schema fingerprints are source-recoverable, but the nightly workflow failed before packaging them.
 They are cataloged as known unsupported developer states so the inspector can give a precise refusal instead of
@@ -72,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -97,6 +98,12 @@ refuses a malformed or ambiguous authoritative channel document, identity, kind,
 credential, access policy, or shared preference instead of guessing. Password verifier material, roles,
 authentication revisions, supported access overrides, shared receiver preferences, and active supported channels are
 preserved exactly or converted deterministically.
+
+The format 5-to-6 step changes configured conventional activity identity from the old RadioResolve GUID key to the
+saved channel's configuration UUID key. It updates the existing `receiver_context` row in place, so its stable row ID
+and every linked activity, summary, and identity row are preserved. A missing activity context needs no change. An
+already-canonical context is accepted. A case mismatch, duplicate GUID match, nonconventional context, unexpected key,
+or occupied target key is refused rather than merged or guessed.
 
 ## Replacement Boundary
 

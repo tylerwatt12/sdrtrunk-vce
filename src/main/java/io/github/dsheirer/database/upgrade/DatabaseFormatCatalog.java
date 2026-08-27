@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 5;
+    public static final int CURRENT_VERSION = 6;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -43,6 +43,7 @@ public final class DatabaseFormatCatalog
         "d4b539e9486d81c0d21ec7816a8a1a0c07d7274dd45f659e44155beef404c3f1";
     private static final String FORMAT_5_FINGERPRINT =
         "cc4ab232780c6445865d86c69d4f04eb43f4f6064cf9e6770ff1405c4da32080";
+    private static final String FORMAT_6_FINGERPRINT = FORMAT_5_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -92,15 +93,26 @@ public final class DatabaseFormatCatalog
             "Move personal browser settings into each account's bounded preference document",
             "Drop known retired channel rows, web policy overrides, and superseded personal-setting storage",
             "Require exact saved-channel UUID, channel-kind, and nonblank RadioResolve GUID identities"));
+    private static final FormatDescriptor FORMAT_6 = descriptor(6, "conventional-context-identity-v29",
+        "Canonical configured conventional receiver-context identity format",
+        FORMAT_6_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
+        List.of("main format 6"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format6TestDatabase.java",
+        List.of(
+            "Preserve configured conventional receiver contexts and every row linked to their stable IDs",
+            "Rewrite only exact legacy GUID context keys to canonical configuration-ID context keys",
+            "Refuse ambiguous, conflicting, or malformed configured conventional context identities"));
 
-    private static final List<FormatDescriptor> FORMATS = List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5);
+    private static final List<FormatDescriptor> FORMATS =
+        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = Map.of(
         FORMAT_1.version(), FORMAT_1,
         FORMAT_2.version(), FORMAT_2,
         FORMAT_3.version(), FORMAT_3,
         FORMAT_4.version(), FORMAT_4,
-        FORMAT_5.version(), FORMAT_5);
+        FORMAT_5.version(), FORMAT_5,
+        FORMAT_6.version(), FORMAT_6);
     /* Several marker-bearing semantic formats may intentionally share one DDL fingerprint. */
     private static final Map<String,List<FormatDescriptor>> BY_FINGERPRINT = formatsByFingerprint();
 
@@ -213,7 +225,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_5;
+        return FORMAT_6;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -373,11 +385,24 @@ public final class DatabaseFormatCatalog
             }
         }
 
-        if(descriptor.version() == 5)
+        if(descriptor.version() >= 5)
         {
             try
             {
                 Format5WebStateValidator.validate(connection);
+            }
+            catch(SQLException exception)
+            {
+                throw new FormatRejectionException("SQLite schema format [" + descriptor.id() + "] " +
+                    exception.getMessage(), exception);
+            }
+        }
+
+        if(descriptor.version() >= 6)
+        {
+            try
+            {
+                Format6ReceiverContextValidator.validate(connection);
             }
             catch(SQLException exception)
             {

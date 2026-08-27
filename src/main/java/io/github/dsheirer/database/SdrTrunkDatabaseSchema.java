@@ -14,6 +14,7 @@ package io.github.dsheirer.database;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.database.upgrade.Format5SchemaSql;
 import io.github.dsheirer.database.upgrade.Format5WebStateValidator;
+import io.github.dsheirer.database.upgrade.Format6ReceiverContextValidator;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -482,6 +483,7 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);
+        Format6ReceiverContextValidator.validate(connection);
     }
 
 }

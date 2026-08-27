@@ -168,6 +168,7 @@ async function main() {
   assert.match(appSource, /controller: tableController, wrapper/);
   assert.doesNotMatch(appSource, /wrapper\.replaceWith\(table\(/);
   assert.doesNotMatch(appSource, /Alias List ID/);
+  assert.doesNotMatch(appSource, /\(#/);
   assert.doesNotMatch(appSource, /scopeAliasListLabel|credential_version|credentialVersion/);
   assert.doesNotMatch(appSource, /identity_detail_available|detail_available/);
   assert.doesNotMatch(appSource, /web-display-settings/);
@@ -470,6 +471,9 @@ async function main() {
 
   assert.equal(entityRefs.href({ kind: 'system', key: 'p25:BEE00:941:alias-list:1' }),
     '/?view=system&scope=p25%3ABEE00%3A941%3Aalias-list%3A1');
+  assert.equal(entityRefs.href({
+    kind: 'talkgroup', scope: 'p25:BEE00:49F:alias-list:1', id: 56735
+  }), '/?view=talkgroup&scope=p25%3ABEE00%3A49F%3Aalias-list%3A1&id=56735');
   const siteUuid = '728d2d66-de4e-476b-a696-919f32dd4d12';
   const channelUuid = 'fd6dd61b-a7d8-4fa0-9b7d-c46382827ca8';
   assert.equal(entityRefs.href({ kind: 'site', key: siteUuid }), `/?view=site&guid=${siteUuid}`);

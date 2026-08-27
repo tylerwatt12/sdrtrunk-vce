@@ -235,6 +235,7 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.output().contains("COMPLETED STEP: 3 -> 4 [format-3-to-4]"));
         assertTrue(result.output().contains("COMPLETED STEP: 4 -> 5 [format-4-to-5]"));
+        assertTrue(result.output().contains("COMPLETED STEP: 5 -> 6 [format-5-to-6]"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())

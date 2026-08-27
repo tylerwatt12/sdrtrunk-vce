@@ -36,13 +36,14 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v28 shape is summary-first. Trunked P25, DMR and NXDN share one protocol-neutral identity projection while
+ * The v29 semantics use canonical saved-channel identities. Trunked P25, DMR and NXDN share one protocol-neutral
+ * identity projection while
  * receiver contexts own site observations. Detailed event rows are optional, while compact identity and hourly
  * summaries are always updated when stats logging is enabled.
  */
 public class P25ActivityLogSchema
 {
-    public static final int SCHEMA_VERSION = 28;
+    public static final int SCHEMA_VERSION = 29;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
         "conventional_call_output_metrics_started_at_ms";

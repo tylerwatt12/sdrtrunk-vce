@@ -349,6 +349,49 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void groupIdentityDetailRequiresTheExactFullP25Scope() throws Exception
+    {
+        String scope = "p25:BEE00:49F:alias-list:1";
+        HttpResponse<String> canonical = get(StatsApiV1.SYSTEMS +
+            "/p25%3ABEE00%3A49F%3Aalias-list%3A1/group-identities/talkgroup/56735");
+        assertEquals(200, canonical.statusCode(), canonical.body());
+        JsonNode identity = OBJECT_MAPPER.readTree(canonical.body()).at("/data");
+        assertEquals(scope, identity.at("/scope_token").textValue(), canonical.body());
+        assertEquals(56_735, identity.at("/talkgroup_id").intValue(), canonical.body());
+        assertEquals("talkgroup", identity.at("/entity_ref/kind").textValue(), canonical.body());
+        assertEquals(scope, identity.at("/entity_ref/scope").textValue(), canonical.body());
+        assertEquals(0, identity.at("/logical_call_count").longValue(), canonical.body());
+        assertEquals(0, identity.at("/recorded_logical_call_count").longValue(), canonical.body());
+        assertEquals(0, identity.at("/stream_submitted_logical_call_count").longValue(), canonical.body());
+
+        HttpResponse<String> staleShortScope = get(StatsApiV1.SYSTEMS +
+            "/p25%3ABEE00%3A49F/group-identities/talkgroup/56735");
+        assertStructuredError(staleShortScope, 404, "not_found", null);
+    }
+
+    @Test
+    void conventionalDetailUsesOnlyCanonicalConfigurationNavigation() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000072";
+        String radioResolveGuid = "728d2d66-de4e-476b-a696-919f32dd4d12";
+        HttpResponse<String> canonical = get(StatsApiV1.CONVENTIONAL_CHANNELS + "/" + configurationId);
+        assertEquals(200, canonical.statusCode(), canonical.body());
+        JsonNode response = OBJECT_MAPPER.readTree(canonical.body());
+        JsonNode channel = response.at("/data/channel");
+        assertEquals(configurationId, channel.at("/configuration_id").textValue(), canonical.body());
+        assertEquals(radioResolveGuid, channel.at("/guid").textValue(), canonical.body());
+        assertEquals("conventional", channel.at("/entity_ref/kind").textValue(), canonical.body());
+        assertEquals(configurationId, channel.at("/entity_ref/key").textValue(), canonical.body());
+        assertTrue(response.at("/data/summaries").isEmpty(), canonical.body());
+        assertFalse(canonical.body().contains("\"context_key\""), canonical.body());
+        assertFalse(channel.has("context"), canonical.body());
+
+        HttpResponse<String> legacyContext = get(StatsApiV1.CONVENTIONAL_CHANNELS +
+            "?context=GUID%3A" + radioResolveGuid);
+        assertStructuredError(legacyContext, 400, "unknown_parameter", "context");
+    }
+
+    @Test
     void legacyReadLiveExportAndAudioRoutesAreNotCompatibilityEndpoints() throws Exception
     {
         for(String path: List.of(
@@ -549,7 +592,9 @@ class StatsApiV1HttpContractTest
         {
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) " +
                 "VALUES (71, 'HTTP Aliases', 'P25')");
+            statement.executeUpdate("UPDATE alias_list SET name='GCRCN' WHERE id=1");
             statement.executeUpdate("INSERT INTO p25_system VALUES (1, 1, 71, 1000, 2000)");
+            statement.executeUpdate("INSERT INTO p25_system VALUES (2, 0xBEE00, 0x49F, 1000, 2000)");
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
@@ -565,6 +610,17 @@ class StatsApiV1HttpContractTest
                 ) VALUES ('00000000-0000-0000-0000-000000000072', 'CONVENTIONAL', 72,
                     'HTTP Conventional', 'HTTP County', 'HTTP Fire', 'NBFM', 154310000, '{}')
                 """);
+            statement.executeUpdate("UPDATE configuration_channel SET " +
+                "radres_guid = '728d2d66-de4e-476b-a696-919f32dd4d12' " +
+                "WHERE configuration_id = '00000000-0000-0000-0000-000000000072'");
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    alias_list_name, radres_guid, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('4b75217f-2555-4c38-aafc-5d17bc0faf71', 'TRUNKED', 1,
+                    'GCRCN', 'GCRCNSimul', 'GCRCN Control', 'GCRCN',
+                    '4b75217f-2555-4c38-aafc-5d17bc0faf72', 'P25_PHASE1', 856137500, '{}')
+                """);
             statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
@@ -575,14 +631,38 @@ class StatsApiV1HttpContractTest
                     1000, 2000, 1, 1, 2, 851012500)
                 """);
             statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
+                    first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
+                    primary_frequency_hz, current_control_hz
+                ) VALUES (2, 'GUID:4b75217f-2555-4c38-aafc-5d17bc0faf72',
+                    '4b75217f-2555-4c38-aafc-5d17bc0faf72', 1, 1,
+                    'GCRCN Control', 'GCRCN', 'P25-1',
+                    1000, 2000, 2, 0x49F, 1, 1, 856137500, 856137500)
+                """);
+            statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
                     alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
                 ) VALUES (1, 'p25:00001:047', 1, 1, 0, 71, 1, 1000, 2000)
                 """);
             statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (2, 'p25:BEE00:49F:alias-list:1', 1, 1, 0, 1, 2, 1000, 2000)
+                """);
+            statement.executeUpdate("""
                 INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
                 VALUES (1, 1, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
+                VALUES (2, 2, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, group_name, matcher_type, protocol, value)
+                VALUES (1, 1, 'CuyCO Jail 35', 'Corrections', 'TALKGROUP', 'APCO25', 56735)
                 """);
         }
     }

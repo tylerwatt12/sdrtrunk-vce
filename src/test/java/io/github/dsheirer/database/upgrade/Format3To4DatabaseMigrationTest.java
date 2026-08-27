@@ -41,7 +41,7 @@ class Format3To4DatabaseMigrationTest
             DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
             DatabaseMigrationChain.PreflightReport report = DatabaseMigrationChain.validateSource(connection,
                 detected);
-            assertEquals(2, report.steps().size());
+            assertEquals(3, report.steps().size());
             DatabaseMigrationChain.StepPreflight step = report.steps().getFirst();
             assertEquals("format-3-to-4", step.id());
             assertEffect(step.effects(), DatabaseMigrationEffect.Kind.PRESERVE,
@@ -95,10 +95,10 @@ class Format3To4DatabaseMigrationTest
             }
 
             assertEquals(3, report.source().version());
-            assertEquals(5, report.target().version());
-            assertEquals("format-4-to-5", report.steps().getLast().id());
+            assertEquals(6, report.target().version());
+            assertEquals("format-5-to-6", report.steps().getLast().id());
             DatabaseFormatCatalog.DetectedFormat current = DatabaseFormatCatalog.requireCurrent(connection);
-            assertEquals(5, current.version());
+            assertEquals(6, current.version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
 
@@ -164,7 +164,7 @@ class Format3To4DatabaseMigrationTest
                 SELECT COUNT(*) FROM pragma_table_info('trunked_signaling_activity_bucket') WHERE name='call_count'
                 """));
 
-            assertEquals("28", metadata(connection, "p25_activity_schema_version"));
+            assertEquals("29", metadata(connection, "p25_activity_schema_version"));
             assertEquals("200", metadata(connection, "conventional_call_output_metrics_started_at_ms"));
             assertTrue(Long.parseLong(metadata(connection,
                 "trunked_logical_call_metrics_started_at_ms")) > 200);

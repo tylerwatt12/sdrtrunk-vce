@@ -62,17 +62,19 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationPlan(format1Database);
         assertFormat(format1Plan.source(), 1, "alpha8-shared", false);
         assertEquals(DatabaseFormatCatalog.current(), format1Plan.target());
-        assertEquals(4, format1Plan.steps().size());
+        assertEquals(5, format1Plan.steps().size());
         assertEquals(1, format1Plan.steps().getFirst().sourceVersion());
         assertEquals(2, format1Plan.steps().getFirst().targetVersion());
-        assertEquals(4, format1Plan.steps().getLast().sourceVersion());
+        assertEquals(5, format1Plan.steps().getLast().sourceVersion());
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().getLast().targetVersion());
         assertTrue(format1Plan.steps().get(1).effects().stream()
             .anyMatch(effect -> "unassigned channel Alias Lists".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(2).effects().stream()
             .anyMatch(effect -> "physical receiver-leg call projections".equals(effect.subject())));
-        assertTrue(format1Plan.steps().getLast().effects().stream()
+        assertTrue(format1Plan.steps().get(3).effects().stream()
             .anyMatch(effect -> "web accounts".equals(effect.subject())));
+        assertTrue(format1Plan.steps().getLast().effects().stream()
+            .anyMatch(effect -> "configured conventional receiver-context identities".equals(effect.subject())));
 
         Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
         SdrTrunkDatabaseStartup.createGlobalDatabase(currentDatabase);

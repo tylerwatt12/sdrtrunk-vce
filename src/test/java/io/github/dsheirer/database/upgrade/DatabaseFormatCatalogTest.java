@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -109,7 +110,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format6TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -145,7 +146,7 @@ class DatabaseFormatCatalogTest
     @Test
     void format5RequiresCanonicalSiteGuidForTrunkedChannels() throws Exception
     {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("format-5-channel-constraints.sqlite"));
+        Path database = Format6TestDatabase.create(mTemporaryFolder.resolve("format-6-channel-constraints.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
@@ -184,6 +185,40 @@ class DatabaseFormatCatalogTest
                                                   auto_start_order, config_json)
                 VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'CONVENTIONAL', 5, 1, 2147483647, '{}')
                 """));
+        }
+    }
+
+    @Test
+    void format6RejectsALegacyKeyForAConfiguredConventionalContext() throws Exception
+    {
+        Path database = Format6TestDatabase.create(mTemporaryFolder.resolve("format-6-legacy-context.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, radres_guid, config_json
+                ) VALUES (
+                    '66666666-7777-4888-8999-aaaaaaaaaaaa', 'CONVENTIONAL', 0,
+                    'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', '{}'
+                )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_context(
+                    context_key, guid, kind_code, protocol_code, channel_name,
+                    first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES (
+                    'GUID:bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+                    'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', 10, 11, 'Legacy Context',
+                    100, 200, 155550000
+                )
+                """);
+
+            SQLException catalog = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspect(connection));
+            assertTrue(catalog.getMessage().contains("uses noncanonical key"));
+            SQLException startup = assertThrows(SQLException.class,
+                () -> SdrTrunkDatabaseSchema.validate(connection));
+            assertTrue(startup.getMessage().contains("uses noncanonical key"));
         }
     }
 
