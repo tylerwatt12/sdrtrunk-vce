@@ -61,7 +61,7 @@ public final class RadioReferenceHttpController
 
     public void handle(HttpExchange exchange) throws IOException
     {
-        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
         String path = exchange.getRequestURI().getRawPath();
 
         try

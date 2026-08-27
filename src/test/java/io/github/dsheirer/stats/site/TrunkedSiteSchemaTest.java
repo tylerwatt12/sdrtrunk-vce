@@ -446,9 +446,10 @@ class TrunkedSiteSchemaTest
             insertAdministratorAlias(statement);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
-                    sort_order, name, auto_start, frequency_count, recording_enabled, event_logging_enabled,
-                    config_json
-                ) VALUES (0, 'Administrator Channel', 0, 1, 0, 0, '{}')
+                    configuration_id, channel_kind, sort_order, name, auto_start, frequency_count,
+                    recording_enabled, event_logging_enabled, config_json
+                ) VALUES ('123e4567-e89b-12d3-a456-426614174000', 'CONVENTIONAL', 0,
+                    'Administrator Channel', 0, 1, 0, 0, '{}')
                 """);
             statement.executeUpdate("""
                 INSERT INTO application_settings (key, settings_json, updated_at_ms)
@@ -489,9 +490,10 @@ class TrunkedSiteSchemaTest
             insertAdministratorAlias(statement);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
-                    sort_order, name, auto_start, frequency_count, recording_enabled, event_logging_enabled,
-                    config_json
-                ) VALUES (0, 'Administrator Channel', 0, 1, 0, 0, '{}')
+                    configuration_id, channel_kind, sort_order, name, auto_start, frequency_count,
+                    recording_enabled, event_logging_enabled, config_json
+                ) VALUES ('123e4567-e89b-12d3-a456-426614174000', 'CONVENTIONAL', 0,
+                    'Administrator Channel', 0, 1, 0, 0, '{}')
                 """);
             statement.executeUpdate("""
                 INSERT INTO application_settings (key, settings_json, updated_at_ms)

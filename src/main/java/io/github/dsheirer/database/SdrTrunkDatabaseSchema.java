@@ -12,6 +12,8 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.database.upgrade.Format5SchemaSql;
+import io.github.dsheirer.database.upgrade.Format5WebStateValidator;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -27,8 +29,8 @@ import java.util.Map;
 public final class SdrTrunkDatabaseSchema
 {
     public static final int ALIAS_SCHEMA_VERSION = 6;
-    public static final int CONFIGURATION_SCHEMA_VERSION = 2;
-    public static final int SETTINGS_SCHEMA_VERSION = 2;
+    public static final int CONFIGURATION_SCHEMA_VERSION = 3;
+    public static final int SETTINGS_SCHEMA_VERSION = 3;
     public static final int ICON_SCHEMA_VERSION = 2;
 
     private static final String ALIAS_LIST_TABLE_SQL = """
@@ -202,6 +204,12 @@ public final class SdrTrunkDatabaseSchema
               )
             """)
     );
+    private static final List<SqliteSchemaValidator.Definition> EXACT_WEB_SETTINGS_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("table", "web_user", Format5SchemaSql.WEB_USER_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "web_access_policy",
+            Format5SchemaSql.WEB_ACCESS_POLICY_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("index", "idx_web_user_one_primary_admin",
+            Format5SchemaSql.WEB_USER_PRIMARY_INDEX_SQL));
     private static final List<SqliteSchemaValidator.Table> TABLES = tables();
     private static final List<String> INDEXES = List.of(
         "idx_alias_talkgroup_value",
@@ -216,9 +224,11 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_channel_alias_list",
         "idx_configuration_channel_decoder",
         "idx_configuration_channel_frequency",
+        "idx_configuration_channel_unique_radres_guid",
         "idx_configuration_channel_map_sort",
         "idx_configuration_broadcast_sort",
-        "idx_configuration_broadcast_type"
+        "idx_configuration_broadcast_type",
+        "idx_web_user_one_primary_admin"
     );
     private static final List<String> VIEWS = List.of("alias_talkgroup", "alias_radio");
     private static final List<SqliteSchemaValidator.Metadata> METADATA = metadata();
@@ -245,7 +255,8 @@ public final class SdrTrunkDatabaseSchema
             new SqliteSchemaValidator.Table("alias_scan_list_membership", "alias_id", "scan_list_id"),
             new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id",
                 "scan_list_id"),
-            new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
+            new SqliteSchemaValidator.Table("configuration_channel", "id", "configuration_id", "channel_kind",
+                "sort_order", "system_name", "site_name",
                 "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
                 "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",
                 "event_logging_enabled", "config_json"),
@@ -253,7 +264,12 @@ public final class SdrTrunkDatabaseSchema
             new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "sort_order", "name",
                 "server_type", "enabled", "host", "port", "delay_ms", "maximum_recording_age_ms", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
-            new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms")
+            new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("web_user", "id", "username", "tier", "primary_admin",
+                "credential_version", "password_algorithm", "password_iterations", "password_derived_key_bits",
+                "password_salt", "password_hash", "password_changed_at_ms", "auth_revision", "preferences_json",
+                "preferences_revision", "created_at_ms", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("web_access_policy", "capability_id", "required_tier", "updated_at_ms")
         );
     }
 
@@ -288,26 +304,7 @@ public final class SdrTrunkDatabaseSchema
                 SELECT 0, 'Default', NULL, 1, 1
                 WHERE NOT EXISTS (SELECT 1 FROM scan_list)
                 """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS configuration_channel (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sort_order INTEGER NOT NULL,
-                    system_name TEXT,
-                    site_name TEXT,
-                    name TEXT,
-                    alias_list_name TEXT,
-                    radres_guid TEXT,
-                    auto_start INTEGER NOT NULL DEFAULT 0,
-                    auto_start_order INTEGER,
-                    decoder_type TEXT,
-                    source_type TEXT,
-                    primary_frequency_hz INTEGER,
-                    frequency_count INTEGER NOT NULL DEFAULT 0,
-                    recording_enabled INTEGER NOT NULL DEFAULT 0,
-                    event_logging_enabled INTEGER NOT NULL DEFAULT 0,
-                    config_json TEXT NOT NULL
-                )
-                """);
+            Format5SchemaSql.createConfigurationChannel(statement);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS configuration_channel_map (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,10 +341,8 @@ public final class SdrTrunkDatabaseSchema
                     updated_at_ms INTEGER NOT NULL
                 )
                 """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_sort ON configuration_channel(sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_alias_list ON configuration_channel(alias_list_name)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_decoder ON configuration_channel(decoder_type)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_frequency ON configuration_channel(primary_frequency_hz)");
+            Format5SchemaSql.createWebSettings(statement);
+            Format5SchemaSql.createConfigurationIndexes(statement);
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_map_sort ON configuration_channel_map(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_type ON configuration_broadcast_stream(server_type, enabled)");
@@ -485,6 +480,8 @@ public final class SdrTrunkDatabaseSchema
     {
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS, METADATA);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
+        Format5WebStateValidator.validate(connection);
     }
 
 }

@@ -65,7 +65,7 @@ class StatsCsvExportTest
     {
         StatsCsvExport export = StatsCsvExport.create("conventional-radios", "empty", List.of());
         String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
-        assertTrue(csv.startsWith("protocol,context,alias_list,frequency_hz"));
+        assertTrue(csv.startsWith("protocol,configuration_id,alias_list,frequency_hz"));
         assertEquals(0, export.rowCount());
     }
 
@@ -73,7 +73,8 @@ class StatsCsvExportTest
     void normalizesConventionalProtocolAndMissingTimeslot() throws Exception
     {
         StatsCsvExport export = StatsCsvExport.create("conventional-channels", "all", List.of(Map.of(
-            "protocol_code", 2, "context_key", "phase-two", "channel_name", "P25 Phase 2",
+            "protocol_code", 2, "configuration_id", "00000000-0000-0000-0000-000000000001",
+            "channel_name", "P25 Phase 2",
             "frequency_hz", 851_012_500L, "timeslot", -1, "logical_call_count", 1)));
         String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
 

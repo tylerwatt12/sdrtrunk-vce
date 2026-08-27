@@ -39,7 +39,8 @@ class StatsWebSystemsDirectoryUiContractTest
         assertTrue(feature.contains("site_preview_limit_per_system"));
         assertFalse(feature.contains("requiredInteger"));
         assertFalse(feature.contains("nextOffset <= offset"));
-        assertTrue(feature.contains("window.sdrtrunkSystemsDirectory = Object.freeze({ load, decode })"));
+        assertTrue(feature.contains("export { load, decode }"));
+        assertFalse(feature.contains("window.sdrtrunkSystemsDirectory"));
     }
 
     @Test
@@ -50,7 +51,7 @@ class StatsWebSystemsDirectoryUiContractTest
         String presenter = function(app, "function systemsDirectoryContent(data)");
 
         assertTrue(systems.contains("createAsyncSection('System Directory'"));
-        assertTrue(systems.contains("window.sdrtrunkSystemsDirectory.load(apiPage, pageParameters())"));
+        assertTrue(systems.contains("systemsDirectory.load(apiPage, pageParameters())"));
         assertTrue(systems.indexOf("beginPage(renderContext") < systems.indexOf("await directory.load("));
         assertTrue(presenter.contains("pager(page, 'bottom', 'Systems')"));
         assertFalse(systems.contains("Promise.all"));
@@ -64,9 +65,9 @@ class StatsWebSystemsDirectoryUiContractTest
         String navigation = function(app, "function activateNavigation(view)");
         String render = function(app, "async function render()");
 
-        assertTrue(navigation.contains("['system', 'talkgroup', 'radio', 'site']"));
+        assertTrue(navigation.contains("applicationRoutes?.[view]?.parent"));
         assertFalse(navigation.contains("view === 'site' ? 'sites'"));
-        int effectiveView = render.indexOf("effectiveView = handlers[view] ? view : 'dashboard'");
+        int effectiveView = render.indexOf("let effectiveView = entry?.id || 'not-found'");
         assertTrue(effectiveView >= 0);
         assertTrue(effectiveView < render.indexOf("activateNavigation(effectiveView)"));
     }

@@ -117,12 +117,16 @@ class StatsWebDashboardUiContractTest
         assertTrue(columns.contains("label: 'Observations'"));
         assertTrue(columns.contains("label: 'Last Seen'"));
         assertTrue(system.contains("row.resolved_channel_name"));
-        assertTrue(system.contains("row.context_key"));
-        assertTrue(system.contains("row.scope_token || row.context_key || row.guid"));
-        assertTrue(system.contains("row.scope_token ? systemLink(row, label)"));
+        assertTrue(system.contains("row.scope_token || row.guid || row.configuration_id"));
+        assertTrue(system.contains("entityReferenceAllowed(row.entity_ref)"));
+        assertTrue(system.contains("entityTarget(row.entity_ref)"));
+        assertFalse(system.contains("context_key"));
         assertTrue(system.contains("dashboard-identity-primary"));
         assertTrue(system.contains("dashboard-identity-context"));
-        assertTrue(radio.contains("row.scope_token ? radioLink(row, row.radio_id, identifier) : identifier"));
+        assertTrue(radio.contains("row.radio_entity_ref"));
+        assertTrue(radio.contains("entityReferenceAllowed(reference)"));
+        assertTrue(radio.contains("entityTarget(reference, { 'conventional-detail': 'radios' })"));
+        assertFalse(radio.contains("radioLink(row"));
         assertTrue(pager.contains("node('button', 'secondary', 'Previous')"));
         assertTrue(pager.contains("node('button', 'secondary', 'Next')"));
         assertTrue(pager.contains("page.has_more"));
@@ -198,27 +202,29 @@ class StatsWebDashboardUiContractTest
         assertTrue(decoder.contains("P25_PHASE2: ['P25 P2', 'P25 Phase 2']"));
         assertTrue(decoder.contains("P25_CONVENTIONAL: ['P25 Conv', 'P25 Conventional']"));
         assertTrue(live.contains("decoderLabel(row.decoder, true)"));
-        assertTrue(live.contains("cells[10].title = decoderLabel(row.decoder)"));
-        assertFalse(live.contains("cellText(cells[10], row.decoder)"));
+        assertTrue(live.contains("title: (row) => decoderLabel(row.decoder)"));
+        assertFalse(live.contains("cells[10]"));
         String identity = function(source, "function dashboardIdentity(row)");
         assertTrue(identity.contains("talkgroup: 'TG'"));
         assertTrue(identity.contains("patch_group: 'Patch'"));
     }
 
     @Test
-    void onlyBuildsLinksWhenTheApiReportsAConcreteDetailTarget() throws Exception
+    void onlyBuildsLinksFromCanonicalEntityReferences() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String receiverLink = function(source, "function callSourceLink(row)");
         String identityLink = function(source, "function dashboardIdentityLink(row, label = dashboardIdentityId(row))");
-        assertTrue(receiverLink.contains("Number(row.detail_available)"));
-        assertFalse(receiverLink.contains("receiver_detail_available"));
+        assertFalse(receiverLink.contains("detail_available"));
         assertTrue(receiverLink.contains("dashboardChannelKind(row) === 'TRUNKED'"));
         assertTrue(receiverLink.contains("siteNameSummary(row"));
-        assertTrue(receiverLink.contains("return label"));
-        assertTrue(identityLink.contains("identity_detail_available"));
-        assertTrue(identityLink.contains("identity_detail_view"));
-        assertTrue(identityLink.contains("return label"));
+        assertTrue(receiverLink.contains("entityReferenceAllowed(row.entity_ref)"));
+        assertTrue(receiverLink.contains("if (target) return anchor(label, target)"));
+        assertFalse(identityLink.contains("identity_detail_available"));
+        assertFalse(identityLink.contains("identity_detail_view"));
+        assertTrue(identityLink.contains("row.entity_ref"));
+        assertTrue(identityLink.contains("row.entity_tab"));
+        assertTrue(identityLink.contains("return target ? anchor(label, target) : label"));
     }
 
     @Test

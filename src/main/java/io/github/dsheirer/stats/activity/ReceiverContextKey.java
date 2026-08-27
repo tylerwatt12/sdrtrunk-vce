@@ -22,50 +22,24 @@ final class ReceiverContextKey
     {
     }
 
-    static String configured(String guid, String configurationId)
+    static String trunked(String guid)
     {
-        return ChannelContextKey.configured(guid, configurationId);
+        return ChannelContextKey.trunked(guid);
     }
 
-    static String guid(String guid)
+    static String conventional(String configurationId)
     {
-        String usableGuid = nonBlank(guid);
-        return usableGuid != null ? "GUID:" + usableGuid : null;
+        return ChannelContextKey.conventional(configurationId);
     }
 
-    static String conventional(P25ActivityLogRecords.ContextKind contextKind, String protocol, Long frequencyHertz,
-                               String channelName)
+    static boolean isConventional(String contextKey)
     {
-        return conventional(contextKind, protocol, frequencyHertz, channelName, false);
-    }
-
-    static String conventionalWithChannelName(P25ActivityLogRecords.ContextKind contextKind, String protocol,
-                                              Long frequencyHertz, String channelName)
-    {
-        return conventional(contextKind, protocol, frequencyHertz, channelName, true);
-    }
-
-    private static String conventional(P25ActivityLogRecords.ContextKind contextKind, String protocol,
-                                       Long frequencyHertz, String channelName, boolean includeChannelName)
-    {
-        if(contextKind == null || protocol == null || protocol.isBlank())
+        if(contextKey == null || !contextKey.startsWith("CONFIGURATION:"))
         {
-            return null;
+            return false;
         }
 
-        if(frequencyHertz != null && frequencyHertz > 0)
-        {
-            String key = contextKind.name() + ":" + protocol + ":" + frequencyHertz;
-            String usableChannelName = nonBlank(channelName);
-            return includeChannelName && usableChannelName != null ? key + ":" + usableChannelName : key;
-        }
-
-        String usableChannelName = nonBlank(channelName);
-        return usableChannelName != null ? contextKind.name() + ":" + protocol + ":" + usableChannelName : null;
-    }
-
-    private static String nonBlank(String value)
-    {
-        return value != null && !value.isBlank() ? value : null;
+        String configurationId = contextKey.substring("CONFIGURATION:".length());
+        return contextKey.equals(conventional(configurationId));
     }
 }

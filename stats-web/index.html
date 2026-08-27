@@ -3,20 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="101">
+  <meta name="sdrtrunk-web-revision" content="102">
   <title>sdrtrunk-vce</title>
-  <script>
-    (() => {
-      try {
-        if (window.localStorage.getItem('sdrtrunk_theme') === 'dark') {
-          document.documentElement.dataset.theme = 'dark';
-        }
-      } catch (error) {
-        // Browser storage can be disabled; light remains the default.
-      }
-    })();
-  </script>
-  <link rel="stylesheet" href="/assets/app.css?v=84">
+  <link rel="stylesheet" href="/assets/app.css?v=85">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -79,7 +68,8 @@
         <div class="header-controls">
           <a id="receiver-health-indicator" class="receiver-health-indicator receiver-health-loading icon-button" href="/?view=admin&amp;tab=health" hidden aria-label="Receiver health loading" title="Receiver health loading"><svg aria-hidden="true"><use href="#icon-health"></use></svg><span id="receiver-health-indicator-state" class="visually-hidden">Loading</span></a>
           <div id="global-status" class="visually-hidden" role="status" aria-live="polite">Loading</div>
-          <div id="auth-controls" class="auth-controls" aria-live="polite"><span id="auth-session-label" class="auth-session-label" hidden></span><button type="button" id="auth-action" class="auth-action" disabled>Checking access</button></div>
+          <div id="preference-status" class="preference-status" role="status" aria-live="polite" hidden></div>
+          <div id="auth-controls" class="auth-controls" aria-live="polite"><span id="auth-status-label" class="auth-session-label" hidden></span><button type="button" id="auth-session-label" class="auth-session-label auth-session-button" hidden>My Settings</button><button type="button" id="auth-action" class="auth-action" disabled>Checking access</button></div>
           <button type="button" id="theme-toggle" class="theme-toggle icon-button" aria-pressed="false" aria-label="Use dark theme" title="Use dark theme"><svg aria-hidden="true"><use href="#icon-moon"></use></svg></button>
         </div>
       </header>
@@ -96,9 +86,6 @@
     </div>
     <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading" role="status">Loading</div></main>
   </div>
-  <script src="/assets/web-call-player.js?v=18"></script>
-  <script src="/assets/core/page-lifecycle.js?v=1"></script>
-  <script src="/assets/features/systems-directory.js?v=2"></script>
-  <script src="/assets/app.js?v=123"></script>
+  <script type="module" src="/assets/app.js?v=124"></script>
 </body>
 </html>

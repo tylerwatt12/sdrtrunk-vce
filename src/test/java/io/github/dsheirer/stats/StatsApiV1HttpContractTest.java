@@ -324,6 +324,20 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void conventionalCsvExportsAcceptOnlyCanonicalConfigurationIdentity() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000072";
+        HttpResponse<String> canonical = get(StatsApiV1.EXPORTS +
+            "/conventional-talkgroups.csv?configuration_id=" + configurationId);
+        assertEquals(200, canonical.statusCode(), canonical.body());
+        assertTrue(canonical.headers().firstValue("Content-Type").orElse("").startsWith("text/csv"));
+
+        HttpResponse<String> removedContext = get(StatsApiV1.EXPORTS +
+            "/conventional-talkgroups.csv?context=retired-context");
+        assertStructuredError(removedContext, 400, "unknown_parameter", "context");
+    }
+
+    @Test
     void systemGroupIdentityCollectionAcceptsItsPathScope() throws Exception
     {
         HttpResponse<String> response = get(StatsApiV1.SYSTEMS +
@@ -381,7 +395,7 @@ class StatsApiV1HttpContractTest
             Map.entry("ACTIVITY", "/api/v1/activity"),
             Map.entry("ACTIVITY_ACTIONS", "/api/v1/activity/actions"),
             Map.entry("ACTIVITY_RADIOS", "/api/v1/activity/radios"),
-            Map.entry("CONVENTIONAL_CONTEXTS", "/api/v1/conventional-contexts"),
+            Map.entry("CONVENTIONAL_CHANNELS", "/api/v1/conventional-channels"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),
             Map.entry("RECEIVER_HEALTH", "/api/v1/receiver-health"),
@@ -537,10 +551,27 @@ class StatsApiV1HttpContractTest
                 "VALUES (71, 'HTTP Aliases', 'P25')");
             statement.executeUpdate("INSERT INTO p25_system VALUES (1, 1, 71, 1000, 2000)");
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    alias_list_name, radres_guid, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000071', 'TRUNKED', 71,
+                    'HTTP System', 'HTTP Site', 'HTTP Site', 'HTTP Aliases',
+                    '00000000-0000-0000-0000-000000000071', 'P25_PHASE1', 851012500, '{}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000072', 'CONVENTIONAL', 72,
+                    'HTTP Conventional', 'HTTP County', 'HTTP Fire', 'NBFM', 154310000, '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
                     first_seen_ms, last_seen_ms, system_key, rfss, site, current_control_hz
-                ) VALUES (1, 'http-site', 'http-site-guid', 1, 1, 'HTTP Site', 'HTTP Aliases', 'P25-1',
+                ) VALUES (1, 'GUID:00000000-0000-0000-0000-000000000071',
+                    '00000000-0000-0000-0000-000000000071', 1, 1,
+                    'HTTP Site', 'HTTP Aliases', 'P25-1',
                     1000, 2000, 1, 1, 2, 851012500)
                 """);
             statement.executeUpdate("""

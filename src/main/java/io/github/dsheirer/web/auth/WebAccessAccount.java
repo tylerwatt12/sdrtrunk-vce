@@ -10,15 +10,15 @@ import java.util.Objects;
 /**
  * Public, verifier-free account metadata used for user management and authenticated principals.
  */
-public record WebAccessAccount(String username, AccessTier tier, long passwordChangedAtEpochMillis,
-                               long credentialVersion, boolean primaryAdmin)
+public record WebAccessAccount(long id, String username, AccessTier tier, long passwordChangedAtEpochMillis,
+                               long authRevision, boolean primaryAdmin)
 {
     public WebAccessAccount
     {
-        username = WebAdminCredential.normalizeUsername(username);
+        username = WebPasswordVerifier.normalizeUsername(username);
         Objects.requireNonNull(tier, "Web account tier cannot be null");
 
-        if(!tier.isAccountTier() || passwordChangedAtEpochMillis <= 0 || credentialVersion < 1)
+        if(id <= 0 || !tier.isAccountTier() || passwordChangedAtEpochMillis <= 0 || authRevision < 1)
         {
             throw new IllegalArgumentException("Invalid web account metadata");
         }

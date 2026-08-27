@@ -5,6 +5,9 @@
  */
 package io.github.dsheirer.controller.channel;
 
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
+import java.util.UUID;
+
 /**
  * Creates the stable context key shared by configured-channel activity and browser navigation.
  */
@@ -16,25 +19,47 @@ public final class ChannelContextKey
 
     public static String configured(Channel channel)
     {
-        return channel != null ? configured(channel.hasRadresGuid() ? channel.getRadresGuid() : null,
-            channel.getConfigurationId()) : null;
-    }
-
-    public static String configured(String guid, String configurationId)
-    {
-        String usableGuid = nonBlank(guid);
-
-        if(usableGuid != null)
+        if(channel == null)
         {
-            return "GUID:" + usableGuid;
+            return null;
         }
 
-        String usableConfigurationId = nonBlank(configurationId);
+        return switch(ChannelConfigurationPolicy.requireChannelKind(channel))
+        {
+            case TRUNKED -> trunked(channel.hasRadresGuid() ? channel.getRadresGuid() : null);
+            case CONVENTIONAL -> conventional(channel.getConfigurationId());
+        };
+    }
+
+    public static String trunked(String guid)
+    {
+        String usableGuid = canonicalUuid(guid);
+        return usableGuid != null ? "GUID:" + usableGuid : null;
+    }
+
+    public static String conventional(String configurationId)
+    {
+        String usableConfigurationId = canonicalUuid(configurationId);
         return usableConfigurationId != null ? "CONFIGURATION:" + usableConfigurationId : null;
     }
 
-    private static String nonBlank(String value)
+    private static String canonicalUuid(String value)
     {
-        return value != null && !value.isBlank() ? value : null;
+        if(value == null || value.isBlank())
+        {
+            return null;
+        }
+
+        String candidate = value.strip();
+
+        try
+        {
+            String canonical = UUID.fromString(candidate).toString();
+            return canonical.equals(candidate) ? canonical : null;
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
     }
 }

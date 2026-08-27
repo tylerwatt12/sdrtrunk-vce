@@ -268,12 +268,11 @@ public final class DmrActivitySchema
 
     static void validateCompletedCall(P25ActivityLogRecords.DmrConventionalCall call) throws SQLException
     {
-        if(call == null || call.contextKey() == null || call.contextKey().isBlank() || call.frequencyHertz() <= 0 ||
+        if(call == null || !ReceiverContextKey.isConventional(call.contextKey()) || call.frequencyHertz() <= 0 ||
             (call.timeslot() != 1 && call.timeslot() != 2) || call.callStartEpochMilliseconds() <= 0 ||
             call.callEndEpochMilliseconds() < call.callStartEpochMilliseconds() || call.targetKind() == null ||
             invalidIdentity(call.talkgroupId()) || invalidIdentity(call.sourceRadioId()) ||
-            invalidIdentity(call.targetRadioId()) || call.guid() != null && !call.guid().isBlank() &&
-                !call.contextKey().equals("GUID:" + call.guid()))
+            invalidIdentity(call.targetRadioId()))
         {
             throw new SQLException("Invalid conventional DMR call observation");
         }

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -18,6 +19,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -50,9 +52,9 @@ class DmrActivitySchemaTest
 
             assertEquals(3, scalar(connection, """
                 SELECT call_count FROM dmr_conventional_talkgroup_summary
-                WHERE context_id=(SELECT id FROM receiver_context WHERE guid='site-a')
+                WHERE context_id=(SELECT id FROM receiver_context WHERE context_key='%s')
                   AND frequency_hz=461125000 AND timeslot=1 AND talkgroup_id=91
-                """));
+                """.formatted(configurationContextKey("site-a"))));
             assertEquals(1, scalar(connection, """
                 SELECT encrypted_count FROM dmr_conventional_talkgroup_summary
                 WHERE frequency_hz=461125000 AND timeslot=1 AND talkgroup_id=91
@@ -63,14 +65,14 @@ class DmrActivitySchemaTest
                 """));
             assertEquals(3, scalar(connection, """
                 SELECT call_count FROM dmr_conventional_radio_summary
-                WHERE context_id=(SELECT id FROM receiver_context WHERE guid='site-a')
+                WHERE context_id=(SELECT id FROM receiver_context WHERE context_key='%s')
                   AND frequency_hz=461125000 AND timeslot=1 AND radio_id=101
-                """));
+                """.formatted(configurationContextKey("site-a"))));
             assertEquals(2, scalar(connection, """
                 SELECT group_call_count FROM dmr_conventional_radio_summary
-                WHERE context_id=(SELECT id FROM receiver_context WHERE guid='site-a')
+                WHERE context_id=(SELECT id FROM receiver_context WHERE context_key='%s')
                   AND frequency_hz=461125000 AND timeslot=1 AND radio_id=101
-                """));
+                """.formatted(configurationContextKey("site-a"))));
             assertEquals(1, scalar(connection, """
                 SELECT private_call_count FROM dmr_conventional_radio_summary
                 WHERE frequency_hz=461125000 AND timeslot=1 AND radio_id=202
@@ -81,19 +83,21 @@ class DmrActivitySchemaTest
                 """));
             assertEquals(4, scalar(connection, """
                 SELECT call_count FROM conventional_activity_summary
-                WHERE context_id=(SELECT id FROM receiver_context WHERE guid='site-a')
+                WHERE context_id=(SELECT id FROM receiver_context WHERE context_key='%s')
                   AND frequency_hz=461125000 AND timeslot=1
-                """));
+                """.formatted(configurationContextKey("site-a"))));
             assertEquals(1, scalar(connection, """
                 SELECT call_count FROM dmr_conventional_talkgroup_summary
-                WHERE context_id=(SELECT id FROM receiver_context WHERE guid='site-b')
+                WHERE context_id=(SELECT id FROM receiver_context WHERE context_key='%s')
                   AND frequency_hz=462125000 AND timeslot=1 AND talkgroup_id=91
-                """));
+                """.formatted(configurationContextKey("site-b"))));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_activity_event"));
             assertEquals("County DMR", text(connection,
-                "SELECT alias_list_name FROM receiver_context WHERE guid='site-a'"));
+                "SELECT alias_list_name FROM receiver_context WHERE context_key='" +
+                    configurationContextKey("site-a") + "'"));
             assertEquals(3, scalar(connection,
-                "SELECT kind_code FROM receiver_context WHERE guid='site-a'"));
+                "SELECT kind_code FROM receiver_context WHERE context_key='" +
+                    configurationContextKey("site-a") + "'"));
         }
     }
 
@@ -142,15 +146,15 @@ class DmrActivitySchemaTest
     }
 
     @Test
-    void guidUsesCanonicalReceiverContextIdentity() throws Exception
+    void configurationIdUsesCanonicalConventionalContextIdentity() throws Exception
     {
         P25ActivityLogRecords.DmrConventionalCall call =
             groupCall(1_000, 2_000, "same-guid", 461_125_000L, 1, 91, 101, false);
-        assertEquals("GUID:same-guid", call.contextKey());
+        assertEquals(configurationContextKey("same-guid"), call.contextKey());
     }
 
     @Test
-    void reusesCanonicalGuidContextWhenChannelModeChanges() throws Exception
+    void keepsConfigurationAndGuidContextsSeparateWhenChannelModeChanges() throws Exception
     {
         Path database = mTemporaryFolder.resolve("mode-switch.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -162,20 +166,24 @@ class DmrActivitySchemaTest
                 INSERT INTO receiver_context (
                     context_key, guid, kind_code, protocol_code, channel_name, decoder, first_seen_ms, last_seen_ms,
                     nac, rfss, site, current_control_hz
-                ) VALUES ('GUID:mode-switch', 'mode-switch', 1, 3, 'Old trunked', 'DMR', 500, 500,
+                ) VALUES ('GUID:%s', '%s', 1, 3, 'Old trunked', 'DMR', 500, 500,
                     1, 2, 3, 461125000)
-                """);
+                """.formatted(radresGuid("mode-switch"), radresGuid("mode-switch")));
 
             P25ActivityLogSchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "mode-switch", 461_125_000L, 1, 91, 101, false));
 
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_context"));
             assertEquals(1, scalar(connection,
-                "SELECT COUNT(*) FROM receiver_context WHERE guid='mode-switch'"));
+                "SELECT kind_code FROM receiver_context WHERE context_key='GUID:" +
+                    radresGuid("mode-switch") + "'"));
             assertEquals(3, scalar(connection,
-                "SELECT kind_code FROM receiver_context WHERE guid='mode-switch'"));
+                "SELECT kind_code FROM receiver_context WHERE context_key='" +
+                    configurationContextKey("mode-switch") + "'"));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(nac) + COUNT(rfss) + COUNT(site) + COUNT(current_control_hz) " +
-                    "FROM receiver_context WHERE guid='mode-switch'"));
+                    "FROM receiver_context WHERE context_key='" +
+                    configurationContextKey("mode-switch") + "'"));
             assertEquals(1, scalar(connection,
                 "SELECT call_count FROM dmr_conventional_talkgroup_summary"));
         }
@@ -190,7 +198,7 @@ class DmrActivitySchemaTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogRecords.DmrConventionalCall invalid = new P25ActivityLogRecords.DmrConventionalCall(
-                2_000, 1_000, "GUID:bad", "bad", "Bad", null, 0, 3,
+                2_000, 1_000, configurationContextKey("invalid-call"), null, "Bad", null, 0, 3,
                 P25ActivityLogRecords.DmrTargetKind.GROUP, 1, 2, null, false);
             assertThrows(SQLException.class,
                 () -> P25ActivityLogSchema.recordDmrConventionalCall(connection, invalid));
@@ -206,7 +214,7 @@ class DmrActivitySchemaTest
     }
 
     @Test
-    void retentionClearAndResetAreBoundedAndContextScoped() throws Exception
+    void retentionSiteClearAndResetRespectConfigurationScope() throws Exception
     {
         Path database = mTemporaryFolder.resolve("maintenance.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -225,13 +233,13 @@ class DmrActivitySchemaTest
             assertEquals(1, cleanup.radios());
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
 
-            assertEquals(2, DmrActivitySchema.clearSiteStats(connection, "keep"));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_radio_summary"));
+            assertEquals(0, DmrActivitySchema.clearSiteStats(connection, radresGuid("keep")));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_radio_summary"));
 
             P25ActivityLogSchema.recordDmrConventionalCall(connection,
                 privateCall(11_000, 12_000, "reset", 463_125_000L, 1, 103, 203, false));
-            assertEquals(2, DmrActivitySchema.resetStats(connection));
+            assertEquals(4, DmrActivitySchema.resetStats(connection));
         }
     }
 
@@ -248,7 +256,7 @@ class DmrActivitySchemaTest
                 groupCall(1_000, 2_000, "cap", 461_125_000L, 1, 1, 101, false);
             P25ActivityLogSchema.recordDmrConventionalCall(connection, seed);
             int context = scalar(connection,
-                "SELECT id FROM receiver_context WHERE context_key='GUID:cap'");
+                "SELECT id FROM receiver_context WHERE context_key='" + configurationContextKey("cap") + "'");
             statement.executeUpdate("""
                 WITH RECURSIVE identities(value) AS (
                     VALUES(2) UNION ALL SELECT value + 1 FROM identities WHERE value < 4096
@@ -310,7 +318,7 @@ class DmrActivitySchemaTest
             P25ActivityLogSchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "plans", 461_125_000L, 1, 1, 1, false));
             int context = scalar(connection,
-                "SELECT id FROM receiver_context WHERE context_key='GUID:plans'");
+                "SELECT id FROM receiver_context WHERE context_key='" + configurationContextKey("plans") + "'");
             statement.executeUpdate("""
                 WITH RECURSIVE identities(value) AS (
                     VALUES(2) UNION ALL SELECT value + 1 FROM identities WHERE value < 4096
@@ -358,22 +366,37 @@ class DmrActivitySchemaTest
         }
     }
 
-    private static P25ActivityLogRecords.DmrConventionalCall groupCall(long start, long end, String guid,
+    private static P25ActivityLogRecords.DmrConventionalCall groupCall(long start, long end, String fixture,
                                                                         long frequency, int timeslot, int talkgroup,
                                                                         int source, boolean encrypted)
     {
-        return new P25ActivityLogRecords.DmrConventionalCall(start, end, "GUID:" + guid, guid,
-            "Repeater " + guid, "County DMR", frequency, timeslot, P25ActivityLogRecords.DmrTargetKind.GROUP,
+        return new P25ActivityLogRecords.DmrConventionalCall(start, end, configurationContextKey(fixture), null,
+            "Repeater " + fixture, "County DMR", frequency, timeslot, P25ActivityLogRecords.DmrTargetKind.GROUP,
             talkgroup, source, null, encrypted);
     }
 
-    private static P25ActivityLogRecords.DmrConventionalCall privateCall(long start, long end, String guid,
+    private static P25ActivityLogRecords.DmrConventionalCall privateCall(long start, long end, String fixture,
                                                                           long frequency, int timeslot, int source,
                                                                           int target, boolean encrypted)
     {
-        return new P25ActivityLogRecords.DmrConventionalCall(start, end, "GUID:" + guid, guid,
-            "Repeater " + guid, "County DMR", frequency, timeslot, P25ActivityLogRecords.DmrTargetKind.PRIVATE,
+        return new P25ActivityLogRecords.DmrConventionalCall(start, end, configurationContextKey(fixture), null,
+            "Repeater " + fixture, "County DMR", frequency, timeslot, P25ActivityLogRecords.DmrTargetKind.PRIVATE,
             null, source, target, encrypted);
+    }
+
+    private static String configurationContextKey(String fixture)
+    {
+        return "CONFIGURATION:" + deterministicUuid("configuration:" + fixture);
+    }
+
+    private static String radresGuid(String fixture)
+    {
+        return deterministicUuid("radres:" + fixture);
+    }
+
+    private static String deterministicUuid(String fixture)
+    {
+        return UUID.nameUUIDFromBytes(fixture.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private static int scalar(Connection connection, String sql) throws SQLException

@@ -1,11 +1,4 @@
-((root, factory) => {
-  'use strict';
-
-  const lifecycle = Object.freeze(factory());
-  if (typeof module === 'object' && module.exports) module.exports = lifecycle;
-  if (root) root.sdrtrunkPageLifecycle = lifecycle;
-})(typeof window !== 'undefined' ? window : globalThis, () => {
-  'use strict';
+'use strict';
 
   function invalidResponse(path, message) {
     const error = new Error(message || 'The API returned an invalid collection response.');
@@ -81,5 +74,4 @@
     return execute();
   }
 
-  return { decodeCollection, decodeOffsetPage, requiresPageHandling, run };
-});
+export { decodeCollection, decodeOffsetPage, requiresPageHandling, run };

@@ -72,13 +72,11 @@ class P25ActivityLogMapper
         String guid = blankToNull(event.guid());
         String configurationId = blankToNull(event.channelConfigurationId());
         String channelName = blankToNull(event.channelName());
-        String contextKey = ReceiverContextKey.configured(guid, configurationId);
+        String contextKey = ReceiverContextKey.conventional(configurationId);
 
         if(contextKey == null)
         {
-            contextKey = ReceiverContextKey.conventionalWithChannelName(
-                P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, Protocol.DMR.name(), event.frequencyHertz(),
-                channelName);
+            return null;
         }
 
         P25ActivityLogRecords.DmrTargetKind targetKind = switch(event.targetKind())
@@ -117,13 +115,11 @@ class P25ActivityLogMapper
         String guid = blankToNull(event.guid());
         String configurationId = blankToNull(event.channelConfigurationId());
         String channelName = blankToNull(event.channelName());
-        String contextKey = ReceiverContextKey.configured(guid, configurationId);
+        String contextKey = ReceiverContextKey.conventional(configurationId);
 
         if(contextKey == null)
         {
-            contextKey = ReceiverContextKey.conventionalWithChannelName(
-                P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN, Protocol.NXDN.name(), event.frequencyHertz(),
-                channelName);
+            return null;
         }
         P25ActivityLogRecords.NxdnTargetKind targetKind = switch(event.targetKind())
         {
@@ -177,8 +173,7 @@ class P25ActivityLogMapper
 
         IdentifierFacts facts = IdentifierFacts.from(event.identifiers());
         String guid = firstNonBlank(event.channel().getRadresGuid(), facts.radresGuid());
-        String contextKey = contextKey(guid, protocolName(event.protocol(), facts, decoderType), facts, null,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, event.channel().getName(),
+        String contextKey = contextKey(guid, facts, P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
             event.channel().getConfigurationId());
 
         if(contextKey == null)
@@ -315,11 +310,7 @@ class P25ActivityLogMapper
         Integer destination = destinationId(target);
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? destinationId(source) : null;
         String guid = firstNonBlank(winnerSource.siteGuid(), facts.radresGuid());
-        String contextKey = ReceiverContextKey.configured(guid, winnerSource.channelConfigurationId());
-        if(contextKey == null)
-        {
-            contextKey = outputContextKey(guid, facts);
-        }
+        String contextKey = ReceiverContextKey.trunked(guid);
         if(system == null && contextKey == null)
         {
             return null;
@@ -368,7 +359,7 @@ class P25ActivityLogMapper
         Integer sourceRadio = sourceIdentifier != null && sourceIdentifier.getForm() == Form.RADIO ?
             destinationId(sourceIdentifier) : null;
         String guid = blankToNull(facts.radresGuid());
-        String contextKey = outputContextKey(guid, facts);
+        String contextKey = ReceiverContextKey.conventional(facts.configurationId());
 
         long timestamp = snapshot.startTimestamp() > 0 ? snapshot.startTimestamp() :
             snapshot.lastActivityTimestamp();
@@ -391,62 +382,6 @@ class P25ActivityLogMapper
             identityDomain(identifiers, DecoderType.NXDN.toString().equals(facts.decoder()), false),
             p25TargetIdentity(targetIdentifier, isP25Decoder(facts.decoder())),
             facts.p25PatchMemberIdentities());
-    }
-
-    private static String outputContextKey(String guid, IdentifierFacts facts)
-    {
-        if(guid != null)
-        {
-            return "GUID:" + guid;
-        }
-
-        if(facts == null)
-        {
-            return null;
-        }
-
-        if(facts.configurationId() != null)
-        {
-            return "CONFIGURATION:" + facts.configurationId();
-        }
-
-        if(facts.hasTrunkedSiteIdentity())
-        {
-            String key = String.join(":", safe(facts.wacn()), safe(facts.systemId()), safe(facts.rfss()),
-                safe(facts.site()));
-            return ":::".equals(key) ? null : "P25:" + key;
-        }
-
-        if(facts.frequencyHertz() == null || facts.frequencyHertz() <= 0)
-        {
-            return null;
-        }
-
-        String decoder = blankToNull(facts.decoder());
-
-        if(DecoderType.P25_CONVENTIONAL.toString().equals(decoder))
-        {
-            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25.name() + ":" +
-                Protocol.APCO25.name() + ":" + facts.frequencyHertz();
-        }
-        else if(DecoderType.DMR.toString().equals(decoder))
-        {
-            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR.name() + ":" +
-                Protocol.DMR.name() + ":" + facts.frequencyHertz();
-        }
-        else if(DecoderType.NXDN.toString().equals(decoder))
-        {
-            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN.name() + ":" +
-                Protocol.NXDN.name() + ":" + facts.frequencyHertz();
-        }
-        else if(DecoderType.AM.toString().equals(decoder) || DecoderType.NBFM.toString().equals(decoder))
-        {
-            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG.name() + ":" +
-                (DecoderType.AM.toString().equals(decoder) ? Protocol.AM.name() : Protocol.NBFM.name()) + ":" +
-                facts.frequencyHertz();
-        }
-
-        return null;
     }
 
     private P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
@@ -513,8 +448,7 @@ class P25ActivityLogMapper
         String lcn = channelDescriptor;
         String guid = blankToNull(channel.getRadresGuid());
         String protocol = protocolName(event.getProtocol(), facts, decoderType);
-        String contextKey = contextKey(guid, protocol, facts, frequency, contextKind, channel.getName(),
-            channel.getConfigurationId());
+        String contextKey = contextKey(guid, facts, contextKind, channel.getConfigurationId());
 
         if(contextKey == null)
         {
@@ -1081,30 +1015,14 @@ class P25ActivityLogMapper
                 P25ActivityLogRecords.IdentityDomain.STANDARD;
     }
 
-    private static String contextKey(String guid, String protocol, IdentifierFacts facts, Long frequency,
-                                     P25ActivityLogRecords.ContextKind contextKind, String configuredChannelName,
+    private static String contextKey(String guid, IdentifierFacts facts,
+                                     P25ActivityLogRecords.ContextKind contextKind,
                                      String channelConfigurationId)
     {
         String configurationId = facts != null && facts.configurationId() != null ?
             facts.configurationId() : blankToNull(channelConfigurationId);
-        String configured = ReceiverContextKey.configured(guid, configurationId);
-
-        if(configured != null)
-        {
-            return configured;
-        }
-
-        if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
-        {
-            String key = String.join(":",
-                safe(facts != null ? facts.wacn() : null),
-                safe(facts != null ? facts.systemId() : null),
-                safe(facts != null ? facts.rfss() : null),
-                safe(facts != null ? facts.site() : null));
-            return ":::".equals(key) ? null : "P25:" + key;
-        }
-
-        return ReceiverContextKey.conventional(contextKind, protocol, frequency, configuredChannelName);
+        return contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE ?
+            ReceiverContextKey.trunked(guid) : ReceiverContextKey.conventional(configurationId);
     }
 
     private static String activityChannelName(P25ActivityLogRecords.ContextKind contextKind, Channel channel)

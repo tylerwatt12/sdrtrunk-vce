@@ -39,15 +39,6 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         rows = rows != null ? List.copyOf(rows) : List.of();
     }
 
-    /** Compatibility constructor for callers that predate explicit channel lifecycle state. */
-    public ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
-                                   String channelName, String configurationId, String guid, boolean controlActive,
-                                   List<IdentifierField> identifiers, List<Row> rows)
-    {
-        this(tableId, title, systemName, siteName, channelName, configurationId, guid, controlActive, true,
-            identifiers, rows);
-    }
-
     public static ChannelActivitySnapshot from(ChannelActivityTableState table)
     {
         Channel owner = table != null ? table.getOwnerChannel() : null;
@@ -86,46 +77,6 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       String targetForm, String targetAlias, String targetAliasDescription, String decoder,
                       String encryptionDetails, Navigation navigation, String role)
     {
-        /**
-         * Compatibility constructor for snapshots that do not supply browser navigation metadata or an explicit role.
-         */
-        public Row(String key, String channelName, String configurationId, String status, List<String> tags,
-                   String lcn, long frequencyHz, String callsign,
-                   Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
-                   long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
-                   long controlSyncLossBits, long controlDroppedBits, long controlLastValidDecodeMs,
-                   VoiceCallQuality voiceQuality,
-                   Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
-                   String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
-                   String targetForm, String targetAlias, String targetAliasDescription, String decoder,
-                   String encryptionDetails)
-        {
-            this(key, channelName, configurationId, status, tags, lcn, frequencyHz, callsign, signalDbfs,
-                decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
-                controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
-                timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
-                targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, null, null);
-        }
-
-        /**
-         * Compatibility constructor for snapshots that do not supply alias descriptions, browser navigation
-         * metadata, or an explicit role.
-         */
-        public Row(String key, String channelName, String configurationId, String status, List<String> tags,
-                   String lcn, long frequencyHz, String callsign, Double signalDbfs, Double decodeHealthPercent,
-                   long qualityObservedAtMs, long controlValidFrames, long controlInvalidFrames,
-                   long controlCorrectedBits, long controlSyncLossBits, long controlDroppedBits,
-                   long controlLastValidDecodeMs, VoiceCallQuality voiceQuality, Integer timeslot, String sourceId,
-                   String sourceForm, String sourceAlias, String talkerAlias, String sourceAliasDisplay,
-                   String targetId, String targetForm, String targetAlias, String decoder, String encryptionDetails)
-        {
-            this(key, channelName, configurationId, status, tags, lcn, frequencyHz, callsign, signalDbfs,
-                decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
-                controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
-                timeslot, sourceId, sourceForm, sourceAlias, null, talkerAlias, sourceAliasDisplay, targetId,
-                targetForm, targetAlias, null, decoder, encryptionDetails);
-        }
-
         private static Row from(ChannelActivityRow row, Channel owner)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
@@ -184,7 +135,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
             }
 
             String type = identifier.getForm() == Form.RADIO ? "radio" :
-                identifier.getForm() == Form.TALKGROUP ? "talkgroup" : null;
+                identifier.getForm() == Form.TALKGROUP ? "talkgroup" :
+                    identifier.getForm() == Form.PATCH_GROUP ? "patch_group" : null;
             String protocol = protocol(identifier.getProtocol());
 
             if(type == null || protocol == null)

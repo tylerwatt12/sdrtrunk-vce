@@ -424,7 +424,7 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, \"source_change\""));
         assertTrue(source.contains("new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(),"));
-        assertTrue(source.contains("writeMultiplexJson(output, TOPIC_DECODE_EVENTS, \"filter_catalog\""));
+        assertFalse(source.contains("writeMultiplexJson(output, TOPIC_DECODE_EVENTS, \"filter_catalog\""));
         assertFalse(source.contains("TOPIC_DECODE_EVENTS, \"snapshot\""));
         assertFalse(source.contains("TOPIC_DECODE_MESSAGES, \"snapshot\""));
         assertTrue(source.contains("output.eventDrops(topic) != mObservedOutputDrops[topic]"));

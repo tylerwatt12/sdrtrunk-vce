@@ -54,7 +54,7 @@ import javax.net.ssl.X509TrustManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class WebAccessHttpControllerTest
+class WebAccessControllersTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String ADMIN_PASSWORD = "admin-password-2026";
@@ -86,13 +86,22 @@ class WebAccessHttpControllerTest
         }
 
         accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.USER);
-        WebAccessHttpController controller = new WebAccessHttpController(accessService);
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
+        WebSessionHttpController sessions =
+            new WebSessionHttpController(accessService, authenticationService, requestSecurity);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         ExecutorService executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
-        controller.register(server);
-        server.createContext("/protected", controller.protect(WebCapability.DASHBOARD_VIEW, exchange -> {
+        sessions.register(server);
+        WebUserAdminHttpController users = new WebUserAdminHttpController(accessService, authenticationService);
+        server.createContext(WebUserAdminHttpController.PATH,
+            requestSecurity.protectApi(WebCapability.ADMIN_USERS, users::handle));
+        WebAccessPolicyHttpController policies = new WebAccessPolicyHttpController(accessService);
+        server.createContext(WebAccessPolicyHttpController.PATH,
+            requestSecurity.protectApi(WebCapability.ADMIN_ACCESS, policies::handle));
+        server.createContext("/protected", requestSecurity.protect(WebCapability.DASHBOARD_VIEW, exchange -> {
             byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
 
@@ -101,7 +110,7 @@ class WebAccessHttpControllerTest
                 outputStream.write(body);
             }
         }));
-        server.createContext("/public-protected", controller.protect(WebCapability.CREDITS_VIEW, exchange -> {
+        server.createContext("/public-protected", requestSecurity.protect(WebCapability.CREDITS_VIEW, exchange -> {
             byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
 
@@ -110,7 +119,7 @@ class WebAccessHttpControllerTest
                 outputStream.write(body);
             }
         }));
-        server.createContext("/admin-api", controller.protectApi(WebCapability.ADMIN_ALIASES, exchange -> {
+        server.createContext("/admin-api", requestSecurity.protectApi(WebCapability.ADMIN_ALIASES, exchange -> {
             byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
 
@@ -138,7 +147,7 @@ class WebAccessHttpControllerTest
             assertEquals(200, send(client, request(origin, "/public-protected").GET()).statusCode());
 
             HttpResponse<String> staleSession = send(client, request(origin, "/api/v1/auth/session")
-                .header("Cookie", WebAccessHttpController.SESSION_COOKIE_NAME + "=expired-session")
+                .header("Cookie", WebRequestSecurity.SESSION_COOKIE_NAME + "=expired-session")
                 .GET());
             assertEquals(200, staleSession.statusCode());
             assertFalse(data(staleSession).get("authenticated").booleanValue());
@@ -160,7 +169,7 @@ class WebAccessHttpControllerTest
 
             Login admin = login(client, origin, "admin", ADMIN_PASSWORD);
             assertEquals("admin", admin.body().get("tier").textValue());
-            assertTrue(admin.cookieHeader().contains(WebAccessHttpController.SESSION_COOKIE_NAME + "="));
+            assertTrue(admin.cookieHeader().contains(WebRequestSecurity.SESSION_COOKIE_NAME + "="));
             assertTrue(admin.setCookie().contains("HttpOnly"));
             assertTrue(admin.setCookie().contains("SameSite=Strict"));
             assertFalse(admin.setCookie().contains("Secure"));
@@ -192,7 +201,7 @@ class WebAccessHttpControllerTest
             assertEquals(403, send(client, request(origin, "/admin-api")
                 .header("Origin", "http://example.invalid")
                 .header("Cookie", admin.cookieHeader())
-                .header(WebAccessHttpController.CSRF_HEADER_NAME, admin.csrfToken())
+                .header(WebRequestSecurity.CSRF_HEADER_NAME, admin.csrfToken())
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
             assertEquals(200, send(client, mutation(origin, "/admin-api", admin)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
@@ -287,7 +296,7 @@ class WebAccessHttpControllerTest
         finally
         {
             server.stop(0);
-            controller.close();
+            requestSecurity.close();
             executor.shutdownNow();
         }
     }
@@ -315,7 +324,9 @@ class WebAccessHttpControllerTest
         }
 
         WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
-        WebAccessHttpController controller = new WebAccessHttpController(accessService, authenticationService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
+        WebSessionHttpController sessions =
+            new WebSessionHttpController(accessService, authenticationService, requestSecurity);
         char[] firstPassword = ADMIN_PASSWORD.toCharArray();
         char[] secondPassword = ADMIN_PASSWORD.toCharArray();
 
@@ -328,14 +339,14 @@ class WebAccessHttpControllerTest
             assertEquals(2, authenticationService.getActiveSessionCount());
 
             assertThrows(IOException.class,
-                () -> controller.deliverLoginResponse(failingResponseExchange(), created, existing.sessionId()));
+                () -> sessions.deliverLoginResponse(failingResponseExchange(), created, existing.sessionId()));
 
             assertEquals(1, authenticationService.getActiveSessionCount());
             assertTrue(authenticationService.resolveSession(existing.sessionId()).isPresent());
             assertTrue(authenticationService.resolveSession(created.sessionId()).isEmpty());
 
             assertThrows(IOException.class,
-                () -> controller.deliverLoginResponse(failingResponseExchange(), existing, existing.sessionId()));
+                () -> sessions.deliverLoginResponse(failingResponseExchange(), existing, existing.sessionId()));
             assertEquals(1, authenticationService.getActiveSessionCount(),
                 "a failed response must not revoke a capacity-reused session");
             assertTrue(authenticationService.resolveSession(existing.sessionId()).isPresent());
@@ -344,7 +355,7 @@ class WebAccessHttpControllerTest
         {
             Arrays.fill(firstPassword, '\u0000');
             Arrays.fill(secondPassword, '\u0000');
-            controller.close();
+            requestSecurity.close();
         }
     }
 
@@ -372,13 +383,16 @@ class WebAccessHttpControllerTest
 
         TlsMaterial material = new TlsMaterialService(mTemporaryDirectory.resolve("tls-root"))
             .generateSelfSigned("localhost", java.util.List.of("localhost", "127.0.0.1"));
-        WebAccessHttpController controller = new WebAccessHttpController(accessService);
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
+        WebSessionHttpController sessions =
+            new WebSessionHttpController(accessService, authenticationService, requestSecurity);
         HttpsServer server = HttpsServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(material.createServerSslContext()));
         ExecutorService executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
-        controller.register(server);
+        sessions.register(server);
         server.start();
 
         try
@@ -394,7 +408,7 @@ class WebAccessHttpControllerTest
         finally
         {
             server.stop(0);
-            controller.close();
+            requestSecurity.close();
             executor.shutdownNow();
         }
     }
@@ -437,7 +451,7 @@ class WebAccessHttpControllerTest
             @Override
             public URI getRequestURI()
             {
-                return URI.create(WebAccessHttpController.LOGIN_PATH);
+                return URI.create(WebSessionHttpController.LOGIN_PATH);
             }
 
             @Override
@@ -536,7 +550,7 @@ class WebAccessHttpControllerTest
         return request(origin, path)
             .header("Origin", origin.toString())
             .header("Cookie", login.cookieHeader())
-            .header(WebAccessHttpController.CSRF_HEADER_NAME, login.csrfToken())
+            .header(WebRequestSecurity.CSRF_HEADER_NAME, login.csrfToken())
             .header("Content-Type", "application/json");
     }
 

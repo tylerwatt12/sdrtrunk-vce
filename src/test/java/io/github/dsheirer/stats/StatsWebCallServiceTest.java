@@ -194,6 +194,39 @@ class StatsWebCallServiceTest
     }
 
     @Test
+    void publishesOnlyCatalogOwnedCompletedCallNavigation() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000737";
+        String guid = "00000000-0000-0000-0000-000000000021";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, guid, WebEntityRef.site(guid),
+                WebEntityRef.system("p25:BEE00:4A7:alias-list:10"), 1, 0))));
+        catalog.refreshNow();
+        StatsWebCallService service = new StatsWebCallService(null, WebCallConfiguration.defaults(), catalog);
+        service.start();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        {
+            service.receive(call());
+            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
+            assertNotNull(event);
+            Map<String,Object> metadata = metadata(event);
+            assertEquals(Map.of("kind", "site", "key", guid), metadata.get("entity_ref"));
+            assertEquals(Map.of("kind", "system", "key", "p25:BEE00:4A7:alias-list:10"),
+                metadata.get("system_entity_ref"));
+            assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:4A7:alias-list:10", "id", 9001),
+                metadata.get("source_entity_ref"));
+            assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:4A7:alias-list:10", "id", 4400),
+                metadata.get("target_entity_ref"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void checksThePerCallWaveLimitBeforeEncoding()
     {
         int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -

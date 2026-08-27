@@ -15,8 +15,10 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
-import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebRequestSecurity;
+import io.github.dsheirer.web.http.WebSessionHttpController;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -65,14 +67,15 @@ class StatsWebDashboardActivityAccessTest
 
         accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.PUBLIC);
         accessService.setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.USER);
-        WebAccessHttpController accessController = new WebAccessHttpController(accessService);
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         ExecutorService executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
-        accessController.register(server);
+        new WebSessionHttpController(accessService, authenticationService, requestSecurity).register(server);
         StatsWebDatabase statsDatabase = new StatsWebDatabase(new UserPreferences(), database);
-        new StatsApiV1Controller(statsDatabase, Map::of, accessController, null).register(server);
+        new StatsApiV1Controller(statsDatabase, Map::of, requestSecurity, null).register(server);
         server.start();
 
         try
@@ -100,7 +103,7 @@ class StatsWebDashboardActivityAccessTest
         {
             server.stop(0);
             executor.shutdownNow();
-            accessController.close();
+            requestSecurity.close();
         }
     }
 
@@ -122,15 +125,15 @@ class StatsWebDashboardActivityAccessTest
         }
 
         accessService.setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.PUBLIC);
-        WebAccessHttpController accessController = new WebAccessHttpController(accessService);
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         server.setExecutor(executor);
-        accessController.register(server);
         BlockingStatsWebDatabase statsDatabase =
             new BlockingStatsWebDatabase(new UserPreferences(), database);
-        new StatsApiV1Controller(statsDatabase, Map::of, accessController, null).register(server);
+        new StatsApiV1Controller(statsDatabase, Map::of, requestSecurity, null).register(server);
         server.start();
         CompletableFuture<HttpResponse<String>> firstResponse = null;
 
@@ -168,7 +171,7 @@ class StatsWebDashboardActivityAccessTest
 
             server.stop(0);
             executor.shutdownNow();
-            accessController.close();
+            requestSecurity.close();
         }
     }
 

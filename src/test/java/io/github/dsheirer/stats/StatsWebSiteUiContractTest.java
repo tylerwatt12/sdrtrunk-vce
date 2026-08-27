@@ -60,14 +60,15 @@ class StatsWebSiteUiContractTest
     }
 
     @Test
-    void rendersNeighborSiteFromTheNormalizedIdentifierWithLegacyFallback() throws Exception
+    void rendersNeighborSiteFromTheCanonicalIdentifier() throws Exception
     {
         String source = source();
         String identifier = function(source, "function neighborSiteId(row)");
         String p25Columns = function(source, "function p25SiteNeighborColumns()");
         String trunkedColumns = function(source, "function trunkedSiteNeighborColumns(site)");
 
-        assertTrue(identifier.contains("row?.site_id ?? row?.site"));
+        assertTrue(identifier.contains("return row?.site_id"));
+        assertFalse(identifier.contains("?? row?.site"));
         assertTrue(p25Columns.contains("hex(neighborSiteId(row), 2)"));
         assertTrue(trunkedColumns.contains("identifierNumber(neighborSiteId(row))"));
     }

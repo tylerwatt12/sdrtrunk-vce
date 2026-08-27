@@ -41,7 +41,14 @@ class StatsWebDatabaseTest
     private static final int WACN = 0xBEE00;
     private static final int SYSTEM = 0x348;
     private static final int SECOND_SYSTEM = 0x49F;
-    private static final String GUID = "test-site-guid";
+    private static final String GUID = "00000000-0000-0000-0000-000000000001";
+    private static final String FIRE_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000002";
+    private static final String SORTING_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000004";
+    private static final String DMR_COUNTY_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000005";
+    private static final String DMR_OTHER_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000006";
+    private static final String CSV_P25_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000081";
+    private static final String CSV_NXDN_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000082";
+    private static final String AIRPORT_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000099";
 
     @TempDir
     Path mTemporaryFolder;
@@ -181,11 +188,23 @@ class StatsWebDatabaseTest
     @Test
     void embedsOnlyTheBoundedSitePreviewForRequestedSystemPages() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement configuration = connection.prepareStatement("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES (?, 'TRUNKED', ?, 'Greater Cleveland', ?, 'County', ?, 'P25_PHASE1', '{}')
+                """))
         {
             for(int index = 0; index < StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW; index++)
             {
-                seedP25Context(connection, 200 + index, "preview-site-" + String.format("%02d", index), 1);
+                String guid = String.format("10000000-0000-0000-0000-%012d", index);
+                seedP25Context(connection, 200 + index, guid, 1);
+                configuration.setString(1, guid);
+                configuration.setInt(2, 200 + index);
+                configuration.setString(3, String.format("Preview Site %02d", index));
+                configuration.setString(4, guid);
+                configuration.executeUpdate();
             }
         }
 
@@ -205,14 +224,15 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> preview = rowsFrom(system, "site_preview");
         assertEquals(StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW, preview.size());
         assertEquals(Boolean.TRUE, system.get("site_preview_truncated"));
-        assertEquals("preview-site-00", preview.getFirst().get("guid"));
-        assertEquals("preview-site-24", preview.getLast().get("guid"));
+        assertEquals("10000000-0000-0000-0000-000000000000", preview.getFirst().get("guid"));
+        assertEquals("10000000-0000-0000-0000-000000000024", preview.getLast().get("guid"));
         assertTrue(preview.stream().allMatch(site ->
             number(site.get("scope_id")) == number(system.get("scope_id"))));
 
         Map<String,Object> searched = mDatabase.systemDirectory(request(
-            "/api/v1/systems?include_site_preview=true&limit=1&q=preview-site-24"));
-        assertEquals("preview-site-24", rowsFrom(rows(searched).getFirst(), "site_preview").getFirst().get("guid"));
+            "/api/v1/systems?include_site_preview=true&limit=1&q=10000000-0000-0000-0000-000000000024"));
+        assertEquals("10000000-0000-0000-0000-000000000024",
+            rowsFrom(rows(searched).getFirst(), "site_preview").getFirst().get("guid"));
 
         Map<String,Object> searchedTruncatedSite = mDatabase.systemDirectory(request(
             "/api/v1/systems?include_site_preview=true&limit=1&q=" + GUID));
@@ -293,7 +313,7 @@ class StatsWebDatabaseTest
         Map<String,Object> affiliatedSite = map(affiliatedPresence, "site");
         assertEquals(GUID, affiliatedSite.get("guid"));
         assertEquals(1L, number(affiliatedSite.get("rfss")));
-        assertEquals(1L, number(affiliatedSite.get("site")));
+        assertEquals(1L, number(affiliatedSite.get("site_id")));
 
         Map<String,Object> registered = mDatabase.systemRadios(request(
             "/api/v1/systems/p25:BEE00:348/radios?scope=p25:BEE00:348&affiliated=false&site_guid=" + GUID));
@@ -331,16 +351,24 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(talkgroup.get("affiliated_radios")));
         assertEquals(1L, number(talkgroup.get("affiliated_sites")));
         assertEquals(Boolean.TRUE, map(talkgroup, "capabilities").get("radio_site_presence"));
+        assertEquals(Map.of("kind", "system", "key", "p25:BEE00:348"),
+            talkgroup.get("system_entity_ref"));
         assertEquals(1L, number(map(mDatabase.system(request(
             "/api/v1/systems/p25:BEE00:348?scope=p25:BEE00:348")), "system").get("affiliated_radios")));
-        assertEquals(1L, number(map(mDatabase.site(request(
-            "/api/v1/sites/" + GUID + "?guid=" + GUID)), "site").get("affiliated_radios")));
+        Map<String,Object> siteDetail = map(mDatabase.site(request(
+            "/api/v1/sites/" + GUID + "?guid=" + GUID)), "site");
+        assertEquals(1L, number(siteDetail.get("affiliated_radios")));
+        assertEquals(Map.of("kind", "system", "key", "p25:BEE00:348"),
+            siteDetail.get("system_entity_ref"));
+        assertFalse(siteDetail.containsKey("system_ref"));
 
         Map<String,Object> radioDetail = map(mDatabase.radio(request(
             "/api/v1/systems/p25:BEE00:348/radios/1811333?scope=p25:BEE00:348&radio_id=1811333")),
             "radio");
         assertEquals("registration", map(radioDetail, "presence").get("evidence"));
         assertEquals(Boolean.TRUE, map(radioDetail, "capabilities").get("radio_site_presence"));
+        assertEquals(Map.of("kind", "system", "key", "p25:BEE00:348"),
+            radioDetail.get("system_entity_ref"));
 
         Map<String,Object> guidlessRadio = map(mDatabase.radio(request(
             "/api/v1/systems/p25:BEE00:348/radios/1811334?scope=p25:BEE00:348&radio_id=1811334")),
@@ -348,7 +376,7 @@ class StatsWebDatabaseTest
         Map<String,Object> guidlessSite = map(map(guidlessRadio, "presence"), "site");
         assertNull(guidlessSite.get("guid"));
         assertEquals(2L, number(guidlessSite.get("rfss")));
-        assertEquals(3L, number(guidlessSite.get("site")));
+        assertEquals(3L, number(guidlessSite.get("site_id")));
 
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/v1/exports/system-radios.csv?dataset=system-radios&scope=p25:BEE00:348" +
@@ -454,8 +482,10 @@ class StatsWebDatabaseTest
                 WHERE scope_id=1 AND radio_id=1811332 AND talkgroup_id=56132
                 """);
             statement.executeUpdate("""
-                INSERT INTO configuration_channel(sort_order, name, alias_list_name, decoder_type, config_json)
-                VALUES(1, 'Configured P25', 'County', 'P25-1', '{}')
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, name, alias_list_name, decoder_type, config_json
+                ) VALUES('00000000-0000-0000-0000-000000000457', 'CONVENTIONAL', 3,
+                    'Configured P25', 'County', 'P25_PHASE1', '{}')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_broadcast_channel(alias_id, channel_name)
@@ -474,7 +504,7 @@ class StatsWebDatabaseTest
         Map<String,Object> lists = mDatabase.aliasLists(request("/api/v1/alias-lists"));
         Map<String,Object> county = rows(lists).getFirst();
         assertEquals(1L, number(county.get("alias_list_id")));
-        assertEquals(1L, number(county.get("assigned_channel_count")));
+        assertEquals(3L, number(county.get("assigned_channel_count")));
 
         Map<String,Object> response = mDatabase.aliases(request(
             "/api/aliases?list=1&type=talkgroup&sort=logical_call_count&direction=desc"));
@@ -502,7 +532,7 @@ class StatsWebDatabaseTest
         assertEquals(List.of(1L, 2L), map(detail, "alias").get("scan_list_ids"));
         Map<String,Object> breakdown = rowsFrom(detail, "breakdown").getFirst();
         assertEquals("scope:1", breakdown.get("scope_key"));
-        assertEquals("p25:BEE00:348", breakdown.get("scope_label"));
+        assertEquals("Greater Cleveland", breakdown.get("scope_label"));
         assertEquals(1L, number(breakdown.get("alias_list_id")));
 
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
@@ -1710,7 +1740,23 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("quiet-quality-site",
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000001713', 'TRUNKED', 1713,
+                    'Quiet DMR', 'Quiet Quality Site',
+                    '00000000-0000-0000-0000-000000001713', 'DMR', '{}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000001714', 'TRUNKED', 1714,
+                    'Configured Only', 'Configured County', 'Configured Without Activity',
+                    '00000000-0000-0000-0000-000000001714', 'P25_PHASE1', '{}')
+                """);
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000001713",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 0, "Quiet DMR", "Quiet Quality Site",
                 7, null, 2, null, List.of(), List.of()));
             statement.executeUpdate("""
@@ -1719,7 +1765,7 @@ class StatsWebDatabaseTest
                     average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct,
                     valid_frames, invalid_frames, corrected_bits, sync_loss_bits, dropped_bits,
                     last_valid_decode_ms
-                ) VALUES ('test-site-guid', 856137500, %1$d, %1$d, -18.0, -19.0, -22.0, -17.0,
+                ) VALUES ('00000000-0000-0000-0000-000000000001', 856137500, %1$d, %1$d, -18.0, -19.0, -22.0, -17.0,
                     96.0, 30, 2, 4, 1, 0, %1$d)
                 """.formatted((now / 10_000L) * 10_000L));
         }
@@ -1732,17 +1778,21 @@ class StatsWebDatabaseTest
         assertEquals("01", sampled.get("site_id_hex"));
         assertFalse(sampled.get("sample_age_seconds").isBlank());
         assertTrue(sampled.isMapped("valid_frames_rolling_30s"));
-        CSVRecord quiet = latest.stream().filter(row -> "quiet-quality-site".equals(row.get("site_guid")))
+        CSVRecord quiet = latest.stream().filter(row -> "00000000-0000-0000-0000-000000001713".equals(row.get("site_guid")))
             .findFirst().orElseThrow();
         assertEquals("", quiet.get("observed_utc"));
         assertEquals("", quiet.get("sample_age_seconds"));
 
         List<CSVRecord> history = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=site-quality&guid=test-site-guid&range=1h&points=60")));
+            "/api/export.csv?dataset=site-quality&guid=00000000-0000-0000-0000-000000000001&range=1h&points=60")));
         assertEquals(1, history.size());
         assertTrue(history.getFirst().isMapped("bucket_end_utc"));
         assertFalse(history.getFirst().isMapped("valid_frames_rolling_30s"));
         assertEquals("BEE00", history.getFirst().get("wacn_hex"));
+
+        StatsCsvExport configuredWithoutActivity = mDatabase.csvExport(request(
+            "/api/export.csv?dataset=site-quality&guid=00000000-0000-0000-0000-000000001714&range=1h"));
+        assertEquals(0, configuredWithoutActivity.rowCount());
     }
 
     @Test
@@ -1786,18 +1836,21 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void returnsDurableAliasListIdsWithSiteAndConventionalRows()
+    void returnsConfiguredAliasOwnershipWithoutLeakingInternalIdsFromDetails()
     {
         assertEquals(1L, number(map(mDatabase.site(request("/api/site?guid=" + GUID)), "site")
             .get("alias_list_id")));
         assertEquals(1L, number(rows(mDatabase.conventional(request("/api/conventional"))).getFirst()
             .get("alias_list_id")));
-        assertEquals(1L, number(map(mDatabase.conventionalDetail(
-            request("/api/conventional/detail?context=conventional-fire")), "context").get("alias_list_id")));
+        Map<String,Object> channel = map(mDatabase.conventionalDetail(request(
+            "/api/conventional/detail?configuration_id=00000000-0000-0000-0000-000000000002")), "channel");
+        assertEquals("County", channel.get("alias_list_name"));
+        assertFalse(channel.containsKey("alias_list_id"));
+        assertEquals(FIRE_CONFIGURATION_ID, map(channel, "entity_ref").get("key"));
     }
 
     @Test
-    void retainsSharedP25AliasListIdentityAfterItsConfigurationIsRemoved() throws Exception
+    void retainsLearnedP25AliasListIdentityAfterAliasRecordsAreRemoved() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -1812,9 +1865,6 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> scopeRows = new ArrayList<>();
         scopeRows.add(rows(mDatabase.systemDirectory(request("/api/systems"))).getFirst());
         scopeRows.add(map(mDatabase.system(request("/api/system?scope=p25:BEE00:348")), "system"));
-        scopeRows.add(rows(mDatabase.systemSites(request(
-            "/api/system/sites?scope=p25:BEE00:348"))).getFirst());
-        scopeRows.add(map(mDatabase.site(request("/api/site?guid=" + GUID)), "site"));
         scopeRows.add(rows(mDatabase.systemTalkgroups(request(
             "/api/system/talkgroups?scope=p25:BEE00:348"))).getFirst());
         scopeRows.add(rows(mDatabase.systemRadios(request(
@@ -1832,29 +1882,46 @@ class StatsWebDatabaseTest
         {
             assertEquals(1L, number(row.get("alias_list_id")), row.toString());
         }
+
+        Map<String,Object> configuredSite = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        Map<String,Object> scopedSite = rows(mDatabase.systemSites(request(
+            "/api/system/sites?scope=p25:BEE00:348"))).getFirst();
+        assertEquals("County", configuredSite.get("alias_list_name"));
+        assertEquals("County", scopedSite.get("alias_list_name"));
+        assertNull(configuredSite.get("alias_list_id"));
+        assertNull(scopedSite.get("alias_list_id"));
     }
 
     @Test
     void treatsAnUncertainP25ContextLogicalCallAsOneSiteObservation() throws Exception
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
-        String scopeToken = "p25:uncertain:guid:p25-fallback-guid";
+        String scopeToken = "p25:uncertain:guid:00000000-0000-0000-0000-000000000900";
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000900', 'TRUNKED', 900,
+                    'Uncertain P25', 'Uncertain P25',
+                    '00000000-0000-0000-0000-000000000900', 'P25_PHASE1', '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
                     first_seen_ms, last_seen_ms, rfss, site
-                ) VALUES (900, 'p25-fallback', 'p25-fallback-guid', 1, 1, 'Uncertain P25',
+                ) VALUES (900, 'GUID:00000000-0000-0000-0000-000000000900',
+                    '00000000-0000-0000-0000-000000000900', 1, 1, 'Uncertain P25',
                     'P25-1', 1000, 3000, 8, 9)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
                     guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, decoder, rfss, site
-                ) VALUES ('p25-fallback-guid', 'fallback-hash', 1000, 3000, 1,
+                ) VALUES ('00000000-0000-0000-0000-000000000900', 'fallback-hash', 1000, 3000, 1,
                     'APCO25', 'Uncertain P25', 'P25-1', 8, 9)
                 """);
             statement.executeUpdate("""
@@ -1873,7 +1940,7 @@ class StatsWebDatabaseTest
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
                     logical_call_count, target_logical_call_count, encrypted_logical_call_count,
                     recorded_output_count, streamed_output_count
-                ) VALUES (900, 1, 77000, 1000, 3000, 1, 1, 1, 1, 1)
+                ) VALUES (900, 1, 57000, 1000, 3000, 1, 1, 1, 1, 1)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_logical_call_bucket (
@@ -1886,7 +1953,7 @@ class StatsWebDatabaseTest
                     scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
                     logical_call_count, encrypted_logical_call_count,
                     recorded_output_count, streamed_output_count
-                ) VALUES (900, %1$d, 1, 1, 77000, 1, 1, 1, 1)
+                ) VALUES (900, %1$d, 1, 1, 57000, 1, 1, 1, 1)
                 """.formatted(bucket));
         }
 
@@ -1905,7 +1972,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(talkgroup.get("site_observation_count")));
 
         Map<String,Object> detail = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=" + scopeToken + "&talkgroup_id=77000")), "group_identity");
+            "/api/talkgroup?scope=" + scopeToken + "&talkgroup_id=57000")), "group_identity");
         assertEquals(1L, number(detail.get("logical_call_count")));
         assertEquals(1L, number(detail.get("site_observation_count")));
 
@@ -1915,8 +1982,8 @@ class StatsWebDatabaseTest
         assertNull(site.get("alias_list_id"));
 
         Map<String,Object> siteTalkgroup = rows(mDatabase.siteTalkgroups(request(
-            "/api/site/talkgroups?guid=p25-fallback-guid&range=24h"))).getFirst();
-        assertEquals(77000L, number(siteTalkgroup.get("talkgroup_id")));
+            "/api/site/talkgroups?guid=00000000-0000-0000-0000-000000000900&range=24h"))).getFirst();
+        assertEquals(57000L, number(siteTalkgroup.get("talkgroup_id")));
         assertEquals(1L, number(siteTalkgroup.get("site_observation_count")));
         assertEquals(1L, number(siteTalkgroup.get("encrypted_site_observation_count")));
         assertFalse(siteTalkgroup.containsKey("logical_call_count"));
@@ -1931,10 +1998,19 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000901', 'TRUNKED', 901,
+                    'Greater Cleveland', 'Second Simulcast', 'County',
+                    '00000000-0000-0000-0000-000000000901', 'P25_PHASE1', '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
                     decoder, first_seen_ms, last_seen_ms, system_key, rfss, site
-                ) VALUES (901, 'multi-site-2', 'multi-site-2-guid', 1, 1, 'Second Simulcast',
+                ) VALUES (901, 'GUID:00000000-0000-0000-0000-000000000901',
+                    '00000000-0000-0000-0000-000000000901', 1, 1, 'Second Simulcast',
                     'County', 'P25-1', 1000, 3000, 1, 1, 2)
                 """);
             statement.executeUpdate("""
@@ -1946,19 +2022,19 @@ class StatsWebDatabaseTest
                 INSERT INTO p25_site_snapshot (
                     guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, rfss, site
-                ) VALUES ('multi-site-2-guid', 'multi-site-2-hash', 1000, 3000, 1,
+                ) VALUES ('00000000-0000-0000-0000-000000000901', 'multi-site-2-hash', 1000, 3000, 1,
                     'APCO25', 'Second Simulcast', 'County', 'P25-1', 1, 1, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
-                VALUES (900, 1, 'Multi-site Call', 'TALKGROUP', 'APCO25', 78000)
+                VALUES (900, 1, 'Multi-site Call', 'TALKGROUP', 'APCO25', 58000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
                     logical_call_count, target_logical_call_count, encrypted_logical_call_count,
                     recorded_output_count, streamed_output_count
-                ) VALUES (1, 1, 78000, 1000, 3000, 1, 1, 1, 1, 1)
+                ) VALUES (1, 1, 58000, 1000, 3000, 1, 1, 1, 1, 1)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_logical_call_bucket (
@@ -1971,7 +2047,7 @@ class StatsWebDatabaseTest
                     scope_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
                     logical_call_count, encrypted_logical_call_count,
                     recorded_output_count, streamed_output_count
-                ) VALUES (1, %1$d, 1, 1, 78000, 1, 1, 1, 1)
+                ) VALUES (1, %1$d, 1, 1, 58000, 1, 1, 1, 1)
                 """.formatted(bucket));
             statement.executeUpdate("""
                 INSERT INTO p25_learned_site (
@@ -1990,8 +2066,8 @@ class StatsWebDatabaseTest
                     scope_id, learned_site_id, bucket_start_ms, identity_role_code,
                     identity_kind_code, identity_id, observed_call_count,
                     encrypted_observed_call_count
-                ) VALUES (1, 901, %1$d, 1, 1, 78000, 1, 1),
-                         (1, 902, %1$d, 1, 1, 78000, 1, 1)
+                ) VALUES (1, 901, %1$d, 1, 1, 58000, 1, 1),
+                         (1, 902, %1$d, 1, 1, 58000, 1, 1)
                 """.formatted(bucket));
         }
 
@@ -2003,7 +2079,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(system.get("stream_submitted_logical_call_count")));
 
         Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=p25:BEE00:348&q=78000"))).getFirst();
+            "/api/system/talkgroups?scope=p25:BEE00:348&q=58000"))).getFirst();
         assertEquals(1L, number(talkgroup.get("logical_call_count")));
         assertEquals(2L, number(talkgroup.get("site_observation_count")));
         assertEquals(1L, number(talkgroup.get("recorded_logical_call_count")));
@@ -2013,22 +2089,22 @@ class StatsWebDatabaseTest
         assertFalse(talkgroup.containsKey("streamed_count"));
 
         Map<String,Object> detail = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=78000")), "group_identity");
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=58000")), "group_identity");
         assertEquals(1L, number(detail.get("logical_call_count")));
         assertEquals(2L, number(detail.get("site_observation_count")));
 
-        for(String guid: List.of(GUID, "multi-site-2-guid"))
+        for(String guid: List.of(GUID, "00000000-0000-0000-0000-000000000901"))
         {
             Map<String,Object> siteTalkgroup = rows(mDatabase.siteTalkgroups(request(
                 "/api/site/talkgroups?guid=" + guid + "&range=24h"))).stream()
-                .filter(row -> number(row.get("talkgroup_id")) == 78000L).findFirst().orElseThrow();
+                .filter(row -> number(row.get("talkgroup_id")) == 58000L).findFirst().orElseThrow();
             assertEquals(1L, number(siteTalkgroup.get("site_observation_count")));
             assertFalse(siteTalkgroup.containsKey("recorded_logical_call_count"));
             assertFalse(siteTalkgroup.containsKey("stream_submitted_logical_call_count"));
         }
 
         Map<String,Object> dashboard = rowsFrom(mDatabase.dashboard(), "topDestinations").stream()
-            .filter(row -> number(row.get("identity_id")) == 78000L).findFirst().orElseThrow();
+            .filter(row -> number(row.get("identity_id")) == 58000L).findFirst().orElseThrow();
         assertEquals(1L, number(dashboard.get("logical_call_count")));
         assertEquals(1L, number(dashboard.get("recorded_logical_call_count")));
         assertEquals(1L, number(dashboard.get("stream_submitted_logical_call_count")));
@@ -2040,7 +2116,7 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(alias.get("stream_submitted_logical_call_count")));
 
         CSVRecord csv = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=system-talkgroups&scope=p25:BEE00:348&q=78000"))).getFirst();
+            "/api/export.csv?dataset=system-talkgroups&scope=p25:BEE00:348&q=58000"))).getFirst();
         assertEquals("1", csv.get("logical_calls"));
         assertEquals("2", csv.get("site_observations"));
         assertEquals("1", csv.get("recorded_logical_calls"));
@@ -2294,14 +2370,25 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name,
+                    decoder_type, primary_frequency_hz, config_json
+                ) VALUES
+                    ('%1$s', 'CONVENTIONAL', 81, 'CSV', 'CSV P25 Phase 2',
+                        'P25_PHASE2', 851012500, '{}'),
+                    ('%2$s', 'CONVENTIONAL', 82, 'CSV', 'CSV NXDN',
+                        'NXDN', 461125000, '{}')
+                """.formatted(CSV_P25_CONFIGURATION_ID, CSV_NXDN_CONFIGURATION_ID));
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
                     first_seen_ms, last_seen_ms, primary_frequency_hz
-                ) VALUES (81, 'csv-p25-phase2', 'csv-p25-phase2-guid', 2, 2, 'CSV P25 Phase 2', 'P25-2',
+                ) VALUES (81, 'CONFIGURATION:%1$s', 'csv-p25-phase2-guid', 2, 2,
+                             'CSV P25 Phase 2', 'P25-2',
                              1000, 3000, 851012500),
-                         (82, 'csv-nxdn', 'csv-nxdn-guid', 4, 4, 'CSV NXDN', 'NXDN',
+                         (82, 'CONFIGURATION:%2$s', 'csv-nxdn-guid', 4, 4, 'CSV NXDN', 'NXDN',
                              1000, 3000, 461125000)
-                """);
+                """.formatted(CSV_P25_CONFIGURATION_ID, CSV_NXDN_CONFIGURATION_ID));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_summary (
                     context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, call_count
@@ -2333,20 +2420,22 @@ class StatsWebDatabaseTest
             "/api/export.csv?dataset=conventional-channels")));
         assertTrue(conventional.size() > 0);
         CSVRecord nbfm = conventional.stream().filter(row ->
-            "conventional-fire".equals(row.get("context"))).findFirst().orElseThrow();
+            FIRE_CONFIGURATION_ID.equals(row.get("configuration_id"))).findFirst().orElseThrow();
         assertEquals("NBFM", nbfm.get("protocol"));
         assertEquals("", nbfm.get("timeslot"));
         assertEquals("P25", conventional.stream().filter(row ->
-            "csv-p25-phase2".equals(row.get("context"))).findFirst().orElseThrow().get("protocol"));
+            CSV_P25_CONFIGURATION_ID.equals(row.get("configuration_id")))
+            .findFirst().orElseThrow().get("protocol"));
         assertEquals("NXDN", conventional.stream().filter(row ->
-            "csv-nxdn".equals(row.get("context"))).findFirst().orElseThrow().get("protocol"));
+            CSV_NXDN_CONFIGURATION_ID.equals(row.get("configuration_id")))
+            .findFirst().orElseThrow().get("protocol"));
 
         seedDmrConventionalRows(mDatabasePath);
         assertEquals(1, mDatabase.csvExport(request(
-            "/api/export.csv?dataset=conventional-talkgroups&context=conventional-dmr-county&q=dispatch"))
+            "/api/export.csv?dataset=conventional-talkgroups&configuration_id=00000000-0000-0000-0000-000000000005&q=dispatch"))
             .rowCount());
         List<CSVRecord> radios = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=conventional-radios&context=conventional-dmr-county&sort=radio" +
+            "/api/export.csv?dataset=conventional-radios&configuration_id=00000000-0000-0000-0000-000000000005&sort=radio" +
                 "&direction=asc")));
         assertEquals("451012500", radios.getFirst().get("frequency_hz"));
         assertEquals("1", radios.getFirst().get("timeslot"));
@@ -2619,7 +2708,6 @@ class StatsWebDatabaseTest
             "/api/site/neighbors?guid=" + GUID)));
         Map<String,Object> siteNeighbor = neighbors.stream()
             .filter(row -> "348:1:2:0-661".equals(row.get("neighbor_key"))).findFirst().orElseThrow();
-        assertEquals(2L, number(siteNeighbor.get("site")));
         assertEquals(2L, number(siteNeighbor.get("site_id")));
         assertEquals("CURRENT", neighbors.get(0).get("state"));
         assertEquals("HISTORICAL", neighbors.get(1).get("state"));
@@ -2670,12 +2758,19 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(event.get("target_kind_code")));
         assertEquals("Dispatch", event.get("target_alias_name"));
         assertEquals("Engine 1", event.get("source_alias_name"));
+        assertEquals(Map.of("kind", "site", "key", GUID), event.get("entity_ref"));
+        assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:348", "id", 1811332),
+            event.get("source_entity_ref"));
+        assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:348", "id", 56132),
+            event.get("target_entity_ref"));
 
         Map<String,Object> radioActivity = mDatabase.activity(request(
             "/api/activity?scope=p25:BEE00:348&radio_id=1811332"));
         Map<String,Object> radioTargetEvent = rows(radioActivity).get(0);
         assertEquals(2L, number(radioTargetEvent.get("target_kind_code")));
         assertEquals("Engine 1", radioTargetEvent.get("target_alias_name"));
+        assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:348", "id", 1811332),
+            radioTargetEvent.get("target_entity_ref"));
     }
 
     @Test
@@ -2706,11 +2801,11 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 UPDATE p25_site_snapshot
                 SET system_key = NULL, system_id = 0x321, nac = 0x456
-                WHERE guid = 'test-site-guid'
+                WHERE guid = '00000000-0000-0000-0000-000000000001'
                 """);
             statement.executeUpdate("""
                 UPDATE receiver_context
-                SET system_key = NULL
+                SET system_key = NULL, nac = 0x456
                 WHERE id = 1
                 """);
             statement.executeUpdate("DELETE FROM trunked_identity_scope_context WHERE context_id = 1");
@@ -2723,7 +2818,7 @@ class StatsWebDatabaseTest
                 INSERT INTO p25_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code
-                ) VALUES (1, %d, 9, 1, 16770000, 65000, 1)
+                ) VALUES (1, %d, 9, 1, 16570000, 65000, 1)
                 """.formatted(currentHour + 1_000L));
         }
 
@@ -2956,24 +3051,32 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000070', 'TRUNKED', 70,
+                    'Greater Cleveland', 'Neighbor Simulcast', 'County',
+                    '00000000-0000-0000-0000-000000000070', 'P25_PHASE1', '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
                     guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
                     lra, mfid, micro_slots, data_service, registration_service, tdma, voice_service,
                     primary_frequency_hz, current_control_hz
-                ) VALUES ('neighbor-site-guid', 'neighbor-hash', 1000, 4000, 1, 'APCO25',
+                ) VALUES ('00000000-0000-0000-0000-000000000070', 'neighbor-hash', 1000, 4000, 1, 'APCO25',
                     'Neighbor Simulcast', 'County', 'P25-1', 1, 0x49F, 1, 2,
                     0, 0x90, 110, 1, 1, 1, 1, 855137500, 855137500)
                 """);
-            seedP25Context(connection, 70, "neighbor-site-guid", 1);
+            seedP25Context(connection, 70, "00000000-0000-0000-0000-000000000070", 1);
         }
 
         Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID))).stream()
-            .filter(row -> number(row.get("rfss")) == 1 && number(row.get("site")) == 2)
+            .filter(row -> number(row.get("rfss")) == 1 && number(row.get("site_id")) == 2)
             .findFirst().orElseThrow();
         assertEquals("Neighbor Simulcast", neighbor.get("neighbor_name"));
-        assertEquals("neighbor-site-guid", neighbor.get("neighbor_guid"));
+        assertEquals("00000000-0000-0000-0000-000000000070", neighbor.get("neighbor_guid"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -2982,7 +3085,7 @@ class StatsWebDatabaseTest
                 INSERT INTO trunked_identity_scope (
                     scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
                     first_seen_ms, last_seen_ms
-                ) VALUES (70, 'dmr:guid:neighbor-site-guid', 3, 2, 0, 5000, 5000)
+                ) VALUES (70, 'dmr:guid:00000000-0000-0000-0000-000000000070', 3, 2, 0, 5000, 5000)
                 """);
             statement.executeUpdate("""
                 UPDATE trunked_identity_scope_context
@@ -2992,10 +3095,10 @@ class StatsWebDatabaseTest
         }
 
         neighbor = rows(mDatabase.siteNeighbors(request("/api/site/neighbors?guid=" + GUID))).stream()
-            .filter(row -> number(row.get("rfss")) == 1 && number(row.get("site")) == 2)
+            .filter(row -> number(row.get("rfss")) == 1 && number(row.get("site_id")) == 2)
             .findFirst().orElseThrow();
-        assertNull(neighbor.get("neighbor_name"));
-        assertNull(neighbor.get("neighbor_guid"));
+        assertEquals("Neighbor Simulcast", neighbor.get("neighbor_name"));
+        assertEquals("00000000-0000-0000-0000-000000000070", neighbor.get("neighbor_guid"));
     }
 
     @Test
@@ -3060,10 +3163,10 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                UPDATE p25_site_snapshot SET alias_list_name = NULL WHERE guid = 'test-site-guid'
+                UPDATE p25_site_snapshot SET alias_list_name = NULL WHERE guid = '00000000-0000-0000-0000-000000000001'
                 """);
             statement.executeUpdate("""
-                UPDATE receiver_context SET alias_list_name = NULL WHERE guid = 'test-site-guid'
+                UPDATE receiver_context SET alias_list_name = NULL WHERE guid = '00000000-0000-0000-0000-000000000001'
                 """);
         }
 
@@ -3073,7 +3176,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void rejectsP25OnlyFactsAfterTheGuidTransitionsToAnotherProtocol() throws Exception
+    void configuredProtocolControlsSiteSpecificChildren() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
@@ -3094,12 +3197,24 @@ class StatsWebDatabaseTest
             }
         }
 
-        StatsApiException bands = assertThrows(StatsApiException.class,
-            () -> mDatabase.siteBands(request("/api/site/bands?guid=" + GUID)));
-        StatsApiException patches = assertThrows(StatsApiException.class,
-            () -> mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID)));
-        assertEquals(404, bands.status());
-        assertEquals(404, patches.status());
+        assertFalse(rowsFrom(mDatabase.siteBands(request("/api/site/bands?guid=" + GUID)),
+            "foreign_rows").isEmpty());
+        assertFalse(rowsFrom(mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID)),
+            "groups").isEmpty());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel SET decoder_type = 'DMR'
+                WHERE radres_guid = '00000000-0000-0000-0000-000000000001'
+                """);
+        }
+
+        assertTrue(rowsFrom(mDatabase.siteBands(request("/api/site/bands?guid=" + GUID)),
+            "foreign_rows").isEmpty());
+        assertTrue(rowsFrom(mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID)),
+            "groups").isEmpty());
     }
 
     @Test
@@ -3184,7 +3299,7 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> p25 = rows(mDatabase.activity(request(
-            "/api/activity?context=site-cleveland"))).getFirst();
+            "/api/activity?guid=" + GUID))).getFirst();
         assertEquals("BAT-E K:11", p25.get("encryption_display"));
         assertEquals("BATON AUTO EVEN K:11", p25.get("encryption_full_display"));
 
@@ -3227,10 +3342,10 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
                     tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', '2-1470', '2-1470', 771193750, NULL, 1, 2, 1000, 2000, 2),
-                    ('test-site-guid', '10-2940', '10-2940', 771193750, NULL, 1, 2, 1000, 2000, 2),
-                    ('test-site-guid', '2-999', '2-999', NULL, NULL, 1, 2, 1000, 2000, 1),
-                    ('test-site-guid', '10-1998', '10-1998', NULL, NULL, 1, 2, 1000, 2000, 1)
+                VALUES ('00000000-0000-0000-0000-000000000001', '2-1470', '2-1470', 771193750, NULL, 1, 2, 1000, 2000, 2),
+                    ('00000000-0000-0000-0000-000000000001', '10-2940', '10-2940', 771193750, NULL, 1, 2, 1000, 2000, 2),
+                    ('00000000-0000-0000-0000-000000000001', '2-999', '2-999', NULL, NULL, 1, 2, 1000, 2000, 1),
+                    ('00000000-0000-0000-0000-000000000001', '10-1998', '10-1998', NULL, NULL, 1, 2, 1000, 2000, 1)
                 """);
         }
 
@@ -3250,7 +3365,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void exposesConventionalContextsSeparately()
+    void exposesConfiguredConventionalChannelsWithOptionalActivity()
     {
         Map<String,Object> conventional = mDatabase.conventional(request("/api/conventional"));
         assertEquals(1, rows(conventional).size());
@@ -3258,9 +3373,9 @@ class StatsWebDatabaseTest
         assertEquals(10L, number(rows(conventional).get(0).get("protocol_code")));
 
         Map<String,Object> detail = mDatabase.conventionalDetail(request(
-            "/api/conventional/detail?context=conventional-fire"));
-        assertEquals("County Fire", map(detail, "context").get("channel_name"));
-        assertEquals(10L, number(map(detail, "context").get("protocol_code")));
+            "/api/conventional/detail?configuration_id=00000000-0000-0000-0000-000000000002"));
+        assertEquals("County Fire", map(detail, "channel").get("channel_name"));
+        assertEquals(10L, number(map(detail, "channel").get("protocol_code")));
         assertTrue(rowsFrom(detail, "summaries").get(0).containsKey("frequency_hz"));
     }
 
@@ -3271,10 +3386,18 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name,
+                    decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%s', 'CONVENTIONAL', 99, 'Airport', 'Airport Tower',
+                    'AM', 118500000, '{}')
+                """.formatted(AIRPORT_CONFIGURATION_ID));
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, channel_name,
                     decoder, first_seen_ms, last_seen_ms, primary_frequency_hz)
-                VALUES (99, 'conventional-airport', 10, 11, 'Airport Tower', 'AM', 1000, 2000, 118500000)
-                """);
+                VALUES (99, 'CONFIGURATION:%s', 10, 11, 'Airport Tower', 'AM',
+                    1000, 2000, 118500000)
+                """.formatted(AIRPORT_CONFIGURATION_ID));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
                     last_seen_ms, call_count)
@@ -3287,20 +3410,24 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> row = rows(mDatabase.conventional(request("/api/conventional"))).stream()
-            .filter(value -> "conventional-airport".equals(value.get("context_key")))
+            .filter(value -> AIRPORT_CONFIGURATION_ID.equals(value.get("configuration_id")))
             .findFirst().orElseThrow();
         assertEquals(11L, number(row.get("protocol_code")));
         assertEquals("am", StatsApiV1Payload.present(row).path("protocol").textValue());
 
         Map<String,Object> detail = mDatabase.conventionalDetail(request(
-            "/api/conventional/detail?context=conventional-airport"));
-        assertEquals(11L, number(map(detail, "context").get("protocol_code")));
-        assertTrue((Boolean)map(map(detail, "context"), "capabilities").get("activity"));
+            "/api/conventional/detail?configuration_id=00000000-0000-0000-0000-000000000099"));
+        assertEquals(11L, number(map(detail, "channel").get("protocol_code")));
+        assertTrue((Boolean)map(map(detail, "channel"), "capabilities").get("activity"));
 
         Map<String,Object> event = rows(mDatabase.activity(request(
-            "/api/activity?context=conventional-airport"))).getFirst();
+            "/api/activity?configuration_id=00000000-0000-0000-0000-000000000099"))).getFirst();
         assertEquals("AM", event.get("protocol"));
         assertEquals("am", StatsApiV1Payload.present(event).path("protocol").textValue());
+        assertEquals(Map.of("kind", "conventional", "key", AIRPORT_CONFIGURATION_ID),
+            event.get("entity_ref"));
+        assertFalse(event.containsKey("source_entity_ref"));
+        assertFalse(event.containsKey("target_entity_ref"));
     }
 
     @Test
@@ -3308,22 +3435,33 @@ class StatsWebDatabaseTest
     {
         seedDmrConventionalRows(mDatabasePath);
 
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (
+                    context_id, observed_at_ms, action_code, event_type_code,
+                    source_radio_id, target_id, target_kind_code, frequency_hz, timeslot
+                ) VALUES (5, 7000, 2, 1, 123456, 91, 1, 451012500, 1)
+                """);
+        }
+
         Map<String,Object> detail = mDatabase.conventionalDetail(request(
-            "/api/conventional/detail?context=conventional-dmr-county"));
-        Map<String,Object> capabilities = map(map(detail, "context"), "capabilities");
+            "/api/conventional/detail?configuration_id=00000000-0000-0000-0000-000000000005"));
+        Map<String,Object> capabilities = map(map(detail, "channel"), "capabilities");
         assertTrue((Boolean)capabilities.get("group_identities"));
         assertTrue((Boolean)capabilities.get("radios"));
         assertTrue((Boolean)capabilities.get("activity"));
 
         Map<String,Object> analogDetail = mDatabase.conventionalDetail(request(
-            "/api/conventional/detail?context=conventional-fire"));
-        Map<String,Object> analogCapabilities = map(map(analogDetail, "context"), "capabilities");
+            "/api/conventional/detail?configuration_id=00000000-0000-0000-0000-000000000002"));
+        Map<String,Object> analogCapabilities = map(map(analogDetail, "channel"), "capabilities");
         assertTrue((Boolean)analogCapabilities.get("activity"));
         assertFalse((Boolean)analogCapabilities.get("group_identities"));
         assertFalse((Boolean)analogCapabilities.get("radios"));
 
         Map<String,Object> talkgroups = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=talkgroup&direction=asc"));
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000005&sort=talkgroup&direction=asc"));
         assertEquals(2, rows(talkgroups).size());
         Map<String,Object> dispatch = rows(talkgroups).getFirst();
         assertEquals(91L, number(dispatch.get("talkgroup_id")));
@@ -3336,7 +3474,7 @@ class StatsWebDatabaseTest
         assertEquals(2L, number(dispatch.get("encrypted_logical_call_count")));
 
         Map<String,Object> radios = mDatabase.conventionalRadios(request(
-            "/api/conventional/radios?context=conventional-dmr-county&sort=radio&direction=asc"));
+            "/api/conventional/radios?configuration_id=00000000-0000-0000-0000-000000000005&sort=radio&direction=asc"));
         assertEquals(2, rows(radios).size());
         Map<String,Object> engine = rows(radios).getFirst();
         assertEquals(123_456L, number(engine.get("radio_id")));
@@ -3347,6 +3485,14 @@ class StatsWebDatabaseTest
         assertEquals(3L, number(engine.get("target_logical_call_count")));
         assertFalse(engine.values().contains("Other Dispatch"));
         assertFalse(engine.values().contains("Other Engine"));
+
+        Map<String,Object> event = rows(mDatabase.activity(request(
+            "/api/activity?configuration_id=" + DMR_COUNTY_CONFIGURATION_ID))).getFirst();
+        Map<String,Object> conventionalReference = Map.of("kind", "conventional", "key",
+            DMR_COUNTY_CONFIGURATION_ID);
+        assertEquals(conventionalReference, event.get("entity_ref"));
+        assertEquals(conventionalReference, event.get("source_entity_ref"));
+        assertEquals(conventionalReference, event.get("target_entity_ref"));
     }
 
     @Test
@@ -3355,7 +3501,7 @@ class StatsWebDatabaseTest
         seedDmrConventionalRows(mDatabasePath);
 
         Map<String,Object> firstPage = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=logical_call_count&limit=1"));
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000005&sort=logical_call_count&limit=1"));
         assertEquals(92L, number(rows(firstPage).getFirst().get("talkgroup_id")));
         assertEquals(1L, number(firstPage.get("limit")));
         assertEquals(0L, number(firstPage.get("offset")));
@@ -3363,36 +3509,34 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(firstPage.get("nextOffset")));
 
         Map<String,Object> secondPage = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=logical_call_count&limit=1&offset=1"));
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000005&sort=logical_call_count&limit=1&offset=1"));
         assertEquals(91L, number(rows(secondPage).getFirst().get("talkgroup_id")));
         assertFalse((Boolean)secondPage.get("hasMore"));
 
         Map<String,Object> aliasSearch = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&q=dispatch"));
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000005&q=dispatch"));
         assertEquals(List.of(91L), rows(aliasSearch).stream()
             .map(row -> number(row.get("talkgroup_id"))).toList());
         assertEquals("DMR Dispatch", rows(mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=alias&direction=asc&limit=1")))
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000005&sort=alias&direction=asc&limit=1")))
             .getFirst().get("alias_name"));
 
         Map<String,Object> radioSearch = mDatabase.conventionalRadios(request(
-            "/api/conventional/radios?context=conventional-dmr-county&q=engine%202"));
+            "/api/conventional/radios?configuration_id=00000000-0000-0000-0000-000000000005&q=engine%202"));
         assertEquals(List.of(234_567L), rows(radioSearch).stream()
             .map(row -> number(row.get("radio_id"))).toList());
         assertEquals("DMR Engine 2", rows(mDatabase.conventionalRadios(request(
-            "/api/conventional/radios?context=conventional-dmr-county&sort=alias&limit=1")))
+            "/api/conventional/radios?configuration_id=00000000-0000-0000-0000-000000000005&sort=alias&limit=1")))
             .getFirst().get("alias_name"));
 
         Map<String,Object> otherContext = mDatabase.conventionalTalkgroups(request(
-            "/api/conventional/talkgroups?context=conventional-dmr-other"));
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000006"));
         assertEquals(1, rows(otherContext).size());
         assertEquals(999L, number(rows(otherContext).getFirst().get("logical_call_count")));
         assertEquals("Other Dispatch", rows(otherContext).getFirst().get("alias_name"));
 
-        StatsApiException wrongProtocol = assertThrows(StatsApiException.class,
-            () -> mDatabase.conventionalTalkgroups(request(
-                "/api/conventional/talkgroups?context=conventional-fire")));
-        assertEquals(404, wrongProtocol.status());
+        assertTrue(rows(mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?configuration_id=00000000-0000-0000-0000-000000000002"))).isEmpty());
         StatsApiException missingContext = assertThrows(StatsApiException.class,
             () -> mDatabase.conventionalRadios(request("/api/conventional/radios")));
         assertEquals(400, missingContext.status());
@@ -3620,6 +3764,9 @@ class StatsWebDatabaseTest
         assertEquals("p25:BEE00:348", scoped.get("scope_token"));
         assertEquals(GUID, scoped.get("guid"));
         assertEquals("Engine 1", scoped.get("alias_name"));
+        assertEquals(Map.of("kind", "system", "key", "p25:BEE00:348"), scoped.get("entity_ref"));
+        assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:348", "id", 1811332),
+            scoped.get("radio_entity_ref"));
 
         Map<String,Object> secondPage = mDatabase.dashboardActivityRadios(request(
             "/api/v1/activity/radios?range=24h&action=EMERGENCY&limit=2&offset=2"));
@@ -3629,8 +3776,13 @@ class StatsWebDatabaseTest
         assertNull(secondPage.get("nextOffset"));
         assertEquals(1, rows(secondPage).size());
         assertEquals(1811332, number(rows(secondPage).getFirst().get("radio_id")));
-        assertEquals("conventional-fire", rows(secondPage).getFirst().get("context_key"));
+        assertEquals("CONFIGURATION:" + FIRE_CONFIGURATION_ID,
+            rows(secondPage).getFirst().get("context_key"));
         assertNull(rows(secondPage).getFirst().get("scope_token"));
+        assertEquals(Map.of("kind", "conventional", "key", FIRE_CONFIGURATION_ID),
+            rows(secondPage).getFirst().get("entity_ref"));
+        assertEquals(Map.of("kind", "conventional", "key", FIRE_CONFIGURATION_ID),
+            rows(secondPage).getFirst().get("radio_entity_ref"));
     }
 
     @Test
@@ -3661,7 +3813,8 @@ class StatsWebDatabaseTest
         assertEquals(1, number(response.get("total_count")));
         assertEquals(1, rows(response).size());
         assertEquals(1888000, number(rows(response).getFirst().get("radio_id")));
-        assertEquals("conventional-fire", rows(response).getFirst().get("context_key"));
+        assertEquals("CONFIGURATION:" + FIRE_CONFIGURATION_ID,
+            rows(response).getFirst().get("context_key"));
         assertEquals("NBFM", rows(response).getFirst().get("protocol"));
     }
 
@@ -3870,17 +4023,32 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name,
+                    decoder_type, config_json
+                ) VALUES
+                    ('00000000-0000-0000-0000-000000000007', 'CONVENTIONAL', 7,
+                        'County', 'P25 Conventional', 'P25_PHASE1', '{}'),
+                    ('00000000-0000-0000-0000-000000000008', 'CONVENTIONAL', 8,
+                        'County', 'DMR Conventional', 'DMR', '{}'),
+                    ('00000000-0000-0000-0000-000000000012', 'CONVENTIONAL', 12,
+                        'County', 'NXDN Conventional', 'NXDN', '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
                     decoder, first_seen_ms, last_seen_ms)
-                VALUES (7, 'conventional-p25', 'conventional-p25-guid', 2, 1, 'P25 Conventional',
+                VALUES (7, 'CONFIGURATION:00000000-0000-0000-0000-000000000007',
+                           'conventional-p25-guid', 2, 1, 'P25 Conventional',
                            'P25-1', 1000, 2000),
-                       (8, 'conventional-dmr', 'conventional-dmr-guid', 3, 3, 'DMR Conventional',
+                       (8, 'CONFIGURATION:00000000-0000-0000-0000-000000000008',
+                           'conventional-dmr-guid', 3, 3, 'DMR Conventional',
                            'DMR', 1000, 2000),
                        (9, 'site-dmr', 'site-dmr-guid', 1, 3, 'DMR Trunked', 'DMR', 1000, 2000),
                        (10, 'site-nxdn', 'site-nxdn-guid', 1, 4, 'NXDN Trunked', 'NXDN', 1000, 2000),
                        (11, 'site-p25-phase2', 'site-p25-phase2-guid', 1, 2, 'P25 Phase 2',
                            'P25-2', 1000, 2000),
-                       (12, 'conventional-nxdn', 'conventional-nxdn-guid', 4, 4, 'NXDN Conventional',
+                       (12, 'CONFIGURATION:00000000-0000-0000-0000-000000000012',
+                           'conventional-nxdn-guid', 4, 4, 'NXDN Conventional',
                            'NXDN', 1000, 2000)
                 """);
             statement.executeUpdate("""
@@ -4022,7 +4190,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void dashboardRanksEachActivitySourceSeparately() throws Exception
+    void dashboardExcludesRetainedConventionalActivityAfterConfigurationDeletion() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
         long firstHour = currentHour - 23L * 3_600_000L;
@@ -4047,14 +4215,15 @@ class StatsWebDatabaseTest
 
         Map<String,Object> activity = map(mDatabase.dashboard(), "sourceActivity24h");
         List<Map<String,Object>> rows = rows(activity);
-        assertEquals(2, rows.size());
-        assertEquals("conventional-fire", rows.getFirst().get("context_key"));
+        assertEquals(1, rows.size());
+        assertEquals("CONFIGURATION:" + FIRE_CONFIGURATION_ID, rows.getFirst().get("context_key"));
         assertEquals("NBFM", rows.getFirst().get("protocol"));
         assertEquals("CONVENTIONAL", rows.getFirst().get("channel_kind"));
         assertEquals(12, number(rows.getFirst().get("logical_call_count")));
-        assertEquals("test-channel-lakewood", rows.getLast().get("guid"));
-        assertEquals(3, number(rows.getLast().get("logical_call_count")));
-        assertTrue(rows.stream().allMatch(row -> number(row.get("total_logical_call_count")) == 15));
+        assertEquals(Map.of("kind", "conventional", "key", FIRE_CONFIGURATION_ID),
+            rows.getFirst().get("entity_ref"));
+        assertTrue(rows.stream().noneMatch(row -> "test-channel-lakewood".equals(row.get("guid"))));
+        assertEquals(12, number(rows.getFirst().get("total_logical_call_count")));
         assertEquals(firstHour, number(activity.get("from_ms")));
     }
 
@@ -4068,11 +4237,19 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000007', 'CONVENTIONAL', 7,
+                    'County', 'P25 Conventional', 'County', 'P25_PHASE1', 154875000, '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
                     decoder, first_seen_ms, last_seen_ms, primary_frequency_hz
                 ) VALUES
-                    (7, 'conventional-p25-alias', 'conventional-p25-alias-guid', 2, 1,
+                    (7, 'CONFIGURATION:00000000-0000-0000-0000-000000000007',
+                        'conventional-p25-alias-guid', 2, 1,
                         'P25 Conventional', 'County', 'P25-1', 1000, 2000, 154875000),
                     (9, 'site-dmr-alias', 'site-dmr-alias-guid', 1, 3,
                         'DMR Trunked', NULL, 'DMR', 1000, 2000, 461012500),
@@ -4153,7 +4330,8 @@ class StatsWebDatabaseTest
         assertEquals("CONVENTIONAL", dmrDestination.get("channel_kind"));
         assertEquals("Talkgroup", dmrDestination.get("identity_kind"));
         assertEquals("DMR Dispatch", dmrDestination.get("alias_name"));
-        assertEquals("conventional-talkgroups", dmrDestination.get("identity_detail_view"));
+        assertEquals("conventional", map(dmrDestination, "entity_ref").get("kind"));
+        assertEquals("talkgroups", dmrDestination.get("entity_tab"));
         assertEquals(12, number(dmrDestination.get("logical_call_count")));
         assertEquals(6, number(dmrDestination.get("recorded_logical_call_count")));
         assertEquals(2, number(dmrDestination.get("stream_submitted_logical_call_count")));
@@ -4162,8 +4340,7 @@ class StatsWebDatabaseTest
             .filter(row -> "NXDN".equals(row.get("protocol"))).findFirst().orElseThrow();
         assertEquals("NXDN Dispatch", nxdnDestination.get("alias_name"));
         assertEquals("NXDN County", nxdnDestination.get("alias_list_name"));
-        assertEquals("talkgroup", nxdnDestination.get("identity_detail_view"));
-        assertEquals(1, number(nxdnDestination.get("identity_detail_available")));
+        assertEquals("talkgroup", map(nxdnDestination, "entity_ref").get("kind"));
         Map<String,Object> nxdnSource = sources.stream()
             .filter(row -> "NXDN".equals(row.get("protocol"))).findFirst().orElseThrow();
         assertEquals("NXDN Unit", nxdnSource.get("alias_name"));
@@ -4177,9 +4354,11 @@ class StatsWebDatabaseTest
         assertEquals("DMR Engine 1", dmrTrunkedSource.get("alias_name"));
 
         Map<String,Object> p25Conventional = destinations.stream()
-            .filter(row -> "conventional-p25-alias".equals(row.get("context_key"))).findFirst().orElseThrow();
+            .filter(row -> "CONFIGURATION:00000000-0000-0000-0000-000000000007"
+                .equals(row.get("context_key"))).findFirst().orElseThrow();
         assertEquals("Dispatch", p25Conventional.get("alias_name"));
-        assertEquals(0, number(p25Conventional.get("identity_detail_available")));
+        assertFalse(p25Conventional.containsKey("entity_ref"));
+        assertFalse(p25Conventional.containsKey("entity_tab"));
 
         Map<String,Object> p25TrunkedSource = sources.stream()
             .filter(row -> "P25".equals(row.get("protocol")) &&
@@ -4187,8 +4366,7 @@ class StatsWebDatabaseTest
         assertEquals("Engine 1", p25TrunkedSource.get("alias_name"));
         assertEquals("CAR 201", p25TrunkedSource.get("last_talker_alias"));
         assertEquals(2000, number(p25TrunkedSource.get("last_talker_alias_seen_ms")));
-        assertEquals("radio", p25TrunkedSource.get("identity_detail_view"));
-        assertEquals(1, number(p25TrunkedSource.get("identity_detail_available")));
+        assertEquals("radio", map(p25TrunkedSource, "entity_ref").get("kind"));
         assertTrue(destinations.stream().allMatch(row -> row.get("last_talker_alias") == null),
             "Destination identities must never inherit a matching radio's talker alias");
 
@@ -4198,7 +4376,11 @@ class StatsWebDatabaseTest
         assertEquals("County Fire", unknownDestination.get("channel_name"));
         assertFalse(unknownDestination.containsKey("alias_name"),
             "NBFM calls are channel-scoped and do not carry a talkgroup/radio identity");
-        assertEquals(0, number(unknownDestination.get("identity_detail_available")));
+        assertFalse(unknownDestination.containsKey("entity_ref"));
+        assertTrue(destinations.stream().allMatch(row -> !row.containsKey("identity_detail_view") &&
+            !row.containsKey("identity_detail_available")));
+        assertTrue(sources.stream().allMatch(row -> !row.containsKey("identity_detail_view") &&
+            !row.containsKey("identity_detail_available")));
     }
 
     @Test
@@ -4554,6 +4736,24 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void rejectsProtocolReservedIdentitiesFromChildAndRelationshipEndpoints()
+    {
+        StatsApiException activity = assertThrows(StatsApiException.class, () -> mDatabase.talkgroupActivity(request(
+            "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=65535&range=24h")));
+        assertEquals(404, activity.status());
+
+        StatsApiException talkgroupRelationship = assertThrows(StatsApiException.class,
+            () -> mDatabase.radioTalkgroupRelationships(request(
+                "/api/relationships?scope=p25:BEE00:348&talkgroup_id=65535")));
+        assertEquals(404, talkgroupRelationship.status());
+
+        StatsApiException radioRelationship = assertThrows(StatsApiException.class,
+            () -> mDatabase.radioTalkgroupRelationships(request(
+                "/api/relationships?scope=p25:BEE00:348&radio_id=16777215")));
+        assertEquals(404, radioRelationship.status());
+    }
+
+    @Test
     void aggregatesTopTalkgroupsForOneSiteAndSelectedRange() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
@@ -4617,26 +4817,44 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name,
+                    radres_guid, decoder_type, primary_frequency_hz, config_json
+                ) VALUES
+                    ('00000000-0000-0000-0000-000000004642', 'TRUNKED', 4642,
+                        'Metro DMR', 'DMR Dashboard',
+                        '00000000-0000-0000-0000-000000004642', 'DMR', NULL, '{}'),
+                    ('00000000-0000-0000-0000-000000004643', 'TRUNKED', 4643,
+                        'Regional NXDN', 'NXDN Dashboard',
+                        '00000000-0000-0000-0000-000000004643', 'NXDN', NULL, '{}'),
+                    ('00000000-0000-0000-0000-000000000012', 'CONVENTIONAL', 12,
+                        'Weather', 'Weather', NULL, 'NBFM', 162550000, '{}'),
+                    ('00000000-0000-0000-0000-000000000014', 'CONVENTIONAL', 14,
+                        'Sheriff', 'Sheriff P25', NULL, 'P25_PHASE1', 154875000, '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot
                     (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, channel_name, decoder)
-                VALUES ('unidentified-site-guid', 'empty', 3000, 4000, 1, 'No Signal', 'P25-1')
+                VALUES ('00000000-0000-0000-0000-000000004640', 'empty', 3000, 4000, 1, 'No Signal', 'P25-1')
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_context (
                     id, context_key, kind_code, protocol_code, channel_name, decoder, nac,
                     first_seen_ms, last_seen_ms, primary_frequency_hz
                 ) VALUES
-                    (12, 'conventional-no-calls', 10, 0, 'Weather', 'NBFM', NULL,
+                    (12, 'CONFIGURATION:00000000-0000-0000-0000-000000000012',
+                        10, 0, 'Weather', 'NBFM', NULL,
                         3000, 7000, 162550000),
                     (13, 'trunked-call-before-metadata', 1, 3, 'DMR Call Context', 'DMR', NULL,
                         3000, 8000, 461025000),
-                    (14, 'conventional-p25-no-calls', 2, 1, 'Sheriff P25', 'P25-1', 0x293,
+                    (14, 'CONFIGURATION:00000000-0000-0000-0000-000000000014',
+                        2, 1, 'Sheriff P25', 'P25-1', 0x293,
                         3000, 9000, 154875000)
                 """);
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(5000, "dashboard-dmr",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(5000, "00000000-0000-0000-0000-000000004642",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "DMR Dashboard",
                 10, 20, 2, null, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(6000, "dashboard-nxdn",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(6000, "00000000-0000-0000-0000-000000004643",
                 TrunkedSiteSchema.PROTOCOL_NXDN, 2, 4, "Regional NXDN", "NXDN Dashboard",
                 7, 8, 9, 5, List.of(), List.of()));
         }
@@ -4648,35 +4866,31 @@ class StatsWebDatabaseTest
             .findFirst().orElseThrow();
         assertEquals(0x49F, number(p25.get("nac")));
         assertEquals(1, number(p25.get("rfss")));
-        assertEquals(1, number(p25.get("site")));
+        assertEquals(1, number(p25.get("site_id")));
         Map<String,Object> dmr = receivers.stream()
-            .filter(row -> "dashboard-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+            .filter(row -> "00000000-0000-0000-0000-000000004642".equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("DMR", dmr.get("protocol"));
         assertEquals(2, number(dmr.get("site_id")));
         assertNull(dmr.get("nac"));
-        assertTrue(receivers.stream().anyMatch(row -> "dashboard-nxdn".equals(row.get("guid")) &&
+        assertTrue(receivers.stream().anyMatch(row -> "00000000-0000-0000-0000-000000004643".equals(row.get("guid")) &&
             "NXDN".equals(row.get("protocol"))));
-        assertTrue(receivers.stream().anyMatch(row -> "conventional-fire".equals(row.get("context_key")) &&
+        assertTrue(receivers.stream().anyMatch(row -> FIRE_CONFIGURATION_ID.equals(row.get("configuration_id")) &&
             "CONVENTIONAL".equals(row.get("channel_kind")) && "NBFM".equals(row.get("protocol"))));
-        assertTrue(receivers.stream().anyMatch(row -> "conventional-no-calls".equals(row.get("context_key"))));
+        assertTrue(receivers.stream().anyMatch(row ->
+            "00000000-0000-0000-0000-000000000012".equals(row.get("configuration_id"))));
         Map<String,Object> conventionalP25 = receivers.stream()
-            .filter(row -> "conventional-p25-no-calls".equals(row.get("context_key")))
+            .filter(row -> "00000000-0000-0000-0000-000000000014".equals(row.get("configuration_id")))
             .findFirst().orElseThrow();
         assertEquals(0x293, number(conventionalP25.get("nac")));
         assertNull(conventionalP25.get("rfss"));
-        assertNull(conventionalP25.get("site"));
-        Map<String,Object> orphanTrunked = receivers.stream()
-            .filter(row -> "trunked-call-before-metadata".equals(row.get("context_key")))
-            .findFirst().orElseThrow();
-        assertEquals("TRUNKED", orphanTrunked.get("channel_kind"));
-        assertEquals("DMR", orphanTrunked.get("protocol"));
-        assertEquals(0, number(orphanTrunked.get("detail_available")));
+        assertNull(conventionalP25.get("site_id"));
+        assertTrue(receivers.stream().noneMatch(row ->
+            "trunked-call-before-metadata".equals(row.get("context_key"))));
         assertEquals(3, number(map(dashboard, "counts").get("conventional_channels")));
-        assertTrue(receivers.stream().filter(row -> "TRUNKED".equals(row.get("channel_kind")) &&
-                !"trunked-call-before-metadata".equals(row.get("context_key")))
-            .allMatch(row -> number(row.get("detail_available")) == 1));
-        assertTrue(receivers.stream().anyMatch(row -> "unidentified-site-guid".equals(row.get("guid")) &&
-            "P25".equals(row.get("protocol")) && "TRUNKED".equals(row.get("channel_kind"))));
+        assertTrue(receivers.stream().filter(row -> "TRUNKED".equals(row.get("channel_kind")))
+            .allMatch(row -> row.get("entity_ref") instanceof Map));
+        assertTrue(receivers.stream().noneMatch(row ->
+            "00000000-0000-0000-0000-000000004640".equals(row.get("guid"))));
     }
 
     @Test
@@ -4688,11 +4902,12 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO configuration_channel (
-                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
-                ) VALUES (1, 'Ohio MARCS', 'Cuyahoga County', 'MARCS Cleveland Simulcast',
-                    'test-site-guid', 'P25-1',
-                    '{"decodeConfiguration":{"modulation":"AUTO","autoPreferredModulation":"CQPSK"}}')
+                UPDATE configuration_channel
+                SET system_name = 'Ohio MARCS', site_name = 'Cuyahoga County',
+                    name = 'MARCS Cleveland Simulcast',
+                    config_json =
+                        '{"decodeConfiguration":{"modulation":"AUTO","autoPreferredModulation":"CQPSK"}}'
+                WHERE radres_guid = '00000000-0000-0000-0000-000000000001'
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_logical_call_bucket (
@@ -4709,22 +4924,24 @@ class StatsWebDatabaseTest
                 INSERT INTO p25_site_snapshot (
                     guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, protocol,
                     channel_name, alias_list_name, decoder, system_key, nac, rfss, site
-                ) VALUES ('configured-neighbor-guid', 'configured-neighbor-hash', 1000, 3000, 1,
+                ) VALUES ('00000000-0000-0000-0000-000000000201', 'configured-neighbor-hash', 1000, 3000, 1,
                     'APCO25', 'Legacy Neighbor Label', 'County', 'P25-1', 1, 0x49F, 1, 2)
                 """);
-            seedP25Context(connection, 201, "configured-neighbor-guid", 1);
+            seedP25Context(connection, 201, "00000000-0000-0000-0000-000000000201", 1);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
-                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
-                ) VALUES (2, 'Ohio MARCS', 'Lake County', 'Painesville Simulcast',
-                    'configured-neighbor-guid', 'P25-1', '{}')
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000201', 'TRUNKED', 2,
+                    'Ohio MARCS', 'Lake County', 'Painesville Simulcast',
+                    '00000000-0000-0000-0000-000000000201', 'P25_PHASE1', '{}')
                 """);
         }
 
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
         assertEquals("Cuyahoga County", site.get("configured_site"));
         assertEquals("MARCS Cleveland Simulcast", site.get("configured_name"));
-        assertEquals("Cleveland Simulcast", site.get("channel_name"));
+        assertEquals("MARCS Cleveland Simulcast", site.get("channel_name"));
         assertEquals("C4FM", site.get("p25_decoder_mode"));
         assertFalse(site.containsKey("p25_auto_preferred_decoder_mode"));
 
@@ -4747,9 +4964,11 @@ class StatsWebDatabaseTest
         assertEquals("Dispatch", destination.get("alias_name"));
         assertNull(destination.get("guid"));
 
-        Map<String,Object> directoryChild = rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?q=MARCS%20Cleveland%20Simulcast"))).stream()
-            .flatMap(parent -> systemSitesFor(parent).stream())
+        Map<String,Object> directorySystem = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=MARCS%20Cleveland%20Simulcast"))).getFirst();
+        assertEquals("Cuyahoga County, Lake County", directorySystem.get("site_names"));
+        assertEquals(2, number(directorySystem.get("site_name_count")));
+        Map<String,Object> directoryChild = systemSitesFor(directorySystem).stream()
             .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Cuyahoga County", directoryChild.get("configured_site"));
         assertEquals("MARCS Cleveland Simulcast", directoryChild.get("configured_name"));
@@ -4761,7 +4980,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID))).stream()
-            .filter(row -> "configured-neighbor-guid".equals(row.get("neighbor_guid")))
+            .filter(row -> "00000000-0000-0000-0000-000000000201".equals(row.get("neighbor_guid")))
             .findFirst().orElseThrow();
         assertEquals("Legacy Neighbor Label", neighbor.get("neighbor_name"));
         assertEquals("Lake County", neighbor.get("neighbor_configured_site"));
@@ -4773,15 +4992,15 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 UPDATE configuration_channel
                 SET name = CASE radres_guid
-                    WHEN 'test-site-guid' THEN 'Zulu Site'
-                    WHEN 'configured-neighbor-guid' THEN 'Alpha Site'
+                    WHEN '00000000-0000-0000-0000-000000000001' THEN 'Zulu Site'
+                    WHEN '00000000-0000-0000-0000-000000000201' THEN 'Alpha Site'
                     ELSE name END
                 """);
         }
 
         List<Map<String,Object>> sortedSites = rows(mDatabase.systemSites(request(
             "/api/system/sites?scope=p25:BEE00:348&sort=name&direction=asc")));
-        assertEquals("configured-neighbor-guid", sortedSites.getFirst().get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000201", sortedSites.getFirst().get("guid"));
     }
 
     @Test
@@ -4800,11 +5019,11 @@ class StatsWebDatabaseTest
                     signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
                     dropped_bits, last_valid_decode_ms)
-                VALUES ('test-site-guid', 856137500, %d, %d, -51.0, -50.0, -55.0, -45.0,
+                VALUES ('00000000-0000-0000-0000-000000000001', 856137500, %d, %d, -51.0, -50.0, -55.0, -45.0,
                     80.0, 80, 20, 4, 0, 0, %d),
-                    ('test-site-guid', 856137500, %d, %d, -41.0, -40.0, -60.0, -35.0,
+                    ('00000000-0000-0000-0000-000000000001', 856137500, %d, %d, -41.0, -40.0, -60.0, -35.0,
                     100.0, 100, 0, 2, 0, 0, %d),
-                    ('test-site-guid', 855137500, %d, %d, -61.0, -60.0, -65.0, -55.0,
+                    ('00000000-0000-0000-0000-000000000001', 855137500, %d, %d, -61.0, -60.0, -65.0, -55.0,
                     75.0, 75, 25, 6, 0, 0, %d)
                 """.formatted(first - Math.floorMod(first, 10_000L), first, first,
                     second - Math.floorMod(second, 10_000L), second, second,
@@ -4812,7 +5031,7 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> response = mDatabase.qualityHistory(request(
-            "/api/quality?guid=test-site-guid&range=1h&points=60"));
+            "/api/quality?guid=00000000-0000-0000-0000-000000000001&range=1h&points=60"));
         assertEquals("1h", response.get("range"));
         assertEquals(60_000L, number(response.get("bucket_ms")));
         assertEquals(60L, number(response.get("target_points")));
@@ -4848,16 +5067,31 @@ class StatsWebDatabaseTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("quality-dmr", TrunkedSiteSchema.PROTOCOL_DMR,
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_channel (
+                        configuration_id, channel_kind, sort_order, system_name, name,
+                        radres_guid, decoder_type, primary_frequency_hz, config_json
+                    ) VALUES
+                        ('00000000-0000-0000-0000-000000004873', 'TRUNKED', 4873,
+                            'Metro DMR', 'DMR Quality',
+                            '00000000-0000-0000-0000-000000004873', 'DMR', 451012500, '{}'),
+                        ('00000000-0000-0000-0000-000000004874', 'TRUNKED', 4874,
+                            'Regional NXDN', 'NXDN Quality',
+                            '00000000-0000-0000-0000-000000004874', 'NXDN', 155012500, '{}')
+                    """);
+            }
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000004873", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 2, "Metro DMR", "DMR Quality", 10, 20, 3, null, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("quality-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000004874", TrunkedSiteSchema.PROTOCOL_NXDN,
                 2, 4, "Regional NXDN", "NXDN Quality", 7, 8, 9, 5, List.of(), List.of()));
-            insertQuality(connection, "quality-dmr", 451_012_500L, now - 2_000L, -52.0, 94.0);
-            insertQuality(connection, "quality-nxdn", 155_012_500L, now - 1_000L, -61.0, 88.0);
+            insertQuality(connection, "00000000-0000-0000-0000-000000004873", 451_012_500L, now - 2_000L, -52.0, 94.0);
+            insertQuality(connection, "00000000-0000-0000-0000-000000004874", 155_012_500L, now - 1_000L, -61.0, 88.0);
         }
 
         Map<String,Object> dmrResponse = mDatabase.qualityHistory(request(
-            "/api/quality?guid=quality-dmr&range=1h&points=60"));
+            "/api/quality?guid=00000000-0000-0000-0000-000000004873&range=1h&points=60"));
         Map<String,Object> dmr = rowsFrom(dmrResponse, "sites").getFirst();
         assertEquals("DMR", dmr.get("protocol"));
         assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, number(dmr.get("protocol_code")));
@@ -4868,7 +5102,7 @@ class StatsWebDatabaseTest
         assertEquals(1, rowsFrom(dmr, "series").size());
 
         Map<String,Object> nxdnResponse = mDatabase.qualityHistory(request(
-            "/api/quality?guid=quality-nxdn&range=1h&points=60"));
+            "/api/quality?guid=00000000-0000-0000-0000-000000004874&range=1h&points=60"));
         Map<String,Object> nxdn = rowsFrom(nxdnResponse, "sites").getFirst();
         assertEquals("NXDN", nxdn.get("protocol"));
         assertEquals(TrunkedSiteSchema.PROTOCOL_NXDN, number(nxdn.get("protocol_code")));
@@ -4878,7 +5112,7 @@ class StatsWebDatabaseTest
         assertEquals(1, rowsFrom(nxdn, "series").size());
 
         List<Map<String,Object>> dmrRows = rowsFrom(rowsFrom(mDatabase.qualityHistory(request(
-            "/api/v1/sites/quality-dmr/quality?guid=quality-dmr&range=1h&points=60")), "sites")
+            "/api/v1/sites/00000000-0000-0000-0000-000000004873/quality?guid=00000000-0000-0000-0000-000000004873&range=1h&points=60")), "sites")
             .getFirst(), "series");
         assertEquals(1, dmrRows.size());
         assertEquals(451_012_500L, number(dmrRows.getFirst().get("frequency_hz")));
@@ -4896,83 +5130,88 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("configured-dmr",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000211",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "Legacy DMR Label",
                 10, 20, 1, null, List.of(),
                 List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 2, 42, 451_012_500L, 1))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("configured-dmr-neighbor",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000212",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "Legacy DMR Neighbor",
                 10, 20, 2, null, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("configured-nxdn",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000213",
                 TrunkedSiteSchema.PROTOCOL_NXDN, 2, 4, "Regional NXDN", "Legacy NXDN Label",
                 7, 8, 9, 5, List.of(), List.of()));
-            seedContextScope(connection, 211, 211, "configured-dmr", TrunkedSiteSchema.PROTOCOL_DMR, 2);
-            seedContextScope(connection, 212, 212, "configured-dmr-neighbor",
+            seedContextScope(connection, 211, 211, "00000000-0000-0000-0000-000000000211", TrunkedSiteSchema.PROTOCOL_DMR, 2);
+            seedContextScope(connection, 212, 212, "00000000-0000-0000-0000-000000000212",
                 TrunkedSiteSchema.PROTOCOL_DMR, 2);
-            seedContextScope(connection, 213, 213, "configured-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
+            seedContextScope(connection, 213, 213, "00000000-0000-0000-0000-000000000213", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
-                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radres_guid, decoder_type, config_json
                 ) VALUES
-                    (211, 'Metro DMR', 'Cuyahoga County', 'Downtown DMR',
-                        'configured-dmr', 'DMR', '{}'),
-                    (212, 'Metro DMR', 'Lake County', 'East DMR',
-                        'configured-dmr-neighbor', 'DMR', '{}'),
-                    (213, 'Regional NXDN', 'Geauga County', 'Chardon NXDN',
-                        'configured-nxdn', 'NXDN', '{}')
+                    ('00000000-0000-0000-0000-000000000211', 'TRUNKED', 211,
+                        'Metro DMR', 'Cuyahoga County', 'Downtown DMR',
+                        '00000000-0000-0000-0000-000000000211', 'DMR', '{}'),
+                    ('00000000-0000-0000-0000-000000000212', 'TRUNKED', 212,
+                        'Metro DMR', 'Lake County', 'East DMR',
+                        '00000000-0000-0000-0000-000000000212', 'DMR', '{}'),
+                    ('00000000-0000-0000-0000-000000000213', 'TRUNKED', 213,
+                        'Regional NXDN', 'Geauga County', 'Chardon NXDN',
+                        '00000000-0000-0000-0000-000000000213', 'NXDN', '{}')
                 """);
         }
 
         Map<String,Object> dmrSite = map(mDatabase.site(request(
-            "/api/site?guid=configured-dmr")), "site");
+            "/api/site?guid=00000000-0000-0000-0000-000000000211")), "site");
         assertEquals("Cuyahoga County", dmrSite.get("configured_site"));
         assertEquals("Downtown DMR", dmrSite.get("configured_name"));
-        assertEquals("Legacy DMR Label", dmrSite.get("channel_name"));
+        assertEquals("Downtown DMR", dmrSite.get("channel_name"));
         Map<String,Object> nxdnSite = map(mDatabase.site(request(
-            "/api/site?guid=configured-nxdn")), "site");
+            "/api/site?guid=00000000-0000-0000-0000-000000000213")), "site");
         assertEquals("Geauga County", nxdnSite.get("configured_site"));
         assertEquals("Chardon NXDN", nxdnSite.get("configured_name"));
-        assertEquals("Legacy NXDN Label", nxdnSite.get("channel_name"));
+        assertEquals("Chardon NXDN", nxdnSite.get("channel_name"));
 
         Map<String,Object> dmrQuality = rowsFrom(mDatabase.qualityHistory(request(
-            "/api/quality?guid=configured-dmr&include_history=false")), "sites").getFirst();
+            "/api/quality?guid=00000000-0000-0000-0000-000000000211&include_history=false")), "sites").getFirst();
         assertEquals("Cuyahoga County", dmrQuality.get("configured_site"));
         assertEquals("Downtown DMR", dmrQuality.get("configured_name"));
         Map<String,Object> nxdnQuality = rowsFrom(mDatabase.qualityHistory(request(
-            "/api/quality?guid=configured-nxdn&include_history=false")), "sites").getFirst();
+            "/api/quality?guid=00000000-0000-0000-0000-000000000213&include_history=false")), "sites").getFirst();
         assertEquals("Geauga County", nxdnQuality.get("configured_site"));
         assertEquals("Chardon NXDN", nxdnQuality.get("configured_name"));
 
         List<Map<String,Object>> recent = rowsFrom(mDatabase.dashboard(), "recentReceivers");
         Map<String,Object> dmrRecent = recent.stream()
-            .filter(row -> "configured-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+            .filter(row -> "00000000-0000-0000-0000-000000000211".equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Cuyahoga County", dmrRecent.get("configured_site"));
         assertEquals("Downtown DMR", dmrRecent.get("configured_name"));
         Map<String,Object> nxdnRecent = recent.stream()
-            .filter(row -> "configured-nxdn".equals(row.get("guid"))).findFirst().orElseThrow();
+            .filter(row -> "00000000-0000-0000-0000-000000000213".equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Geauga County", nxdnRecent.get("configured_site"));
         assertEquals("Chardon NXDN", nxdnRecent.get("configured_name"));
 
         Map<String,Object> dmrChild = rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=Downtown%20DMR"))).stream()
             .flatMap(parent -> systemSitesFor(parent).stream())
-            .filter(row -> "configured-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+            .filter(row -> "00000000-0000-0000-0000-000000000211".equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Cuyahoga County", dmrChild.get("configured_site"));
         assertEquals("Downtown DMR", dmrChild.get("configured_name"));
         Map<String,Object> nxdnChild = rows(mDatabase.systemSites(request(
-            "/api/system/sites?scope=nxdn:guid:configured-nxdn"))).getFirst();
+            "/api/system/sites?scope=nxdn:guid:00000000-0000-0000-0000-000000000213"))).getFirst();
         assertEquals("Geauga County", nxdnChild.get("configured_site"));
         assertEquals("Chardon NXDN", nxdnChild.get("configured_name"));
 
         Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=configured-dmr"))).getFirst();
-        assertEquals("Legacy DMR Neighbor", neighbor.get("neighbor_name"));
-        assertEquals("Lake County", neighbor.get("neighbor_configured_site"));
-        assertEquals("East DMR", neighbor.get("neighbor_configured_name"));
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000211"))).getFirst();
+        assertNull(neighbor.get("neighbor_name"));
+        assertNull(neighbor.get("neighbor_configured_site"));
+        assertNull(neighbor.get("neighbor_configured_name"));
+        assertFalse(neighbor.containsKey("entity_ref"));
     }
 
     @Test
-    void resolvesRetainedProtocolTransitionsByLatestObservationWithP25TieBreak() throws Exception
+    void keepsConfiguredSiteProtocolStableAcrossConflictingRetainedObservations() throws Exception
     {
         long trunkedLastSeen = System.currentTimeMillis();
 
@@ -4996,7 +5235,7 @@ class StatsWebDatabaseTest
                     INSERT INTO trunked_identity_scope (
                         scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
                         first_seen_ms, last_seen_ms
-                    ) VALUES (30, 'dmr:guid:test-site-guid', 3, 2, 0, 1000, 3000)
+                    ) VALUES (30, 'dmr:guid:00000000-0000-0000-0000-000000000001', 3, 2, 0, 1000, 3000)
                     """);
                 statement.executeUpdate("""
                     UPDATE trunked_identity_scope_context SET scope_id = 30 WHERE context_id = 1
@@ -5004,108 +5243,25 @@ class StatsWebDatabaseTest
             }
         }
 
-        Map<String,Object> latest = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
-        assertEquals("DMR", latest.get("protocol"));
-        assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, number(latest.get("protocol_code")));
-        assertEquals(42, number(rows(mDatabase.siteChannels(request(
-            "/api/site/channels?guid=" + GUID))).getFirst().get("channel_number")));
-        assertEquals(3, number(rows(mDatabase.siteNeighbors(request(
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        assertEquals("p25", site.get("protocol"));
+        assertEquals(1, number(site.get("protocol_code")));
+        assertEquals("Cleveland Simulcast", site.get("channel_name"));
+        assertEquals(Map.of("kind", "site", "key", GUID), site.get("entity_ref"));
+
+        List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=" + GUID)));
+        assertNotNull(channels.getFirst().get("descriptor"));
+        assertTrue(channels.stream().noneMatch(row ->
+            row.get("channel_number") instanceof Number number && number.longValue() == 42));
+        assertEquals(2, number(rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID))).getFirst().get("site_id")));
-        CSVRecord dmrChannelExport = csvRows(mDatabase.csvExport(request(
+
+        CSVRecord channelExport = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=site-channels&guid=" + GUID))).getFirst();
-        assertEquals("DMR", dmrChannelExport.get("protocol"));
-        assertEquals("10", dmrChannelExport.get("network_id"));
-        assertEquals("20", dmrChannelExport.get("system_id"));
-        assertEquals("2", dmrChannelExport.get("site_id"));
-
-        List<Map<String,Object>> qualitySites = rowsFrom(mDatabase.qualityHistory(request(
-            "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
-        assertEquals(1, qualitySites.size());
-        assertEquals("DMR", qualitySites.getFirst().get("protocol"));
-        assertNull(qualitySites.getFirst().get("nac"));
-
-        List<Map<String,Object>> directory = rows(mDatabase.systemDirectory(request(
-            "/api/system-directory")));
-        List<Map<String,Object>> directoryChildren = directory.stream()
-            .flatMap(parent -> systemSitesFor(parent).stream())
-            .filter(child -> GUID.equals(child.get("guid"))).toList();
-        assertEquals(1, directoryChildren.size());
-        assertEquals("DMR", directoryChildren.getFirst().get("protocol"));
-        Map<String,Object> transitionedDmrPreview = rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?include_site_preview=true"))).stream()
-            .filter(parent -> "DMR".equals(parent.get("protocol")))
-            .flatMap(parent -> rowsFrom(parent, "site_preview").stream())
-            .filter(child -> GUID.equals(child.get("guid"))).findFirst().orElseThrow();
-        assertEquals("Transitioned DMR", transitionedDmrPreview.get("configured_system"));
-        assertEquals("DMR Receiver", transitionedDmrPreview.get("channel_name"));
-        assertEquals(451_000_000L, number(transitionedDmrPreview.get("current_control_hz")));
-        assertEquals(trunkedLastSeen, number(transitionedDmrPreview.get("last_seen_ms")));
-        Map<String,Object> retainedP25Parent = directory.stream()
-            .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
-        assertEquals(0, number(retainedP25Parent.get("sites")));
-        assertNull(retainedP25Parent.get("site_names"));
-        Map<String,Object> recentReceiver = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
-            .filter(receiver -> GUID.equals(receiver.get("guid"))).findFirst().orElseThrow();
-        assertEquals("DMR", recentReceiver.get("protocol"));
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
-            PreparedStatement statement = connection.prepareStatement(
-                "UPDATE p25_site_snapshot SET last_seen_ms = ? WHERE guid = ?"))
-        {
-            statement.setLong(1, trunkedLastSeen);
-            statement.setString(2, GUID);
-            statement.executeUpdate();
-            try(Statement ownership = connection.createStatement())
-            {
-                ownership.executeUpdate("""
-                    UPDATE receiver_context SET protocol_code = 1, decoder = 'P25-1' WHERE id = 1
-                    """);
-                ownership.executeUpdate("""
-                    UPDATE trunked_identity_scope_context SET scope_id = 1 WHERE context_id = 1
-                    """);
-            }
-        }
-
-        Map<String,Object> tied = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
-        assertEquals(1, number(tied.get("protocol_code")));
-        assertEquals("trunked", tied.get("site_kind"));
-        assertNotNull(rows(mDatabase.siteChannels(request(
-            "/api/site/channels?guid=" + GUID))).getFirst().get("descriptor"));
-        Map<String,Object> p25Neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=" + GUID))).getFirst();
-        assertEquals(number(p25Neighbor.get("site")), number(p25Neighbor.get("site_id")));
-        CSVRecord p25ChannelExport = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=site-channels&guid=" + GUID))).getFirst();
-        assertEquals("P25", p25ChannelExport.get("protocol"));
-        assertEquals("BEE00", p25ChannelExport.get("wacn_hex"));
-        assertEquals("49F", p25ChannelExport.get("nac_hex"));
-
-        qualitySites = rowsFrom(mDatabase.qualityHistory(request(
-            "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
-        assertEquals(1, qualitySites.size());
-        assertEquals("P25", qualitySites.getFirst().get("protocol"));
-        assertEquals(0x49FL, number(qualitySites.getFirst().get("nac")));
-
-        directory = rows(mDatabase.systemDirectory(request("/api/system-directory")));
-        directoryChildren = directory.stream().flatMap(parent -> systemSitesFor(parent).stream())
-            .filter(child -> GUID.equals(child.get("guid"))).toList();
-        assertEquals(1, directoryChildren.size());
-        assertEquals("P25", directoryChildren.getFirst().get("protocol"));
-        Map<String,Object> transitionedP25Preview = rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?include_site_preview=true"))).stream()
-            .filter(parent -> "P25".equals(parent.get("protocol")))
-            .flatMap(parent -> rowsFrom(parent, "site_preview").stream())
-            .filter(child -> GUID.equals(child.get("guid"))).findFirst().orElseThrow();
-        assertEquals("Cleveland Simulcast", transitionedP25Preview.get("channel_name"));
-        assertEquals(856_137_500L, number(transitionedP25Preview.get("current_control_hz")));
-        assertEquals(trunkedLastSeen, number(transitionedP25Preview.get("last_seen_ms")));
-        retainedP25Parent = directory.stream()
-            .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
-        assertEquals(1, number(retainedP25Parent.get("sites")));
-        assertEquals("Cleveland Simulcast", retainedP25Parent.get("site_names"));
-        recentReceiver = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
-            .filter(receiver -> GUID.equals(receiver.get("guid"))).findFirst().orElseThrow();
-        assertEquals("P25", recentReceiver.get("protocol"));
+        assertEquals("P25", channelExport.get("protocol"));
+        assertEquals("BEE00", channelExport.get("wacn_hex"));
+        assertEquals("49F", channelExport.get("nac_hex"));
     }
 
     @Test
@@ -5190,17 +5346,29 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("INSERT INTO p25_system VALUES (3, 1, 4095, 1000, 4000)");
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    radres_guid, decoder_type, primary_frequency_hz, config_json
+                ) VALUES
+                    ('00000000-0000-0000-0000-000000000031', 'TRUNKED', 31,
+                        'Greater Cleveland', 'Earlier Child', 'County',
+                        '00000000-0000-0000-0000-000000000031', 'P25_PHASE1', 857137500, '{}'),
+                    ('00000000-0000-0000-0000-000000000032', 'TRUNKED', 32,
+                        'Greater Cleveland', 'Unknown Child', 'County',
+                        '00000000-0000-0000-0000-000000000032', 'P25_PHASE1', 858137500, '{}')
+                """);
+            statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
                     primary_frequency_hz, current_control_hz)
-                VALUES ('earlier-child', 'earlier-child-hash', 1000, 2500, 1, 'APCO25', 'Earlier Child',
+                VALUES ('00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-000000000031-hash', 1000, 2500, 1, 'APCO25', 'Earlier Child',
                     'County', 'P25-1', 1, 0x49F, 0, 9, 857137500, 857137500)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac,
                     primary_frequency_hz, current_control_hz)
-                VALUES ('unknown-child', 'unknown-child-hash', 1000, 2400, 1, 'APCO25', 'Unknown Child',
+                VALUES ('00000000-0000-0000-0000-000000000032', '00000000-0000-0000-0000-000000000032-hash', 1000, 2400, 1, 'APCO25', 'Unknown Child',
                     'County', 'P25-1', 1, 0x49F, 858137500, 858137500)
                 """);
             statement.executeUpdate("""
@@ -5209,8 +5377,8 @@ class StatsWebDatabaseTest
                     alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
                 ) VALUES (3, 'p25:00001:FFF', 1, 1, 0, 1, 3, 1000, 4000)
                 """);
-            seedP25Context(connection, 31, "earlier-child", 1);
-            seedP25Context(connection, 32, "unknown-child", 1);
+            seedP25Context(connection, 31, "00000000-0000-0000-0000-000000000031", 1);
+            seedP25Context(connection, 32, "00000000-0000-0000-0000-000000000032", 1);
         }
 
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
@@ -5223,8 +5391,8 @@ class StatsWebDatabaseTest
         assertEquals(SYSTEM, number(systems.getLast().get("system_id")));
         assertTrue(systems.stream().noneMatch(system -> system.containsKey("children")));
         List<Map<String,Object>> children = systemSitesFor(systems.getLast());
-        assertEquals("earlier-child", children.getFirst().get("guid"));
-        assertEquals("unknown-child", children.get(1).get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000031", children.getFirst().get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000032", children.get(1).get("guid"));
         assertEquals(GUID, children.getLast().get("guid"));
     }
 
@@ -5238,15 +5406,21 @@ class StatsWebDatabaseTest
                 INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
                     primary_frequency_hz, current_control_hz)
-                VALUES ('consensus-site-guid', 'consensus-hash', 1000, 2500, 1, 'APCO25', 'Consensus Child',
+                VALUES ('00000000-0000-0000-0000-000000000033', 'consensus-hash', 1000, 2500, 1, 'APCO25', 'Consensus Child',
                     'County', 'P25-1', 1, 0x49F, 1, 2, 857137500, 857137500)
                 """);
             statement.executeUpdate("""
-                INSERT INTO configuration_channel (sort_order, system_name, radres_guid, config_json)
-                VALUES (1, ' Greater Cleveland ', 'test-site-guid', '{}'),
-                       (2, 'greater cleveland', 'consensus-site-guid', '{}')
+                UPDATE configuration_channel SET system_name = ' Greater Cleveland '
+                WHERE radres_guid = '00000000-0000-0000-0000-000000000001'
                 """);
-            seedP25Context(connection, 33, "consensus-site-guid", 1);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, radres_guid,
+                    decoder_type, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000033', 'TRUNKED', 2,
+                    'greater cleveland', '00000000-0000-0000-0000-000000000033', 'P25_PHASE1', '{}')
+                """);
+            seedP25Context(connection, 33, "00000000-0000-0000-0000-000000000033", 1);
         }
 
         Map<String,Object> parent = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
@@ -5260,7 +5434,7 @@ class StatsWebDatabaseTest
         assertEquals(1, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=BEE00"))).size());
         assertEquals(1, rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?q=consensus-site-guid"))).size());
+            "/api/system-directory?q=00000000-0000-0000-0000-000000000033"))).size());
         assertEquals(1, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=Consensus%20Child"))).size());
 
@@ -5269,7 +5443,7 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 UPDATE configuration_channel SET system_name = 'Other System'
-                WHERE radres_guid = 'consensus-site-guid'
+                WHERE radres_guid = '00000000-0000-0000-0000-000000000033'
                 """);
         }
 
@@ -5285,7 +5459,7 @@ class StatsWebDatabaseTest
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-a", TrunkedSiteSchema.PROTOCOL_DMR,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000101", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 2, "Metro DMR", "DMR Downtown", 10, 20, 1, null,
                 List.of(
                     new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L,
@@ -5295,24 +5469,42 @@ class StatsWebDatabaseTest
                             TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR),
                     new TrunkedSiteSchema.Channel(43, null, 2, 452_000_000L, 457_000_000L, 2)),
                 List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 2, 44, 453_000_000L, 1))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-b", TrunkedSiteSchema.PROTOCOL_DMR,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000102", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 2, "Metro DMR", "DMR Airport", 10, 20, 2, null,
                 List.of(new TrunkedSiteSchema.Channel(52, null, 1, 461_000_000L, 466_000_000L, 1)),
                 List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-a", TrunkedSiteSchema.PROTOCOL_NXDN,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000103", TrunkedSiteSchema.PROTOCOL_NXDN,
                 2, 4, "Regional NXDN", "NXDN North", 7, 8, 9, 5,
                 List.of(new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, 160_000_000L, 1)),
                 List.of(new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L, 2))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-b", TrunkedSiteSchema.PROTOCOL_NXDN,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000104", TrunkedSiteSchema.PROTOCOL_NXDN,
                 2, 4, "Regional NXDN", "NXDN South", 7, 8, 10, 5,
                 List.of(new TrunkedSiteSchema.Channel(130, 131, null, 155_025_000L, 160_025_000L, 1)),
                 List.of()));
-            seedContextScope(connection, 101, 101, "dmr-a", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 102, 102, "dmr-b", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 103, 103, "nxdn-a", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
-            seedContextScope(connection, 104, 104, "nxdn-b", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
+            seedContextScope(connection, 101, 101, "00000000-0000-0000-0000-000000000101", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 102, 102, "00000000-0000-0000-0000-000000000102", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 103, 103, "00000000-0000-0000-0000-000000000103", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
+            seedContextScope(connection, 104, 104, "00000000-0000-0000-0000-000000000104", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
             try(Statement statement = connection.createStatement())
             {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_channel (
+                        configuration_id, channel_kind, sort_order, system_name, name,
+                        radres_guid, decoder_type, config_json
+                    ) VALUES
+                        ('00000000-0000-0000-0000-000000000101', 'TRUNKED', 101,
+                            'Metro DMR', 'DMR Downtown',
+                            '00000000-0000-0000-0000-000000000101', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000102', 'TRUNKED', 102,
+                            'Metro DMR', 'DMR Airport',
+                            '00000000-0000-0000-0000-000000000102', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000103', 'TRUNKED', 103,
+                            'Regional NXDN', 'NXDN North',
+                            '00000000-0000-0000-0000-000000000103', 'NXDN', '{}'),
+                        ('00000000-0000-0000-0000-000000000104', 'TRUNKED', 104,
+                            'Regional NXDN', 'NXDN South',
+                            '00000000-0000-0000-0000-000000000104', 'NXDN', '{}')
+                    """);
                 statement.executeUpdate("""
                     INSERT INTO trunked_identity_summary (
                         scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
@@ -5338,38 +5530,38 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> previewSystems = rows(mDatabase.systemDirectory(request(
             "/api/v1/systems?include_site_preview=true&limit=25")));
         Map<String,Object> dmrPreviewSystem = previewSystems.stream()
-            .filter(row -> "dmr:guid:dmr-a".equals(row.get("scope_token"))).findFirst().orElseThrow();
+            .filter(row -> "dmr:guid:00000000-0000-0000-0000-000000000101".equals(row.get("scope_token"))).findFirst().orElseThrow();
         Map<String,Object> dmrPreview = rowsFrom(dmrPreviewSystem, "site_preview").getFirst();
-        assertEquals("dmr-a", dmrPreview.get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000101", dmrPreview.get("guid"));
         assertEquals(1L, number(dmrPreview.get("site_id")));
         assertEquals(2L, number(dmrPreview.get("channels")));
         assertEquals(Boolean.FALSE, dmrPreviewSystem.get("site_preview_truncated"));
         Map<String,Object> nxdnPreviewSystem = previewSystems.stream()
-            .filter(row -> "nxdn:guid:nxdn-a".equals(row.get("scope_token"))).findFirst().orElseThrow();
+            .filter(row -> "nxdn:guid:00000000-0000-0000-0000-000000000103".equals(row.get("scope_token"))).findFirst().orElseThrow();
         Map<String,Object> nxdnPreview = rowsFrom(nxdnPreviewSystem, "site_preview").getFirst();
-        assertEquals("nxdn-a", nxdnPreview.get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000103", nxdnPreview.get("guid"));
         assertEquals(9L, number(nxdnPreview.get("site_id")));
         assertEquals(5L, number(nxdnPreview.get("ran")));
         assertEquals(Boolean.FALSE, nxdnPreviewSystem.get("site_preview_truncated"));
         List<Map<String,Object>> dmr = systems.stream().filter(row -> "DMR".equals(row.get("protocol"))).toList();
         assertEquals(2, dmr.size());
-        assertEquals(List.of("dmr:guid:dmr-a", "dmr:guid:dmr-b"),
+        assertEquals(List.of("dmr:guid:00000000-0000-0000-0000-000000000101", "dmr:guid:00000000-0000-0000-0000-000000000102"),
             dmr.stream().map(row -> String.valueOf(row.get("scope_token"))).toList());
         assertTrue(dmr.stream().allMatch(row -> number(row.get("sites")) == 1));
         assertTrue(dmr.stream().allMatch(row -> "Metro DMR".equals(row.get("configured_system"))));
         assertTrue(dmr.stream().noneMatch(row -> row.containsKey("children")));
-        assertEquals("dmr-a", systemSitesFor(dmr.getFirst()).getFirst().get("guid"));
-        assertEquals("dmr-b", systemSitesFor(dmr.getLast()).getFirst().get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000101", systemSitesFor(dmr.getFirst()).getFirst().get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000102", systemSitesFor(dmr.getLast()).getFirst().get("guid"));
         assertTrue(dmr.stream().flatMap(row -> systemSitesFor(row).stream())
             .allMatch(row -> "trunked".equals(row.get("site_kind"))));
-        assertEquals("dmr-b", systemSitesFor(rows(mDatabase.systemDirectory(request(
+        assertEquals("00000000-0000-0000-0000-000000000102", systemSitesFor(rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=DMR%20Airport"))).getFirst()).getFirst().get("guid"));
         assertEquals(2, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=20"))).size());
 
         List<Map<String,Object>> nxdn = systems.stream().filter(row -> "NXDN".equals(row.get("protocol"))).toList();
         assertEquals(2, nxdn.size());
-        assertEquals(List.of("nxdn:guid:nxdn-a", "nxdn:guid:nxdn-b"),
+        assertEquals(List.of("nxdn:guid:00000000-0000-0000-0000-000000000103", "nxdn:guid:00000000-0000-0000-0000-000000000104"),
             nxdn.stream().map(row -> String.valueOf(row.get("scope_token"))).toList());
         assertTrue(nxdn.stream().allMatch(row -> number(row.get("sites")) == 1));
         assertTrue(nxdn.stream().allMatch(row -> systemSitesFor(row).size() == 1));
@@ -5378,14 +5570,14 @@ class StatsWebDatabaseTest
             "/api/system-directory?q=NXDN")));
         assertEquals(2, nxdnSearch.size());
         assertEquals("NXDN", nxdnSearch.getFirst().get("protocol"));
-        assertEquals("nxdn-a", systemSitesFor(nxdnSearch.getFirst()).getFirst().get("guid"));
+        assertEquals("00000000-0000-0000-0000-000000000103", systemSitesFor(nxdnSearch.getFirst()).getFirst().get("guid"));
         assertEquals(1, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=NXDN%20North"))).size());
-        assertEquals("nxdn-a", systemSitesFor(rows(mDatabase.systemDirectory(request(
+        assertEquals("00000000-0000-0000-0000-000000000103", systemSitesFor(rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=9"))).getFirst()).getFirst().get("guid"));
 
-        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=dmr-a")), "site");
-        assertEquals("DMR", site.get("protocol"));
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=00000000-0000-0000-0000-000000000101")), "site");
+        assertEquals("dmr", site.get("protocol"));
         assertEquals("trunked", site.get("site_kind"));
         assertFalse(site.containsKey("site_type"));
         assertFalse(site.containsKey("snapshot_hash"));
@@ -5400,54 +5592,54 @@ class StatsWebDatabaseTest
         assertEquals(Boolean.TRUE, dmrCapabilities.get("group_identities"));
         assertEquals(Boolean.TRUE, dmrCapabilities.get("activity"));
 
-        Map<String,Object> nxdnSite = map(mDatabase.site(request("/api/site?guid=nxdn-a")), "site");
-        assertEquals("NXDN", nxdnSite.get("protocol"));
+        Map<String,Object> nxdnSite = map(mDatabase.site(request("/api/site?guid=00000000-0000-0000-0000-000000000103")), "site");
+        assertEquals("nxdn", nxdnSite.get("protocol"));
         assertEquals(4, number(nxdnSite.get("identity_domain_code")));
         assertEquals(5, number(nxdnSite.get("ran")));
         assertEquals(Boolean.TRUE, map(nxdnSite, "capabilities").get("quality"));
         assertEquals(Boolean.TRUE, map(nxdnSite, "capabilities").get("activity"));
 
         Map<String,Object> typeDTalkgroup = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=nxdn:guid:nxdn-a"))).getFirst();
+            "/api/system/talkgroups?scope=nxdn:guid:00000000-0000-0000-0000-000000000103"))).getFirst();
         assertEquals(2, number(typeDTalkgroup.get("identity_domain_code")));
         assertEquals(24921, number(typeDTalkgroup.get("talkgroup_id")));
         assertEquals(24921, number(rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?scope=nxdn:guid:nxdn-a&q=12-0345")))
+            "/api/system/talkgroups?scope=nxdn:guid:00000000-0000-0000-0000-000000000103&q=12-0345")))
             .getFirst().get("talkgroup_id")));
         Map<String,Object> typeDRadio = map(mDatabase.radio(request(
-            "/api/radio?scope=nxdn:guid:nxdn-a&radio_id=14358")), "radio");
+            "/api/radio?scope=nxdn:guid:00000000-0000-0000-0000-000000000103&radio_id=14358")), "radio");
         assertEquals(2, number(typeDRadio.get("identity_domain_code")));
         assertEquals(14358, number(typeDRadio.get("radio_id")));
         assertEquals("TYPE D UNIT", typeDRadio.get("last_talker_alias"));
         assertEquals(24921, number(typeDRadio.get("last_talkgroup_id")));
         assertEquals(14358, number(rows(mDatabase.systemRadios(request(
-            "/api/system/radios?scope=nxdn:guid:nxdn-a&q=07-0022")))
+            "/api/system/radios?scope=nxdn:guid:00000000-0000-0000-0000-000000000103&q=07-0022")))
             .getFirst().get("radio_id")));
         assertEquals(14358, number(rows(mDatabase.systemTalkerAliases(request(
-            "/api/system/talker-aliases?scope=nxdn:guid:nxdn-a&q=07-0022")))
+            "/api/system/talker-aliases?scope=nxdn:guid:00000000-0000-0000-0000-000000000103&q=07-0022")))
             .getFirst().get("radio_id")));
 
         CSVRecord dmrTalkgroupExport = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=system-talkgroups&scope=dmr:guid:dmr-a"))).getFirst();
+            "/api/export.csv?dataset=system-talkgroups&scope=dmr:guid:00000000-0000-0000-0000-000000000101"))).getFirst();
         assertEquals("DMR", dmrTalkgroupExport.get("protocol"));
         assertEquals("10", dmrTalkgroupExport.get("network_id"));
         assertEquals("20", dmrTalkgroupExport.get("system_id"));
         CSVRecord dmrRadioExport = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=system-radios&scope=dmr:guid:dmr-a"))).getFirst();
+            "/api/export.csv?dataset=system-radios&scope=dmr:guid:00000000-0000-0000-0000-000000000101"))).getFirst();
         assertEquals("10", dmrRadioExport.get("network_id"));
         assertEquals("1234", dmrRadioExport.get("radio_id"));
 
         CSVRecord nxdnTalkgroupExport = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=system-talkgroups&scope=nxdn:guid:nxdn-a"))).getFirst();
+            "/api/export.csv?dataset=system-talkgroups&scope=nxdn:guid:00000000-0000-0000-0000-000000000103"))).getFirst();
         assertEquals("7", nxdnTalkgroupExport.get("network_id"));
         assertEquals("12-0345", nxdnTalkgroupExport.get("formatted_talkgroup_id"));
         CSVRecord nxdnRadioExport = csvRows(mDatabase.csvExport(request(
-            "/api/export.csv?dataset=system-radios&scope=nxdn:guid:nxdn-a"))).getFirst();
+            "/api/export.csv?dataset=system-radios&scope=nxdn:guid:00000000-0000-0000-0000-000000000103"))).getFirst();
         assertEquals("7", nxdnRadioExport.get("network_id"));
         assertEquals("07-0022", nxdnRadioExport.get("formatted_radio_id"));
 
         Map<String,Object> dmrChannelPage = mDatabase.siteChannels(request(
-            "/api/site/channels?guid=dmr-a&limit=1"));
+            "/api/site/channels?guid=00000000-0000-0000-0000-000000000101&limit=1"));
         List<Map<String,Object>> channels = rows(dmrChannelPage);
         assertEquals(1, channels.size());
         assertTrue((Boolean)dmrChannelPage.get("hasMore"));
@@ -5460,29 +5652,30 @@ class StatsWebDatabaseTest
             TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR,
             number(channels.getFirst().get("role_flags")));
         assertEquals(43, number(rows(mDatabase.siteChannels(request(
-            "/api/site/channels?guid=dmr-a&limit=1&offset=1"))).getFirst().get("channel_number")));
+            "/api/site/channels?guid=00000000-0000-0000-0000-000000000101&limit=1&offset=1"))).getFirst().get("channel_number")));
 
         List<Map<String,Object>> neighbors = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=nxdn-a&limit=1")));
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000103&limit=1")));
         assertEquals(1, neighbors.size());
         assertEquals(10, number(neighbors.getFirst().get("site_id")));
         assertEquals(4, number(neighbors.getFirst().get("identity_domain_code")));
         assertEquals(155_012_500L, number(neighbors.getFirst().get("frequency_hz")));
 
         List<Map<String,Object>> dmrNeighbors = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=dmr-a&limit=1")));
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000101&limit=1")));
         assertEquals(1, dmrNeighbors.size());
         assertEquals(2, number(dmrNeighbors.getFirst().get("site_id")));
-        assertEquals("DMR Airport", dmrNeighbors.getFirst().get("neighbor_name"));
-        assertEquals("dmr-b", dmrNeighbors.getFirst().get("neighbor_guid"));
+        assertNull(dmrNeighbors.getFirst().get("neighbor_name"));
+        assertNull(dmrNeighbors.getFirst().get("neighbor_guid"));
+        assertFalse(dmrNeighbors.getFirst().containsKey("entity_ref"));
 
         List<Map<String,Object>> nxdnChannels = rows(mDatabase.siteChannels(request(
-            "/api/site/channels?guid=nxdn-a&limit=1")));
+            "/api/site/channels?guid=00000000-0000-0000-0000-000000000103&limit=1")));
         assertEquals(1, nxdnChannels.size());
         assertEquals(120, number(nxdnChannels.getFirst().get("channel_number")));
 
         assertTrue(rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?q=00000"))).isEmpty());
+            "/api/system-directory?q=not-a-configured-site"))).isEmpty());
 
         Map<String,Object> counts = map(mDatabase.dashboard(), "counts");
         assertEquals(5, number(counts.get("trunked_systems")));
@@ -5493,83 +5686,120 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void linksOnlyUniquelyOwnedAndFullyQualifiedTrunkedNeighbors() throws Exception
+    void doesNotGuessDmrNeighborNavigationFromDisplayFacts() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-source",
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_channel (
+                        configuration_id, channel_kind, sort_order, system_name, name,
+                        radres_guid, decoder_type, config_json
+                    ) VALUES
+                        ('00000000-0000-0000-0000-000000000170', 'TRUNKED', 170,
+                            'Shared DMR', 'Site 3',
+                            '00000000-0000-0000-0000-000000000170', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000171', 'TRUNKED', 171,
+                            'Shared DMR', 'Site 5',
+                            '00000000-0000-0000-0000-000000000171', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000172', 'TRUNKED', 172,
+                            'Shared DMR', 'Duplicate Site 5',
+                            '00000000-0000-0000-0000-000000000172', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000173', 'TRUNKED', 173,
+                            'DMR Alpha', 'Other Source',
+                            '00000000-0000-0000-0000-000000000173', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000174', 'TRUNKED', 174,
+                            'DMR Beta', 'Other Target',
+                            '00000000-0000-0000-0000-000000000174', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000175', 'TRUNKED', 175,
+                            'Sparse DMR', 'Sparse Source',
+                            '00000000-0000-0000-0000-000000000175', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000176', 'TRUNKED', 176,
+                            'Sparse DMR', 'Sparse Target',
+                            '00000000-0000-0000-0000-000000000176', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000177', 'TRUNKED', 177,
+                            'Unclassified DMR', 'Unclassified Source',
+                            '00000000-0000-0000-0000-000000000177', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000178', 'TRUNKED', 178,
+                            'Unclassified DMR', 'Unclassified Target',
+                            '00000000-0000-0000-0000-000000000178', 'DMR', '{}')
+                    """);
+            }
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000170",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, " Shared DMR ", "Site 3", 0, null, 3, null,
                 List.of(), List.of(new TrunkedSiteSchema.Neighbor(1, 2, 0, null, 5, 802, null, 1))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-target",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000171",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "shared dmr", "Site 5", 0, null, 5, null,
                 List.of(new TrunkedSiteSchema.Channel(802, null, 1, 139_518_750L, null, 1)), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-unowned",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000179",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Shared DMR", "Unowned Site 5", 0, null, 5, null,
                 List.of(), List.of()));
-            seedContextScope(connection, 170, 170, "dmr-link-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 171, 171, "dmr-link-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 170, 170, "00000000-0000-0000-0000-000000000170", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 171, 171, "00000000-0000-0000-0000-000000000171", TrunkedSiteSchema.PROTOCOL_DMR, 0);
         }
 
         Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=dmr-link-source"))).getFirst();
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000170"))).getFirst();
         assertEquals(5, number(neighbor.get("site_id")));
         assertEquals(802, number(neighbor.get("channel_number")));
-        assertEquals("Site 5", neighbor.get("neighbor_name"));
-        assertEquals("dmr-link-target", neighbor.get("neighbor_guid"));
+        assertNull(neighbor.get("neighbor_name"));
+        assertNull(neighbor.get("neighbor_guid"));
+        assertFalse(neighbor.containsKey("entity_ref"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-duplicate",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000172",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "SHARED DMR", "Duplicate Site 5", 0, null, 5, null,
                 List.of(), List.of()));
-            seedContextScope(connection, 172, 172, "dmr-link-duplicate", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 172, 172, "00000000-0000-0000-0000-000000000172", TrunkedSiteSchema.PROTOCOL_DMR, 0);
 
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-other-source",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000173",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "DMR Alpha", "Other Source", 1, null, 3, null,
                 List.of(), List.of(new TrunkedSiteSchema.Neighbor(1, 2, 1, null, 5, 803, null, 1))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-other-target",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000174",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "DMR Beta", "Other Target", 1, null, 5, null,
                 List.of(), List.of()));
-            seedContextScope(connection, 173, 173, "dmr-other-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 174, 174, "dmr-other-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 173, 173, "00000000-0000-0000-0000-000000000173", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 174, 174, "00000000-0000-0000-0000-000000000174", TrunkedSiteSchema.PROTOCOL_DMR, 0);
 
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-sparse-source",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000175",
                 TrunkedSiteSchema.PROTOCOL_DMR, 2, 0, "Sparse DMR", "Sparse Source", null, null, 3, null,
                 List.of(), List.of(new TrunkedSiteSchema.Neighbor(2, 0, null, null, 5, null, null, 1))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-sparse-target",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000176",
                 TrunkedSiteSchema.PROTOCOL_DMR, 2, 0, "Sparse DMR", "Sparse Target", null, null, 5, null,
                 List.of(), List.of()));
-            seedContextScope(connection, 175, 175, "dmr-sparse-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 176, 176, "dmr-sparse-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 175, 175, "00000000-0000-0000-0000-000000000175", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 176, 176, "00000000-0000-0000-0000-000000000176", TrunkedSiteSchema.PROTOCOL_DMR, 0);
 
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-unclassified-source",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000177",
                 TrunkedSiteSchema.PROTOCOL_DMR, 0, 0, "Unclassified DMR", "Unclassified Source", 2, null,
                 3, null, List.of(),
                 List.of(new TrunkedSiteSchema.Neighbor(0, 0, 2, null, 5, 804, null, 1))));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-unclassified-target",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000178",
                 TrunkedSiteSchema.PROTOCOL_DMR, 0, 0, "Unclassified DMR", "Unclassified Target", 2, null,
                 5, null, List.of(), List.of()));
-            seedContextScope(connection, 177, 177, "dmr-unclassified-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 178, 178, "dmr-unclassified-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 177, 177, "00000000-0000-0000-0000-000000000177", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 178, 178, "00000000-0000-0000-0000-000000000178", TrunkedSiteSchema.PROTOCOL_DMR, 0);
         }
 
         neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=dmr-link-source"))).getFirst();
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000170"))).getFirst();
         assertNull(neighbor.get("neighbor_name"));
         assertNull(neighbor.get("neighbor_guid"));
 
         neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=dmr-other-source"))).getFirst();
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000173"))).getFirst();
         assertNull(neighbor.get("neighbor_name"));
         assertNull(neighbor.get("neighbor_guid"));
 
         neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=dmr-sparse-source"))).getFirst();
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000175"))).getFirst();
         assertNull(neighbor.get("neighbor_name"));
         assertNull(neighbor.get("neighbor_guid"));
 
         neighbor = rows(mDatabase.siteNeighbors(request(
-            "/api/site/neighbors?guid=dmr-unclassified-source"))).getFirst();
+            "/api/site/neighbors?guid=00000000-0000-0000-0000-000000000177"))).getFirst();
         assertNull(neighbor.get("neighbor_name"));
         assertNull(neighbor.get("neighbor_guid"));
     }
@@ -5577,10 +5807,21 @@ class StatsWebDatabaseTest
     @Test
     void pagesTiedTrunkedSiteFactsUsingTheirFullPrimaryKeys() throws Exception
     {
-        String guid = "dmr-pagination-ties";
+        String guid = "00000000-0000-0000-0000-000000005606";
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_channel (
+                        configuration_id, channel_kind, sort_order, system_name, name,
+                        radres_guid, decoder_type, config_json
+                    ) VALUES ('00000000-0000-0000-0000-000000005606', 'TRUNKED', 5606,
+                        'Paging DMR', 'Paging Site',
+                        '00000000-0000-0000-0000-000000005606', 'DMR', '{}')
+                    """);
+            }
             TrunkedSiteSchema.upsert(connection, trunkedSnapshot(guid, TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 2, "Paging DMR", "Paging Site", 10, 20, 1, null,
                 List.of(
@@ -5616,18 +5857,39 @@ class StatsWebDatabaseTest
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-tiny", TrunkedSiteSchema.PROTOCOL_DMR,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000111", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 1, "Shared DMR", "Tiny Site", 10, null, 1, null, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-small", TrunkedSiteSchema.PROTOCOL_DMR,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000112", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 2, "Shared DMR", "Small Site", 10, null, 2, null, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-global", TrunkedSiteSchema.PROTOCOL_NXDN,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000113", TrunkedSiteSchema.PROTOCOL_NXDN,
                 1, 1, "Shared NXDN", "Global Site", null, 8, 1, 5, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-local", TrunkedSiteSchema.PROTOCOL_NXDN,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000114", TrunkedSiteSchema.PROTOCOL_NXDN,
                 1, 3, "Shared NXDN", "Local Site", null, 8, 2, 5, List.of(), List.of()));
-            seedContextScope(connection, 111, 111, "dmr-tiny", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 112, 112, "dmr-small", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 113, 113, "nxdn-global", TrunkedSiteSchema.PROTOCOL_NXDN, 1);
-            seedContextScope(connection, 114, 114, "nxdn-local", TrunkedSiteSchema.PROTOCOL_NXDN, 1);
+            seedContextScope(connection, 111, 111, "00000000-0000-0000-0000-000000000111", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 112, 112, "00000000-0000-0000-0000-000000000112", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 113, 113, "00000000-0000-0000-0000-000000000113", TrunkedSiteSchema.PROTOCOL_NXDN, 1);
+            seedContextScope(connection, 114, 114, "00000000-0000-0000-0000-000000000114", TrunkedSiteSchema.PROTOCOL_NXDN, 1);
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_channel (
+                        configuration_id, channel_kind, sort_order, system_name, name,
+                        radres_guid, decoder_type, config_json
+                    ) VALUES
+                        ('00000000-0000-0000-0000-000000000111', 'TRUNKED', 111,
+                            'Shared DMR', 'Tiny Site',
+                            '00000000-0000-0000-0000-000000000111', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000112', 'TRUNKED', 112,
+                            'Shared DMR', 'Small Site',
+                            '00000000-0000-0000-0000-000000000112', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000113', 'TRUNKED', 113,
+                            'Shared NXDN', 'Global Site',
+                            '00000000-0000-0000-0000-000000000113', 'NXDN', '{}'),
+                        ('00000000-0000-0000-0000-000000000114', 'TRUNKED', 114,
+                            'Shared NXDN', 'Local Site',
+                            '00000000-0000-0000-0000-000000000114', 'NXDN', '{}')
+                    """);
+            }
         }
 
         List<Map<String,Object>> systems = rows(mDatabase.systemDirectory(request("/api/system-directory")));
@@ -5647,7 +5909,7 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            seedContextScope(connection, 150, 150, "quiet-dmr", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 150, 150, "00000000-0000-0000-0000-000000000150", TrunkedSiteSchema.PROTOCOL_DMR, 0);
             statement.executeUpdate("""
                 UPDATE receiver_context
                 SET channel_name='Quiet DMR', alias_list_name='DMR Aliases',
@@ -5656,35 +5918,37 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
-                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
-                ) VALUES(150, 'Quiet Network', 'Summit County', 'Quiet DMR Site',
-                    'quiet-dmr', 'DMR', '{}')
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radres_guid, decoder_type, config_json
+                ) VALUES('00000000-0000-0000-0000-000000000150', 'TRUNKED', 150,
+                    'Quiet Network', 'Summit County', 'Quiet DMR Site',
+                    '00000000-0000-0000-0000-000000000150', 'DMR', '{}')
                 """);
         }
 
         Map<String,Object> quietSystem = rows(mDatabase.systemDirectory(request(
             "/api/system-directory"))).stream()
-            .filter(row -> "dmr:guid:quiet-dmr".equals(row.get("scope_token")))
+            .filter(row -> "dmr:guid:00000000-0000-0000-0000-000000000150".equals(row.get("scope_token")))
             .findFirst().orElseThrow();
         assertEquals(1, number(quietSystem.get("sites")));
         assertFalse(quietSystem.containsKey("children"));
         Map<String,Object> child = systemSitesFor(quietSystem).getFirst();
-        assertEquals("quiet-dmr", child.get("guid"));
-        assertEquals("Quiet DMR", child.get("channel_name"));
+        assertEquals("00000000-0000-0000-0000-000000000150", child.get("guid"));
+        assertEquals("Quiet DMR Site", child.get("channel_name"));
         assertEquals("Summit County", child.get("configured_site"));
         assertEquals("Quiet DMR Site", child.get("configured_name"));
         assertEquals(0, number(child.get("observation_count")));
 
-        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=quiet-dmr")), "site");
-        assertEquals("DMR", site.get("protocol"));
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=00000000-0000-0000-0000-000000000150")), "site");
+        assertEquals("dmr", site.get("protocol"));
         assertEquals("trunked", site.get("site_kind"));
-        assertEquals("Quiet DMR", site.get("channel_name"));
+        assertEquals("Quiet DMR Site", site.get("channel_name"));
         assertEquals("Summit County", site.get("configured_site"));
         assertEquals("Quiet DMR Site", site.get("configured_name"));
         assertEquals(451_012_500L, number(site.get("primary_frequency_hz")));
 
         Map<String,Object> recent = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
-            .filter(row -> "quiet-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+            .filter(row -> "00000000-0000-0000-0000-000000000150".equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Summit County", recent.get("configured_site"));
         assertEquals("Quiet DMR Site", recent.get("configured_name"));
     }
@@ -5694,13 +5958,28 @@ class StatsWebDatabaseTest
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-tier3", TrunkedSiteSchema.PROTOCOL_DMR,
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000121", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 0, "Tier III", "Tier III Site", 10, 20, 1, null, List.of(), List.of()));
-            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-connect-plus",
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("00000000-0000-0000-0000-000000000122",
                 TrunkedSiteSchema.PROTOCOL_DMR, 2, 0, "Connect Plus", "Connect Plus Site", 10, 20, 2, null,
                 List.of(), List.of()));
-            seedContextScope(connection, 121, 121, "dmr-tier3", TrunkedSiteSchema.PROTOCOL_DMR, 0);
-            seedContextScope(connection, 122, 122, "dmr-connect-plus", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 121, 121, "00000000-0000-0000-0000-000000000121", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 122, 122, "00000000-0000-0000-0000-000000000122", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_channel (
+                        configuration_id, channel_kind, sort_order, system_name, name,
+                        radres_guid, decoder_type, config_json
+                    ) VALUES
+                        ('00000000-0000-0000-0000-000000000121', 'TRUNKED', 121,
+                            'Tier III', 'Tier III Site',
+                            '00000000-0000-0000-0000-000000000121', 'DMR', '{}'),
+                        ('00000000-0000-0000-0000-000000000122', 'TRUNKED', 122,
+                            'Connect Plus', 'Connect Plus Site',
+                            '00000000-0000-0000-0000-000000000122', 'DMR', '{}')
+                    """);
+            }
         }
 
         List<Map<String,Object>> dmr = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
@@ -5827,7 +6106,7 @@ class StatsWebDatabaseTest
             """))
         {
             context.setInt(1, contextId);
-            context.setString(2, protocol.toLowerCase() + "-" + guid);
+            context.setString(2, "GUID:" + guid);
             context.setString(3, guid);
             context.setInt(4, protocolCode);
             context.setString(5, protocol + " Receiver");
@@ -5861,7 +6140,7 @@ class StatsWebDatabaseTest
             """))
         {
             context.setInt(1, contextId);
-            context.setString(2, "p25-" + guid);
+            context.setString(2, "GUID:" + guid);
             context.setString(3, guid);
             context.executeUpdate();
             ownership.setInt(1, scopeId);
@@ -5929,13 +6208,23 @@ class StatsWebDatabaseTest
             statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
             statement.executeUpdate("DELETE FROM alias_list");
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (1, 'County', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    alias_list_name, radres_guid, decoder_type, primary_frequency_hz, config_json
+                ) VALUES
+                    ('%1$s', 'TRUNKED', 1, 'Greater Cleveland', 'Cuyahoga County',
+                        'Cleveland Simulcast', 'County', '%1$s', 'P25_PHASE1', 856137500, '{}'),
+                    ('%2$s', 'CONVENTIONAL', 2, 'County', NULL, 'County Fire',
+                        'County', NULL, 'NBFM', 154310000, '{}')
+                """.formatted(GUID, FIRE_CONFIGURATION_ID));
             statement.executeUpdate("INSERT INTO p25_system VALUES (1, " + WACN + ", " + SYSTEM + ", " +
                 (now - 10_000) + ", " + now + ")");
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
                     primary_frequency_hz, current_control_hz)
-                VALUES (1, 'site-cleveland', 'test-site-guid', 1, 1, 'Cleveland Simulcast', 'County', 'P25-1',
+                VALUES (1, 'GUID:00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 1, 1, 'Cleveland Simulcast', 'County', 'P25-1',
                     1000, 2000, 1, 0x49F, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
@@ -5954,7 +6243,7 @@ class StatsWebDatabaseTest
                     lra, active_rfss_network_connection, mfid, broadcast_clock_ms, micro_slots, data_service,
                     data_access, wuid_lease_minutes,
                     registration_service, tdma, voice_service, primary_frequency_hz, current_control_hz)
-                VALUES ('test-site-guid', 'hash', 1000, 2000, 10, 'APCO25', 'Cleveland Simulcast', 'County',
+                VALUES ('00000000-0000-0000-0000-000000000001', 'hash', 1000, 2000, 10, 'APCO25', 'Cleveland Simulcast', 'County',
                     'P25-1', 1, 0x49F, 1, 1, 0, 1, 0x90, 1784000000000, 110, 1,
                     'Autonomous and by Request', 240, 1, 1, 1, 856137500, 856137500)
                 """);
@@ -5963,102 +6252,102 @@ class StatsWebDatabaseTest
                     signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
                     dropped_bits, last_valid_decode_ms)
-                VALUES ('test-site-guid', 856137500, 0, 2000, -20.0, -21.0, -25.0, -18.0,
+                VALUES ('00000000-0000-0000-0000-000000000001', 856137500, 0, 2000, -20.0, -21.0, -25.0, -18.0,
                     98.5, 100, 1, 4, 0, 0, 1999)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel (guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma,
-                    timeslots, callsign, confirmed_at_ms) VALUES ('test-site-guid', '0-821', '0-821',
+                    timeslots, callsign, confirmed_at_ms) VALUES ('00000000-0000-0000-0000-000000000001', '0-821', '0-821',
                     856137500, 811137500, 0, 1, 'WPFF205', %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
                     tdma, timeslots, callsign, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', '0-821', '0-821', 856137500, 811137500,
+                VALUES ('00000000-0000-0000-0000-000000000001', '0-821', '0-821', 856137500, 811137500,
                     0, 1, 'WPFF205', 1000, 2000, 10)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
                     tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', '0-509', '0-509', 854187500, NULL,
+                VALUES ('00000000-0000-0000-0000-000000000001', '0-509', '0-509', 854187500, NULL,
                     0, 1, 1000, 2000, 4),
-                    ('test-site-guid', '0-510', '0-510', 854187500, NULL,
+                    ('00000000-0000-0000-0000-000000000001', '0-510', '0-510', 854187500, NULL,
                     0, 1, 1000, 2000, 2),
-                    ('test-site-guid', '0-900', '0-900', 857137500, NULL,
+                    ('00000000-0000-0000-0000-000000000001', '0-900', '0-900', 857137500, NULL,
                     0, 1, 1000, %d, 2)
                 """.formatted(now - 3_600_000L));
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_tag (guid, channel_key, tag, confirmed_at_ms)
-                VALUES ('test-site-guid', '0-821', 'CURRENT_CONTROL', %d)
+                VALUES ('00000000-0000-0000-0000-000000000001', '0-821', 'CURRENT_CONTROL', %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_tag_summary
                     (guid, channel_key, tag, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', '0-821', 'CONTROL', 1000, 2000, 10),
-                    ('test-site-guid', '0-509', 'VOICE', 1000, 2000, 4),
-                    ('test-site-guid', '0-510', 'DATA', 1000, 2000, 2)
+                VALUES ('00000000-0000-0000-0000-000000000001', '0-821', 'CONTROL', 1000, 2000, 10),
+                    ('00000000-0000-0000-0000-000000000001', '0-509', 'VOICE', 1000, 2000, 4),
+                    ('00000000-0000-0000-0000-000000000001', '0-510', 'DATA', 1000, 2000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_neighbor (guid, neighbor_key, system_id, rfss, site, channel_descriptor,
                     downlink_hz, status, confirmed_at_ms)
-                VALUES ('test-site-guid', '348:1:2:0-661', 0x348, 1, 2, '0-661', 855137500,
+                VALUES ('00000000-0000-0000-0000-000000000001', '348:1:2:0-661', 0x348, 1, 2, '0-661', 855137500,
                     '[VALID INFORMATION, ACTIVE RFSS CONNECTION]', %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_neighbor_summary (guid, neighbor_key, system_id, rfss, site,
                     channel_descriptor, downlink_hz, status, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', '348:1:2:0-661', 0x348, 1, 2, '0-661', 855137500,
+                VALUES ('00000000-0000-0000-0000-000000000001', '348:1:2:0-661', 0x348, 1, 2, '0-661', 855137500,
                     '[VALID INFORMATION, ACTIVE RFSS CONNECTION]', 1000, 2000, 10),
-                    ('test-site-guid', '348:1:3:0-677', 0x348, 1, 3, '0-677', 855237500,
+                    ('00000000-0000-0000-0000-000000000001', '348:1:3:0-677', 0x348, 1, 3, '0-677', 855237500,
                     '[VALID INFORMATION]', 1000, 1500, 2),
-                    ('test-site-guid', '348:1:4:0-693', 0x348, 1, 4, '0-693', 855337500,
+                    ('00000000-0000-0000-0000-000000000001', '348:1:4:0-693', 0x348, 1, 4, '0-693', 855337500,
                     '[VALID INFORMATION]', 1000, %d, 2)
                 """.formatted(now - 3_600_000L));
             statement.executeUpdate("""
                 INSERT INTO p25_foreign_system_band
                     (guid, foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
                      transmit_offset_hz, confirmed_at_ms)
-                VALUES ('test-site-guid', 0xBEE00, 0x9EF, 4, 1, 935012500, 12500, -39000000, %1$d),
-                    ('test-site-guid', 0xBEE00, 0x9EF, 5, 3, 935012500, 12500, -39000000, %1$d),
-                    ('test-site-guid', 0xBEE00, 0x954, 0, 1, 851006250, 6250, -45000000, %1$d)
+                VALUES ('00000000-0000-0000-0000-000000000001', 0xBEE00, 0x9EF, 4, 1, 935012500, 12500, -39000000, %1$d),
+                    ('00000000-0000-0000-0000-000000000001', 0xBEE00, 0x9EF, 5, 3, 935012500, 12500, -39000000, %1$d),
+                    ('00000000-0000-0000-0000-000000000001', 0xBEE00, 0x954, 0, 1, 851006250, 6250, -45000000, %1$d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_foreign_system_band_summary
                     (guid, foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
                      transmit_offset_hz, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', 0xBEE00, 0x9EF, 4, 1, 935012500, 12500, -39000000,
+                VALUES ('00000000-0000-0000-0000-000000000001', 0xBEE00, 0x9EF, 4, 1, 935012500, 12500, -39000000,
                         1000, %1$d, 10),
-                    ('test-site-guid', 0xBEE00, 0x9EF, 5, 3, 935012500, 12500, -39000000,
+                    ('00000000-0000-0000-0000-000000000001', 0xBEE00, 0x9EF, 5, 3, 935012500, 12500, -39000000,
                         1000, %1$d, 10),
-                    ('test-site-guid', 0xBEE00, 0x954, 0, 1, 851006250, 6250, -45000000,
+                    ('00000000-0000-0000-0000-000000000001', 0xBEE00, 0x954, 0, 1, 851006250, 6250, -45000000,
                         1000, %1$d, 5)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group (guid, patch_group, version, confirmed_at_ms)
-                VALUES ('test-site-guid', 56132, 0, %d)
+                VALUES ('00000000-0000-0000-0000-000000000001', 56132, 0, %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_summary
                     (guid, patch_group, version, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', 56132, 0, 1000, 2000, 10)
+                VALUES ('00000000-0000-0000-0000-000000000001', 56132, 0, 1000, 2000, 10)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_talkgroup (guid, patch_group, talkgroup_id, confirmed_at_ms)
-                VALUES ('test-site-guid', 56132, 56132, %d)
+                VALUES ('00000000-0000-0000-0000-000000000001', 56132, 56132, %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_talkgroup_summary
                     (guid, patch_group, talkgroup_id, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', 56132, 56132, 1000, 2000, 10)
+                VALUES ('00000000-0000-0000-0000-000000000001', 56132, 56132, 1000, 2000, 10)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_radio (guid, patch_group, radio_id, confirmed_at_ms)
-                VALUES ('test-site-guid', 56132, 1811332, %d)
+                VALUES ('00000000-0000-0000-0000-000000000001', 56132, 1811332, %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_radio_summary
                     (guid, patch_group, radio_id, first_seen_ms, last_seen_ms, observation_count)
-                VALUES ('test-site-guid', 56132, 1811332, 1000, 2000, 10)
+                VALUES ('00000000-0000-0000-0000-000000000001', 56132, 1811332, 1000, 2000, 10)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
@@ -6106,7 +6395,8 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, first_seen_ms, last_seen_ms, primary_frequency_hz)
-                VALUES (2, 'conventional-fire', NULL, 10, 0, 'County Fire', 'County', 'NBFM', 1000, 2000,
+                VALUES (2, 'CONFIGURATION:00000000-0000-0000-0000-000000000002', NULL, 10, 0,
+                    'County Fire', 'County', 'NBFM', 1000, 2000,
                     154310000)
                 """);
             statement.executeUpdate("""
@@ -6122,13 +6412,23 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    decoder_type, primary_frequency_hz, config_json
+                ) VALUES
+                    ('%1$s', 'CONVENTIONAL', 5, 'County', 'County DMR', 'County DMR',
+                        'DMR', 451012500, '{}'),
+                    ('%2$s', 'CONVENTIONAL', 6, 'Other', 'Other DMR', 'Other DMR',
+                        'DMR', 461012500, '{}')
+                """.formatted(DMR_COUNTY_CONFIGURATION_ID, DMR_OTHER_CONFIGURATION_ID));
+            statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, first_seen_ms, last_seen_ms, primary_frequency_hz)
-                VALUES (5, 'conventional-dmr-county', 'dmr-county-guid', 3, 3, 'County DMR',
+                VALUES (5, 'CONFIGURATION:%1$s', 'dmr-county-guid', 3, 3, 'County DMR',
                         'County DMR', 'DMR', 1000, 5000, 451012500),
-                       (6, 'conventional-dmr-other', 'dmr-other-guid', 3, 3, 'Other DMR',
+                       (6, 'CONFIGURATION:%2$s', 'dmr-other-guid', 3, 3, 'Other DMR',
                         'Other DMR', 'DMR', 1000, 6000, 461012500)
-                """);
+                """.formatted(DMR_COUNTY_CONFIGURATION_ID, DMR_OTHER_CONFIGURATION_ID));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
                     last_seen_ms, call_count)
@@ -6185,20 +6485,29 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (2, 'Second', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    radres_guid, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('00000000-0000-0000-0000-000000000003', 'TRUNKED', 3,
+                    'Second System', 'Second Simulcast', 'Second',
+                    '00000000-0000-0000-0000-000000000003', 'P25_PHASE1', 855137500, '{}')
+                """);
             statement.executeUpdate("INSERT INTO p25_system VALUES (2, " + WACN + ", " + SECOND_SYSTEM +
                 ", 1000, 3000)");
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
                     primary_frequency_hz, current_control_hz)
-                VALUES (3, 'site-second', 'second-site-guid', 1, 1, 'Second Simulcast', 'Second', 'P25-1',
+                VALUES (3, 'GUID:00000000-0000-0000-0000-000000000003',
+                    '00000000-0000-0000-0000-000000000003', 1, 1, 'Second Simulcast', 'Second', 'P25-1',
                     1000, 3000, 2, 0x123, 1, 1, 855137500, 855137500)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
                     primary_frequency_hz, current_control_hz)
-                VALUES ('second-site-guid', 'second-hash', 1000, 3000, 10, 'APCO25', 'Second Simulcast',
+                VALUES ('00000000-0000-0000-0000-000000000003', 'second-hash', 1000, 3000, 10, 'APCO25', 'Second Simulcast',
                     'Second', 'P25-1', 2, 0x123, 1, 1, 855137500, 855137500)
                 """);
             statement.executeUpdate("""
@@ -6248,6 +6557,13 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
+                    decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%s', 'CONVENTIONAL', 4, 'County', 'Alpha Channel', 'County',
+                    'P25_PHASE1', 800000000, '{}')
+                """.formatted(SORTING_CONFIGURATION_ID));
+            statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, logical_call_count,
                     source_logical_call_count, target_logical_call_count, grant_count, encrypted_logical_call_count, recorded_output_count,
@@ -6275,9 +6591,9 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, nac, first_seen_ms, last_seen_ms, primary_frequency_hz)
-                VALUES (4, 'conventional-alpha', 10, 20, 'Alpha Channel', 'County', 'P25-1', 0x123,
+                VALUES (4, 'CONFIGURATION:%s', 10, 20, 'Alpha Channel', 'County', 'P25-1', 0x123,
                     1000, 3000, 800000000)
-                """);
+                """.formatted(SORTING_CONFIGURATION_ID));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
                     last_seen_ms, call_count, last_event_type_code)

@@ -12,13 +12,10 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
-/**
- * Versioned PBKDF2 password verifier.  The established class name is retained for compatibility with the webfirst
- * authentication core; instances are also used for bounded ordinary-user credentials.
- */
-public record WebAdminCredential(int version, String username, String algorithm, int iterations, int derivedKeyBits,
-                                 String saltBase64, String passwordHashBase64, long passwordChangedAtEpochMillis,
-                                 long credentialVersion)
+/** Versioned PBKDF2 verifier for any web user account. */
+public record WebPasswordVerifier(int version, String username, String algorithm, int iterations, int derivedKeyBits,
+                                  String saltBase64, String passwordHashBase64,
+                                  long passwordChangedAtEpochMillis, long authRevision)
 {
     public static final int CURRENT_VERSION = 1;
     public static final String PBKDF2_SHA256 = "PBKDF2WithHmacSHA256";
@@ -30,11 +27,11 @@ public record WebAdminCredential(int version, String username, String algorithm,
     public static final int MAXIMUM_USERNAME_CHARACTERS = 64;
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[a-z0-9][a-z0-9._-]{0,63}");
 
-    public WebAdminCredential
+    public WebPasswordVerifier
     {
         if(version != CURRENT_VERSION)
         {
-            throw new IllegalArgumentException("Unsupported web credential version");
+            throw new IllegalArgumentException("Unsupported web password-verifier version");
         }
 
         username = normalizeUsername(username);
@@ -63,15 +60,13 @@ public record WebAdminCredential(int version, String username, String algorithm,
             throw new IllegalArgumentException("Web password-change time must be positive");
         }
 
-        if(credentialVersion < 1)
+        if(authRevision < 1)
         {
-            throw new IllegalArgumentException("Web credential version must be positive");
+            throw new IllegalArgumentException("Web authentication revision must be positive");
         }
     }
 
-    /**
-     * Normalizes account names and rejects ambiguous or unbounded values.
-     */
+    /** Normalizes account names and rejects ambiguous or unbounded values. */
     public static String normalizeUsername(String username)
     {
         Objects.requireNonNull(username, "Web username cannot be null");
@@ -86,18 +81,10 @@ public record WebAdminCredential(int version, String username, String algorithm,
         return normalized;
     }
 
-    /**
-     * Compatibility alias for webfirst callers that use the former generation terminology.
-     */
-    public long authGeneration()
+    public WebPasswordVerifier withAuthRevision(long replacementRevision)
     {
-        return credentialVersion;
-    }
-
-    public WebAdminCredential withCredentialVersion(long replacementVersion)
-    {
-        return new WebAdminCredential(version, username, algorithm, iterations, derivedKeyBits, saltBase64,
-            passwordHashBase64, passwordChangedAtEpochMillis, replacementVersion);
+        return new WebPasswordVerifier(version, username, algorithm, iterations, derivedKeyBits, saltBase64,
+            passwordHashBase64, passwordChangedAtEpochMillis, replacementRevision);
     }
 
     byte[] decodeSalt()
@@ -133,15 +120,13 @@ public record WebAdminCredential(int version, String username, String algorithm,
         Arrays.fill(decoded, (byte)0);
     }
 
-    /**
-     * Never include the verifier or salt in incidental logs and diagnostics.
-     */
+    /** Never include the verifier or salt in incidental logs and diagnostics. */
     @Override
     public String toString()
     {
-        return "WebAdminCredential[version=" + version + ", username=" + username + ", algorithm=" + algorithm +
+        return "WebPasswordVerifier[version=" + version + ", username=" + username + ", algorithm=" + algorithm +
             ", iterations=" + iterations + ", derivedKeyBits=" + derivedKeyBits +
-            ", passwordChangedAtEpochMillis=" + passwordChangedAtEpochMillis + ", credentialVersion=" +
-            credentialVersion + ", verifier=<redacted>]";
+            ", passwordChangedAtEpochMillis=" + passwordChangedAtEpochMillis + ", authRevision=" +
+            authRevision + ", verifier=<redacted>]";
     }
 }

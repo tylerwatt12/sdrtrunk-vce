@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Strict JSON adapter for administrator alias-list changes. Register each context with
- * {@link WebAccessHttpController#protectApi} so every request is administrator-only and mutations also require the
+ * {@link WebRequestSecurity#protectApi} so every request is administrator-only and mutations also require the
  * existing same-origin and CSRF checks.
  */
 public final class AliasAdminHttpController
@@ -117,7 +117,7 @@ public final class AliasAdminHttpController
     /** Handles all alias-administration contexts. */
     public void handle(HttpExchange exchange) throws IOException
     {
-        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
 
         try
         {
@@ -1282,14 +1282,14 @@ public final class AliasAdminHttpController
     private static void sendError(HttpExchange exchange, int status, String code, String message, String field)
         throws IOException
     {
-        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
         exchange.getResponseHeaders().set("Vary", "Cookie");
         ApiHttpResponse.sendError(exchange, status, code, message, field);
     }
 
     private static void sendData(HttpExchange exchange, int status, Object value) throws IOException
     {
-        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
         exchange.getResponseHeaders().set("Vary", "Cookie");
         ApiHttpResponse.sendData(exchange, status, value);
     }

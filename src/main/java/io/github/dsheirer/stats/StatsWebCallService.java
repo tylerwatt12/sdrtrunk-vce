@@ -22,6 +22,8 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -61,6 +63,7 @@ final class StatsWebCallService implements AutoCloseable
     private static final int SAMPLE_RATE = 8000;
     private final StatsLiveEventHub mEventHub;
     private final CompletedCallScanListMatcher mScanListMatcher;
+    private final WebEntityNavigationCatalog mNavigationCatalog;
     private final ThreadPoolExecutor mEncoderExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(2), new NamingThreadFactory("stats completed call audio"),
         new ThreadPoolExecutor.AbortPolicy());
@@ -99,9 +102,16 @@ final class StatsWebCallService implements AutoCloseable
 
     StatsWebCallService(ScanListModel scanListModel, WebCallConfiguration configuration)
     {
+        this(scanListModel, configuration, null);
+    }
+
+    StatsWebCallService(ScanListModel scanListModel, WebCallConfiguration configuration,
+                        WebEntityNavigationCatalog navigationCatalog)
+    {
         mConfiguration = configuration != null ? configuration : WebCallConfiguration.defaults();
         mEventHub = new StatsLiveEventHub(mConfiguration.maximumListeners(), EVENT_QUEUE_CAPACITY);
         mScanListMatcher = scanListModel != null ? new CompletedCallScanListMatcher(scanListModel) : null;
+        mNavigationCatalog = navigationCatalog;
     }
 
     synchronized void configure(WebCallConfiguration configuration)
@@ -478,8 +488,8 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
-    private static Map<String,Object> metadata(String id, long sequence, CompletedAudioCall call, long completedAt,
-                                               Set<Long> scanListIds)
+    private Map<String,Object> metadata(String id, long sequence, CompletedAudioCall call, long completedAt,
+                                        Set<Long> scanListIds)
     {
         AudioCallSnapshot snapshot = call.snapshot();
         IdentifierCollection identifiers = snapshot.identifierCollection();
@@ -499,14 +509,15 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "site", recordingMetadata != null ? recordingMetadata.siteName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY));
         putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.siteIdentity() : null);
-        putText(value, "site_guid", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID,
-            Role.ANY));
+        Object siteGuid = identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID, Role.ANY);
+        putText(value, "site_guid", siteGuid);
         putText(value, "channel", recordingMetadata != null ? recordingMetadata.channelName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
         putText(value, "channel_identity", recordingMetadata != null ? recordingMetadata.channelIdentity() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY));
-        putText(value, "configuration_id", identifierValue(identifiers, IdentifierClass.CONFIGURATION,
-            Form.UNIQUE_ID, Role.ANY));
+        Object configurationId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
+            Form.UNIQUE_ID, Role.ANY);
+        putText(value, "configuration_id", configurationId);
         putText(value, "alias_list", recordingMetadata != null ? recordingMetadata.aliasListName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY));
         putText(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE,
@@ -557,6 +568,34 @@ final class StatsWebCallService implements AutoCloseable
 
         putIdentifierValue(value, "nac", identifiers, Form.NETWORK_ACCESS_CODE);
         putIdentifierValue(value, "ran", identifiers, Form.RAN);
+        WebEntityNavigationCatalog.Snapshot navigation = mNavigationCatalog != null ?
+            mNavigationCatalog.snapshot() : WebEntityNavigationCatalog.Snapshot.empty();
+        WebEntityNavigationCatalog.Channel channel = navigation.channel(
+            configurationId != null ? String.valueOf(configurationId) : null,
+            siteGuid != null ? String.valueOf(siteGuid) : null);
+
+        if(channel != null)
+        {
+            WebEntityRef.put(value, channel.entityRef());
+
+            if(channel.systemRef() != null)
+            {
+                value.put("system_entity_ref", channel.systemRef().toMap());
+            }
+
+            WebEntityRef sourceReference = navigationReference(channel, source);
+            WebEntityRef targetReference = navigationReference(channel, target);
+
+            if(sourceReference != null)
+            {
+                value.put("source_entity_ref", sourceReference.toMap());
+            }
+            if(targetReference != null)
+            {
+                value.put("target_entity_ref", targetReference.toMap());
+            }
+        }
+
         value.put("timeslot", snapshot.timeslot());
         value.put("encrypted", snapshot.isEncrypted());
         if(snapshot.voiceCallQuality() != null && snapshot.voiceCallQuality().hasMeasurements())
@@ -570,6 +609,34 @@ final class StatsWebCallService implements AutoCloseable
             value.put("vc_fec_protected_bits", snapshot.voiceCallQuality().fecProtectedBitCount());
         }
         return Map.copyOf(value);
+    }
+
+    private static WebEntityRef navigationReference(WebEntityNavigationCatalog.Channel channel,
+                                                    Identifier<?> identifier)
+    {
+        if(channel == null || identifier == null || identifier instanceof FullyQualifiedRadioIdentifier ||
+            identifier instanceof FullyQualifiedTalkgroupIdentifier)
+        {
+            return null;
+        }
+
+        int value;
+
+        if(identifier instanceof PatchGroupIdentifier patchIdentifier && patchIdentifier.getValue() != null &&
+            patchIdentifier.getValue().getPatchGroup() != null)
+        {
+            value = patchIdentifier.getValue().getPatchGroup().getValue();
+        }
+        else if(identifier.getValue() instanceof Number number)
+        {
+            value = number.intValue();
+        }
+        else
+        {
+            return null;
+        }
+
+        return channel.identity(identifier.getForm(), identifier.getProtocol(), value);
     }
 
     private static void putIdentifierValue(Map<String,Object> values, String key, IdentifierCollection identifiers,

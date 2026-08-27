@@ -214,7 +214,7 @@ public final class WebAuthenticationService implements AutoCloseable
 
     private static String boundedUsername(String username)
     {
-        if(username == null || username.length() > WebAdminCredential.MAXIMUM_USERNAME_CHARACTERS * 4)
+        if(username == null || username.length() > WebPasswordVerifier.MAXIMUM_USERNAME_CHARACTERS * 4)
         {
             return "invalid";
         }

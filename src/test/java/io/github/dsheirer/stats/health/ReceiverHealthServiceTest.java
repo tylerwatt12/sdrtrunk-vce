@@ -278,7 +278,7 @@ class ReceiverHealthServiceTest
             null, null, null, null, null, null, null, null, null, null, null, null, "P25_PHASE1", null, null,
             "CURRENT_CONTROL");
         return new ChannelActivitySnapshot(tableId, "County · Downtown", "County",
-            "Downtown", "Control", null, null, true, List.of(), List.of(row));
+            "Downtown", "Control", null, null, true, true, List.of(), List.of(row));
     }
 
     private static Map<String,Object> measurement(Map<String,Object> snapshot, String sectionId, String scope)

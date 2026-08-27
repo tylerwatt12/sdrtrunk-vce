@@ -65,7 +65,7 @@ class WebAccessSessionManagerTest
             WebAccessSession revoked = manager.create(current).orElseThrow();
             accessService.provisionOrResetPrimaryAdmin("replacement admin password".toCharArray());
             assertTrue(manager.resolve(revoked.sessionId(), accessService).isEmpty(),
-                "credential-version change must revoke the old session");
+                "authentication-revision change must revoke the old session");
             assertEquals(0, manager.getActiveSessionCount());
         }
     }

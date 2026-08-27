@@ -20,15 +20,15 @@ import org.junit.jupiter.api.Test;
 class Pbkdf2PasswordHasherTest
 {
     private final Pbkdf2PasswordHasher mHasher = new Pbkdf2PasswordHasher(
-        WebAdminCredential.MINIMUM_ITERATIONS, new SecureRandom(),
+        WebPasswordVerifier.MINIMUM_ITERATIONS, new SecureRandom(),
         Clock.fixed(Instant.ofEpochMilli(1_234), ZoneOffset.UTC));
 
     @Test
     void createsUniqueSaltedVerifierAndUsesNormalizedUsername()
     {
         char[] password = "correct horse battery staple".toCharArray();
-        WebAdminCredential first = mHasher.createCredential("  User.One  ", password, 1);
-        WebAdminCredential second = mHasher.createCredential("user.one", password, 2);
+        WebPasswordVerifier first = mHasher.createVerifier("  User.One  ", password, 1);
+        WebPasswordVerifier second = mHasher.createVerifier("user.one", password, 2);
 
         assertEquals("user.one", first.username());
         assertEquals(1_234, first.passwordChangedAtEpochMillis());
@@ -49,15 +49,15 @@ class Pbkdf2PasswordHasherTest
     {
         assertEquals(7, Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS);
         assertThrows(IllegalArgumentException.class,
-            () -> new Pbkdf2PasswordHasher(WebAdminCredential.MINIMUM_ITERATIONS - 1));
+            () -> new Pbkdf2PasswordHasher(WebPasswordVerifier.MINIMUM_ITERATIONS - 1));
         assertThrows(IllegalArgumentException.class,
-            () -> mHasher.createCredential("admin", "six666".toCharArray(), 1));
-        WebAdminCredential minimumLength = mHasher.createCredential("admin", "seven77".toCharArray(), 1);
+            () -> mHasher.createVerifier("admin", "six666".toCharArray(), 1));
+        WebPasswordVerifier minimumLength = mHasher.createVerifier("admin", "seven77".toCharArray(), 1);
         assertTrue(mHasher.verify(minimumLength, "admin", "seven77".toCharArray()));
         assertThrows(IllegalArgumentException.class,
-            () -> new WebAdminCredential(1, "admin", WebAdminCredential.PBKDF2_SHA256,
-                WebAdminCredential.MINIMUM_ITERATIONS - 1, 256, "invalid", "invalid", 1, 1));
+            () -> new WebPasswordVerifier(1, "admin", WebPasswordVerifier.PBKDF2_SHA256,
+                WebPasswordVerifier.MINIMUM_ITERATIONS - 1, 256, "invalid", "invalid", 1, 1));
         assertThrows(IllegalArgumentException.class,
-            () -> WebAdminCredential.normalizeUsername("administrator@example.com"));
+            () -> WebPasswordVerifier.normalizeUsername("administrator@example.com"));
     }
 }

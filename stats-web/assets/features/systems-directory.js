@@ -1,5 +1,4 @@
-(() => {
-  'use strict';
+'use strict';
 
   const API_PATH = '/api/v1/systems';
   const DIRECTORY_LIMIT = 25;
@@ -63,5 +62,4 @@
     return decode(page);
   }
 
-  window.sdrtrunkSystemsDirectory = Object.freeze({ load, decode });
-})();
+export { load, decode };

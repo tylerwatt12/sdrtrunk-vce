@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 4;
+    public static final int CURRENT_VERSION = 5;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -41,16 +41,12 @@ public final class DatabaseFormatCatalog
         "d1a300bf3cfc32870a36c6c4d009d5eb3ae0fea794782357ed2ea3c2948d270d";
     private static final String FORMAT_4_FINGERPRINT =
         "d4b539e9486d81c0d21ec7816a8a1a0c07d7274dd45f659e44155beef404c3f1";
-
-    private static final Map<String,String> BASE_METADATA = Map.of(
-        "configuration_schema_version", "2",
-        "settings_schema_version", "2",
-        "icon_schema_version", "2",
-        "trunked_site_schema_version", "2",
-        "dmr_activity_schema_version", "1");
+    private static final String FORMAT_5_FINGERPRINT =
+        "cc4ab232780c6445865d86c69d4f04eb43f4f6064cf9e6770ff1405c4da32080";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
-        "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT, 4, 24,
+        "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
+        new SubsystemVersions(4, 2, 2, 2, 24, 2, 1),
         List.of("Alpha8", "Alpha9", "Alpha10", "diagnostics builds",
             "successful nightly publications through 2026-08-03"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format1TestDatabase.java",
@@ -61,7 +57,8 @@ public final class DatabaseFormatCatalog
             "Retain playback enablement while dropping retired numeric priority ordering",
             "Reset reproducible trunked-identity evidence while rebuilding preserved affiliations"));
     private static final FormatDescriptor FORMAT_2 = descriptor(2, "scan-lists-p25-v26",
-        "Scan-list and protocol-neutral identity database format", FORMAT_2_FINGERPRINT, 6, 26,
+        "Scan-list and protocol-neutral identity database format", FORMAT_2_FINGERPRINT,
+        new SubsystemVersions(6, 2, 2, 2, 26, 2, 1),
         List.of("b131d0927", "6b3500f4c", "successful nightly publications 2026-08-19 through 2026-08-25"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format2TestDatabase.java",
         List.of(
@@ -70,7 +67,8 @@ public final class DatabaseFormatCatalog
             "Create missing factory Alias Lists and Default routing only where canonical names are unambiguous",
             "Preserve same-family canonical list spelling and routing; refuse wrong-family collisions"));
     private static final FormatDescriptor FORMAT_3 = descriptor(3, "p25-site-projection-v27",
-        "P25 site-projection database format", FORMAT_3_FINGERPRINT, 6, 27,
+        "P25 site-projection database format", FORMAT_3_FINGERPRINT,
+        new SubsystemVersions(6, 2, 2, 2, 27, 2, 1),
         List.of("64b3cb552", "b10be0ab7"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format3TestDatabase.java",
         List.of(
@@ -79,18 +77,30 @@ public final class DatabaseFormatCatalog
             "Reset only physical receiver-leg call projections and trunked identity evidence whose semantics change",
             "Create logical-call and site-observation summaries with fresh boundaries"));
     private static final FormatDescriptor FORMAT_4 = descriptor(4, "logical-call-site-observation-v28",
-        "Logical-call and P25 site-observation database format", FORMAT_4_FINGERPRINT, 6, 28,
+        "Logical-call and P25 site-observation database format", FORMAT_4_FINGERPRINT,
+        new SubsystemVersions(6, 2, 2, 2, 28, 2, 1),
         List.of("406b992e8"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format4TestDatabase.java",
-        List.of("Current format; no schema migration required"));
+        List.of("Preserve the format-4 logical-call and site-observation model"));
+    private static final FormatDescriptor FORMAT_5 = descriptor(5, "web-users-channel-identity-v1",
+        "Normalized web users, per-user preferences, access policy, and saved-channel identity format",
+        FORMAT_5_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 28, 2, 1),
+        List.of("main format 5"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format5TestDatabase.java",
+        List.of(
+            "Preserve exact password verifiers, roles, access policy, and shared receiver preferences",
+            "Move personal browser settings into each account's bounded preference document",
+            "Drop known retired channel rows, web policy overrides, and superseded personal-setting storage",
+            "Require exact saved-channel UUID, channel-kind, and nonblank RadioResolve GUID identities"));
 
-    private static final List<FormatDescriptor> FORMATS = List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4);
+    private static final List<FormatDescriptor> FORMATS = List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = Map.of(
         FORMAT_1.version(), FORMAT_1,
         FORMAT_2.version(), FORMAT_2,
         FORMAT_3.version(), FORMAT_3,
-        FORMAT_4.version(), FORMAT_4);
+        FORMAT_4.version(), FORMAT_4,
+        FORMAT_5.version(), FORMAT_5);
     /* Several marker-bearing semantic formats may intentionally share one DDL fingerprint. */
     private static final Map<String,List<FormatDescriptor>> BY_FINGERPRINT = formatsByFingerprint();
 
@@ -203,7 +213,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_4;
+        return FORMAT_5;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -293,12 +303,17 @@ public final class DatabaseFormatCatalog
     }
 
     private static FormatDescriptor descriptor(int version, String id, String description, String fingerprint,
-                                                int aliasVersion, int p25Version, List<String> sourceReferences,
+                                                SubsystemVersions versions, List<String> sourceReferences,
                                                 String fixtureResource, List<String> migrationPolicy)
     {
-        Map<String,String> metadata = new LinkedHashMap<>(BASE_METADATA);
-        metadata.put("alias_schema_version", Integer.toString(aliasVersion));
-        metadata.put("p25_activity_schema_version", Integer.toString(p25Version));
+        Map<String,String> metadata = new LinkedHashMap<>();
+        metadata.put("alias_schema_version", Integer.toString(versions.alias()));
+        metadata.put("configuration_schema_version", Integer.toString(versions.configuration()));
+        metadata.put("settings_schema_version", Integer.toString(versions.settings()));
+        metadata.put("icon_schema_version", Integer.toString(versions.icon()));
+        metadata.put("p25_activity_schema_version", Integer.toString(versions.p25Activity()));
+        metadata.put("trunked_site_schema_version", Integer.toString(versions.trunkedSite()));
+        metadata.put("dmr_activity_schema_version", Integer.toString(versions.dmrActivity()));
         return new FormatDescriptor(version, id, description, fingerprint, Map.copyOf(metadata),
             List.copyOf(sourceReferences), fixtureResource, List.copyOf(migrationPolicy));
     }
@@ -355,6 +370,19 @@ public final class DatabaseFormatCatalog
             {
                 throw new FormatRejectionException("SQLite schema format [" + descriptor.id() + "] must contain exactly one " +
                     "Default scan list; found " + defaultScanLists);
+            }
+        }
+
+        if(descriptor.version() == 5)
+        {
+            try
+            {
+                Format5WebStateValidator.validate(connection);
+            }
+            catch(SQLException exception)
+            {
+                throw new FormatRejectionException("SQLite schema format [" + descriptor.id() + "] " +
+                    exception.getMessage(), exception);
             }
         }
     }
@@ -426,6 +454,11 @@ public final class DatabaseFormatCatalog
     public record FormatDescriptor(int version, String id, String description, String fingerprint,
                                    Map<String,String> subsystemMetadata, List<String> sourceReferences,
                                    String fixtureResource, List<String> migrationPolicy)
+    {
+    }
+
+    private record SubsystemVersions(int alias, int configuration, int settings, int icon, int p25Activity,
+                                     int trunkedSite, int dmrActivity)
     {
     }
 

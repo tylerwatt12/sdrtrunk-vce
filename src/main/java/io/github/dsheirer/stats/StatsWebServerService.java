@@ -36,7 +36,6 @@ import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.record.AudioRecordingManager;
@@ -62,10 +61,15 @@ import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
-import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
 import io.github.dsheirer.web.http.WebCallConfigurationHttpController;
-import io.github.dsheirer.web.http.WebDisplaySettingsHttpController;
-import io.github.dsheirer.web.settings.WebDisplaySettingsService;
+import io.github.dsheirer.web.http.WebRequestSecurity;
+import io.github.dsheirer.web.http.WebSessionHttpController;
+import io.github.dsheirer.web.http.WebSiteSettingsHttpController;
+import io.github.dsheirer.web.http.WebUserAdminHttpController;
+import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
+import io.github.dsheirer.web.auth.WebUserPreferencesService;
+import io.github.dsheirer.web.settings.WebSiteSettingsService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -173,14 +177,14 @@ public class StatsWebServerService implements AutoCloseable
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final Path mWebAccessDatabasePath;
-    private final WebDisplaySettingsService mWebDisplaySettingsService;
+    private final WebSiteSettingsService mWebSiteSettingsService;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
     private volatile ListenerRuntime mListener;
     private volatile WebServerRuntimeState mRuntimeState = stoppedState("Web server is disabled.");
     private WebAccessService mWebAccessService;
     private WebAuthenticationService mWebAuthenticationService;
-    private volatile WebAccessHttpController mWebAccessHttpController;
+    private volatile WebRequestSecurity mWebRequestSecurity;
     private boolean mRuntimeServicesStarted;
     private boolean mClosed;
 
@@ -235,8 +239,11 @@ public class StatsWebServerService implements AutoCloseable
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
         mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
+        mDatabase = new StatsWebDatabase(userPreferences);
+        WebEntityNavigationCatalog entityCatalog =
+            new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
         mWebCallService = new StatsWebCallService(mScanListModel,
-            mUserPreferences.getApplicationPreference().getWebCallConfiguration());
+            mUserPreferences.getApplicationPreference().getWebCallConfiguration(), entityCatalog);
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mAliasAdministrationService = aliasAdministrationService;
@@ -248,11 +255,9 @@ public class StatsWebServerService implements AutoCloseable
             new ChannelDiagnosticService(channelProcessingManager, mDiagnosticFftScheduler) : null;
         mTunerDiagnosticService = tunerManager != null ?
             new TunerDiagnosticService(tunerManager, mDiagnosticFftScheduler) : null;
-        mDatabase = new StatsWebDatabase(userPreferences);
-        mLiveService = new StatsLiveService(channelProcessingManager);
+        mLiveService = new StatsLiveService(channelProcessingManager, entityCatalog);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
-        mWebDisplaySettingsService = new WebDisplaySettingsService(mWebAccessDatabasePath,
-            mUserPreferences.getNowPlayingPreference());
+        mWebSiteSettingsService = new WebSiteSettingsService(mUserPreferences.getNowPlayingPreference());
         mTlsMaterialService = new WebTlsMaterialService(
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
         mTlsMaintenanceExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -331,7 +336,7 @@ public class StatsWebServerService implements AutoCloseable
 
     /**
      * Thread-safe JavaFX bootstrap/recovery operation for the fixed primary web administrator.  The persisted
-     * credential version changes before this method returns, so every old session fails its next credential-version
+     * authentication revision changes before this method returns, so every old session fails its next snapshot
      * check; eagerly removing those sessions also releases their bounded session capacity immediately.
      */
     public synchronized WebAccessAccount provisionOrResetPrimaryAdmin(char[] password) throws IOException, SQLException
@@ -661,13 +666,20 @@ public class StatsWebServerService implements AutoCloseable
 
     private void registerContexts(HttpServer server, Path assetRoot, String webClientRevision)
     {
-        mWebAccessHttpController.register(server);
+        new WebSessionHttpController(mWebAccessService, mWebAuthenticationService, mWebRequestSecurity)
+            .register(server);
+        WebUserAdminHttpController users =
+            new WebUserAdminHttpController(mWebAccessService, mWebAuthenticationService);
+        server.createContext(WebUserAdminHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_USERS, users::handle));
+        WebAccessPolicyHttpController access = new WebAccessPolicyHttpController(mWebAccessService);
+        server.createContext(WebAccessPolicyHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_ACCESS, access::handle));
 
         if(mAliasAdministrationService != null)
         {
-            AliasAdminHttpController aliasController = new AliasAdminHttpController(mAliasAdministrationService,
-                mDatabase::invalidateAliasCache);
-            HttpHandler protectedAliases = mWebAccessHttpController.protectApi(
+            AliasAdminHttpController aliasController = new AliasAdminHttpController(mAliasAdministrationService);
+            HttpHandler protectedAliases = mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_ALIASES, aliasController::handle);
             server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, protectedAliases);
             server.createContext(AliasAdminHttpController.ALIASES_PATH, protectedAliases);
@@ -679,28 +691,31 @@ public class StatsWebServerService implements AutoCloseable
                 () -> mUserPreferences.getApplicationPreference().getWebCallConfiguration(),
                 configuration -> mUserPreferences.getApplicationPreference().setWebCallConfiguration(configuration),
                 mWebCallService::status);
-        server.createContext(WebCallConfigurationHttpController.PATH, mWebAccessHttpController.protectApi(
+        server.createContext(WebCallConfigurationHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
             mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
-        server.createContext(RadioReferenceHttpController.PATH, mWebAccessHttpController.protectApi(
+        server.createContext(RadioReferenceHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 
-        WebDisplaySettingsHttpController webDisplaySettingsController =
-            new WebDisplaySettingsHttpController(mWebDisplaySettingsService);
-        server.createContext(WebDisplaySettingsHttpController.PATH, mWebAccessHttpController.protectApi(
-            WebCapability.ADMIN_SETTINGS, webDisplaySettingsController::handle));
-        server.createContext(WebDisplaySettingsHttpController.LIVE_PATH, mWebAccessHttpController.protectApi(
-            WebCapability.LIVE_VIEW, webDisplaySettingsController::handleLive));
+        WebSiteSettingsHttpController siteSettingsController =
+            new WebSiteSettingsHttpController(mWebSiteSettingsService);
+        server.createContext(WebSiteSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, siteSettingsController::handle));
 
-        new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService,
+        WebUserPreferencesHttpController userPreferencesController = new WebUserPreferencesHttpController(
+            mWebRequestSecurity, new WebUserPreferencesService(mWebAccessDatabasePath));
+        server.createContext(WebUserPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.USER_SETTINGS, userPreferencesController::handle));
+
+        new StatsApiV1Controller(mDatabase, this::status, mWebRequestSecurity, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
             .register(server);
         server.createContext(StatsApiV1.LIVE_MULTIPLEX,
-            mWebAccessHttpController.protectAny(MULTIPLEX_CAPABILITIES, this::handleLiveMultiplex));
+            mWebRequestSecurity.protectAny(MULTIPLEX_CAPABILITIES, this::handleLiveMultiplex));
         server.createContext(StatsApiV1.LIVE_MULTIPLEX_CONTROL,
-            mWebAccessHttpController.protectAnyViewerControl(MULTIPLEX_CAPABILITIES,
+            mWebRequestSecurity.protectAnyViewerControl(MULTIPLEX_CAPABILITIES,
                 this::handleLiveMultiplexControl));
         createProtectedContext(server, StatsApiV1.SCAN_LISTS, WebCapability.WEB_AUDIO_LISTEN,
             this::handleScanLists);
@@ -714,15 +729,13 @@ public class StatsWebServerService implements AutoCloseable
 
     private void ensureAuthenticationServices() throws IOException, SQLException
     {
-        if(mWebAccessHttpController == null)
+        if(mWebRequestSecurity == null)
         {
             WebAccessService accessService = new WebAccessService(mWebAccessDatabasePath);
             WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
-            WebAccessHttpController controller =
-                new WebAccessHttpController(accessService, authenticationService);
             mWebAccessService = accessService;
             mWebAuthenticationService = authenticationService;
-            mWebAccessHttpController = controller;
+            mWebRequestSecurity = new WebRequestSecurity(accessService, authenticationService);
         }
     }
 
@@ -861,7 +874,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private void createProtectedContext(HttpServer server, String path, WebCapability capability, HttpHandler handler)
     {
-        server.createContext(path, mWebAccessHttpController.protect(capability, handler));
+        server.createContext(path, mWebRequestSecurity.protect(capability, handler));
     }
 
     private synchronized Map<String,Object> status()
@@ -890,14 +903,6 @@ public class StatsWebServerService implements AutoCloseable
         status.put("database", mDatabase.status());
         status.put("statsLogging", statsLoggingStatusResponse());
         status.put("webPlayer", mWebCallService.status());
-        NowPlayingPreference nowPlaying = mUserPreferences.getNowPlayingPreference();
-        status.put("decodeDisplay", Map.of(
-            "showControl", nowPlaying.isShowControlDecodeQuality(),
-            "showVoice", nowPlaying.isShowVoiceDecodeQuality(),
-            "clearVoiceOnCallEnd", nowPlaying.isClearVoiceDecodeQualityOnCallEnd(),
-            "mode", nowPlaying.getDecodeQualityDisplayMode().name().toLowerCase()
-        ));
-        status.put("webDisplay", mWebDisplaySettingsService.configuration());
         return status;
     }
 
@@ -965,14 +970,6 @@ public class StatsWebServerService implements AutoCloseable
         return new StatsWebNavigationState(runtimeState.running(), runtimeState.port(), runtimeState.https(),
             loggingStatus.summaryActive(),
             loggingStatus.detailedHistoryActive());
-    }
-
-    /**
-     * Resolves a configured receiver GUID to the durable, protocol-neutral system scope used by web URLs.
-     */
-    public String getScopeToken(String guid)
-    {
-        return mDatabase.scopeTokenForGuid(guid);
     }
 
     static void applyCsvHeaders(Headers headers, String fileName)
@@ -1102,7 +1099,7 @@ public class StatsWebServerService implements AutoCloseable
 
                     if(now - lastAuthorizationCheck >= TimeUnit.SECONDS.toNanos(1))
                     {
-                        if(!mWebAccessHttpController.isRequestStillAuthorized(exchange))
+                        if(!mWebRequestSecurity.isRequestStillAuthorized(exchange))
                         {
                             break;
                         }
@@ -1629,8 +1626,7 @@ public class StatsWebServerService implements AutoCloseable
             mUserPreferences.getApplicationPreference().getWebCallConfiguration();
         ApiHttpResponse.sendData(exchange, 200, Map.of("scan_lists", rows,
             "maximum_selected_scan_lists", configuration.maximumSelectedScanLists(),
-            "waiting_calls_per_listener", configuration.waitingCallsPerListener(),
-            "maximum_grouped_calls", 4));
+            "waiting_calls_per_listener", configuration.waitingCallsPerListener()));
     }
 
     static Long scanListCoverageId(URI uri)
@@ -1882,7 +1878,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private void handleStatic(HttpExchange exchange, Path root, String webClientRevision) throws IOException
     {
-        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
 
         if(!requireMethod(exchange, "GET", "HEAD"))
         {
@@ -2065,10 +2061,10 @@ public class StatsWebServerService implements AutoCloseable
         stopActiveListener();
         mRuntimeState = stoppedState("Web server is stopped.");
 
-        if(mWebAccessHttpController != null)
+        if(mWebRequestSecurity != null)
         {
-            mWebAccessHttpController.close();
-            mWebAccessHttpController = null;
+            mWebRequestSecurity.close();
+            mWebRequestSecurity = null;
             mWebAuthenticationService = null;
             mWebAccessService = null;
         }
@@ -2657,7 +2653,7 @@ public class StatsWebServerService implements AutoCloseable
 
             for(String topic: MULTIPLEX_TOPICS)
             {
-                if(!mWebAccessHttpController.isRequestStillAuthorized(mExchange, capabilityForTopic(topic)))
+                if(!mWebRequestSecurity.isRequestStillAuthorized(mExchange, capabilityForTopic(topic)))
                 {
                     denied.add(topic);
                 }
@@ -2992,9 +2988,6 @@ public class StatsWebServerService implements AutoCloseable
                     writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "source_change",
                         new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(), scope.timeslot(),
                             request.subscriptionId(), filterCatalog));
-                    //Best-effort compatibility for an older cached browser. The authoritative source-change
-                    //envelope protects the current browser from post-rebind frames crossing logical selections.
-                    writeMultiplexJson(output, TOPIC_DECODE_EVENTS, "filter_catalog", filterCatalog);
                     observeOutputDrops(output, TOPIC_DECODE_EVENTS);
                 }
                 case "decode_messages" -> {
@@ -3134,10 +3127,8 @@ public class StatsWebServerService implements AutoCloseable
                 mUserPreferences.getApplicationPreference().getWebCallConfiguration();
             Map<String,Object> snapshot = new LinkedHashMap<>();
             snapshot.put("calls", calls);
-            snapshot.put("listener_token", mClientId);
             snapshot.put("scan_list_ids", mCallScanListIds);
             snapshot.put("waiting_calls_per_listener", configuration.waitingCallsPerListener());
-            snapshot.put("maximum_grouped_calls", 4);
             return Map.copyOf(snapshot);
         }
 

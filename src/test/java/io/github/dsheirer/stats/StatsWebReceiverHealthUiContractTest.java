@@ -27,17 +27,19 @@ class StatsWebReceiverHealthUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String html = readText(INDEX_HTML);
         String viewAllowed = block(source, "function viewAllowed(view)");
+        String routeAllowed = block(source, "function routeDefinitionAllowed(definition)");
         String renderAdmin = block(source, "async function renderAdmin()");
         String desktopEnabled = block(source, "desktopEnabled()");
 
         assertTrue(source.contains("RECEIVER_HEALTH: 'receiver-health'"));
-        assertTrue(viewAllowed.contains("accessSession.tier === 'ADMIN'"));
-        assertTrue(viewAllowed.contains("ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
+        assertTrue(viewAllowed.contains("applicationRoutes?.[view]?.allowed()"));
+        assertTrue(routeAllowed.contains("accessSession.tier === 'ADMIN'"));
+        assertTrue(routeAllowed.contains("ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertTrue(html.contains("id=\"receiver-health-indicator\""));
         assertTrue(html.contains("href=\"/?view=admin&amp;tab=health\" hidden"));
         assertTrue(renderAdmin.contains("id: 'health', label: 'Health', capability: " +
             "ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
-        assertTrue(desktopEnabled.contains("!tableOnly && this.authorized()"));
+        assertTrue(desktopEnabled.contains("return this.authorized()"));
     }
 
     @Test
@@ -60,8 +62,9 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(refresh.contains("liveConnection("));
         assertFalse(topics.contains("receiver_health"));
         assertTrue(access.contains("receiverHealthController.synchronizeAccess()"));
-        assertTrue(source.contains("loadStatus(false), refreshLiveDisplaySettings(false),"));
-        assertTrue(source.contains("loadStatus(true), refreshLiveDisplaySettings(true),"));
+        assertTrue(source.contains("Promise.all([loadStatus(false), receiverHealthController.refresh()])"));
+        assertTrue(source.contains("Promise.all([loadStatus(true), receiverHealthController.refresh()])"));
+        assertFalse(source.contains("refreshLiveDisplaySettings"));
         assertTrue(source.contains("receiverHealthController.refresh()"));
     }
 

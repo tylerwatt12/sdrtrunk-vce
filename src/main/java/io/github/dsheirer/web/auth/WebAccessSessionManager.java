@@ -128,7 +128,7 @@ public final class WebAccessSessionManager implements AutoCloseable
     }
 
     /**
-     * Resolves and refreshes an unexpired session only if its account, role, and credential version remain current.
+     * Resolves and refreshes an unexpired session only if its account, role, and authentication revision remain current.
      */
     public Optional<WebAccessSession> resolve(String sessionId, WebAccessService accessService)
     {
@@ -228,7 +228,7 @@ public final class WebAccessSessionManager implements AutoCloseable
 
         try
         {
-            normalized = WebAdminCredential.normalizeUsername(username);
+            normalized = WebPasswordVerifier.normalizeUsername(username);
         }
         catch(IllegalArgumentException | NullPointerException exception)
         {

@@ -19,16 +19,19 @@ class StatsWebPageLifecycleUiContractTest
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
-    void loadsTheLifecycleBeforeEveryBrowserConsumer() throws Exception
+    void loadsOneModuleEntrypointWithExplicitLifecycleImports() throws Exception
     {
         String html = readText(INDEX_HTML);
-        int lifecycle = html.indexOf("/assets/core/page-lifecycle.js?v=1");
-        int systems = html.indexOf("/assets/features/systems-directory.js?v=2");
-        int application = html.indexOf("/assets/app.js?v=123");
+        String source = readText(APP_JAVASCRIPT);
+        int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
+        int systems = source.indexOf("import * as systemsDirectory from './features/systems-directory.js';");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=124\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
-        assertTrue(systems < application);
+        assertTrue(application >= 0);
+        assertFalse(html.contains("<script src=\"/assets/core/page-lifecycle.js"));
+        assertFalse(html.contains("<script src=\"/assets/features/systems-directory.js"));
         assertTrue(html.contains("class=\"content\" aria-live=\"polite\" aria-busy=\"true\""));
         assertTrue(html.contains("<div class=\"loading\" role=\"status\">Loading</div>"));
     }
@@ -40,8 +43,8 @@ class StatsWebPageLifecycleUiContractTest
         String render = function(source, "async function render()");
         String beginPage = function(source, "function beginPage(renderContext, ...children)");
 
-        assertOrdered(render, "if (!closeReadOnlyModal(false)) return;", "const epoch = ++activeRenderEpoch;");
-        assertOrdered(render, "content.replaceChildren(loading);", "await handlers[effectiveView]();");
+        assertOrdered(render, "if (!closeReadOnlyModal()) return;", "const epoch = ++activeRenderEpoch;");
+        assertOrdered(render, "content.replaceChildren(loading);", "await entry.handler();");
         assertFalse(render.contains("content.replaceChildren();"));
         assertOrdered(render, "await refreshAccessSession(false);", "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(beginPage, "content.replaceChildren(...children);",
@@ -52,10 +55,10 @@ class StatsWebPageLifecycleUiContractTest
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(system, "if (!renderIsCurrent(renderContext)) return;", "window.history.replaceState");
 
-        String liveActivity = function(source, "async function renderAdminLiveActivitySettings()");
-        assertOrdered(liveActivity, "await renderAdminWebDisplaySettings();",
+        String siteSettings = function(source, "async function renderSiteSettings()");
+        assertOrdered(siteSettings, "await renderAdminSiteBehaviorSettings();",
             "if (!renderIsCurrent(renderContext)) return;");
-        assertOrdered(liveActivity, "if (!renderIsCurrent(renderContext)) return;",
+        assertOrdered(siteSettings, "if (!renderIsCurrent(renderContext)) return;",
             "await renderAdminRadioReferenceSettings();");
     }
 
@@ -66,7 +69,7 @@ class StatsWebPageLifecycleUiContractTest
         String render = function(source, "async function render()");
         String popState = function(source, "window.addEventListener('popstate', () =>");
 
-        assertOrdered(render, "setNavigationOpen(false);", "const view = route.get('view') || 'dashboard';");
+        assertOrdered(render, "setNavigationOpen(false);", "const view = routeFoundation.requestedView(route);");
         assertOrdered(popState, "setNavigationOpen(false);", "const previous = `/?${route.toString()}`;");
     }
 
@@ -77,7 +80,7 @@ class StatsWebPageLifecycleUiContractTest
         String helper = function(source, "function createAsyncSection(title, options = {})");
         String apiPage = function(source, "async function apiPage(path, parameters = {}, options = {})");
 
-        assertTrue(helper.contains("window.sdrtrunkPageLifecycle.run"));
+        assertTrue(helper.contains("pageLifecycle.run"));
         assertTrue(helper.contains("renderIsCurrent(renderContext) && host.isConnected"));
         assertTrue(helper.contains("host.setAttribute('role', 'region')"));
         assertTrue(helper.contains("host.setAttribute('aria-label', title)"));
@@ -85,7 +88,7 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(helper.contains("failure.querySelector('.async-section-retry')?.focus()"));
         assertOrdered(helper, "replaceAsyncContent(host, present(value));",
             "host.setAttribute('aria-busy', 'false');");
-        assertTrue(apiPage.contains("window.sdrtrunkPageLifecycle.decodeOffsetPage(response, path)"));
+        assertTrue(apiPage.contains("pageLifecycle.decodeOffsetPage(response, path)"));
     }
 
     @Test

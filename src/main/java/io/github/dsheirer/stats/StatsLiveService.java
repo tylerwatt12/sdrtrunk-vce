@@ -10,6 +10,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -19,11 +20,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Bounded web adapter for the authoritative channel-activity snapshot.
- * Channel state is owned by {@link ChannelActivityModel}; this class never starts another projection worker or
- * changes receiver-side activity lifetime when browser subscribers connect or disconnect.
+ * Channel state is owned by {@link ChannelActivityModel}; one low-priority web worker performs bounded projection,
+ * and browser subscribers never change receiver-side activity lifetime.
  */
 final class StatsLiveService implements AutoCloseable
 {
@@ -38,22 +42,47 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_TAGS = 16;
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
     private static final int MAXIMUM_LIVE_ALIAS_REFERENCES = 8;
-    private final ChannelActivityModel mActivityModel;
+    private final ActivitySource mActivitySource;
+    private final WebEntityNavigationCatalog mNavigationCatalog;
     private final StatsLiveEventHub mSystemsHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicBoolean mRunning = new AtomicBoolean();
+    /** Single latest-value handoff. Saturation coalesces stale web updates instead of delaying channel activity. */
+    private final AtomicReference<ChannelActivityEvent> mPendingActivity = new AtomicReference<>();
+    private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
+    private final AtomicBoolean mProjectionResyncRequired = new AtomicBoolean();
     private final Object mLifecycleLock = new Object();
     private final Object mEncodedSnapshotLock = new Object();
     private final Listener<ChannelActivityEvent> mChannelActivityListener = this::receiveChannelActivity;
 
-    /* Package-private standalone state exists only for bounded projection tests without a receiver manager. */
-    private final Map<String,ChannelActivitySnapshot> mStandaloneSnapshots = new LinkedHashMap<>();
-    private long mStandaloneRevision;
     private volatile EncodedSnapshot mEncodedSystemSnapshot;
+    private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation =
+        WebEntityNavigationCatalog.Snapshot.empty();
+    private volatile Thread mProjectionWorker;
 
     StatsLiveService(ChannelProcessingManager channelProcessingManager)
     {
-        mActivityModel = channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null;
+        this(channelProcessingManager, null);
+    }
+
+    StatsLiveService(ChannelProcessingManager channelProcessingManager,
+                     WebEntityNavigationCatalog navigationCatalog)
+    {
+        this(channelProcessingManager != null ?
+            new ModelActivitySource(channelProcessingManager.getChannelActivityModel()) : ActivitySource.EMPTY,
+            navigationCatalog);
+    }
+
+    private StatsLiveService(ActivitySource activitySource, WebEntityNavigationCatalog navigationCatalog)
+    {
+        mActivitySource = Objects.requireNonNull(activitySource, "Channel activity source cannot be null");
+        mNavigationCatalog = navigationCatalog;
+    }
+
+    static StatsLiveService fromActivitySource(ActivitySource activitySource,
+                                               WebEntityNavigationCatalog navigationCatalog)
+    {
+        return new StatsLiveService(activitySource, navigationCatalog);
     }
 
     void start()
@@ -62,28 +91,63 @@ final class StatsLiveService implements AutoCloseable
         {
             if(mRunning.compareAndSet(false, true))
             {
-                if(mActivityModel != null)
+                if(mNavigationCatalog != null)
                 {
-                    mActivityModel.addActivityListener(mChannelActivityListener);
+                    mNavigationCatalog.start();
                 }
+
+                mPublishedNavigation = navigationSnapshot();
+
+                Thread worker = new ObserverThreadFactory("stats live projection").newThread(this::projectionLoop);
+                mProjectionWorker = worker;
+                worker.start();
+
+                mActivitySource.addListener(mChannelActivityListener);
             }
         }
     }
 
     void stop()
     {
+        Thread worker = null;
+
         synchronized(mLifecycleLock)
         {
             if(mRunning.compareAndSet(true, false))
             {
-                if(mActivityModel != null)
+                mActivitySource.removeListener(mChannelActivityListener);
+
+                mPendingActivity.set(null);
+                worker = mProjectionWorker;
+                mProjectionWorker = null;
+
+                if(worker != null)
                 {
-                    mActivityModel.removeActivityListener(mChannelActivityListener);
+                    worker.interrupt();
+                    LockSupport.unpark(worker);
+                }
+
+                if(mNavigationCatalog != null)
+                {
+                    mNavigationCatalog.stop();
                 }
             }
 
             mSystemsHub.close();
             mEncodedSystemSnapshot = null;
+            mPublishedNavigation = WebEntityNavigationCatalog.Snapshot.empty();
+        }
+
+        if(worker != null && worker != Thread.currentThread())
+        {
+            try
+            {
+                worker.join(1_000L);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -102,14 +166,54 @@ final class StatsLiveService implements AutoCloseable
             return;
         }
 
-        PreparedActivityEvent prepared = prepare(event);
+        if(mPendingActivity.getAndSet(event) != null)
+        {
+            mDroppedProjectionEvents.incrementAndGet();
+            mProjectionResyncRequired.set(true);
+        }
+
+        LockSupport.unpark(mProjectionWorker);
+    }
+
+    private void projectionLoop()
+    {
+        Thread current = Thread.currentThread();
+
+        while(mRunning.get() && mProjectionWorker == current)
+        {
+            ChannelActivityEvent event = mPendingActivity.getAndSet(null);
+
+            if(event == null)
+            {
+                publishNavigationRefreshIfNeeded();
+                LockSupport.parkNanos(this, 100_000_000L);
+            }
+            else
+            {
+                try
+                {
+                    projectAndPublish(event);
+                }
+                catch(RuntimeException exception)
+                {
+                    //One malformed optional projection is discarded. The worker remains available for the next
+                    //authoritative snapshot and never pushes the failure back onto a receiver callback.
+                    mProjectionResyncRequired.set(true);
+                }
+            }
+        }
+    }
+
+    private void projectAndPublish(ChannelActivityEvent event)
+    {
+        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
+        PreparedActivityEvent prepared = prepare(event, navigation);
 
         if(prepared == null)
         {
             return;
         }
 
-        mEncodedSystemSnapshot = null;
         LinkedHashMap<String,Object> update = new LinkedHashMap<>();
         update.put("operation", prepared.operation().name().toLowerCase());
         update.put("table_id", prepared.tableId());
@@ -120,40 +224,67 @@ final class StatsLiveService implements AutoCloseable
         }
 
         update.put("revision", event.revision() > 0 ? event.revision() : currentSnapshotSet().revision());
-        mSystemsHub.publish("activity_table", Map.copyOf(update));
+        synchronized(mLifecycleLock)
+        {
+            if(!mRunning.get())
+            {
+                return;
+            }
+
+            mEncodedSystemSnapshot = null;
+            mPublishedNavigation = navigation;
+            mSystemsHub.publish("activity_table", Map.copyOf(update));
+        }
+
+        if(mProjectionResyncRequired.getAndSet(false))
+        {
+            Map<String,Object> authoritative = snapshot();
+
+            synchronized(mLifecycleLock)
+            {
+                if(mRunning.get())
+                {
+                    mSystemsHub.publish("activity_resync", Map.of("snapshot", authoritative));
+                }
+            }
+        }
     }
 
-    /** Test-only direct projection path. Production snapshots always come from ChannelActivityModel. */
-    void process(ChannelActivityEvent event)
+    private void publishNavigationRefreshIfNeeded()
     {
-        if(event == null || event.snapshot() == null || event.operation() == null)
+        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
+
+        if(mPublishedNavigation == navigation)
         {
             return;
         }
 
-        synchronized(mStandaloneSnapshots)
+        ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
+        Map<String,Object> authoritative = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation);
+
+        synchronized(mLifecycleLock)
         {
-            if(event.operation() == ChannelActivityEvent.Operation.REMOVE)
+            if(mRunning.get() && mPublishedNavigation != navigation)
             {
-                mStandaloneSnapshots.remove(event.snapshot().tableId());
+                mEncodedSystemSnapshot = null;
+                mPublishedNavigation = navigation;
+                mSystemsHub.publish("activity_resync", Map.of("snapshot", authoritative));
             }
-            else
-            {
-                mStandaloneSnapshots.put(event.snapshot().tableId(), event.snapshot());
-            }
-
-            mStandaloneRevision++;
         }
+    }
 
-        receiveChannelActivity(new ChannelActivityEvent(event.operation(), event.snapshot(), mStandaloneRevision));
+    long droppedProjectionEvents()
+    {
+        return mDroppedProjectionEvents.get();
     }
 
     Map<String,Object> snapshot()
     {
-        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS);
+        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot());
     }
 
-    private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows)
+    private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
+                                        WebEntityNavigationCatalog.Snapshot navigation)
     {
         List<ChannelActivitySnapshot> snapshots = source.tables().stream()
             .filter(StatsLiveService::isVisibleLiveTable).sorted(Comparator
@@ -169,7 +300,7 @@ final class StatsLiveService implements AutoCloseable
             ChannelActivitySnapshot table = snapshots.get(index);
             int available = Math.max(0, maximumRows - rowsIncluded);
             int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, available);
-            Map<String,Object> projected = activityTable(table, rowLimit);
+            Map<String,Object> projected = activityTable(table, rowLimit, navigation);
             tables.add(projected);
             int included = projected.get("rows") instanceof List<?> rows ? rows.size() : 0;
             rowsIncluded += included;
@@ -204,9 +335,10 @@ final class StatsLiveService implements AutoCloseable
     byte[] encodedSnapshot() throws IOException
     {
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
+        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
         EncodedSnapshot cached = mEncodedSystemSnapshot;
 
-        if(cached != null && cached.revision() == source.revision())
+        if(cached != null && cached.revision() == source.revision() && cached.navigation() == navigation)
         {
             return cached.payload();
         }
@@ -215,7 +347,7 @@ final class StatsLiveService implements AutoCloseable
         {
             cached = mEncodedSystemSnapshot;
 
-            if(cached != null && cached.revision() == source.revision())
+            if(cached != null && cached.revision() == source.revision() && cached.navigation() == navigation)
             {
                 return cached.payload();
             }
@@ -228,7 +360,7 @@ final class StatsLiveService implements AutoCloseable
             {
                 int candidateLimit = low + (high - low) / 2;
                 byte[] candidate = ApiHttpResponse.encodePayload(
-                    StatsApiV1Payload.present(snapshot(source, candidateLimit)));
+                    StatsApiV1Payload.present(snapshot(source, candidateLimit, navigation)));
 
                 if(candidate.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
                 {
@@ -246,7 +378,7 @@ final class StatsLiveService implements AutoCloseable
                 throw new IOException("Live channel-activity metadata exceeds the snapshot byte budget");
             }
 
-            EncodedSnapshot encoded = new EncodedSnapshot(source.revision(), best);
+            EncodedSnapshot encoded = new EncodedSnapshot(source.revision(), navigation, best);
             mEncodedSystemSnapshot = encoded;
             return encoded.payload();
         }
@@ -254,19 +386,11 @@ final class StatsLiveService implements AutoCloseable
 
     private ChannelActivityModel.SnapshotSet currentSnapshotSet()
     {
-        if(mActivityModel != null)
-        {
-            return mActivityModel.getSnapshotSet();
-        }
-
-        synchronized(mStandaloneSnapshots)
-        {
-            return new ChannelActivityModel.SnapshotSet(mStandaloneRevision,
-                List.copyOf(mStandaloneSnapshots.values()));
-        }
+        return mActivitySource.snapshot();
     }
 
-    private static PreparedActivityEvent prepare(ChannelActivityEvent event)
+    private PreparedActivityEvent prepare(ChannelActivityEvent event,
+                                          WebEntityNavigationCatalog.Snapshot navigation)
     {
         String tableId = boundedText(event.snapshot().tableId(), MAXIMUM_LIVE_TEXT_LENGTH);
 
@@ -276,13 +400,22 @@ final class StatsLiveService implements AutoCloseable
         }
 
         Map<String,Object> table = event.operation() == ChannelActivityEvent.Operation.REMOVE ? null :
-            activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE);
+            activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE, navigation);
         return new PreparedActivityEvent(event.operation(), tableId, table);
     }
 
-    private static Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows)
+    private WebEntityNavigationCatalog.Snapshot navigationSnapshot()
+    {
+        return mNavigationCatalog != null ? mNavigationCatalog.snapshot() :
+            WebEntityNavigationCatalog.Snapshot.empty();
+    }
+
+    private static Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows,
+                                                    WebEntityNavigationCatalog.Snapshot navigation)
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
+        WebEntityNavigationCatalog.Channel tableChannel =
+            navigation.channel(snapshot.configurationId(), snapshot.guid());
         table.put("table_id", boundedText(snapshot.tableId(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("title", boundedText(snapshot.title(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("system_name", boundedText(snapshot.systemName(), MAXIMUM_LIVE_TEXT_LENGTH));
@@ -290,13 +423,15 @@ final class StatsLiveService implements AutoCloseable
         table.put("channel_name", boundedText(snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(table, "guid", snapshot.guid(), MAXIMUM_LIVE_TEXT_LENGTH);
+        WebEntityRef.put(table, tableChannel != null ? tableChannel.entityRef() : null);
         table.put("control_active", snapshot.controlActive());
         table.put("channel_running", snapshot.channelRunning());
         table.put("identifiers", snapshot.identifiers().stream().limit(MAXIMUM_LIVE_IDENTIFIERS)
             .map(StatsLiveService::activityIdentifier).toList());
         int rowCount = snapshot.rows().size();
         int included = Math.min(rowCount, Math.max(0, maximumRows));
-        table.put("rows", snapshot.rows().stream().limit(included).map(StatsLiveService::activityRow).toList());
+        table.put("rows", snapshot.rows().stream().limit(included)
+            .map(row -> activityRow(row, tableChannel, navigation)).toList());
         table.put("rows_total", rowCount);
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
@@ -312,12 +447,22 @@ final class StatsLiveService implements AutoCloseable
         return Map.copyOf(value);
     }
 
-    private static Map<String,Object> activityRow(ChannelActivitySnapshot.Row snapshot)
+    private static Map<String,Object> activityRow(ChannelActivitySnapshot.Row snapshot,
+                                                  WebEntityNavigationCatalog.Channel tableChannel,
+                                                  WebEntityNavigationCatalog.Snapshot catalog)
     {
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
+        WebEntityNavigationCatalog.Channel rowChannel = catalog.channel(snapshot.configurationId(), null);
+
+        if(rowChannel == null)
+        {
+            rowChannel = tableChannel;
+        }
+
         row.put("key", boundedText(snapshot.key(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
+        WebEntityRef.put(row, rowChannel != null ? rowChannel.entityRef() : null);
         row.put("status", boundedText(snapshot.status(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(row, "role", snapshot.role(), MAXIMUM_LIVE_TEXT_LENGTH);
         List<String> tags = snapshot.tags() != null ? snapshot.tags().stream().filter(Objects::nonNull)
@@ -387,8 +532,20 @@ final class StatsLiveService implements AutoCloseable
                 .map(StatsLiveService::activityAliasReference).toList());
             row.put("target_aliases", navigation.targetAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
                 .map(StatsLiveService::activityAliasReference).toList());
-            put(row, "source_matcher", activityMatcherReference(navigation.sourceMatcher()));
-            put(row, "target_matcher", activityMatcherReference(navigation.targetMatcher()));
+            if(rowChannel != null)
+            {
+                WebEntityRef sourceReference = rowChannel.identity(navigation.sourceMatcher());
+                WebEntityRef targetReference = rowChannel.identity(navigation.targetMatcher());
+
+                if(sourceReference != null)
+                {
+                    row.put("source_entity_ref", sourceReference.toMap());
+                }
+                if(targetReference != null)
+                {
+                    row.put("target_entity_ref", targetReference.toMap());
+                }
+            }
         }
 
         return Map.copyOf(row);
@@ -400,21 +557,6 @@ final class StatsLiveService implements AutoCloseable
         value.put("alias_id", reference.aliasId());
         value.put("alias_list_id", reference.aliasListId());
         value.put("name", boundedText(reference.name(), MAXIMUM_LIVE_TEXT_LENGTH));
-        return Map.copyOf(value);
-    }
-
-    private static Map<String,Object> activityMatcherReference(ChannelActivitySnapshot.MatcherReference reference)
-    {
-        if(reference == null)
-        {
-            return null;
-        }
-
-        Map<String,Object> value = new LinkedHashMap<>();
-        value.put("type", boundedText(reference.type(), MAXIMUM_LIVE_TEXT_LENGTH));
-        value.put("protocol", boundedText(reference.protocol(), MAXIMUM_LIVE_TEXT_LENGTH));
-        putText(value, "variant", reference.variant(), MAXIMUM_LIVE_TEXT_LENGTH);
-        value.put("value", reference.value());
         return Map.copyOf(value);
     }
 
@@ -451,7 +593,64 @@ final class StatsLiveService implements AutoCloseable
     {
     }
 
-    private record EncodedSnapshot(long revision, byte[] payload)
+    private record EncodedSnapshot(long revision, WebEntityNavigationCatalog.Snapshot navigation, byte[] payload)
     {
+    }
+
+    interface ActivitySource
+    {
+        ActivitySource EMPTY = new ActivitySource()
+        {
+            private final ChannelActivityModel.SnapshotSet mEmpty =
+                new ChannelActivityModel.SnapshotSet(0, List.of());
+
+            @Override
+            public ChannelActivityModel.SnapshotSet snapshot()
+            {
+                return mEmpty;
+            }
+
+            @Override
+            public void addListener(Listener<ChannelActivityEvent> listener)
+            {
+            }
+
+            @Override
+            public void removeListener(Listener<ChannelActivityEvent> listener)
+            {
+            }
+        };
+
+        ChannelActivityModel.SnapshotSet snapshot();
+
+        void addListener(Listener<ChannelActivityEvent> listener);
+
+        void removeListener(Listener<ChannelActivityEvent> listener);
+    }
+
+    private record ModelActivitySource(ChannelActivityModel model) implements ActivitySource
+    {
+        private ModelActivitySource
+        {
+            Objects.requireNonNull(model, "Channel activity model cannot be null");
+        }
+
+        @Override
+        public ChannelActivityModel.SnapshotSet snapshot()
+        {
+            return model.getSnapshotSet();
+        }
+
+        @Override
+        public void addListener(Listener<ChannelActivityEvent> listener)
+        {
+            model.addActivityListener(listener);
+        }
+
+        @Override
+        public void removeListener(Listener<ChannelActivityEvent> listener)
+        {
+            model.removeActivityListener(listener);
+        }
     }
 }

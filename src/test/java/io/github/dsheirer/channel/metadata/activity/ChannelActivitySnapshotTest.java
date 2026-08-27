@@ -20,7 +20,7 @@ class ChannelActivitySnapshotTest
     void normalizesNullTopLevelValues()
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null, null,
-            false, null, null);
+            false, true, null, null);
 
         assertEquals("", snapshot.tableId());
         assertEquals("", snapshot.title());
@@ -61,8 +61,9 @@ class ChannelActivitySnapshotTest
     @Test
     void carriesDetachedCanonicalNavigationForLiveIdentifiers()
     {
+        String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
         Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
-        channel.setConfigurationId("configuration-17");
+        channel.setConfigurationId(configurationId);
         channel.setRadresGuid("86a927a5-fc21-4ee3-8bb3-6e8b943cc68f");
         channel.setAliasListName("County Sheriff");
         Alias radio = new Alias("Car 12");
@@ -72,7 +73,7 @@ class ChannelActivitySnapshotTest
         talkgroup.setId(302L);
         talkgroup.setAliasListId(41L);
         ChannelActivityTableState table = new ChannelActivityTableState("Conventional", null, null);
-        ChannelActivityRow row = table.getOrCreate("configuration-17:155730000:0", channel,
+        ChannelActivityRow row = table.getOrCreate(configurationId + ":155730000:0", channel,
             ChannelActivityRow.Role.CONVENTIONAL, 155_730_000L, null);
         row.setSource(APCO25RadioIdentifier.createFrom(1201));
         row.setSourceAliases(List.of(radio));
@@ -83,7 +84,7 @@ class ChannelActivitySnapshotTest
         ChannelActivitySnapshot.Row snapshotRow = table.getLatestSnapshot().rows().getFirst();
         ChannelActivitySnapshot.Navigation navigation = snapshotRow.navigation();
         assertEquals("CONVENTIONAL", snapshotRow.role());
-        assertEquals("GUID:86a927a5-fc21-4ee3-8bb3-6e8b943cc68f", navigation.contextKey());
+        assertEquals("CONFIGURATION:" + configurationId, navigation.contextKey());
         assertEquals("County Sheriff", navigation.aliasListName());
         assertEquals("p25", navigation.protocol());
         assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12"),

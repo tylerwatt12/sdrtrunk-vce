@@ -47,8 +47,8 @@ final class StatsApiV1Payload
     private static final Set<String> BOOLEAN_FIELDS = Set.of(
         "data_service", "registration_service", "tdma", "voice_service", "encrypted", "record_enabled",
         "active_rfss_network_connection",
-        "ranged", "exact", "overlap", "has_fdma", "has_tdma", "has_unknown", "detail_available",
-        "identity_detail_available", "site_names_truncated", "talkgroups_truncated", "radios_truncated",
+        "ranged", "exact", "overlap", "has_fdma", "has_tdma", "has_unknown",
+        "site_names_truncated", "talkgroups_truncated", "radios_truncated",
         "members_truncated", "channel_key_truncated", "descriptor_truncated", "callsign_truncated",
         "logical_channels_truncated", "currently_affiliated");
     private static final Set<String> ENUM_FIELDS = Set.of(

@@ -56,7 +56,7 @@ public final class WebCallConfigurationHttpController
 
     public void handle(HttpExchange exchange) throws IOException
     {
-        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
 
         if(!PATH.equals(exchange.getRequestURI().getRawPath()) || exchange.getRequestURI().getRawQuery() != null)
         {

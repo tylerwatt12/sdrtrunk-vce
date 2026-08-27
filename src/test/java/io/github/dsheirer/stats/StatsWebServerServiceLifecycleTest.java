@@ -24,7 +24,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
 import java.net.InetAddress;
@@ -90,7 +90,7 @@ class StatsWebServerServiceLifecycleTest
 
             try
             {
-                assertEquals(1, service.provisionOrResetPrimaryAdmin(initialPassword).credentialVersion());
+                assertEquals(1, service.provisionOrResetPrimaryAdmin(initialPassword).authRevision());
             }
             finally
             {
@@ -148,7 +148,7 @@ class StatsWebServerServiceLifecycleTest
 
             try
             {
-                assertEquals(2, service.provisionOrResetPrimaryAdmin(replacementPassword).credentialVersion());
+                assertEquals(2, service.provisionOrResetPrimaryAdmin(replacementPassword).authRevision());
             }
             finally
             {
@@ -318,7 +318,7 @@ class StatsWebServerServiceLifecycleTest
         throws Exception
     {
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(origin.resolve(
-                WebAccessHttpController.SESSION_PATH))
+                WebSessionHttpController.SESSION_PATH))
             .timeout(Duration.ofSeconds(10))
             .header("Cookie", cookie)
             .GET()
@@ -359,7 +359,7 @@ class StatsWebServerServiceLifecycleTest
     private static String login(HttpClient client, URI origin, String password) throws Exception
     {
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(origin.resolve(
-                WebAccessHttpController.LOGIN_PATH))
+                WebSessionHttpController.LOGIN_PATH))
             .timeout(Duration.ofSeconds(30))
             .header("Origin", origin.toString())
             .header("Content-Type", "application/json")

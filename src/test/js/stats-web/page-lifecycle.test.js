@@ -1,10 +1,11 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
 const modulePath = process.argv[2];
 assert.ok(modulePath, 'The page lifecycle module path is required.');
-const lifecycle = require(modulePath);
+let lifecycle = null;
 
 function deferred() {
   let resolve;
@@ -21,6 +22,8 @@ function assertInvalid(action, path = '/api/test') {
 }
 
 async function main() {
+  const source = fs.readFileSync(modulePath, 'utf8');
+  lifecycle = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   const row = { id: 1 };
   const collectionResponse = { rows: [row], range: '24h' };
   const collection = lifecycle.decodeCollection(collectionResponse, '/api/test');

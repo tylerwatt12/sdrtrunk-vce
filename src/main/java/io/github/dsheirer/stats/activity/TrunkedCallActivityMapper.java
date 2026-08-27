@@ -72,14 +72,7 @@ class TrunkedCallActivityMapper
             descriptor.getDownlinkFrequency() : null;
         Integer timeslot = event.hasTimeslot() ? event.getTimeslot() : null;
         String guid = blankToNull(channel.getRadresGuid());
-        String configurationId = blankToNull(value(first(identifiers, Form.UNIQUE_ID)));
-
-        if(configurationId == null)
-        {
-            configurationId = blankToNull(channel.getConfigurationId());
-        }
-
-        String contextKey = ReceiverContextKey.configured(guid, configurationId);
+        String contextKey = ReceiverContextKey.trunked(guid);
 
         if(contextKey == null)
         {
@@ -132,8 +125,7 @@ class TrunkedCallActivityMapper
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
         P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
         String guid = blankToNull(channel.getRadresGuid());
-        String configurationId = blankToNull(channel.getConfigurationId());
-        String contextKey = ReceiverContextKey.configured(guid, configurationId);
+        String contextKey = ReceiverContextKey.trunked(guid);
         IChannelDescriptor descriptor = attribution.channelDescriptor();
         Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
             descriptor.getDownlinkFrequency() : null;

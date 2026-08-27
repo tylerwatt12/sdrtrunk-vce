@@ -231,25 +231,32 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String aliasList = function(source, "function aliasListLink(name, id)");
         assertTrue(aliasList.contains("aliasAdminAllowed()"));
-        assertTrue(aliasList.contains("Alias List #${aliasListId}"));
-        assertTrue(function(source, "function scopeAliasListLabel(row)")
-            .contains("Alias List #${id}"));
-        assertTrue(function(source, "function systemLink(row, label = systemValue(row))")
-            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertFalse(aliasList.contains("Alias List #"));
+        assertTrue(function(source, "function scopeAliasListName(row)")
+            .contains("row?.alias_list_name"));
+        String systemLink = function(source, "function systemLink(reference, label)");
+        assertTrue(systemLink.contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(systemLink.contains("entityRefHref(reference)"));
+        assertFalse(systemLink.contains("row?.entity_ref"));
+        assertTrue(source.contains("systemLink(talkgroup.system_entity_ref"));
+        assertTrue(source.contains("systemLink(radio.system_entity_ref"));
+        assertTrue(source.contains("systemLink(site.system_entity_ref"));
         assertTrue(function(source, "function siteLink(row, label = siteValue(row))")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertTrue(function(source, "function siteNameSummary(row, linked = true)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertTrue(function(source, "function neighborSiteLink(row)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
-        assertTrue(function(source, "function talkgroupLink(row, id = row.talkgroup_id, label, explicitKind)")
+        assertTrue(function(source,
+            "function talkgroupLink(row, id = row.talkgroup_id, label, reference = row?.entity_ref)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
-        assertTrue(function(source, "function radioLink(row, id = row.radio_id, label)")
+        assertTrue(function(source,
+            "function radioLink(row, id = row.radio_id, label, reference = row?.entity_ref)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertTrue(function(source, "function callSourceLink(row)")
-            .contains("capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)"));
+            .contains("entityReferenceAllowed(row.entity_ref)"));
         assertTrue(function(source, "function dashboardIdentityLink(row, label = dashboardIdentityId(row))")
-            .contains("capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)"));
+            .contains("entityReferenceAllowed(row.entity_ref)"));
     }
 
     @Test
@@ -277,7 +284,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"101\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"102\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -308,9 +315,9 @@ class StatsWebInteractionUiContractTest
         String systems = function(source, "async function renderSystems()");
         String presenter = function(source, "function systemsDirectoryContent(data)");
         assertTrue(presenter.contains("row.configured_system || `${protocolFamily(row)} System`"));
-        assertTrue(presenter.contains("heading.append(systemLink(row, label))"));
+        assertTrue(presenter.contains("heading.append(systemLink(row.entity_ref, label))"));
         assertTrue(presenter.contains("siteNameSummary(row)"));
-        assertTrue(systems.contains("window.sdrtrunkSystemsDirectory.load(apiPage"));
+        assertTrue(systems.contains("systemsDirectory.load(apiPage"));
         assertTrue(presenter.contains("tableRows: rows"));
         assertTrue(presenter.contains("`directory-${row.directory_type}-row`"));
         assertTrue(presenter.contains("truncatedParentCount"));
@@ -389,7 +396,8 @@ class StatsWebInteractionUiContractTest
         String tabs = function(source, "function entityTabs(view, system, id, active, radio, kind = null)");
         String talkgroup = function(source, "async function renderTalkgroup()");
         String radio = function(source, "async function renderRadio()");
-        String links = function(source, "function talkgroupLink(row, id = row.talkgroup_id, label, explicitKind)");
+        String links = function(source,
+            "function talkgroupLink(row, id = row.talkgroup_id, label, reference = row?.entity_ref)");
         assertTrue(tabs.contains("kind: kind === 'patch_group' ? 'patch_group' : null"));
         assertTrue(talkgroup.contains("entityTabs('talkgroup', talkgroup, id, tab, false, kind)"));
         assertTrue(talkgroup.contains(
@@ -400,10 +408,10 @@ class StatsWebInteractionUiContractTest
         assertFalse(activity.contains("scopeParameters.kind === 'patch'"));
         assertTrue(activity.contains("const refreshed = await api('/api/v1/activity'"));
         assertTrue(activity.contains("...scopeParameters"));
-        assertTrue(links.contains("rowGroupIdentityKind(row, explicitKind) === 'patch_group'"));
-        assertTrue(radio.contains("radio.last_talkgroup_kind"));
+        assertTrue(links.contains("entityRefHref(reference)"));
+        assertTrue(radio.contains("radio.last_talkgroup_entity_ref"));
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
-        assertTrue(source.contains("talkgroupLink(site, row.patch_group, undefined, 'patch_group')"));
+        assertTrue(source.contains("talkgroupLink(row, row.patch_group)"));
         assertFalse(source.contains("target_kind_code"));
         assertFalse(source.contains("identity_kind_code"));
         assertFalse(source.contains("last_talkgroup_kind_code"));
@@ -491,10 +499,10 @@ class StatsWebInteractionUiContractTest
             .contains("exportCsvLink('site-neighbors', { guid: site.guid })"));
         assertTrue(function(source, "async function renderConventional()")
             .contains("exportCsvLink('conventional-channels')"));
-        assertTrue(function(source, "async function renderConventionalTalkgroups(contextKey)")
-            .contains("exportCsvLink('conventional-talkgroups', { context: contextKey })"));
-        assertTrue(function(source, "async function renderConventionalRadios(contextKey)")
-            .contains("exportCsvLink('conventional-radios', { context: contextKey })"));
+        assertTrue(function(source, "async function renderConventionalTalkgroups(configurationId)")
+            .contains("exportCsvLink('conventional-talkgroups', { configuration_id: configurationId })"));
+        assertTrue(function(source, "async function renderConventionalRadios(configurationId)")
+            .contains("exportCsvLink('conventional-radios', { configuration_id: configurationId })"));
 
         assertFalse(function(source, "async function renderDashboard()").contains("exportCsvLink("));
         assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
@@ -509,7 +517,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String css = readText(APP_CSS);
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
-        String renderer = function(source, "function activityIdentifier(row, value, kind)");
+        String renderer = function(source, "function activityIdentifier(row, value, kind, reference)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
         assertTrue(labels.contains("0x0000: 'No Talkgroup'"));
         assertTrue(labels.contains("0xFFFF: 'Everyone'"));
@@ -526,6 +534,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(labels.contains("row.address_domain !== 'nxdn_type_d'"));
         assertFalse(labels.contains("identity_domain_code"));
         assertTrue(renderer.contains("node('span', 'special-identifier', specialLabel)"));
+        assertTrue(renderer.contains("talkgroupLink(row, value, identifier, reference)"));
+        assertTrue(renderer.contains("radioLink(row, value, identifier, reference)"));
         assertFalse(renderer.contains("badge('System/special'"));
         assertTrue(css.contains(".special-identifier"));
         assertTrue(css.contains("text-overflow: ellipsis"));
@@ -564,8 +574,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(callsign.contains("encodeURIComponent(callsign)"));
         assertTrue(source.contains("['Callsign', callsignLink(site.callsign)]"));
         assertTrue(source.contains("render: (row) => callsignLink(row.callsign)"));
-        assertTrue(neighbor.contains("row.neighbor_guid"));
-        assertTrue(neighbor.contains("href('site', { guid: row.neighbor_guid"));
+        assertTrue(neighbor.contains("entityRefHref(row?.entity_ref)"));
+        assertFalse(neighbor.contains("neighbor_guid"));
+        assertFalse(neighbor.contains("href('site'"));
         assertTrue(neighbor.contains("neighborSiteDisplayParts(row)"));
         assertTrue(source.contains("fullLabel: 'Monitored Name and Site'"));
         assertTrue(source.contains("row?.neighbor_configured_site"));
@@ -586,17 +597,19 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void appliesAndPersistsAnAccessibleThemeBeforePaint() throws Exception
+    void appliesAndPersistsAnAccessibleAccountOwnedTheme() throws Exception
     {
         String source = source();
         String html = readText(INDEX_HTML);
         String css = readText(APP_CSS);
-        int themeKey = html.indexOf("window.localStorage.getItem('sdrtrunk_theme')");
-        assertTrue(themeKey >= 0);
-        assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
+        assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=84"));
-        assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
+        assertTrue(html.contains("/assets/app.css?v=85"));
+        assertTrue(function(source, "function storedTheme()")
+            .contains("activeUserPreferences().appearance.theme"));
+        assertTrue(function(source, "function setTheme(theme)")
+            .contains("preferences.appearance.theme = selected"));
+        assertFalse(source.contains("THEME_STORAGE_KEY"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -608,13 +621,16 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void controlsAndPersistsBrowserPlaybackVolumeIndependentlyOfTransportState() throws Exception
+    void controlsAndPersistsAccountOwnedBrowserPlaybackVolumeIndependentlyOfTransportState() throws Exception
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
+        String application = source();
         String css = readText(APP_CSS);
-        String changeVolume = function(source, "  changeVolume()");
-        String readVolume = function(source, "  readVolume()");
+        String changeVolume = function(source, "  changeVolume(write = false)");
+        String applyPreferences = function(source, "  applyPreferences(preferences)");
+        String writePreferences = function(source, "  writePreferences()");
+        String bindControls = function(source, "  bindControls()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
         String startCurrent = function(source, "  startCurrent()");
 
@@ -622,15 +638,19 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=18"));
-        assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
-        assertTrue(source.contains("this.volume = this.readVolume()"));
+        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js';"));
+        assertFalse(html.contains("/assets/web-call-player.js"));
+        assertFalse(source.contains("VOLUME_KEY"));
+        assertFalse(source.contains("localStorage"));
+        assertTrue(source.contains("this.volume = 1"));
+        assertTrue(applyPreferences.contains("const volume = Number(preferences.volume)"));
+        assertTrue(applyPreferences.contains("this.gainNode.gain.value = volume"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
-        assertTrue(changeVolume.contains("localStorage.setItem(WebCallPlayer.VOLUME_KEY"));
+        assertTrue(bindControls.contains("this.changeVolume(false)"));
+        assertTrue(bindControls.contains("this.writePreferences()"));
+        assertTrue(writePreferences.contains("this.preferenceWriter({"));
+        assertTrue(writePreferences.contains("volume: this.volume"));
         assertFalse(changeVolume.contains("this.paused"));
-        assertTrue(readVolume.contains("stored === null || stored.trim() === ''"));
-        assertTrue(readVolume.contains("return 1"));
-        assertTrue(readVolume.contains("saved >= 0 && saved <= 1"));
         assertTrue(function(source, "  synchronizeSubscription()").contains("else this.setStatus('Ready')"));
         assertTrue(ensureAudioContext.contains("this.audioContext.createAnalyser()"));
         assertTrue(ensureAudioContext.contains("this.analyserNode.connect(this.gainNode)"));
@@ -657,8 +677,8 @@ class StatsWebInteractionUiContractTest
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertTrue(ensureConnected.contains("addEventListener('snapshot'"));
-        assertTrue(enqueue.contains("this.seenCallIds.has(normalized._logicalCallId)"));
-        assertTrue(enqueue.contains("this.rememberCallId(normalized._logicalCallId)"));
+        assertTrue(enqueue.contains("this.seenCallIds.has(normalized._callId)"));
+        assertTrue(enqueue.contains("this.rememberCallId(normalized._callId)"));
         assertTrue(snapshot.contains("snapshot?.calls"));
         assertTrue(activity.contains("api('/api/v1/activity'"));
         assertTrue(activity.contains("tableController.replaceRows"));
@@ -706,8 +726,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(enqueue.contains("else this.render();"));
         assertTrue(togglePlayback.contains("this.playbackOffset = this.getPlaybackPosition()"));
         assertTrue(togglePlayback.contains("if (this.currentBuffer) this.startCurrent();"));
-        assertTrue(togglePlayback.contains("item.enabled && item.defaultSelected"));
-        assertTrue(togglePlayback.contains("this.persistSelectedScanLists()"));
+        assertTrue(togglePlayback.contains("if (!this.ensureConnected())"));
+        assertTrue(togglePlayback.contains("this.setStatus('Unavailable')"));
+        assertFalse(togglePlayback.contains("defaultSelected"));
+        assertFalse(source.contains("persistSelectedScanLists"));
         assertTrue(replayCurrent.contains("this.playbackOffset = 0"));
         assertTrue(replayCurrent.contains("this.startCurrent()"));
         assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
@@ -756,23 +778,31 @@ class StatsWebInteractionUiContractTest
         String schedule = function(source, "  chooseNextLane(lanes, lastKey, consecutive)");
         String recent = function(source, "  rememberRecentCall(call)");
         String pruneRecent = function(source, "  pruneRecentCalls()");
-        String replayRecent = function(source, "  async replayRecent(logicalCallId)");
+        String replayRecent = function(source, "  async replayRecent(callId)");
         String returnLive = function(source, "  async returnToLive()");
         String subscribeState = function(source, "  subscribeState(observer)");
 
         assertTrue(html.contains("id=\"playback-scan-list-options\""));
         assertFalse(html.contains("id=\"playback-missed\""));
-        assertTrue(parameters.contains("scan_list_id: [...this.selectedScanListIds]"));
+        assertTrue(parameters.contains("scan_list_id: this.activeSelectedScanListIds()"));
+        assertTrue(function(source, "  activeSelectedScanListIds()")
+            .contains("this.scanListById.get(id)?.enabled"));
         assertTrue(synchronize.contains("this.events.update(this.subscriptionParameters())"));
         assertTrue(source.contains("maximum_selected_scan_lists"));
         assertTrue(source.contains("waiting_calls_per_listener"));
         assertTrue(function(source, "  setScanListSelected(id, selected)")
             .contains("if (selected && this.paused) void this.togglePlayback()"));
-        assertTrue(normalize.contains("value.logical_call_id ?? value.call_id"));
-        assertTrue(normalize.contains("value.matched_scan_list_ids ?? value.scan_list_ids"));
-        assertTrue(enqueue.contains("this.seenCallIds.has(normalized._logicalCallId)"));
+        assertTrue(normalize.contains("typeof value.call_id === 'string'"));
+        assertTrue(normalize.contains("Array.isArray(value.scan_list_ids)"));
+        assertTrue(normalize.contains("scanListIds.map(String)"));
+        assertFalse(normalize.contains("value.scan_list_ids.map(Number)"));
+        assertFalse(normalize.contains("logical_call_id"));
+        assertFalse(normalize.contains("matched_scan_list_ids"));
+        assertFalse(normalize.contains("selected_scan_list_ids"));
+        assertFalse(normalize.contains("start_timestamp_ms"));
+        assertTrue(enqueue.contains("this.seenCallIds.has(normalized._callId)"));
         assertTrue(enqueue.indexOf("callMatchesSelection(normalized)") <
-            enqueue.indexOf("rememberCallId(normalized._logicalCallId)"));
+            enqueue.indexOf("rememberCallId(normalized._callId)"));
         assertTrue(source.contains("MAXIMUM_SEEN_CALL_IDS = 2048"));
         assertTrue(source.contains("MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4"));
         assertTrue(source.contains("MAXIMUM_RECENT_CALLS = 256"));
@@ -990,7 +1020,7 @@ class StatsWebInteractionUiContractTest
             "function liveMessageSourceMatchesSelection(selection, subscriptionId, source)"));
         assertTrue(messages.contains("liveDetailSelectionDelta(selection, nextSelection)"));
         assertFalse(messages.contains("filters.resetForSelection"));
-        assertTrue(events.contains("addEventListener('filter_catalog'"));
+        assertFalse(events.contains("addEventListener('filter_catalog'"));
         assertTrue(events.contains("addEventListener('source_change'"));
         assertTrue(events.contains("liveEventScopeMatchesSelection(selection, expectedSubscriptionId, source)"));
         assertTrue(events.contains("const subscriptionId = randomLiveClientId()"));
@@ -1043,7 +1073,8 @@ class StatsWebInteractionUiContractTest
         String conventional = function(source, "function liveConventionalChannelValue(row)");
         String systems = function(source, "function liveSystemsSection(onSelectionChange)");
         String upsert = function(systems, "const upsertTable = (value) =>");
-        String createRow = function(systems, "const createRow = (row) =>");
+        String rowRenderer = function(source,
+            "function renderTableRow(data, columns, rowKey, rowClass, onRowClick)");
 
         assertTrue(existingAlias.contains("list: Number(reference.alias_list_id)"));
         assertTrue(existingAlias.contains("alias: Number(reference.alias_id)"));
@@ -1054,12 +1085,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(draftAlias.contains("createValue: value"));
         assertTrue(routedPrefill.contains("aliasMatcherDescriptor(options, type, protocol, variant)"));
         assertTrue(routedPrefill.contains("selectedList.unmatched_talkgroup_policy"));
-        assertTrue(conventional.contains("href('conventional-detail', { context: row.context_key, tab: 'info' })"));
-        assertTrue(upsert.contains("href('site', { guid: value.guid, tab: 'info' })"));
+        assertTrue(conventional.contains("entityRefHref(row?.entity_ref)"));
+        assertFalse(conventional.contains("context_key"));
+        assertTrue(upsert.contains("entityTarget(value.entity_ref)"));
         assertTrue(upsert.contains("dismissedStoppedTables.has(value.table_id)"));
         assertTrue(upsert.contains("value.channel_running !== true"));
         assertTrue(upsert.contains("current.channel_running !== false"));
-        assertTrue(createRow.contains("event.target.closest('a, button')"));
+        assertTrue(systems.contains("type: 'live-systems'"));
+        assertTrue(systems.contains("onRowClick: (row) =>"));
+        assertTrue(rowRenderer.contains("event.target.closest('a, button, input, select, textarea, label')"));
         assertTrue(upsert.contains("quality.classList.toggle('quality-link'"));
         assertTrue(upsert.contains("select.classList.toggle('quality-link'"));
         assertTrue(css.contains(".systems-tab-close"));
@@ -1079,7 +1113,6 @@ class StatsWebInteractionUiContractTest
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
         String systems = function(source, "function liveSystemsSection(onSelectionChange)");
-        String createRow = function(systems, "const createRow = (row) =>");
         String showTable = function(systems, "const showTable = (tableId) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
@@ -1109,18 +1142,23 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("if (!events.has(event.event_id)) order.unshift(event.event_id)"));
         assertTrue(events.contains("while (order.length > liveDetailCaptureLimit())"));
         assertTrue(events.contains("stream.addEventListener('live_gap'"));
-        assertTrue(events.contains("filters.setCatalog(JSON.parse(event.data))"));
+        assertTrue(events.contains("stream.addEventListener('source_change'"));
+        assertTrue(events.contains("filters.setCatalog(source?.filter_catalog)"));
         assertFalse(events.contains("liveDetailSelect('Protocol'"));
         assertFalse(messages.contains("liveDetailSelect('Protocol'"));
-        assertTrue(events.contains("['Time', 'Duration', 'Event', 'From', 'To', 'Channel', 'Details']"));
-        assertTrue(events.contains("node('tr', liveEventCategoryClass(event.category))"));
-        assertTrue(events.contains("row.dataset.eventCategory = event.category || 'OTHER'"));
-        assertTrue(events.contains("message.colSpan = 7"));
-        assertTrue(events.contains("node('td', 'live-event-duration')"));
-        assertTrue(events.contains("node('strong', 'live-event-duration-value', durationText)"));
+        for(String column: new String[]{"time", "duration", "event", "from", "to", "channel", "details"})
+        {
+            assertTrue(events.contains("id: '" + column + "'"), () -> "Missing live event column " + column);
+        }
+        assertTrue(events.contains("type: 'live-events'"));
+        assertTrue(events.contains("rowClass: (event) => liveEventCategoryClass(event.category)"));
+        assertTrue(events.contains("eventsTable.tableController.replaceRows"));
+        assertTrue(events.contains("node('strong', 'live-event-duration-value', text)"));
         assertTrue(messages.contains("liveConnection('decode_messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
         assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
+        assertTrue(messages.contains("type: 'live-messages'"));
+        assertTrue(messages.contains("messagesTable.tableController.replaceRows"));
         assertTrue(channel.contains("binaryFrameConnection('channel_diagnostics', parameters"));
         assertTrue(channel.contains("expectedSubscriptionId = randomLiveClientId()"));
         assertTrue(channel.contains("parameters.subscription_id = expectedSubscriptionId"));
@@ -1176,12 +1214,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(selection.contains("rowKey: resolvedRow?.key || null"));
         assertTrue(rowSelection.contains("tableValue?.control_active === true"));
         assertTrue(rowSelection.contains("liveCurrentControlRow(tableValue)"));
-        assertTrue(systems.contains("const currentRow = (value?.rows || []).find"));
+        assertTrue(systems.contains("const currentControl = value.control_active ? liveCurrentControlRow(value) : null"));
         assertTrue(systems.contains("liveDetailRowSelection(value, row)"));
         assertTrue(systems.contains("onSelectionChange(selection)"));
         assertFalse(systems.contains("selectedRowKey"));
         assertTrue(source.contains("function liveCurrentControlRow(tableValue)"));
-        assertTrue(createRow.contains("selectRow(value, currentRow)"));
+        assertTrue(systems.contains("type: 'live-systems'"));
+        assertTrue(systems.contains("onRowClick: (row) =>"));
+        assertTrue(systems.contains("liveTable.tableController.replaceRows"));
         assertTrue(showTable.contains("value.control_active ? liveCurrentControlRow(value) : null"));
         assertTrue(showTable.contains("selectRow(value, currentControl)"));
         assertTrue(updateVisibleRows.contains("liveCurrentControlRow(value)"));
@@ -1240,7 +1280,9 @@ class StatsWebInteractionUiContractTest
         assertFalse(live.contains("'Tuner Spectrum'"));
         assertTrue(html.contains("data-view=\"tuner-spectrum\""));
         assertTrue(source.contains("TUNER_SPECTRUM: 'tuner-spectrum'"));
-        assertTrue(source.contains("'tuner-spectrum': ACCESS_CAPABILITIES.TUNER_SPECTRUM"));
+        assertTrue(readText(Path.of("stats-web", "assets", "core", "routes.js"))
+            .contains("id: 'tuner-spectrum', label: 'Tuner Spectrum', title: 'Tuner Spectrum', " +
+                "parent: 'tuner-spectrum', access: 'admin-tuner'"));
         assertTrue(tunerPage.contains("pageConnections.add(spectrum)"));
         assertTrue(tunerPage.contains("pageHeader('Tuner Spectrum'"));
         assertFalse(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
@@ -1268,8 +1310,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("All profiles use 8-bit spectrum data."));
         assertTrue(parameters.contains("profile: spectrumProfile"));
         assertTrue(acceptState.contains("Object.hasOwn(TUNER_SPECTRUM_PROFILES, acceptedProfile)"));
-        assertTrue(source.contains("TUNER_SPECTRUM_PROFILE_STORAGE_KEY"));
-        assertTrue(tuner.contains("storeTunerChoice(TUNER_SPECTRUM_PROFILE_STORAGE_KEY, spectrumProfile)"));
+        assertFalse(source.contains("_STORAGE_KEY"));
+        assertFalse(source.contains("localStorage"));
+        assertTrue(source.contains("TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile'"));
+        assertTrue(tuner.contains("storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile)"));
         assertTrue(tuner.contains("profileSelect.addEventListener('change', applySelectedProfile)"));
         assertFalse(tuner.contains("Temporary spectrum experiment"));
         assertFalse(tuner.contains("Reset measurement"));
@@ -1321,25 +1365,25 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'tuner-spectrum-ceiling'"));
         assertTrue(tuner.contains("'Lower display limit'"));
         assertTrue(tuner.contains("'Upper display limit'"));
-        assertTrue(tuner.contains("function updateDisplayRange(changedHandle = '')"));
-        assertTrue(tuner.contains("TUNER_SPECTRUM_FLOOR_STORAGE_KEY, dbFloor"));
-        assertTrue(tuner.contains("TUNER_SPECTRUM_CEILING_STORAGE_KEY, dbCeiling"));
+        assertTrue(tuner.contains("function updateDisplayRange(changedHandle = '', persist = false)"));
+        assertTrue(tuner.contains("preferences.tuner.floor_db = dbFloor"));
+        assertTrue(tuner.contains("preferences.tuner.ceiling_db = dbCeiling"));
         assertTrue(tuner.contains("Math.min(dbCeiling, raw)"));
         assertTrue(tuner.contains("(dbCeiling - value) / (dbCeiling - dbFloor)"));
         assertTrue(tuner.contains("(value - dbFloor) / (dbCeiling - dbFloor)"));
-        assertTrue(tuner.contains("TUNER_WATERFALL_SPEED_STORAGE_KEY, waterfallSpeed"));
-        assertTrue(tuner.contains("TUNER_SPECTRUM_SNAP_STORAGE_KEY, true"));
-        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SNAP_STORAGE_KEY, snapInput.checked)"));
+        assertTrue(tuner.contains("TUNER_WATERFALL_SPEED_PREFERENCE, waterfallSpeed"));
+        assertTrue(tuner.contains("TUNER_SPECTRUM_SNAP_PREFERENCE, true"));
+        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked)"));
         assertTrue(tuner.contains("'Snap frequency'"));
         assertTrue(tuner.contains("smoothInput.type = 'checkbox'"));
-        assertTrue(tuner.contains("TUNER_SPECTRUM_SMOOTH_STORAGE_KEY, true"));
-        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_STORAGE_KEY, smoothInput.checked)"));
+        assertTrue(tuner.contains("TUNER_SPECTRUM_SMOOTH_PREFERENCE, true"));
+        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked)"));
         assertTrue(tuner.contains("'Smooth FFT'"));
         assertTrue(tuner.contains("waterfallChannelsInput.type = 'checkbox'"));
-        assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_STORAGE_KEY, false"));
+        assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_PREFERENCE, false"));
         assertTrue(tuner.contains("'Highlight channels on waterfall'"));
-        assertTrue(tuner.contains("storeTunerChoice(TUNER_SPECTRUM_TARGET_STORAGE_KEY, targetSelect.value)"));
-        assertTrue(tuner.contains("tunerStoredChoice(TUNER_SPECTRUM_TARGET_STORAGE_KEY, targets[0].id"));
+        assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
+        assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
         assertTrue(tuner.contains("optionsPanel.append(rangeControl, rangeHelp, speedControl, toggleControls, profilePanel)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
@@ -1465,9 +1509,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(visibleValuesFor.contains("return values.subarray(first, end)"));
         assertTrue(tuner.contains("queueViewportUpdate(requestMode === 'immediate')"));
         assertTrue(tuner.contains("generation === frame.generation && sequence !== null"));
-        assertTrue(source.contains("sdrtrunk.wideband.lowerDisplayLimitDb"));
-        assertTrue(source.contains("sdrtrunk.wideband.waterfallScrollSpeed"));
-        assertTrue(source.contains("sdrtrunk.wideband.highlightWaterfallChannels"));
+        assertTrue(source.contains("TUNER_SPECTRUM_FLOOR_PREFERENCE = 'floor_db'"));
+        assertTrue(source.contains("TUNER_WATERFALL_SPEED_PREFERENCE = 'waterfall_speed'"));
+        assertTrue(source.contains("TUNER_WATERFALL_CHANNELS_PREFERENCE = 'highlight_waterfall_channels'"));
+        assertFalse(source.contains("sdrtrunk.wideband."));
         assertTrue(source.contains("const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000"));
         assertTrue(diagnostic.contains("headerBytes >= 68 ? header.getInt32(64, true) : 0"));
         assertTrue(diagnostic.contains("headerBytes >= 72 ? header.getInt32(68, true) : valueCount"));

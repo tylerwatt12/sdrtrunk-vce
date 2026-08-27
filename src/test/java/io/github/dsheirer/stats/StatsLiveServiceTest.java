@@ -64,7 +64,7 @@ class StatsLiveServiceTest
     }
 
     @Test
-    void webAdapterUsesTheCoreSnapshotWithoutASecondProjectionWorker() throws Exception
+    void webAdapterUsesTheCoreSnapshotWithOneLowPriorityProjectionWorker() throws Exception
     {
         ChannelProcessingManager manager = managerForManualActivityEvents();
         StatsLiveService service = new StatsLiveService(manager);
@@ -87,8 +87,12 @@ class StatsLiveServiceTest
                 @SuppressWarnings("unchecked")
                 List<Map<String,Object>> rows = (List<Map<String,Object>>)trunked.get("rows");
                 assertFalse(rows.isEmpty(), "the configured control row supplies the wideband channel marker");
-                assertTrue(Thread.getAllStackTraces().keySet().stream()
-                    .noneMatch(thread -> thread.isAlive() && thread.getName().startsWith("stats live projection")));
+                List<Thread> projectionWorkers = Thread.getAllStackTraces().keySet().stream()
+                    .filter(thread -> thread.isAlive() && thread.getName().startsWith("stats live projection"))
+                    .toList();
+                assertEquals(1, projectionWorkers.size());
+                assertTrue(projectionWorkers.getFirst().isDaemon());
+                assertEquals(Thread.NORM_PRIORITY - 1, projectionWorkers.getFirst().getPriority());
             }
         }
         finally
@@ -136,18 +140,19 @@ class StatsLiveServiceTest
     @Test
     void publishesConventionalStatusChangesWithStableTableIdentity() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null);
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         service.start();
 
         try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
         {
-            service.process(conventionalActivity("IDLE"));
+            source.publish(conventionalActivity("IDLE"));
             assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "IDLE");
 
-            service.process(conventionalActivity("CALL"));
+            source.publish(conventionalActivity("CALL"));
             assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "CALL");
 
-            service.process(conventionalActivity("IDLE"));
+            source.publish(conventionalActivity("IDLE"));
             assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "IDLE");
         }
         finally
@@ -201,7 +206,7 @@ class StatsLiveServiceTest
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, null, null, "NBFM", null, null, "CONVENTIONAL");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
-            "", "", "Conventional", null, null, false, List.of(), List.of(row));
+            "", "", "Conventional", null, null, false, true, List.of(), List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

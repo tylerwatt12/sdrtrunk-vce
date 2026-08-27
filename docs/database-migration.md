@@ -39,12 +39,13 @@ the catalog entries and their fixtures directly. If a known distributed build ca
 safe signature, record it as unresolved and obtain an exact database sample; do not claim complete Alpha 8+ support or
 guess a route until the entry is resolved.
 
-The replacement audit recovered three formats from every successful Alpha 8-or-newer alpha and nightly publication:
-the shared Alpha 8/9/10 and early-nightly baseline, the later scan-list/P25-v26 nightly format, and the current
-P25-v27 format. The runtime catalog is the sole exact inventory of their fingerprints, subsystem metadata, source
-references, fixtures, and data policies; this document intentionally does not duplicate those values.
+The replacement audit recovered five formats from successful Alpha 8-or-newer alpha, nightly, and main builds: the
+shared Alpha 8/9/10 and early-nightly baseline, the scan-list/P25-v26 format, the P25-v27 site-projection format, the
+P25-v28 logical-call/site-observation format, and the current normalized web-user/saved-channel-identity format. The
+runtime catalog is the sole exact inventory of their fingerprints, subsystem metadata, source references, fixtures,
+and data policies; this document intentionally does not duplicate those values.
 
-Five intermediate schema fingerprints are source-recoverable, but the nightly workflow failed before packaging them.
+Seven intermediate schema fingerprints are source-recoverable, but the nightly workflow failed before packaging them.
 They are cataloged as known unsupported developer states so the inspector can give a precise refusal instead of
 guessing. If one was actually deployed, retain that database and its matching `build_info.txt`; support requires an
 exact deployed sample and an explicit adjacent step.
@@ -71,7 +72,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 (published nightly) -> format 3 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -82,6 +83,20 @@ The format 2-to-3 step creates a missing canonical factory Alias List and its De
 case-insensitive name match exists. An existing same-family match keeps its stored spelling and administrator-owned
 routing; blank compatible channels use that stored spelling. A canonical name owned by the wrong family is refused
 during preflight rather than renamed or repurposed.
+
+The format 3-to-4 step establishes separate logical-call and P25 site-observation summaries at an explicit collection
+boundary. It does not invent those new metrics from older physical receiver-leg activity.
+
+The format 4-to-5 step normalizes web accounts, password verifiers, per-user browser preferences, configurable access
+overrides, and the site-settings revision. It gives every active saved channel one exact configuration UUID and kind
+and rebuilds its deterministic database query projections from the authoritative channel document. Those old query
+columns are reproducible derived state, so a stale value there is replaced rather than mistaken for administrator
+configuration. Trunked channels must also have a nonblank RadioResolve GUID. The step drops and counts recognized
+MPT-1327 and sound-card channel rows, retired web-policy overrides, and superseded personal-setting storage. It still
+refuses a malformed or ambiguous authoritative channel document, identity, kind, RadioResolve GUID, account,
+credential, access policy, or shared preference instead of guessing. Password verifier material, roles,
+authentication revisions, supported access overrides, shared receiver preferences, and active supported channels are
+preserved exactly or converted deterministically.
 
 ## Replacement Boundary
 

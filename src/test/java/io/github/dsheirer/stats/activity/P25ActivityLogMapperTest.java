@@ -88,18 +88,20 @@ import org.junit.jupiter.api.Test;
 class P25ActivityLogMapperTest
 {
     private static final String GUID = "123e4567-e89b-12d3-a456-426614174000";
+    private static final String CONFIGURATION_ID = "223e4567-e89b-12d3-a456-426614174000";
+    private static final String CONFIGURATION_CONTEXT_KEY = "CONFIGURATION:" + CONFIGURATION_ID;
 
     @Test
     void mapsImmutableDmrConventionalCompletion()
     {
-        DMRConventionalCallEvent event = new DMRConventionalCallEvent(1_000L, 2_000L, "configuration-id",
+        DMRConventionalCallEvent event = new DMRConventionalCallEvent(1_000L, 2_000L, CONFIGURATION_ID,
             GUID, "County Repeater", "County DMR", 461_125_000L, 2,
             DMRConventionalCallEvent.TargetKind.PRIVATE, null, 101, 202, true);
 
         P25ActivityLogRecords.DmrConventionalCall record = new P25ActivityLogMapper().map(event);
 
         assertNotNull(record);
-        assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
         assertEquals("County DMR", record.aliasListName());
         assertEquals(461_125_000L, record.frequencyHertz());
         assertEquals(2, record.timeslot());
@@ -108,24 +110,23 @@ class P25ActivityLogMapperTest
         assertEquals(202, record.targetRadioId());
         assertTrue(record.encrypted());
 
-        P25ActivityLogRecords.DmrConventionalCall fallback = new P25ActivityLogMapper().map(
+        P25ActivityLogRecords.DmrConventionalCall missingIdentity = new P25ActivityLogMapper().map(
             new DMRConventionalCallEvent(1_000L, 2_000L, null, null, "County Repeater", null,
                 461_125_000L, 2, DMRConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false));
-        assertNotNull(fallback);
-        assertEquals("CONVENTIONAL_DMR:DMR:461125000:County Repeater", fallback.contextKey());
+        assertNull(missingIdentity);
     }
 
     @Test
     void mapsImmutableNxdnConventionalCompletion()
     {
-        NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000L, 2_000L, "configuration-id",
+        NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000L, 2_000L, CONFIGURATION_ID,
             GUID, "County Repeater", "County NXDN", 461_125_000L,
             NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, true);
 
         P25ActivityLogRecords.NxdnConventionalCall record = new P25ActivityLogMapper().map(event);
 
         assertNotNull(record);
-        assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
         assertEquals("County NXDN", record.aliasListName());
         assertEquals(461_125_000L, record.frequencyHertz());
         assertEquals(P25ActivityLogRecords.NxdnTargetKind.GROUP, record.targetKind());
@@ -134,11 +135,10 @@ class P25ActivityLogMapperTest
         assertNull(record.targetRadioId());
         assertTrue(record.encrypted());
 
-        P25ActivityLogRecords.NxdnConventionalCall fallback = new P25ActivityLogMapper().map(
+        P25ActivityLogRecords.NxdnConventionalCall missingIdentity = new P25ActivityLogMapper().map(
             new NXDNConventionalCallEvent(1_000L, 2_000L, null, null, "County Repeater", null,
                 461_125_000L, NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false));
-        assertNotNull(fallback);
-        assertEquals("CONVENTIONAL_NXDN:NXDN:461125000:County Repeater", fallback.contextKey());
+        assertNull(missingIdentity);
     }
 
     @Test
@@ -148,6 +148,7 @@ class P25ActivityLogMapperTest
         dmrConfig.setChannelMode(DMRChannelMode.CONVENTIONAL);
         Channel dmr = new Channel("DMR Repeater", ChannelType.STANDARD);
         dmr.setDecodeConfiguration(dmrConfig);
+        dmr.setConfigurationId(CONFIGURATION_ID);
         dmr.setRadresGuid(GUID);
         DecodeConfigNXDN nxdnConfig = new DecodeConfigNXDN();
         nxdnConfig.setChannelMode(NXDNChannelMode.TRUNKED);
@@ -182,6 +183,7 @@ class P25ActivityLogMapperTest
 
         assertNotNull(dmrRecord);
         assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, dmrRecord.contextKind());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, dmrRecord.contextKey());
         assertEquals(P25ActivityLogRecords.Action.REGISTER, dmrRecord.action());
         assertNotNull(nxdnRecord);
         assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, nxdnRecord.contextKind());
@@ -347,7 +349,7 @@ class P25ActivityLogMapperTest
         assertNotNull(record);
         assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
         assertEquals("NBFM", record.protocol());
-        assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
         assertEquals("Test Channel", record.channelName());
         assertEquals("Conventional Lorain Cnty", record.aliasListName());
         assertTrue(record.configuredMetadataObserved());
@@ -383,7 +385,7 @@ class P25ActivityLogMapperTest
         assertNotNull(record);
         assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
         assertEquals("AM", record.protocol());
-        assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
     }
 
     @Test
@@ -549,7 +551,7 @@ class P25ActivityLogMapperTest
         DecodeConfigDMR dmrConfig = new DecodeConfigDMR();
         dmrConfig.setChannelMode(DMRChannelMode.TRUNKED);
         dmr.setDecodeConfiguration(dmrConfig);
-        dmr.setRadresGuid("dmr-alias");
+        dmr.setRadresGuid("323e4567-e89b-12d3-a456-426614174000");
         P25ActivityLogRecords.TalkerAliasUpdate dmrUpdate = new P25ActivityLogMapper().map(
             new TrunkedTalkerAliasEvent(dmr, Protocol.DMR, DMRRadio.createFrom(101),
                 DmrTalkerAliasIdentifier.create("ENGINE 4"), new MutableIdentifierCollection(),
@@ -559,7 +561,7 @@ class P25ActivityLogMapperTest
         DecodeConfigNXDN nxdnConfig = new DecodeConfigNXDN();
         nxdnConfig.setTransmissionMode(TransmissionMode.TYPE_D);
         nxdn.setDecodeConfiguration(nxdnConfig);
-        nxdn.setRadresGuid("nxdn-alias");
+        nxdn.setRadresGuid("423e4567-e89b-12d3-a456-426614174000");
         P25ActivityLogRecords.TalkerAliasUpdate nxdnUpdate = new P25ActivityLogMapper().map(
             new TrunkedTalkerAliasEvent(nxdn, Protocol.NXDN,
                 NXDNRadioIdentifier.createTypeDFrom(0x1234), new NXDNTalkerAliasIdentifier("UNIT 12"),
@@ -831,9 +833,10 @@ class P25ActivityLogMapperTest
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Talkgroup.create(56138));
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
         AudioCallId callId = new AudioCallId(1L, 2L, 1);
-        CallLegSource source = new CallLegSource(DecoderType.P25_CONVENTIONAL, "p25-conventional",
+        CallLegSource source = new CallLegSource(DecoderType.P25_CONVENTIONAL, CONFIGURATION_ID,
             "P25 Conventional", GUID, 0, null, false);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
@@ -848,15 +851,16 @@ class P25ActivityLogMapperTest
         assertNotNull(metric);
         assertEquals(3_600_123L, metric.callStartEpochMilliseconds());
         assertEquals(GUID, metric.guid());
-        assertEquals("GUID:" + GUID, metric.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
         assertEquals(56138, metric.talkgroupId());
         assertEquals(P25ActivityLogRecords.CallOutput.RECORDED, metric.output());
     }
 
     @Test
-    void mapsConventionalOutputWithoutRequiringTalkgroupOrGuid()
+    void mapsConventionalOutputWithoutTalkgroupOrGuidUsingConfigurationIdentity()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(FrequencyConfigurationIdentifier.create(154_310_000L));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
         AudioCallId callId = new AudioCallId(7L, 8L, 0);
@@ -870,7 +874,7 @@ class P25ActivityLogMapperTest
             P25ActivityLogRecords.CallOutput.STREAMED);
 
         assertNotNull(metric);
-        assertEquals("CONVENTIONAL_ANALOG:NBFM:154310000", metric.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
         assertNull(metric.guid());
         assertEquals(154_310_000L, metric.frequencyHertz());
         assertEquals(0, metric.talkgroupId());
@@ -878,9 +882,10 @@ class P25ActivityLogMapperTest
     }
 
     @Test
-    void mapsNxdnConventionalOutputWithoutGuidOrConfigurationIdentity()
+    void mapsNxdnConventionalOutputWithoutGuidUsingConfigurationIdentity()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(FrequencyConfigurationIdentifier.create(461_125_000L));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
         AudioCallId callId = new AudioCallId(9L, 10L, 0);
@@ -894,7 +899,7 @@ class P25ActivityLogMapperTest
             P25ActivityLogRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
-        assertEquals("CONVENTIONAL_NXDN:NXDN:461125000", metric.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
         assertEquals(461_125_000L, metric.frequencyHertz());
         assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C, metric.identityDomain());
     }
@@ -908,6 +913,7 @@ class P25ActivityLogMapperTest
         channel.setDecodeConfiguration(config);
         channel.setRadresGuid(GUID);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
         identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
@@ -938,6 +944,7 @@ class P25ActivityLogMapperTest
     void mapsPrivateCallOutputDestinationAndSourceRadios()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
         identifiers.update(APCO25RadioIdentifier.createTo(1_822_001));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
@@ -960,9 +967,8 @@ class P25ActivityLogMapperTest
     @Test
     void usesStableConfigurationIdentityForOutputWithoutGuid()
     {
-        String configurationId = "223e4567-e89b-12d3-a456-426614174000";
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
-        identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(FrequencyConfigurationIdentifier.create(451_012_500L));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.DMR));
         AudioCallId callId = new AudioCallId(7L, 9L, 1);
@@ -976,13 +982,14 @@ class P25ActivityLogMapperTest
             P25ActivityLogRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
-        assertEquals("CONFIGURATION:" + configurationId, metric.contextKey());
+        assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
     }
 
     @Test
     void preservesPatchMembersForConventionalCallOutput()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(patchGroup());
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
         AudioCallId callId = new AudioCallId(1L, 2L, 1);
@@ -1030,7 +1037,7 @@ class P25ActivityLogMapperTest
     }
 
     @Test
-    void mapsActivityWithoutGuidUsingStableConfigurationIdentity()
+    void rejectsTrunkedActivityWithoutGuid()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25RadioIdentifier.createFrom(1811524));
@@ -1044,8 +1051,7 @@ class P25ActivityLogMapperTest
         Channel channel = channel(DecoderType.P25_PHASE1);
         channel.setRadresGuid(null);
         P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel, event);
-        assertNotNull(record);
-        assertEquals("CONFIGURATION:" + channel.getConfigurationId(), record.contextKey());
+        assertNull(record);
     }
 
     @Test
@@ -1214,6 +1220,7 @@ class P25ActivityLogMapperTest
             case NBFM -> new DecodeConfigNBFM();
             default -> new DecodeConfigP25Phase1();
         });
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setRadresGuid(GUID);
         return channel;
     }

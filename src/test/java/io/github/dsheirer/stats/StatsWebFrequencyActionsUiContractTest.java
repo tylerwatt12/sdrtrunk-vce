@@ -24,7 +24,7 @@ class StatsWebFrequencyActionsUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String configuration = block(source, "async function renderConfiguration()");
         String administration = block(source, "async function renderAdmin()");
-        String liveActivity = block(source, "async function renderAdminLiveActivitySettings()");
+        String siteSettings = block(source, "async function renderSiteSettings()");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String html = Files.readString(INDEX_HTML);
 
@@ -33,12 +33,12 @@ class StatsWebFrequencyActionsUiContractTest
         assertFalse(configuration.contains("focused migration"));
         assertTrue(configuration.contains("comingSoonPanel('RadioReference')"));
         assertFalse(configuration.contains("renderAdminRadioReferenceSettings"));
-        assertTrue(administration.contains("id: 'live-activity', label: 'Live & Activity'"));
-        assertTrue(administration.contains("await renderAdminLiveActivitySettings()"));
-        assertTrue(liveActivity.contains("const renderContext = captureRenderContext()"));
-        assertTrue(liveActivity.contains("await renderAdminWebDisplaySettings()"));
-        assertTrue(liveActivity.contains("if (!renderIsCurrent(renderContext)) return"));
-        assertTrue(liveActivity.contains("await renderAdminRadioReferenceSettings()"));
+        assertTrue(administration.contains("id: 'site-settings', label: 'Site Settings'"));
+        assertTrue(administration.contains("await renderSiteSettings()"));
+        assertTrue(siteSettings.contains("const renderContext = captureRenderContext()"));
+        assertTrue(siteSettings.contains("await renderAdminSiteBehaviorSettings()"));
+        assertTrue(siteSettings.contains("if (!renderIsCurrent(renderContext)) return"));
+        assertTrue(siteSettings.contains("await renderAdminRadioReferenceSettings()"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
         assertTrue(html.contains("data-nav-tab=\"radioreference\" " +
             "href=\"/?view=configuration&amp;tab=radioreference\""));

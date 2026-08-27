@@ -28,6 +28,7 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -35,6 +36,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -429,7 +431,7 @@ class P25ActivityLogWriterTest
         createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
-            1_000L, 2_000L, "GUID:dmr-writer", "dmr-writer", "DMR Repeater",
+            1_000L, 2_000L, configurationContextKey("dmr-writer"), null, "DMR Repeater",
             "County DMR", 461_125_000L, 1, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false);
         writer.start();
         writer.enqueue(call);
@@ -473,7 +475,7 @@ class P25ActivityLogWriterTest
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
-            1_000L, 2_000L, "GUID:dmr-detailed", "dmr-detailed", "DMR Repeater",
+            1_000L, 2_000L, configurationContextKey("dmr-detailed"), null, "DMR Repeater",
             "County DMR", 461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -489,28 +491,28 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertEquals(3L, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context WHERE context_key='GUID:dmr-detailed'
-                """));
+                SELECT kind_code FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals(3L, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:dmr-detailed'
-                """));
+                SELECT protocol_code FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals("DMR Repeater", scalarString(connection, """
-                SELECT channel_name FROM receiver_context WHERE context_key='GUID:dmr-detailed'
-                """));
+                SELECT channel_name FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals("County DMR", scalarString(connection, """
-                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:dmr-detailed'
-                """));
+                SELECT alias_list_name FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals("DMR", scalarString(connection, """
-                SELECT decoder FROM receiver_context WHERE context_key='GUID:dmr-detailed'
-                """));
+                SELECT decoder FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals(461_125_000L, scalarLong(connection, """
-                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:dmr-detailed'
-                """));
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals(1L, scalarLong(connection, """
                 SELECT COUNT(*) FROM receiver_context
-                WHERE context_key='GUID:dmr-detailed' AND current_control_hz IS NULL
+                WHERE context_key='%s' AND current_control_hz IS NULL
                   AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
-                """));
+                """.formatted(configurationContextKey("dmr-detailed"))));
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1L, scalarLong(connection,
@@ -530,10 +532,10 @@ class P25ActivityLogWriterTest
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
-            1_000L, 2_000L, "GUID:nxdn-detailed", "nxdn-detailed", "NXDN Repeater",
+            1_000L, 2_000L, configurationContextKey("nxdn-detailed"), null, "NXDN Repeater",
             "County NXDN", 461_125_000L, P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, true));
         writer.enqueue(new P25ActivityLogRecords.ConventionalCallOutput(
-            1_000L, "GUID:nxdn-detailed", "nxdn-detailed", 461_125_000L, null, 91, "TALKGROUP",
+            1_000L, configurationContextKey("nxdn-detailed"), null, 461_125_000L, null, 91, "TALKGROUP",
             List.of(), 101, P25ActivityLogRecords.CallOutput.RECORDED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -549,28 +551,28 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertEquals(4L, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
-                """));
+                SELECT kind_code FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals(4L, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
-                """));
+                SELECT protocol_code FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals("NXDN Repeater", scalarString(connection, """
-                SELECT channel_name FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
-                """));
+                SELECT channel_name FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals("County NXDN", scalarString(connection, """
-                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
-                """));
+                SELECT alias_list_name FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals("NXDN", scalarString(connection, """
-                SELECT decoder FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
-                """));
+                SELECT decoder FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals(461_125_000L, scalarLong(connection, """
-                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
-                """));
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='%s'
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals(1L, scalarLong(connection, """
                 SELECT COUNT(*) FROM receiver_context
-                WHERE context_key='GUID:nxdn-detailed' AND current_control_hz IS NULL
+                WHERE context_key='%s' AND current_control_hz IS NULL
                   AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
-                """));
+                """.formatted(configurationContextKey("nxdn-detailed"))));
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1L, scalarLong(connection,
@@ -593,21 +595,20 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("dmr-private-identity.sqlite");
         createTestDatabase(database);
-        String guid = "dmr-private";
-        String contextKey = "GUID:" + guid;
+        String contextKey = configurationContextKey("dmr-private");
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
-                3_599_900L, 3_600_100L, contextKey, guid, "DMR Private", "County DMR",
+                3_599_900L, 3_600_100L, contextKey, null, "DMR Private", "County DMR",
                 461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.PRIVATE, null, 101, 202, true);
             P25ActivityLogSchema.recordDmrConventionalCall(connection, call);
             assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
-                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, guid,
+                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, null,
                     461_125_000L, 2, 202, "RADIO", List.of(), 101,
                     P25ActivityLogRecords.CallOutput.RECORDED)));
             assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
-                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, guid,
+                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, null,
                     461_125_000L, 2, 202, "RADIO", List.of(), 101,
                     P25ActivityLogRecords.CallOutput.STREAMED)));
 
@@ -631,10 +632,10 @@ class P25ActivityLogWriterTest
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
-            1_000L, 2_000L, "GUID:valid-dmr", "valid-dmr", "Valid DMR", null, 461_125_000L, 1,
+            1_000L, 2_000L, configurationContextKey("valid-dmr"), null, "Valid DMR", null, 461_125_000L, 1,
             P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
-            3_000L, 4_000L, "GUID:invalid-dmr", "invalid-dmr", "Invalid DMR", null, 461_125_000L, 1,
+            3_000L, 4_000L, configurationContextKey("invalid-dmr"), null, "Invalid DMR", null, 461_125_000L, 1,
             P25ActivityLogRecords.DmrTargetKind.GROUP, DmrActivitySchema.MAXIMUM_DMR_ID + 1, 102, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -664,10 +665,10 @@ class P25ActivityLogWriterTest
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
-            1_000L, 2_000L, "GUID:valid-nxdn", "valid-nxdn", "Valid NXDN", null, 461_125_000L,
+            1_000L, 2_000L, configurationContextKey("valid-nxdn"), null, "Valid NXDN", null, 461_125_000L,
             P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, false));
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
-            3_000L, 4_000L, "GUID:invalid-nxdn", "invalid-nxdn", "Invalid NXDN", null, 461_125_000L,
+            3_000L, 4_000L, configurationContextKey("invalid-nxdn"), null, "Invalid NXDN", null, 461_125_000L,
             P25ActivityLogRecords.NxdnTargetKind.GROUP, 0x1_0000, 102, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -2858,7 +2859,7 @@ class P25ActivityLogWriterTest
         {
             P25ActivityLogSchema.recordActivity(connection,
                 conventionalActivity(3_600_123L, P25ActivityLogRecords.Action.CALL), false);
-            String contextKey = "CONVENTIONAL_ANALOG:NBFM:154310000";
+            String contextKey = configurationContextKey("conventional-activity");
             assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
                 new P25ActivityLogRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
                     154_310_000L, null, 0, null, List.of(),
@@ -2966,77 +2967,81 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            String p25Guid = "123e4567-e89b-12d3-a456-426614174090";
-            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(1_000L, p25Guid,
+            String p25ConfigurationId = "123e4567-e89b-12d3-a456-426614174090";
+            P25ActivityLogSchema.recordActivity(connection,
+                configuredConventionalActivity(1_000L, p25ConfigurationId,
                 P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", "Elyria PD",
                 "P25-1", 155_730_000L, 0x348), false);
 
             assertEquals(2L, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT kind_code FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
             assertEquals(1L, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT protocol_code FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
             assertEquals("ELYRIA PDISP", scalarString(connection, """
-                SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT channel_name FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
             assertEquals("Elyria PD", scalarString(connection, """
-                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT alias_list_name FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
             assertEquals("P25-1", scalarString(connection, """
-                SELECT decoder FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT decoder FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
             assertEquals(155_730_000L, scalarLong(connection, """
-                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
             assertEquals(0x348L, scalarLong(connection, """
-                SELECT nac FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT nac FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
 
-            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(2_000L, p25Guid,
-                P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", null,
-                "P25-1", 155_730_000L, 0x348), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                configuredConventionalActivity(2_000L, p25ConfigurationId,
+                    P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", null,
+                    "P25-1", 155_730_000L, 0x348), false);
             assertNull(scalarString(connection, """
-                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(p25Guid)));
+                SELECT alias_list_name FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(p25ConfigurationId)));
 
-            String nbfmGuid = "123e4567-e89b-12d3-a456-426614174091";
-            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(3_000L, nbfmGuid,
+            String nbfmConfigurationId = "123e4567-e89b-12d3-a456-426614174091";
+            P25ActivityLogSchema.recordActivity(connection,
+                configuredConventionalActivity(3_000L, nbfmConfigurationId,
                 P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", "County Fire",
                 "Conventional Lorain Cnty", "NBFM", 154_310_000L, null), false);
 
             assertEquals(10L, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(nbfmGuid)));
+                SELECT kind_code FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(nbfmConfigurationId)));
             assertEquals(10L, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(nbfmGuid)));
+                SELECT protocol_code FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(nbfmConfigurationId)));
             assertEquals("County Fire", scalarString(connection, """
-                SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(nbfmGuid)));
+                SELECT channel_name FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(nbfmConfigurationId)));
             assertEquals("Conventional Lorain Cnty", scalarString(connection, """
-                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(nbfmGuid)));
+                SELECT alias_list_name FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(nbfmConfigurationId)));
             assertEquals(154_310_000L, scalarLong(connection, """
-                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(nbfmGuid)));
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(nbfmConfigurationId)));
             assertEquals(1L, scalarLong(connection, """
-                SELECT COUNT(*) FROM receiver_context WHERE context_key='GUID:%s'
+                SELECT COUNT(*) FROM receiver_context WHERE context_key='CONFIGURATION:%s'
                   AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
                   AND current_control_hz IS NULL
-                """.formatted(nbfmGuid)));
+                """.formatted(nbfmConfigurationId)));
 
-            String amGuid = "123e4567-e89b-12d3-a456-426614174099";
-            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(4_000L, amGuid,
+            String amConfigurationId = "123e4567-e89b-12d3-a456-426614174099";
+            P25ActivityLogSchema.recordActivity(connection,
+                configuredConventionalActivity(4_000L, amConfigurationId,
                 P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", "Airport Ground",
                 "County Airport", "AM", 121_900_000L, null), true);
 
             assertEquals(10L, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(amGuid)));
+                SELECT kind_code FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(amConfigurationId)));
             assertEquals(11L, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
-                """.formatted(amGuid)));
+                SELECT protocol_code FROM receiver_context WHERE context_key='CONFIGURATION:%s'
+                """.formatted(amConfigurationId)));
         }
     }
 
@@ -3295,8 +3300,9 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ResolvedLogicalCall logicalCall(long sequence)
     {
+        String guid = radresGuid("logical-call-winner");
         return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(77, sequence),
-            LOGICAL_CALL_START + sequence, "GUID:winner", "winner", Protocol.APCO25.name(),
+            LOGICAL_CALL_START + sequence, "GUID:" + guid, guid, Protocol.APCO25.name(),
             P25ActivityLogRecords.IdentityDomain.STANDARD, 0x924, 0x649, 17, 1201,
             Form.TALKGROUP.name(), List.of(), 700001, true, 0x84, 1,
             P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(),
@@ -3318,7 +3324,8 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent signaling(P25ActivityLogRecords.Action action)
     {
-        return new P25ActivityLogRecords.ActivityEvent(LOGICAL_CALL_START, "GUID:signaling", "signaling",
+        String guid = radresGuid("signaling");
+        return new P25ActivityLogRecords.ActivityEvent(LOGICAL_CALL_START, "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, Protocol.DMR.name(), action,
             action == P25ActivityLogRecords.Action.DENIAL ? "DENIAL" : "CALL_GROUP",
             "101", "91", Form.TALKGROUP.name(), List.of(), 451_012_500L, "12", 1, false,
@@ -3409,10 +3416,10 @@ class P25ActivityLogWriterTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
-                    sort_order, name, auto_start, frequency_count, recording_enabled, event_logging_enabled,
-                    config_json
-                ) VALUES (0, 'Administrator Channel', 0, 1, 0, 0, '{}')
-                """);
+                    configuration_id, channel_kind, sort_order, name, auto_start, frequency_count,
+                    recording_enabled, event_logging_enabled, config_json
+                ) VALUES ('%s', 'CONVENTIONAL', 0, 'Administrator Channel', 0, 1, 0, 0, '{}')
+                """.formatted(configurationId("administrator-channel")));
             statement.executeUpdate("""
                 INSERT INTO application_settings (key, settings_json, updated_at_ms)
                 VALUES ('administrator-setting', '{}', 1)
@@ -3753,7 +3760,8 @@ class P25ActivityLogWriterTest
     private static P25ActivityLogRecords.ActivityEvent conventionalActivity(long timestamp,
                                                                              P25ActivityLogRecords.Action action)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONVENTIONAL_ANALOG:NBFM:154310000", null,
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, configurationContextKey("conventional-activity"),
+            null,
             P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", action, "CALL", null, null, null,
             154310000L, null, null, false, null, null, null, null, null, null, null, "County Fire", "NBFM",
             null, action == P25ActivityLogRecords.Action.CALL, null, null);
@@ -3761,21 +3769,42 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent frequencylessConventionalActivity(long timestamp)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONVENTIONAL_ANALOG:NBFM:County Fire", null,
+        return new P25ActivityLogRecords.ActivityEvent(timestamp,
+            configurationContextKey("frequencyless-conventional-activity"), null,
             P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM",
             P25ActivityLogRecords.Action.EMERGENCY, "EMERGENCY", "1888000", null, null, (Long)null, null, null,
             false, null, null, null, null, null, null, null, "County Fire", "NBFM", null, false, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent configuredConventionalActivity(long timestamp, String guid,
-        P25ActivityLogRecords.ContextKind contextKind, String protocol, String channelName, String aliasListName,
-        String decoder, long frequencyHertz, Integer nac)
+    private static P25ActivityLogRecords.ActivityEvent configuredConventionalActivity(long timestamp,
+        String configurationId, P25ActivityLogRecords.ContextKind contextKind, String protocol, String channelName,
+        String aliasListName, String decoder, long frequencyHertz, Integer nac)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid, contextKind, protocol,
-            P25ActivityLogRecords.Action.CALL, "CALL", null, null, null, List.of(), frequencyHertz, null, null,
-            false, null, null, null, null, nac, null, null, channelName, decoder, null, true, null, null,
-            P25ActivityLogRecords.IdentityDomain.STANDARD, P25ActivityLogRecords.P25TargetIdentity.UNKNOWN,
-            List.of(), aliasListName, true);
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONFIGURATION:" + configurationId, null,
+            contextKind, protocol, P25ActivityLogRecords.Action.CALL, "CALL", null, null, null, List.of(),
+            frequencyHertz, null, null, false, null, null, null, null, nac, null, null, channelName, decoder, null,
+            true, null, null, P25ActivityLogRecords.IdentityDomain.STANDARD,
+            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(), aliasListName, true);
+    }
+
+    private static String configurationContextKey(String fixture)
+    {
+        return "CONFIGURATION:" + configurationId(fixture);
+    }
+
+    private static String configurationId(String fixture)
+    {
+        return deterministicUuid("configuration:" + fixture);
+    }
+
+    private static String radresGuid(String fixture)
+    {
+        return deterministicUuid("radres:" + fixture);
+    }
+
+    private static String deterministicUuid(String fixture)
+    {
+        return UUID.nameUUIDFromBytes(fixture.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private static P25ActivityLogRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)

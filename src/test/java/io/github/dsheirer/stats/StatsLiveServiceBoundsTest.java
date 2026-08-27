@@ -17,8 +17,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import java.util.AbstractList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
@@ -28,7 +32,8 @@ class StatsLiveServiceBoundsTest
     @Test
     void capsRowsWithinEachActivityTableAndReportsTheOriginalCount()
     {
-        StatsLiveService service = new StatsLiveService(null);
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         int total = StatsLiveService.MAXIMUM_ROWS_PER_TABLE + 17;
         List<ChannelActivitySnapshot.Row> rows = IntStream.range(0, total)
             .mapToObj(index -> activityRow("row-" + index))
@@ -36,7 +41,7 @@ class StatsLiveServiceBoundsTest
 
         try
         {
-            service.process(activity("bounded-table", rows));
+            source.publish(activity("bounded-table", rows));
             Map<String,Object> table = tables(service).getFirst();
             List<Map<String,Object>> boundedRows = rows(table);
             assertEquals(StatsLiveService.MAXIMUM_ROWS_PER_TABLE, boundedRows.size());
@@ -55,7 +60,8 @@ class StatsLiveServiceBoundsTest
     @Test
     void projectsProtocolNeutralHoverDetails()
     {
-        StatsLiveService service = new StatsLiveService(null);
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
             List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 4_321L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
@@ -72,7 +78,7 @@ class StatsLiveServiceBoundsTest
 
         try
         {
-            service.process(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
+            source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
             Map<String,Object> table = tables(service).getFirst();
             List<Map<String,Object>> identifiers = (List<Map<String,Object>>)table.get("identifiers");
             Map<String,Object> projected = rows(table).getFirst();
@@ -92,9 +98,8 @@ class StatsLiveServiceBoundsTest
                 (List<Map<String,Object>>)projected.get("source_aliases");
             assertEquals(301L, sourceAliases.getFirst().get("alias_id"));
             assertEquals(41L, sourceAliases.getFirst().get("alias_list_id"));
-            Map<String,Object> targetMatcher = (Map<String,Object>)projected.get("target_matcher");
-            assertEquals("talkgroup", targetMatcher.get("type"));
-            assertEquals(4400, targetMatcher.get("value"));
+            assertFalse(projected.containsKey("target_matcher"),
+                "raw matcher hints are internal inputs, not browser navigation contracts");
         }
         finally
         {
@@ -105,7 +110,8 @@ class StatsLiveServiceBoundsTest
     @Test
     void capsTheAuthoritativeSnapshotWithoutBrowserOwnedCache() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null);
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
 
         try
         {
@@ -114,15 +120,23 @@ class StatsLiveServiceBoundsTest
             for(int index = 0; index < StatsLiveService.MAXIMUM_LIVE_TABLES; index++)
             {
                 String tableId = "table-%03d".formatted(index);
-                service.process(activity(tableId, List.of(activityRow("row-" + index))));
+                source.publish(activity(tableId, List.of(activityRow("row-" + index))));
             }
 
             try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
             {
-                service.process(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
+                source.publish(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
                     List.of(activityRow("omitted"))));
-                StatsLiveEventHub.LiveEvent update = subscription.poll(1, java.util.concurrent.TimeUnit.SECONDS);
-                assertEquals("activity_table", update.name());
+                boolean receivedUpdate = false;
+
+                for(int attempt = 0; attempt < 4 && !receivedUpdate; attempt++)
+                {
+                    StatsLiveEventHub.LiveEvent update = subscription.poll(1, TimeUnit.SECONDS);
+                    receivedUpdate = update != null && "activity_table".equals(update.name());
+                }
+
+                assertTrue(receivedUpdate,
+                    "the bounded adapter must publish the latest table even when earlier updates were coalesced");
 
                 Map<String,Object> snapshot = service.snapshot();
                 List<Map<String,Object>> tables = tables(snapshot);
@@ -137,7 +151,7 @@ class StatsLiveServiceBoundsTest
                     ("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES)).equals(table.get("table_id"))));
 
                 long revision = ((Number)snapshot.get("revision")).longValue();
-                service.process(activity("table-000", List.of(activityRow("updated"))));
+                source.publish(activity("table-000", List.of(activityRow("updated"))));
                 assertEquals(revision + 1, ((Number)service.snapshot().get("revision")).longValue(),
                     "the authoritative truncation snapshot must preserve contiguous revisions");
                 assertEquals("updated", rows(tables(service).getFirst()).getFirst().get("key"));
@@ -155,7 +169,8 @@ class StatsLiveServiceBoundsTest
     @Test
     void capsAliasReferencesForEachLiveIdentifier()
     {
-        StatsLiveService service = new StatsLiveService(null);
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         List<ChannelActivitySnapshot.AliasReference> aliases = IntStream.range(0, 20)
             .mapToObj(index -> new ChannelActivitySnapshot.AliasReference(index + 1L, 41L,
                 "Alias " + index)).toList();
@@ -165,7 +180,7 @@ class StatsLiveServiceBoundsTest
 
         try
         {
-            service.process(activity("aliases", List.of(activityRow("row", navigation))));
+            source.publish(activity("aliases", List.of(activityRow("row", navigation))));
             Map<String,Object> row = rows(tables(service).getFirst()).getFirst();
             assertEquals(8, ((List<?>)row.get("source_aliases")).size());
             assertEquals(8, ((List<?>)row.get("target_aliases")).size());
@@ -177,9 +192,173 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
+    void projectsOnlyCatalogOwnedCanonicalNavigation()
+    {
+        String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+        String guid = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, guid, WebEntityRef.site(guid),
+                WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))), 60_000L);
+        catalog.refreshNow();
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, "County",
+            "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
+            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
+        ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
+            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+
+        try
+        {
+            service.start();
+            source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
+            Map<String,Object> table = tables(service).getFirst();
+            Map<String,Object> projected = rows(table).getFirst();
+            assertEquals(Map.of("kind", "site", "key", guid), table.get("entity_ref"));
+            assertEquals(Map.of("kind", "site", "key", guid), projected.get("entity_ref"));
+            assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:49F:alias-list:1", "id", 1201),
+                projected.get("source_entity_ref"));
+            assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:49F:alias-list:1", "id", 4400),
+                projected.get("target_entity_ref"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void rebuiltCatalogInvalidatesTheEncodedLiveSnapshot() throws Exception
+    {
+        String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+        String guid = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
+        AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded =
+            new AtomicReference<>(WebEntityNavigationCatalog.Snapshot.empty());
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
+        catalog.refreshNow();
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
+        ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("CONTROL"), null);
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
+            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+
+        try
+        {
+            service.start();
+            source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
+            byte[] withoutNavigation = service.encodedSnapshot();
+            assertFalse(new String(withoutNavigation, java.nio.charset.StandardCharsets.UTF_8)
+                .contains("\"entity_ref\""));
+
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            {
+                loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                    configurationId, guid, WebEntityRef.site(guid),
+                    WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))));
+                catalog.refreshNow();
+
+                StatsLiveEventHub.LiveEvent resync = subscription.poll(1, TimeUnit.SECONDS);
+                assertEquals("activity_resync", resync.name(),
+                    "a catalog change must update already-connected live clients without waiting for activity");
+            }
+
+            byte[] withNavigation = service.encodedSnapshot();
+            assertFalse(withoutNavigation == withNavigation,
+                "a changed catalog must rebuild a live snapshot whose activity revision is unchanged");
+            assertTrue(new String(withNavigation, java.nio.charset.StandardCharsets.UTF_8)
+                .contains("\"entity_ref\""));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void receiverHandoffNeverProjectsOnTheProducerAndCoalescesWhenSaturated() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicReference<Thread> projectionThread = new AtomicReference<>();
+        List<String> blockingTags = new AbstractList<>()
+        {
+            @Override
+            public String get(int index)
+            {
+                projectionThread.set(Thread.currentThread());
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(2, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return "VOICE";
+            }
+
+            @Override
+            public int size()
+            {
+                return 1;
+            }
+        };
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        Thread producer = Thread.currentThread();
+
+        try
+        {
+            service.start();
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            {
+                ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("blocked", "Live", "System", "Site",
+                    "Control", null, null, true, true, List.of(),
+                    List.of(activityRow("blocked", null, blockingTags, null)));
+                service.receiveChannelActivity(
+                    new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, blocked, 1));
+                assertTrue(projectionEntered.await(1, TimeUnit.SECONDS));
+                assertFalse(producer == projectionThread.get(),
+                    "projection must execute on the low-priority observer worker");
+
+                for(int revision = 2; revision <= 100; revision++)
+                {
+                    service.receiveChannelActivity(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
+                        activity("latest", List.of(activityRow("row"))).snapshot(), revision));
+                }
+
+                assertTrue(service.droppedProjectionEvents() > 0,
+                    "a full latest-value handoff must coalesce stale observer events");
+                releaseProjection.countDown();
+                boolean resynchronized = false;
+
+                for(int index = 0; index < 3 && !resynchronized; index++)
+                {
+                    StatsLiveEventHub.LiveEvent published = subscription.poll(1, TimeUnit.SECONDS);
+                    resynchronized = published != null && "activity_resync".equals(published.name());
+                }
+
+                assertTrue(resynchronized,
+                    "coalescing distinct revisions must publish an authoritative snapshot resync");
+            }
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            service.close();
+        }
+    }
+
+    @Test
     void enforcesOneGlobalRowAndEncodedByteBudgetAndReusesTheEncodedSnapshot() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null);
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         List<ChannelActivitySnapshot.Row> rows = IntStream.range(0, StatsLiveService.MAXIMUM_ROWS_PER_TABLE)
             .mapToObj(index -> activityRow("x".repeat(2_000) + index))
             .toList();
@@ -189,7 +368,7 @@ class StatsLiveServiceBoundsTest
         {
             for(int index = 0; index < tableCount; index++)
             {
-                service.process(activity("global-" + index, rows));
+                source.publish(activity("global-" + index, rows));
             }
 
             Map<String,Object> snapshot = service.snapshot();
@@ -215,7 +394,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
-            "Control", null, null, true, List.of(), rows);
+            "Control", null, null, true, true, List.of(), rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 
@@ -227,7 +406,13 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivitySnapshot.Row activityRow(String key,
                                                             ChannelActivitySnapshot.Navigation navigation)
     {
-        return new ChannelActivitySnapshot.Row(key, "Control", null, "ACTIVE", List.of("CONTROL"), "1",
+        return activityRow(key, null, List.of("CONTROL"), navigation);
+    }
+
+    private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
+                                                            ChannelActivitySnapshot.Navigation navigation)
+    {
+        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
             null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL");
     }

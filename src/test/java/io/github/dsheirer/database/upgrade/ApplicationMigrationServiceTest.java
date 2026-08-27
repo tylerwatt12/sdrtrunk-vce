@@ -62,15 +62,17 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationPlan(format1Database);
         assertFormat(format1Plan.source(), 1, "alpha8-shared", false);
         assertEquals(DatabaseFormatCatalog.current(), format1Plan.target());
-        assertEquals(3, format1Plan.steps().size());
+        assertEquals(4, format1Plan.steps().size());
         assertEquals(1, format1Plan.steps().getFirst().sourceVersion());
         assertEquals(2, format1Plan.steps().getFirst().targetVersion());
-        assertEquals(3, format1Plan.steps().getLast().sourceVersion());
+        assertEquals(4, format1Plan.steps().getLast().sourceVersion());
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().getLast().targetVersion());
         assertTrue(format1Plan.steps().get(1).effects().stream()
             .anyMatch(effect -> "unassigned channel Alias Lists".equals(effect.subject())));
-        assertTrue(format1Plan.steps().getLast().effects().stream()
+        assertTrue(format1Plan.steps().get(2).effects().stream()
             .anyMatch(effect -> "physical receiver-leg call projections".equals(effect.subject())));
+        assertTrue(format1Plan.steps().getLast().effects().stream()
+            .anyMatch(effect -> "web accounts".equals(effect.subject())));
 
         Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
         SdrTrunkDatabaseStartup.createGlobalDatabase(currentDatabase);
@@ -287,7 +289,7 @@ class ApplicationMigrationServiceTest
             mTemporaryFolder.resolve("selected-admin-source"));
         Format1TestDatabase.create(sourceDatabase);
         char[] password = "retained alpha administrator".toCharArray();
-        new WebAccessService(sourceDatabase).provisionOrResetPrimaryAdmin(password);
+        LegacyWebAccessTestData.storePrimaryAdmin(sourceDatabase, password);
 
         new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
 
@@ -789,10 +791,10 @@ class ApplicationMigrationServiceTest
                 return "injected invalid configuration";
             });
 
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+        IOException exception = assertThrows(IOException.class,
             () -> service.importPrevious(sourceRoot, targetRoot, null));
 
-        assertTrue(exception.getMessage().contains("incompatible Alias List"));
+        assertTrue(exception.getMessage().contains("canonical lowercase UUID"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
     }
@@ -948,18 +950,21 @@ class ApplicationMigrationServiceTest
     {
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
+            String configJson = channelJson("Preserved Channel", "Preserved System", "Preserved Site", "Test",
+                DecoderType.P25_PHASE1, 451000000);
+            String configurationId = OBJECT_MAPPER.readTree(configJson).path("configurationId").asText();
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    sort_order, system_name, site_name, name, alias_list_name, decoder_type,
-                    source_type, primary_frequency_hz, frequency_count, config_json
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
+                    radres_guid, decoder_type, source_type, primary_frequency_hz, frequency_count, config_json
                 ) VALUES (
-                    1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Test', 'P25_PHASE1',
-                    'TUNER', 451000000, 1, ?
+                    ?, 'TRUNKED', 1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Test',
+                    '00000000-0000-4000-8000-000000007001', 'P25_PHASE1', 'TUNER', 451000000, 1, ?
                 )
                 """))
             {
-                insert.setString(1, channelJson("Preserved Channel", "Preserved System", "Preserved Site", "Test",
-                    DecoderType.P25_PHASE1, 451000000));
+                insert.setString(1, configurationId);
+                insert.setString(2, configJson);
                 insert.executeUpdate();
             }
             statement.executeUpdate("""

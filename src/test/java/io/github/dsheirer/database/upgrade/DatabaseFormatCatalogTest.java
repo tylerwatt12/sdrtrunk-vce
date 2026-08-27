@@ -29,6 +29,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 class DatabaseFormatCatalogTest
 {
+    private static final int FROZEN_PRE_FORMAT_5_MAXIMUM_VERSION = 4;
+    private static final Set<String> FROZEN_PRE_FORMAT_5_FINGERPRINTS = Set.of(
+        "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a",
+        "38294d5173dbaa550b7818006f09b9d2b83fe3c2bae1ba15b6c56416d8fd69dc",
+        "d1a300bf3cfc32870a36c6c4d009d5eb3ae0fea794782357ed2ea3c2948d270d",
+        "d4b539e9486d81c0d21ec7816a8a1a0c07d7274dd45f659e44155beef404c3f1");
     @TempDir
     Path mTemporaryFolder;
 
@@ -103,7 +109,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -114,6 +120,70 @@ class DatabaseFormatCatalogTest
             assertFalse(detected.requiresMigration());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
+        }
+    }
+
+    @Test
+    void genuineFormat5IsOutsideTheFrozenPreFormat5AcceptanceBoundary() throws Exception
+    {
+        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("format-5-boundary.sqlite"));
+        try(Connection connection = open(database))
+        {
+            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
+            int marker = Integer.parseInt(scalar(connection, """
+                SELECT value FROM database_metadata WHERE key='database_format_version'
+                """));
+
+            assertEquals("cc4ab232780c6445865d86c69d4f04eb43f4f6064cf9e6770ff1405c4da32080",
+                fingerprint);
+            assertEquals(5, marker);
+            assertTrue(marker > FROZEN_PRE_FORMAT_5_MAXIMUM_VERSION);
+            assertFalse(FROZEN_PRE_FORMAT_5_FINGERPRINTS.contains(fingerprint));
+        }
+    }
+
+    @Test
+    void format5RequiresCanonicalSiteGuidForTrunkedChannels() throws Exception
+    {
+        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("format-5-channel-constraints.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, radres_guid, config_json)
+                VALUES ('11111111-2222-4333-8444-555555555555', 'TRUNKED', 0, NULL, '{}')
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, radres_guid, config_json)
+                VALUES ('11111111-2222-4333-8444-555555555555', 'TRUNKED', 0,
+                        'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE', '{}')
+                """));
+            assertEquals(1, statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, radres_guid, config_json)
+                VALUES ('66666666-7777-4888-8999-aaaaaaaaaaaa', 'CONVENTIONAL', 0, NULL, '{}')
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, auto_start, config_json)
+                VALUES ('77777777-7777-4777-8777-777777777777', 'CONVENTIONAL', 1, 2, '{}')
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, auto_start, config_json)
+                VALUES ('88888888-8888-4888-8888-888888888888', 'CONVENTIONAL', 2, 0.5, '{}')
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, auto_start_order,
+                                                  config_json)
+                VALUES ('99999999-9999-4999-8999-999999999999', 'CONVENTIONAL', 3, 2147483648, '{}')
+                """));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, auto_start_order,
+                                                  config_json)
+                VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'CONVENTIONAL', 4, 1.5, '{}')
+                """));
+            assertEquals(1, statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, auto_start,
+                                                  auto_start_order, config_json)
+                VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'CONVENTIONAL', 5, 1, 2147483647, '{}')
+                """));
         }
     }
 
@@ -131,6 +201,50 @@ class DatabaseFormatCatalogTest
             assertTrue(detected.requiresMigration());
             assertEquals(DatabaseFormatCatalog.requireVersion(3).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
+        }
+    }
+
+    @Test
+    void frozenFormat4FixtureContainsOnlyTheDeclaredSyntheticMigrationInventory() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("format-4.sqlite"));
+
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(4, detected.version());
+            assertTrue(detected.markerPresent());
+            assertEquals("admin,listener,operator", scalar(connection, """
+                SELECT group_concat(username, ',') FROM (
+                    SELECT json_extract(settings_json, '$.primaryAdmin.username') AS username
+                    FROM application_settings WHERE key='web.access.v1'
+                    UNION ALL
+                    SELECT json_extract(value, '$.credential.username') AS username
+                    FROM application_settings, json_each(settings_json, '$.users')
+                    WHERE application_settings.key='web.access.v1'
+                    ORDER BY username
+                )
+                """));
+            assertEquals("2", scalar(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals("4", scalar(connection, "SELECT COUNT(*) FROM alias_list"));
+            assertEquals("4", scalar(connection, "SELECT COUNT(*) FROM application_settings"));
+            assertEquals("{\"preserved\":true}", scalar(connection, """
+                SELECT settings_json FROM application_settings WHERE key='format-4-preserve-sentinel'
+                """));
+            assertEquals("2", scalar(connection, """
+                SELECT json_array_length(json_extract(settings_json, '$.users'))
+                FROM application_settings WHERE key='web.access.v1'
+                """));
+            assertEquals("USER:USER", scalar(connection, """
+                SELECT json_extract(settings_json, '$.policyOverrides.dashboard') || ':' ||
+                       json_extract(settings_json, '$.policyOverrides.site-access')
+                FROM application_settings WHERE key='web.access.v1'
+                """));
+            assertEquals("0", scalar(connection, """
+                SELECT json_extract(settings_json, '$.show_encryption_details')
+                FROM application_settings WHERE key='web.display.v1'
+                """));
         }
     }
 
@@ -194,7 +308,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void olderBuildRefusesAValidNewerGlobalMarker() throws Exception
+    void currentCatalogRefusesAMarkerBeyondItsRegisteredVersion() throws Exception
     {
         Path database = mTemporaryFolder.resolve("newer-marker.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -269,5 +383,13 @@ class DatabaseFormatCatalogTest
     private static Connection open(Path database) throws Exception
     {
         return DriverManager.getConnection("jdbc:sqlite:" + database);
+    }
+
+    private static String scalar(Connection connection, String sql) throws Exception
+    {
+        try(Statement statement = connection.createStatement(); var resultSet = statement.executeQuery(sql))
+        {
+            return resultSet.next() ? resultSet.getString(1) : null;
+        }
     }
 }

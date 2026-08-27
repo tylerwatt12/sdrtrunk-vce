@@ -12,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.web.auth.WebAccessService;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -56,9 +55,26 @@ class BugReportConfigurationExporterTest
                     "{\"user/test\":{\"vault.saved.password\":\"vault-password\",\"normal\":\"kept\"}}");
                 statement.executeUpdate();
 
-                statement.setString(1, WebAccessService.SETTING_KEY);
-                statement.setString(2,
-                    "{\"primaryAdmin\":{\"salt\":\"must-not-export\",\"verifier\":\"must-not-export\"}}");
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO web_user(
+                    username, tier, primary_admin, credential_version, password_algorithm, password_iterations,
+                    password_derived_key_bits, password_salt, password_hash, password_changed_at_ms, auth_revision,
+                    preferences_json, preferences_revision, created_at_ms, updated_at_ms
+                ) VALUES ('admin', 'ADMIN', 1, 1, 'PBKDF2WithHmacSHA256', 600000, 256,
+                          zeroblob(16), zeroblob(32), 1, 1,
+                          '{"version":1}', 1, 1, 1)
+                """))
+            {
+                statement.executeUpdate();
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO web_access_policy(capability_id, required_tier, updated_at_ms)
+                VALUES ('dashboard', 'USER', 1)
+                """))
+            {
                 statement.executeUpdate();
             }
         }
@@ -77,7 +93,8 @@ class BugReportConfigurationExporterTest
             preferences.at("/user~1test/vault.saved.password").textValue());
         assertEquals("kept", preferences.at("/user~1test/normal").textValue());
         assertEquals(1, snapshot.get("application_settings").size());
-        assertFalse(mapper.writeValueAsString(snapshot).contains("must-not-export"));
+        assertFalse(snapshot.containsKey("web_user"));
+        assertFalse(snapshot.containsKey("web_access_policy"));
         assertTrue(snapshot.containsKey("alias_list"));
         assertTrue(snapshot.containsKey("alias_list_unmatched_talkgroup_stream"));
         assertTrue(snapshot.containsKey("alias"));

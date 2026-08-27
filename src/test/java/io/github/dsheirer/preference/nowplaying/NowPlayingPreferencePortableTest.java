@@ -8,8 +8,7 @@ package io.github.dsheirer.preference.nowplaying;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.DecodeQualityDisplayMode;
-import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.LiveActivitySettings;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.SiteSettings;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -22,7 +21,7 @@ class NowPlayingPreferencePortableTest
     Path mTemporaryFolder;
 
     @Test
-    void liveActivityBatchRoundTripsThroughPortablePreferencesInFreshJvms() throws Exception
+    void siteSettingsRoundTripThroughPortablePreferencesInFreshJvms() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -48,17 +47,22 @@ class NowPlayingPreferencePortableTest
             try
             {
                 NowPlayingPreference preference = new NowPlayingPreference(ignored -> {});
-                LiveActivitySettings expected = new LiveActivitySettings(true, 1_250, false, false, true,
-                    DecodeQualityDisplayMode.DETAILED, 350);
+                SiteSettings expected = new SiteSettings(true, true, 1_250);
 
                 if("write".equals(args[1]))
                 {
-                    preference.setLiveActivitySettings(expected);
+                    NowPlayingPreference.SiteSettingsUpdate updated =
+                        preference.replaceSiteSettings(preference.getSiteSettingsSnapshot().revision(), expected);
+                    if(!updated.updated() || updated.snapshot().revision() != 2)
+                    {
+                        throw new AssertionError("Site-settings revision was not advanced");
+                    }
                 }
-                else if(!expected.equals(preference.getLiveActivitySettings()))
+                else if(!expected.equals(preference.getSiteSettings()) ||
+                    preference.getSiteSettingsSnapshot().revision() != 2)
                 {
-                    throw new AssertionError("Unexpected persisted Live activity settings: " +
-                        preference.getLiveActivitySettings());
+                    throw new AssertionError("Unexpected persisted site settings: " +
+                        preference.getSiteSettingsSnapshot());
                 }
             }
             finally

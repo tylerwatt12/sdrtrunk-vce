@@ -46,14 +46,6 @@ class StatsAliasResolver
     private static final List<String> DMR_PROTOCOLS = List.of("DMR");
     private static final List<String> NXDN_PROTOCOLS = List.of("NXDN");
 
-    /**
-     * Retained as the mutation boundary hook. Lookups are query-scoped, so there is no shared rule corpus to clear.
-     */
-    synchronized void invalidate()
-    {
-        // Query-scoped rule loading observes committed alias changes immediately.
-    }
-
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         enrichTalkgroups(connection, rows, "talkgroup_id", "alias_");

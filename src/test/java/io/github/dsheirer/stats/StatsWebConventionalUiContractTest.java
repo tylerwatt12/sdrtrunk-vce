@@ -25,16 +25,16 @@ class StatsWebConventionalUiContractTest
     void buildsConventionalTabsFromServerCapabilities() throws Exception
     {
         String source = source();
-        String tabBuilder = function(source, "function conventionalTabItems(context)");
+        String tabBuilder = function(source, "function conventionalTabItems(channel)");
 
         for(String capability: new String[]{"group_identities", "radios", "activity"})
         {
-            assertTrue(tabBuilder.contains("conventionalCapability(context, '" + capability + "')"),
+            assertTrue(tabBuilder.contains("conventionalCapability(channel, '" + capability + "')"),
                 () -> "Missing conventional capability check for " + capability);
         }
 
         assertTrue(tabBuilder.contains(
-            "conventionalCapability(context, 'activity') && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+            "conventionalCapability(channel, 'activity') && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertFalse(tabBuilder.contains("protocol_code"));
         assertFalse(tabBuilder.contains("isDmr"));
     }
@@ -44,10 +44,12 @@ class StatsWebConventionalUiContractTest
     {
         String source = source();
         assertTrue(source.contains("const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;"));
-        assertTrue(source.contains("apiPage(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({"));
-        assertTrue(source.contains("apiPage(conventionalApiPath(contextKey, 'radios'), pageParameters({"));
+        assertTrue(source.contains("apiPage(conventionalApiPath(configurationId, 'talkgroups'), pageParameters({"));
+        assertTrue(source.contains("apiPage(conventionalApiPath(configurationId, 'radios'), pageParameters({"));
         assertTrue(source.contains("limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT"));
-        assertFalse(source.contains("/api/conventional/"));
+        assertTrue(source.contains("apiPage('/api/v1/conventional-channels', pageParameters())"));
+        assertFalse(source.contains("/api/v1/conventional-contexts"));
+        assertFalse(function(source, "async function renderConventionalDetail()").contains("context_key"));
     }
 
     @Test
@@ -84,9 +86,10 @@ class StatsWebConventionalUiContractTest
         String radios = function(source, "function conventionalRadioColumns()");
         assertTrue(columns.contains("decoderDisplay(row.decoder)"));
         assertTrue(list.contains("createAsyncSection('Conventional Channels'"));
-        assertTrue(list.contains("apiPage('/api/v1/conventional-contexts', pageParameters())"));
+        assertTrue(list.contains("apiPage('/api/v1/conventional-channels', pageParameters())"));
         assertTrue(list.indexOf("beginPage(renderContext") < list.indexOf("await directory.load("));
-        assertTrue(detail.contains("decoderDisplay(context.decoder)"));
+        assertTrue(detail.contains("const channel = data?.channel"));
+        assertTrue(detail.contains("decoderDisplay(channel.decoder)"));
         assertTrue(detail.contains("label: 'Logical Calls'"));
         assertTrue(detail.contains("label: 'Rec'"));
         assertTrue(detail.contains("label: 'Submitted'"));

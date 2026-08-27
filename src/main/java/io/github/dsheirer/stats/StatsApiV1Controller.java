@@ -17,7 +17,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.ApiHttpResponse;
-import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebRequestSecurity;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
@@ -41,25 +41,25 @@ final class StatsApiV1Controller
 
     private final StatsWebDatabase mDatabase;
     private final Supplier<Map<String,Object>> mStatusSupplier;
-    private final WebAccessHttpController mAccessController;
+    private final WebRequestSecurity mRequestSecurity;
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
-                         WebAccessHttpController accessController, TunerDiagnosticService tunerDiagnosticService)
+                         WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService)
     {
-        this(database, statusSupplier, accessController, tunerDiagnosticService, Map::of);
+        this(database, statusSupplier, requestSecurity, tunerDiagnosticService, Map::of);
     }
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
-                         WebAccessHttpController accessController, TunerDiagnosticService tunerDiagnosticService,
+                         WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService,
                          Supplier<Map<String,Object>> receiverHealthSupplier)
     {
         mDatabase = database;
         mStatusSupplier = statusSupplier;
-        mAccessController = accessController;
+        mRequestSecurity = requestSecurity;
         mTunerDiagnosticService = tunerDiagnosticService;
         mReceiverHealthSupplier = receiverHealthSupplier;
     }
@@ -96,7 +96,7 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "talkgroup_id", "radio_id", "scope", "guid", "context",
-                    "hide_grants", "kind", "limit");
+                    "configuration_id", "hide_grants", "kind", "limit");
                 return page(mDatabase.activity(request));
             }));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
@@ -107,9 +107,9 @@ final class StatsApiV1Controller
             }));
         create(server, StatsApiV1.ACTIVITY_RADIOS, WebCapability.SYSTEMS_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_RADIOS, this::dashboardActivityRadios));
-        create(server, StatsApiV1.CONVENTIONAL_CONTEXTS, WebCapability.CONVENTIONAL_VIEW,
-            exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CONTEXTS, this::conventionalContexts));
-        server.createContext(StatsApiV1.EXPORTS, mAccessController.protectAny(
+        create(server, StatsApiV1.CONVENTIONAL_CHANNELS, WebCapability.CONVENTIONAL_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CHANNELS, this::conventionalChannels));
+        server.createContext(StatsApiV1.EXPORTS, mRequestSecurity.protectAny(
             Set.of(WebCapability.CSV_EXPORT, WebCapability.ADMIN_ALIASES), this::handleCsvExport));
         create(server, StatsApiV1.RECEIVER_HEALTH, WebCapability.RECEIVER_HEALTH,
             exchange -> handleJson(exchange, StatsApiV1.RECEIVER_HEALTH, (request, segments) -> {
@@ -324,7 +324,7 @@ final class StatsApiV1Controller
         };
     }
 
-    private Object conventionalContexts(StatsRequest request, List<String> segments)
+    private Object conventionalChannels(StatsRequest request, List<String> segments)
     {
         if(segments.isEmpty())
         {
@@ -332,12 +332,12 @@ final class StatsApiV1Controller
             return page(mDatabase.conventional(request));
         }
 
-        StatsRequest scoped = request.withPathParameter("context", segments.get(0));
+        StatsRequest scoped = request.withPathParameter("configuration_id", segments.get(0));
 
         if(segments.size() == 1)
         {
             request.requireOnly("limit", "offset");
-            return compound(mDatabase.conventionalDetail(scoped), "context", "summaries");
+            return compound(mDatabase.conventionalDetail(scoped), "channel", "summaries");
         }
         else if(segments.size() == 2 && "talkgroups".equals(segments.get(1)))
         {
@@ -413,7 +413,7 @@ final class StatsApiV1Controller
             String dataset = segments.getFirst().substring(0, segments.getFirst().length() - 4);
 
             if("aliases".equals(dataset) &&
-                !mAccessController.isRequestStillAuthorized(exchange, WebCapability.ADMIN_ALIASES))
+                !mRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.ADMIN_ALIASES))
             {
                 ApiHttpResponse.sendError(exchange, 403, "access_denied", "Access is denied");
                 return;
@@ -451,7 +451,7 @@ final class StatsApiV1Controller
 
     private void create(HttpServer server, String path, WebCapability capability, HttpHandler handler)
     {
-        server.createContext(path, mAccessController.protect(capability, handler));
+        server.createContext(path, mRequestSecurity.protect(capability, handler));
     }
 
     private static void validateExportQuery(StatsRequest request, String dataset)
@@ -465,7 +465,7 @@ final class StatsApiV1Controller
             case "site-channels", "site-neighbors" -> request.requireOnly("guid");
             case "conventional-channels" -> request.requireOnly("q", "sort", "direction");
             case "conventional-talkgroups", "conventional-radios" ->
-                request.requireOnly("context", "q", "sort", "direction");
+                request.requireOnly("configuration_id", "q", "sort", "direction");
             case "signal-health" -> request.requireOnly();
             case "site-quality" -> request.requireOnly("guid", "range", "points");
             case "aliases" -> request.requireOnly("family", "type", "matcher", "list", "group",

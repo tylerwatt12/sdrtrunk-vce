@@ -572,19 +572,6 @@ final class P25ActivityLogRecords
                 patchMemberTalkgroupIds, null, output, IdentityDomain.STANDARD);
         }
 
-        ConventionalCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
-                            List<Integer> patchMemberTalkgroupIds, CallOutput output)
-        {
-            this(callStartEpochMilliseconds, guid != null && !guid.isBlank() ? "GUID:" + guid : null, guid,
-                null, null, talkgroupId, targetKind, patchMemberTalkgroupIds, null, output,
-                IdentityDomain.STANDARD);
-        }
-
-        ConventionalCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
-        {
-            this(callStartEpochMilliseconds, guid, talkgroupId, "TALKGROUP", List.of(), output);
-        }
-
         int destinationId()
         {
             return talkgroupId;

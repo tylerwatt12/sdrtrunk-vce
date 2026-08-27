@@ -1,6 +1,4 @@
-class WebCallPlayer {
-  static VOLUME_KEY = 'sdrtrunk-vce.web-player.volume';
-  static SELECTED_SCAN_LISTS_KEY = 'sdrtrunk-vce.web-player.selected-scan-lists';
+export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
   static MAXIMUM_SCAN_LISTS = 128;
   static MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4;
@@ -35,7 +33,8 @@ class WebCallPlayer {
     this.loadToken = 0;
     this.loadController = null;
     this.paused = true;
-    this.volume = this.readVolume();
+    this.volume = 1;
+    this.preferenceWriter = null;
     this.maximumQueued = 100;
     this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SCAN_LISTS;
     this.arrivalSequence = 0;
@@ -48,7 +47,6 @@ class WebCallPlayer {
     this.selectedScanListIds = new Set();
     this.scanListCatalogReady = false;
     this.scanListCatalogState = 'loading';
-    this.listenerToken = null;
     this.ui.volume.value = String(this.volume);
     this.bindControls();
     this.render();
@@ -65,6 +63,37 @@ class WebCallPlayer {
 
   setActions(actions = {}) {
     this.actions = actions && typeof actions === 'object' ? actions : {};
+  }
+
+  setPreferenceWriter(writer) {
+    this.preferenceWriter = typeof writer === 'function' ? writer : null;
+  }
+
+  applyPreferences(preferences) {
+    if (!preferences || typeof preferences !== 'object') return;
+    const volume = Number(preferences.volume);
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) {
+      this.volume = volume;
+      this.ui.volume.value = String(volume);
+      if (this.gainNode) this.gainNode.gain.value = volume;
+    }
+    if (Array.isArray(preferences.selected_scan_list_ids)) {
+      this.selectedScanListIds = new Set(preferences.selected_scan_list_ids.map(String));
+      this.filterQueueForSelectedLists();
+      this.renderScanLists();
+      this.synchronizeSubscription();
+    }
+    this.render();
+  }
+
+  writePreferences() {
+    if (!this.preferenceWriter) return;
+    const selectedScanListIds = [...this.selectedScanListIds].map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0).sort((left, right) => left - right);
+    void Promise.resolve().then(() => this.preferenceWriter({
+      volume: this.volume,
+      selected_scan_list_ids: selectedScanListIds
+    })).catch(() => {});
   }
 
   subscribeState(observer) {
@@ -89,6 +118,8 @@ class WebCallPlayer {
       currentReady: Boolean(this.current && this.currentBuffer),
       recentReplay: Boolean(this.recentReplay),
       paused: this.paused,
+      playing: Boolean(this.source),
+      targetLabel: this.currentTargetLabel(),
       holdTarget: this.holdTarget,
       queuedCount: this.queuedCount,
       status: this.ui.status?.textContent || '',
@@ -112,16 +143,22 @@ class WebCallPlayer {
   }
 
   subscriptionParameters() {
-    return { scan_list_id: [...this.selectedScanListIds].sort((first, second) => Number(first) - Number(second)) };
+    return { scan_list_id: this.activeSelectedScanListIds() };
+  }
+
+  activeSelectedScanListIds() {
+    return [...this.selectedScanListIds]
+      .filter((id) => this.scanListById.get(id)?.enabled)
+      .sort((first, second) => Number(first) - Number(second))
+      .slice(0, this.maximumSelectedScanLists);
   }
 
   ensureConnected() {
     if (this.events) return this.events;
     if (typeof this.connectionFactory !== 'function' || !this.scanListCatalogReady ||
-        !this.selectedScanListIds.size) return null;
+        !this.activeSelectedScanListIds().length) return null;
     const events = this.connectionFactory(this.connectionTopic, this.subscriptionParameters());
     this.events = events;
-    events.addEventListener('ready', (event) => this.handleReady(this.eventPayload(event)));
     events.addEventListener('call', (event) => this.enqueue(this.eventPayload(event)));
     events.addEventListener('snapshot', (event) => this.consumeSnapshot(this.eventPayload(event)));
     events.onopen = () => this.setStatus(this.paused ? (this.currentBuffer ? 'Paused' : 'Ready') :
@@ -137,11 +174,10 @@ class WebCallPlayer {
       this.events.close();
       this.events = null;
     }
-    this.listenerToken = null;
   }
 
   synchronizeSubscription() {
-    if (!this.scanListCatalogReady || !this.selectedScanListIds.size) {
+    if (!this.scanListCatalogReady || !this.activeSelectedScanListIds().length) {
       this.closeEvents();
       this.setStatus(this.scanListCatalogReady ? 'Select a scan list' : 'Loading scan lists');
       return;
@@ -153,18 +189,10 @@ class WebCallPlayer {
 
   eventPayload(event) {
     try {
-      const parsed = JSON.parse(event?.data || '{}');
-      return parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+      return JSON.parse(event?.data || '{}');
     } catch (_) {
       return {};
     }
-  }
-
-  handleReady(payload) {
-    if (typeof payload?.listener_token === 'string') this.listenerToken = payload.listener_token;
-    this.applyLimits(payload);
-    this.renderScanLists();
-    this.render();
   }
 
   disconnect(status = 'Unavailable') {
@@ -173,7 +201,7 @@ class WebCallPlayer {
     this.loadController?.abort();
     this.loadController = null;
     this.paused = true;
-    this.clearQueuedCalls('disconnected');
+    this.clearQueuedCalls();
     this.avoids.clear();
     this.recentCalls = [];
     this.recentReplay = null;
@@ -207,35 +235,24 @@ class WebCallPlayer {
     this.applyLimits(limits);
     const unique = new Map();
     (Array.isArray(rows) ? rows : []).slice(0, WebCallPlayer.MAXIMUM_SCAN_LISTS).forEach((row) => {
-      const idValue = row?.scan_list_id ?? row?.id;
-      const id = idValue === null || idValue === undefined ? '' : String(idValue).trim();
-      if (!id || unique.has(id)) return;
+      const id = Number.isSafeInteger(row?.id) && row.id > 0 ? String(row.id) : '';
+      const name = typeof row?.name === 'string' ? row.name.trim() : '';
+      const description = row?.description === undefined ? '' : row.description;
+      if (typeof description !== 'string' || typeof row?.default !== 'boolean') return;
+      if (!id || !name || unique.has(id)) return;
       unique.set(id, {
         id,
-        name: String(row?.name || `Scan list ${id}`).trim() || `Scan list ${id}`,
-        description: String(row?.description || '').trim(),
-        enabled: row?.enabled !== false && row?.available !== false && row?.published !== false,
-        published: row?.published !== false,
-        defaultSelected: row?.default === true || row?.default_selected === true
+        name,
+        description: description.trim(),
+        enabled: true,
+        default: row.default
       });
     });
     // The server already applies the administrator-owned scan-list order.
     this.scanLists = [...unique.values()];
     this.scanListById = new Map(this.scanLists.map((item) => [item.id, item]));
-    const stored = this.readSelectedScanLists();
-    const existing = this.selectedScanListIds.size ? [...this.selectedScanListIds] : stored.ids;
-    let selected = existing.filter((id) => this.scanListById.get(id)?.enabled);
-    if (!selected.length && !stored.present && !this.selectedScanListIds.size) {
-      selected = this.scanLists.filter((item) => item.enabled && item.defaultSelected).map((item) => item.id);
-      if (!selected.length) {
-        const first = this.scanLists.find((item) => item.enabled);
-        if (first) selected = [first.id];
-      }
-    }
-    this.selectedScanListIds = new Set(selected.slice(0, this.maximumSelectedScanLists));
     this.scanListCatalogReady = true;
     this.scanListCatalogState = 'ready';
-    this.persistSelectedScanLists();
     this.updateScanListStatus();
     this.filterQueueForSelectedLists();
     this.renderScanLists();
@@ -248,41 +265,23 @@ class WebCallPlayer {
   }
 
   applyLimits(value = {}) {
-    const selected = Math.trunc(Number(value?.maximum_selected_scan_lists ?? value?.maximumSelectedScanLists));
-    if (Number.isFinite(selected) && selected >= 1) {
+    const selected = value?.maximum_selected_scan_lists;
+    if (Number.isInteger(selected) && selected >= 1) {
       this.maximumSelectedScanLists = Math.min(WebCallPlayer.MAXIMUM_SCAN_LISTS, selected);
-      this.selectedScanListIds = new Set([...this.selectedScanListIds].slice(0, this.maximumSelectedScanLists));
     }
-    const queued = Math.trunc(Number(value?.waiting_calls_per_listener));
-    if (Number.isFinite(queued) && queued >= 1) {
+    const queued = value?.waiting_calls_per_listener;
+    if (Number.isInteger(queued) && queued >= 1) {
       this.maximumQueued = Math.min(500, queued);
       this.trimQueueToLimit();
     }
-  }
-
-  readSelectedScanLists() {
-    try {
-      const stored = localStorage.getItem(WebCallPlayer.SELECTED_SCAN_LISTS_KEY);
-      if (stored === null) return { present: false, ids: [] };
-      const parsed = JSON.parse(stored);
-      return { present: true, ids: Array.isArray(parsed) ? parsed.map(String) : [] };
-    } catch (_) {
-      return { present: false, ids: [] };
-    }
-  }
-
-  persistSelectedScanLists() {
-    try {
-      localStorage.setItem(WebCallPlayer.SELECTED_SCAN_LISTS_KEY,
-        JSON.stringify([...this.selectedScanListIds].sort()));
-    } catch (_) { }
   }
 
   setScanListSelected(id, selected) {
     const item = this.scanListById.get(String(id));
     if (!item?.enabled) return;
     const updated = new Set(this.selectedScanListIds);
-    if (selected && !updated.has(item.id) && updated.size >= this.maximumSelectedScanLists) {
+    const activeCount = [...updated].filter((value) => this.scanListById.get(value)?.enabled).length;
+    if (selected && !updated.has(item.id) && activeCount >= this.maximumSelectedScanLists) {
       if (this.ui.scanListStatus) {
         this.ui.scanListStatus.textContent = `Choose up to ${this.maximumSelectedScanLists} scan lists.`;
       }
@@ -293,7 +292,7 @@ class WebCallPlayer {
     else updated.delete(item.id);
     if ([...updated].sort().join('|') === [...this.selectedScanListIds].sort().join('|')) return;
     this.selectedScanListIds = updated;
-    this.persistSelectedScanLists();
+    this.writePreferences();
     this.updateScanListStatus();
     this.filterQueueForSelectedLists();
     this.renderScanLists();
@@ -325,7 +324,7 @@ class WebCallPlayer {
       this.ui.scanListOptions.append(this.scanListMessage('No scan lists are available.'));
       return;
     }
-    const selectionFull = this.selectedScanListIds.size >= this.maximumSelectedScanLists;
+    const selectionFull = this.activeSelectedScanListIds().length >= this.maximumSelectedScanLists;
     this.scanLists.forEach((item) => {
       const label = document.createElement('label');
       label.className = 'playback-scan-list-option';
@@ -344,11 +343,6 @@ class WebCallPlayer {
         description.textContent = item.description;
         copy.append(description);
       }
-      if (!item.enabled) {
-        const unavailable = document.createElement('small');
-        unavailable.textContent = item.published ? 'Unavailable' : 'Not published to listeners';
-        copy.append(unavailable);
-      }
       label.append(checkbox, copy);
       this.ui.scanListOptions.append(label);
     });
@@ -357,7 +351,7 @@ class WebCallPlayer {
   updateScanListStatus() {
     if (!this.ui.scanListStatus || !this.scanListCatalogReady) return;
     if (!this.scanLists.length) this.ui.scanListStatus.textContent = 'No scan lists are available.';
-    else if (!this.selectedScanListIds.size) {
+    else if (!this.activeSelectedScanListIds().length) {
       this.ui.scanListStatus.textContent = 'Select at least one scan list to receive calls.';
     } else {
       this.ui.scanListStatus.textContent = '';
@@ -375,18 +369,14 @@ class WebCallPlayer {
   enqueue(call) {
     const normalized = this.normalizeCall(call);
     if (!normalized || !this.callMatchesSelection(normalized)) return;
-    if (this.seenCallIds.has(normalized._logicalCallId)) return;
-    this.rememberCallId(normalized._logicalCallId);
+    if (this.seenCallIds.has(normalized._callId)) return;
+    this.rememberCallId(normalized._callId);
     this.rememberRecentCall(normalized);
-    if (!this.isAllowed(normalized)) {
-      this.acknowledge(normalized, 'filtered');
-      return;
-    }
+    if (!this.isAllowed(normalized)) return;
 
     while (this.queuedCount >= this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.acknowledge(dropped, 'queue_overflow');
     }
 
     this.insertQueuedCall(normalized);
@@ -395,27 +385,29 @@ class WebCallPlayer {
   }
 
   consumeSnapshot(snapshot) {
-    if (typeof snapshot?.listener_token === 'string') this.listenerToken = snapshot.listener_token;
     this.applyLimits(snapshot);
     (Array.isArray(snapshot?.calls) ? snapshot.calls : []).forEach((call) => this.enqueue(call));
   }
 
   normalizeCall(value) {
-    if (!value || typeof value !== 'object' || !value.audio_url) return null;
-    const idValue = value.logical_call_id ?? value.call_id;
-    const logicalCallId = idValue === null || idValue === undefined ? '' : String(idValue).trim();
-    if (!logicalCallId) return null;
-    const started = Number(value.started_at_ms ?? value.start_timestamp_ms ?? value.completed_at_ms);
-    const matchedValue = value.matched_scan_list_ids ?? value.scan_list_ids ?? value.selected_scan_list_ids;
-    const matched = Array.isArray(matchedValue) ? matchedValue.map(String) : [...this.selectedScanListIds];
+    if (!value || typeof value !== 'object' || typeof value.audio_url !== 'string' ||
+        !value.audio_url.trim()) return null;
+    const callId = typeof value.call_id === 'string' ? value.call_id.trim() : '';
+    const started = value.started_at_ms;
+    const completed = value.completed_at_ms;
+    if (!callId || !Number.isFinite(started) || started <= 0 || !Number.isFinite(completed) || completed <= 0 ||
+        !Array.isArray(value.scan_list_ids)) return null;
+    const scanListIds = value.scan_list_ids;
+    if (!scanListIds.length || scanListIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
+        typeof value.conversation_key !== 'string' || !value.conversation_key.trim()) return null;
     const call = {
       ...value,
-      _logicalCallId: logicalCallId,
-      _startedAtMs: Number.isFinite(started) && started > 0 ? started : Date.now(),
+      _callId: callId,
+      _startedAtMs: started,
       _arrivalSequence: this.arrivalSequence++,
-      _matchedScanListIds: [...new Set(matched)]
+      _matchedScanListIds: [...new Set(scanListIds.map(String))]
     };
-    call._conversationKey = String(value.conversation_key || this.targetKey(call));
+    call._conversationKey = value.conversation_key.trim();
     return call;
   }
 
@@ -428,8 +420,8 @@ class WebCallPlayer {
   }
 
   rememberRecentCall(call) {
-    if (!call?._logicalCallId) return;
-    this.recentCalls = this.recentCalls.filter((item) => item._logicalCallId !== call._logicalCallId);
+    if (!call?._callId) return;
+    this.recentCalls = this.recentCalls.filter((item) => item._callId !== call._callId);
     this.recentCalls.push(call);
     this.recentCalls.sort((first, second) => this.callCompletedAt(second) - this.callCompletedAt(first) ||
       second._arrivalSequence - first._arrivalSequence);
@@ -459,7 +451,7 @@ class WebCallPlayer {
   compareCalls(first, second) {
     return first._startedAtMs - second._startedAtMs ||
       first._arrivalSequence - second._arrivalSequence ||
-      first._logicalCallId.localeCompare(second._logicalCallId);
+      first._callId.localeCompare(second._callId);
   }
 
   oldestLaneKey(lanes, excludedKey = null) {
@@ -532,25 +524,23 @@ class WebCallPlayer {
     return call;
   }
 
-  clearQueuedCalls(outcome) {
-    this.conversationLanes.forEach((lane) => lane.forEach((call) => this.acknowledge(call, outcome)));
+  clearQueuedCalls() {
     this.conversationLanes.clear();
     this.queuedCount = 0;
   }
 
   clearQueue() {
-    this.clearQueuedCalls('cleared');
+    this.clearQueuedCalls();
     this.render();
   }
 
-  filterQueuedCalls(predicate, outcome) {
+  filterQueuedCalls(predicate) {
     this.conversationLanes.forEach((lane, key) => {
       const retained = [];
       lane.forEach((call) => {
         if (predicate(call)) retained.push(call);
         else {
           this.queuedCount--;
-          this.acknowledge(call, outcome);
         }
       });
       if (retained.length) this.conversationLanes.set(key, retained);
@@ -559,13 +549,14 @@ class WebCallPlayer {
   }
 
   filterQueueForSelectedLists() {
-    this.filterQueuedCalls((call) => this.callMatchesSelection(call), 'subscription_changed');
+    this.filterQueuedCalls((call) => this.callMatchesSelection(call));
   }
 
   callMatchesSelection(call) {
-    if (!this.selectedScanListIds.size) return false;
-    return !call?._matchedScanListIds?.length ||
-      call._matchedScanListIds.some((id) => this.selectedScanListIds.has(String(id)));
+    const selected = new Set(this.activeSelectedScanListIds());
+    if (!selected.size) return false;
+    return Boolean(call?._matchedScanListIds?.length) &&
+      call._matchedScanListIds.some((id) => selected.has(String(id)));
   }
 
   bindControls() {
@@ -576,7 +567,8 @@ class WebCallPlayer {
     this.ui.avoid.addEventListener('click', () => this.avoidCurrent());
     this.ui.avoidList?.addEventListener('click', () => this.actions.openAvoidList?.(this));
     this.ui.clearQueue?.addEventListener('click', () => this.clearQueue());
-    this.ui.volume.addEventListener('input', () => this.changeVolume());
+    this.ui.volume.addEventListener('input', () => this.changeVolume(false));
+    this.ui.volume.addEventListener('change', () => this.writePreferences());
     const panels = [this.ui.scanListOptions?.closest('details'), this.ui.queueList?.closest('details')]
       .filter(Boolean);
     panels.forEach((panel) => panel.addEventListener('toggle', () => {
@@ -588,17 +580,6 @@ class WebCallPlayer {
   }
 
   async togglePlayback() {
-    if (this.paused && this.scanListCatalogReady && !this.selectedScanListIds.size) {
-      const selected = this.scanLists.find((item) => item.enabled && item.defaultSelected) ||
-        this.scanLists.find((item) => item.enabled);
-      if (selected) {
-        this.selectedScanListIds = new Set([selected.id]);
-        this.persistSelectedScanLists();
-        this.updateScanListStatus();
-        this.renderScanLists();
-        this.synchronizeSubscription();
-      }
-    }
     const token = ++this.transportToken;
     this.paused = !this.paused;
 
@@ -634,7 +615,7 @@ class WebCallPlayer {
       this.holdTarget = null;
     } else if (this.current && this.currentBuffer) {
       this.holdTarget = this.current._conversationKey;
-      this.filterQueuedCalls((call) => call._conversationKey === this.holdTarget, 'hold_filtered');
+      this.filterQueuedCalls((call) => call._conversationKey === this.holdTarget);
     }
 
     this.render();
@@ -654,8 +635,8 @@ class WebCallPlayer {
       this.avoids.delete(this.avoids.keys().next().value);
     }
     if (this.holdTarget === target) this.holdTarget = null;
-    this.filterQueuedCalls((call) => call._conversationKey !== target, 'avoided');
-    this.stopCurrent('avoided');
+    this.filterQueuedCalls((call) => call._conversationKey !== target);
+    this.stopCurrent();
     if (this.paused) this.setStatus('Ready');
     else this.playNext();
   }
@@ -671,11 +652,8 @@ class WebCallPlayer {
       void this.returnToLive();
       return;
     }
-    if (this.current) this.stopCurrent('skipped');
-    else {
-      const skipped = this.takeNextCall();
-      if (skipped) this.acknowledge(skipped, 'skipped');
-    }
+    if (this.current) this.stopCurrent();
+    else this.takeNextCall();
     if (this.paused) {
       this.setStatus('Ready');
       this.render();
@@ -699,11 +677,11 @@ class WebCallPlayer {
     this.startCurrent();
   }
 
-  async replayRecent(logicalCallId) {
+  async replayRecent(callId) {
     this.pruneRecentCalls();
-    const call = this.recentCalls.find((item) => item._logicalCallId === String(logicalCallId || ''));
+    const call = this.recentCalls.find((item) => item._callId === String(callId || ''));
     if (!call || call._audioUnavailable) return false;
-    if (this.current?._logicalCallId === call._logicalCallId && !this.recentReplay) {
+    if (this.current?._callId === call._callId && !this.recentReplay) {
       await this.replayCurrent();
       return true;
     }
@@ -774,7 +752,6 @@ class WebCallPlayer {
 
     let next = this.takeNextCall();
     while (next && (!this.callMatchesSelection(next) || !this.isAllowed(next))) {
-      this.acknowledge(next, 'filtered');
       next = this.takeNextCall();
     }
     if (!next) {
@@ -810,10 +787,8 @@ class WebCallPlayer {
 
     try {
       const buffer = await Promise.race([(async () => {
-        const headers = {};
-        if (this.listenerToken) headers['X-SDRTrunk-Listener-Token'] = this.listenerToken;
         const response = await fetch(requested.audio_url, {
-          cache: 'no-store', credentials: 'same-origin', headers, signal: loadController.signal
+          cache: 'no-store', credentials: 'same-origin', signal: loadController.signal
         });
         if (!response.ok) throw new Error(`Audio returned ${response.status}`);
         this.ensureAudioContext();
@@ -839,7 +814,7 @@ class WebCallPlayer {
           }, 150);
           return;
         }
-        this.stopCurrent('unavailable');
+        this.stopCurrent();
         this.setStatus('Skipped unavailable call');
         setTimeout(() => {
           if (this.paused) {
@@ -881,7 +856,6 @@ class WebCallPlayer {
       this.current = null;
       this.currentBuffer = null;
       this.playbackOffset = 0;
-      this.acknowledge(completed, 'completed');
       this.render();
       this.playNext();
     };
@@ -904,8 +878,7 @@ class WebCallPlayer {
     }
   }
 
-  stopCurrent(outcome = null) {
-    const stopped = this.current;
+  stopCurrent() {
     this.loadToken++;
     this.loadController?.abort();
     this.loadController = null;
@@ -913,19 +886,7 @@ class WebCallPlayer {
     this.current = null;
     this.currentBuffer = null;
     this.playbackOffset = 0;
-    if (outcome && stopped) this.acknowledge(stopped, outcome);
     this.render();
-  }
-
-  acknowledge(call, outcome) {
-    const url = call?.control_url || call?.ack_url;
-    if (!url) return;
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    if (this.listenerToken) headers['X-SDRTrunk-Listener-Token'] = this.listenerToken;
-    fetch(url, {
-      method: 'POST', cache: 'no-store', credentials: 'same-origin', headers,
-      body: JSON.stringify({ logical_call_id: call._logicalCallId || call.logical_call_id || call.call_id, outcome })
-    }).catch(() => {});
   }
 
   getPlaybackPosition() {
@@ -971,29 +932,16 @@ class WebCallPlayer {
     while (this.queuedCount > this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.acknowledge(dropped, 'queue_overflow');
     }
   }
 
-  changeVolume() {
+  changeVolume(write = false) {
     const requested = Number(this.ui.volume.value);
     this.volume = Number.isFinite(requested) ? Math.max(0, Math.min(1, requested)) : 1;
     this.ui.volume.value = String(this.volume);
     if (this.gainNode) this.gainNode.gain.value = this.volume;
-    try {
-      localStorage.setItem(WebCallPlayer.VOLUME_KEY, String(this.volume));
-    } catch (_) { }
     this.renderVolume();
-  }
-
-  readVolume() {
-    try {
-      const stored = localStorage.getItem(WebCallPlayer.VOLUME_KEY);
-      if (stored === null || stored.trim() === '') return 1;
-      const saved = Number(stored);
-      if (Number.isFinite(saved) && saved >= 0 && saved <= 1) return saved;
-    } catch (_) { }
-    return 1;
+    if (write) this.writePreferences();
   }
 
   ensureAudioContext() {
@@ -1065,6 +1013,17 @@ class WebCallPlayer {
       `${call.source_alias}${sourceId ? ` · ${sourceType} ${sourceId}` : ''}` :
       (sourceId ? `${sourceType} ${sourceId}` : '');
     return `${target}${source ? ` ← ${source}` : ''}`;
+  }
+
+  currentTargetLabel() {
+    const call = this.current;
+    if (!call) return '';
+    const alias = String(call.target_alias || '').trim();
+    if (alias) return alias;
+    const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
+      String(call.target_id);
+    if (targetId) return `${this.identifierType(call.target_form, 'TGID')} ${targetId}`;
+    return String(call.channel || '').trim();
   }
 
   identifierType(form, fallback) {
@@ -1177,5 +1136,3 @@ class WebCallPlayer {
     this.notifyStateObservers();
   }
 }
-
-window.WebCallPlayer = WebCallPlayer;

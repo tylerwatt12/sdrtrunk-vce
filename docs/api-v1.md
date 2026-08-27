@@ -43,7 +43,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | Resource | Purpose |
 | --- | --- |
 | `GET /api/v1/status` | Server, database, logging, live-stream, and web-call status. |
-| `GET /api/v1/live/settings` | Non-sensitive receiver-wide Live presentation policy for viewers authorized for Live. |
+| `GET /api/v1/me/preferences` | The signed-in user's complete, bounded browser preference document and revision. |
 | `GET /api/v1/dashboard` | Bounded summary counts, recent receivers, call activity, and top identities. |
 | `GET /api/v1/quality` | Current quality across a bounded site page. Global requests cannot include history. |
 | `GET /api/v1/alias-lists` | Paged alias-list catalog. |
@@ -280,9 +280,31 @@ audio fetches receive `429 too_many_audio_responses` and are counted on Listener
 
 ## Authentication and administration
 
-Authentication remains under `/api/v1/auth/*`. User, access-policy, alias-list, alias, scan-list, and web-audio
+Authentication uses `GET /api/v1/auth/session`, `POST /api/v1/auth/login`, and
+`POST /api/v1/auth/logout`. Signed-in users own one complete preference document at
+`GET, PUT /api/v1/me/preferences`. User, access-policy, site-setting, alias-list, alias, scan-list, and web-audio
 administration remain under `/api/v1/admin/*`. They use the same success/error envelopes and `snake_case` contract.
 Mutations require the session's CSRF token and the capability enforced for that resource.
+
+The user preference document contains the browser theme, optional playing-call page-title prefix, playback volume and
+selected scan lists, scanner detail mode, presentation fields, tuner display fields, and saved table layouts. Each
+table layout can store its schema, column order, widths, and hidden columns. The document is versioned, limited to
+128 KiB, 128 tables, and 128 columns per table, and is replaced as one unit. `GET` returns a quoted positive `ETag`.
+`PUT` requires that exact revision in `If-Match`; a stale revision receives `409 preference_conflict` and the current
+revision in `ETag`.
+
+Central administration uses:
+
+- `GET, POST /api/v1/admin/users`
+- `PUT, DELETE /api/v1/admin/users/{username}`
+- `GET, PUT /api/v1/admin/access`
+- `GET, PUT /api/v1/admin/site-settings`
+
+The site-settings document is intentionally limited to the three receiver-wide settings that change everyone's
+experience: idle-call detail retention, clearing voice decode quality at call end, and traffic-grant age-out in
+milliseconds. `GET` returns the complete document with a quoted positive `ETag`. `PUT` replaces all three values and
+requires the exact quoted revision in `If-Match`; a stale revision returns `409` with the current complete document
+and `ETag`.
 
 Scan-list administration uses:
 
@@ -290,17 +312,6 @@ Scan-list administration uses:
 - `GET, PUT, DELETE /api/v1/admin/scan-lists/{id}`
 - `PUT /api/v1/admin/scan-lists/{id}/members`
 - `GET, PUT /api/v1/admin/web-audio`
-
-Receiver-wide Live presentation uses:
-
-- `GET, PUT /api/v1/admin/web-display`
-- `GET /api/v1/live/settings`
-
-The administrator document includes encryption-detail visibility, idle-row call-detail retention, control and voice
-decode-quality visibility, voice-quality clearing, decode-quality format, trunked idle-grant retention, and
-`live_detail_matching_row_limit` (25–500, default 200). The Live endpoint returns the same non-sensitive policy to a
-viewer authorized for Live so presentation policy does not depend on Dashboard access. Updates may contain any
-non-empty subset and are serialized as one receiver-wide settings mutation.
 
 Web-audio configuration uses `waiting_calls_per_listener` as the administrator-owned browser waiting-call policy.
 Listeners receive and obey the effective value but do not receive a control for changing it.

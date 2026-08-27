@@ -41,8 +41,12 @@ class ChannelConfigurationPolicyTest
         assertFalse(ChannelConfigurationPolicy.isRetired(active));
         assertFalse(ChannelConfigurationPolicy.isActive(retired));
         assertTrue(ChannelConfigurationPolicy.isRetired(retired));
+        assertThrows(IllegalArgumentException.class,
+            () -> ChannelConfigurationPolicy.requireChannelKind(retired));
         assertFalse(ChannelConfigurationPolicy.isActive(retiredSource));
         assertTrue(ChannelConfigurationPolicy.isRetired(retiredSource));
+        assertThrows(IllegalArgumentException.class,
+            () -> ChannelConfigurationPolicy.requireChannelKind(retiredSource));
     }
 
     @Test
@@ -51,6 +55,9 @@ class ChannelConfigurationPolicyTest
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "TUNER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("MPT1327", "TUNER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "MIXER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("mpt1327", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("MPT1327 ", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "mixer"));
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "REMOVED_SOURCE"));
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("FUTURE_DECODER", "TUNER"));
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("AM", "TUNER"));

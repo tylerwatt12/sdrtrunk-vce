@@ -1003,10 +1003,11 @@ final class StatsAliasCatalog
 
         StringBuilder conventionalSql = new StringBuilder("""
             SELECT context.id AS context_id, context.context_key, context.guid, context.channel_name AS site_name,
-                context.alias_list_name,
-                (SELECT config.system_name FROM configuration_channel config
-                 WHERE config.radres_guid = context.guid ORDER BY config.sort_order LIMIT 1) AS system_name
+                context.alias_list_name, nullif(trim(config.system_name), '') AS system_name
             FROM receiver_context context
+            JOIN configuration_channel config
+              ON config.channel_kind = 'CONVENTIONAL'
+             AND context.context_key = 'CONFIGURATION:' || config.configuration_id
             WHERE context.kind_code <> 1 AND context.protocol_code = 3
               AND context.alias_list_name IS NOT NULL AND trim(context.alias_list_name) <> ''
               AND

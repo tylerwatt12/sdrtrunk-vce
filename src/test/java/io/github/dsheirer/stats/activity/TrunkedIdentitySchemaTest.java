@@ -20,6 +20,7 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -28,6 +29,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -174,7 +176,7 @@ class TrunkedIdentitySchemaTest
     void keepsOrdinaryStableAndAmbiguousP25IdentityEvidenceOnOneBoundedRow() throws Exception
     {
         Path database = activityDatabase("p25-identity-state.sqlite");
-        String guid = "p25-identity-state";
+        String guid = radresGuid("p25-identity-state");
 
         try(Connection connection = open(database);
             Statement statement = connection.createStatement())
@@ -252,7 +254,7 @@ class TrunkedIdentitySchemaTest
             P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x1000, 1).state());
 
         Path database = activityDatabase("p25-zero-local-fq.sqlite");
-        String guid = "p25-zero-local-fq";
+        String guid = radresGuid("p25-zero-local-fq");
         P25ActivityLogRecords.P25TargetIdentity first =
             P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
         P25ActivityLogRecords.P25TargetIdentity second =
@@ -358,7 +360,7 @@ class TrunkedIdentitySchemaTest
     void sameCallAttributionRefinesOrdinaryP25IdentityButIndependentEvidenceStillConflicts() throws Exception
     {
         Path database = activityDatabase("p25-same-call-refinement.sqlite");
-        String guid = "p25-same-call-refinement";
+        String guid = radresGuid("p25-same-call-refinement");
         P25ActivityLogRecords.P25TargetIdentity qualified =
             P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
 
@@ -409,7 +411,7 @@ class TrunkedIdentitySchemaTest
     void resolvedLogicalCallRefinesOnlyAnOrdinaryIdentityFromTheSameCallStart() throws Exception
     {
         Path database = activityDatabase("p25-completed-refinement.sqlite");
-        String guid = "p25-completed-refinement";
+        String guid = radresGuid("p25-completed-refinement");
         P25ActivityLogRecords.P25TargetIdentity qualified =
             P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
 
@@ -459,7 +461,7 @@ class TrunkedIdentitySchemaTest
     void projectsQualifiedPatchMembersWithoutGuessingFlattenedMembers() throws Exception
     {
         Path database = activityDatabase("p25-patch-member-identities.sqlite");
-        String guid = "p25-patch-member-identities";
+        String guid = radresGuid("p25-patch-member-identities");
 
         try(Connection connection = open(database))
         {
@@ -906,7 +908,7 @@ class TrunkedIdentitySchemaTest
     void olderNxdnDomainEvidenceCannotReplaceAnAuthoritativeSiteDomain() throws Exception
     {
         Path database = database("nxdn-stale-domain.sqlite");
-        String guid = "nxdn-stale-domain";
+        String guid = radresGuid("nxdn-stale-domain");
 
         try(Connection connection = open(database))
         {
@@ -922,12 +924,12 @@ class TrunkedIdentitySchemaTest
 
             assertEquals(2, scalarLong(connection, """
                 SELECT identity_domain_code FROM trunked_identity_scope
-                WHERE scope_token='nxdn:guid:nxdn-stale-domain'
-                """));
+                WHERE scope_token='nxdn:guid:%s'
+                """.formatted(guid)));
             assertEquals(2_000L, scalarLong(connection, """
                 SELECT last_seen_ms FROM trunked_identity_scope
-                WHERE scope_token='nxdn:guid:nxdn-stale-domain'
-                """));
+                WHERE scope_token='nxdn:guid:%s'
+                """.formatted(guid)));
             assertEquals(2, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_identity_summary
                 WHERE identity_id IN (65520,65521)
@@ -937,14 +939,14 @@ class TrunkedIdentitySchemaTest
                 WHERE identity_id IN (100,200)
                 """));
             assertEquals(1, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context WHERE guid='nxdn-stale-domain'
-                """));
+                SELECT kind_code FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
             assertEquals(4, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context WHERE guid='nxdn-stale-domain'
-                """));
+                SELECT protocol_code FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
             assertEquals(2_000L, scalarLong(connection, """
-                SELECT last_seen_ms FROM receiver_context WHERE guid='nxdn-stale-domain'
-                """));
+                SELECT last_seen_ms FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM p25_activity_event"));
         }
     }
@@ -1015,12 +1017,13 @@ class TrunkedIdentitySchemaTest
     void p25RekeyClearsGuidSiteFactsAndRejectsOldGenerationReceiverFacts() throws Exception
     {
         Path database = database("p25-generation-rekey.sqlite");
-        String guid = "p25-generation-rekey";
+        String guid = radresGuid("p25-generation-rekey");
+        String targetGuid = radresGuid("target-site");
 
         try(Connection connection = open(database))
         {
             P25ActivityLogSchema.insertSite(connection,
-                p25SiteSnapshot(1_000L, "target-site", 0x349, "target", "00-0700", 857_000_000L));
+                p25SiteSnapshot(1_000L, targetGuid, 0x349, "target", "00-0700", 857_000_000L));
             P25ActivityLogSchema.insertSite(connection,
                 p25SiteSnapshot(1_000L, guid, 0x348, "old", "00-0500", 855_000_000L));
             P25ActivityLogSchema.upsertGrantedChannelSummary(connection,
@@ -1037,25 +1040,25 @@ class TrunkedIdentitySchemaTest
                 SELECT system.system_id
                 FROM p25_site_snapshot site
                 JOIN p25_system system ON system.system_key=site.system_key
-                WHERE site.guid='p25-generation-rekey'
-                """));
+                WHERE site.guid='%s'
+                """.formatted(guid)));
             assertEquals(5_000L, scalarLong(connection, """
-                SELECT first_seen_ms FROM receiver_context WHERE guid='p25-generation-rekey'
-                """));
+                SELECT first_seen_ms FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
             assertEquals(5_000L, scalarLong(connection, """
-                SELECT first_seen_ms FROM p25_site_snapshot WHERE guid='p25-generation-rekey'
-                """));
+                SELECT first_seen_ms FROM p25_site_snapshot WHERE guid='%s'
+                """.formatted(guid)));
             assertEquals(1, scalarLong(connection, """
-                SELECT observation_count FROM p25_site_snapshot WHERE guid='p25-generation-rekey'
-                """));
+                SELECT observation_count FROM p25_site_snapshot WHERE guid='%s'
+                """.formatted(guid)));
             assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM p25_site_channel_summary
-                WHERE guid='p25-generation-rekey' AND downlink_hz=856000000
-                """));
+                WHERE guid='%s' AND downlink_hz=856000000
+                """.formatted(guid)));
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM p25_site_channel_summary
-                WHERE guid='p25-generation-rekey' AND channel_key IN ('00-0500','00-0509')
-                """));
+                WHERE guid='%s' AND channel_key IN ('00-0500','00-0509')
+                """.formatted(guid)));
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_logical_call_bucket
                 """));
@@ -1066,7 +1069,7 @@ class TrunkedIdentitySchemaTest
     void protocolSpecificSiteProjectionFollowsTheCurrentReceiverContext() throws Exception
     {
         Path database = database("site-protocol-routing.sqlite");
-        String guid = "site-protocol-routing";
+        String guid = radresGuid("site-protocol-routing");
 
         try(Connection connection = open(database))
         {
@@ -1078,29 +1081,31 @@ class TrunkedIdentitySchemaTest
             P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, dmr);
 
             assertEquals(0, scalarLong(connection,
-                "SELECT COUNT(*) FROM p25_site_snapshot WHERE guid='site-protocol-routing'"));
+                "SELECT COUNT(*) FROM p25_site_snapshot WHERE guid='" + guid + "'"));
             assertEquals(1, scalarLong(connection,
-                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='site-protocol-routing'"));
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='" + guid + "'"));
             assertEquals(3, scalarLong(connection,
-                "SELECT protocol_code FROM receiver_context WHERE guid='site-protocol-routing'"));
+                "SELECT protocol_code FROM receiver_context WHERE guid='" + guid + "'"));
 
             P25ActivityLogSchema.insertSite(connection,
                 p25SiteSnapshot(3_000L, guid, 0x348, "p25-again", "00-0600", 856_000_000L));
 
             assertEquals(1, scalarLong(connection,
-                "SELECT COUNT(*) FROM p25_site_snapshot WHERE guid='site-protocol-routing'"));
+                "SELECT COUNT(*) FROM p25_site_snapshot WHERE guid='" + guid + "'"));
             assertEquals(0, scalarLong(connection,
-                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='site-protocol-routing'"));
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='" + guid + "'"));
             assertEquals(1, scalarLong(connection,
-                "SELECT protocol_code FROM receiver_context WHERE guid='site-protocol-routing'"));
+                "SELECT protocol_code FROM receiver_context WHERE guid='" + guid + "'"));
         }
     }
 
     @Test
-    void onlyAuthoritativeConventionalReclassificationDetachesFormerTrunkedOwnership() throws Exception
+    void keepsTrunkedGuidAndConventionalConfigurationOwnershipSeparate() throws Exception
     {
         Path database = database("authoritative-conventional-transition.sqlite");
-        String guid = "dmr-to-conventional";
+        String guid = radresGuid("dmr-to-conventional");
+        String configurationId = configurationId("dmr-to-conventional");
+        String configurationContextKey = "CONFIGURATION:" + configurationId;
         TrunkedSiteSchema.Snapshot site = new TrunkedSiteSchema.Snapshot(
             5_000L, guid, "trunked", TrunkedSiteSchema.PROTOCOL_DMR, 1, 2,
             "Metro DMR", "Downtown", "Aliases", "DMR Tier 3", 10, 20, 30, null, 2,
@@ -1118,38 +1123,43 @@ class TrunkedIdentitySchemaTest
                     P25ActivityLogRecords.IdentityDomain.STANDARD, true), true);
 
             P25ActivityLogSchema.recordDmrConventionalCall(connection,
-                dmrConventionalCall(1_000L, 2_000L, guid, 92, 102));
+                dmrConventionalCall(1_000L, 2_000L, configurationId, 92, 102));
 
+            assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM receiver_context"));
             assertEquals(1, scalarLong(connection,
-                "SELECT kind_code FROM receiver_context WHERE guid='dmr-to-conventional'"));
+                "SELECT kind_code FROM receiver_context WHERE context_key='GUID:" + guid + "'"));
+            assertEquals(3, scalarLong(connection,
+                "SELECT kind_code FROM receiver_context WHERE context_key='" + configurationContextKey + "'"));
             assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_identity_scope_context"));
             assertEquals(1, scalarLong(connection,
-                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='dmr-to-conventional'"));
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='" + guid + "'"));
             assertEquals(1, scalarLong(connection,
-                "SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='dmr-to-conventional'"));
-            assertEquals(2, identityCount(connection, "dmr:guid:dmr-to-conventional"));
+                "SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='" + guid + "'"));
+            assertEquals(2, identityCount(connection, "dmr:guid:" + guid));
 
             P25ActivityLogSchema.recordDmrConventionalCall(connection,
-                dmrConventionalCall(6_000L, 7_000L, guid, 93, 103));
+                dmrConventionalCall(6_000L, 7_000L, configurationId, 93, 103));
 
+            assertEquals(1, scalarLong(connection,
+                "SELECT kind_code FROM receiver_context WHERE context_key='GUID:" + guid + "'"));
             assertEquals(3, scalarLong(connection,
-                "SELECT kind_code FROM receiver_context WHERE guid='dmr-to-conventional'"));
+                "SELECT kind_code FROM receiver_context WHERE context_key='" + configurationContextKey + "'"));
             assertEquals(7_000L, scalarLong(connection,
-                "SELECT last_seen_ms FROM receiver_context WHERE guid='dmr-to-conventional'"));
-            assertEquals(0, scalarLong(connection,
+                "SELECT last_seen_ms FROM receiver_context WHERE context_key='" + configurationContextKey + "'"));
+            assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_identity_scope_context"));
             assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_identity_scope"));
-            assertEquals(2, identityCount(connection, "dmr:guid:dmr-to-conventional"));
-            assertEquals(0, scalarLong(connection,
-                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='dmr-to-conventional'"));
-            assertEquals(0, scalarLong(connection,
-                "SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='dmr-to-conventional'"));
-            assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM p25_activity_event"));
-            assertEquals(2, scalarLong(connection,
+            assertEquals(2, identityCount(connection, "dmr:guid:" + guid));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='" + guid + "'"));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='" + guid + "'"));
+            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM p25_activity_event"));
+            assertEquals(4, scalarLong(connection,
                 "SELECT COUNT(*) FROM conventional_call_identity_bucket"));
-            assertFalse(P25ActivityLogSchema.isAuthoritativeTrunkedSiteSnapshot(connection, site));
+            assertTrue(P25ActivityLogSchema.isAuthoritativeTrunkedSiteSnapshot(connection, site));
         }
     }
 
@@ -1285,9 +1295,9 @@ class TrunkedIdentitySchemaTest
         try(Connection connection = open(database))
         {
             P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection,
-                siteSnapshot("dmr-zero", TrunkedSiteSchema.PROTOCOL_DMR, 1, 0));
+                siteSnapshot(radresGuid("dmr-zero"), TrunkedSiteSchema.PROTOCOL_DMR, 1, 0));
             P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection,
-                siteSnapshot("nxdn-zero", TrunkedSiteSchema.PROTOCOL_NXDN, 2, 4));
+                siteSnapshot(radresGuid("nxdn-zero"), TrunkedSiteSchema.PROTOCOL_NXDN, 2, 4));
 
             assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
             assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope_context"));
@@ -1636,18 +1646,20 @@ class TrunkedIdentitySchemaTest
     void prunesOnlyUnconfiguredFactFreeContextsAndRetainsHistoricalScopeBoundaries() throws Exception
     {
         Path database = database("context-pruning.sqlite");
+        String configuredGuid = radresGuid("configured-dmr");
 
         try(Connection connection = open(database);
             Statement statement = connection.createStatement())
         {
-            insertContext(connection, 10, "configured-dmr", 1, 3, null);
-            insertContext(connection, 11, "removed-empty-dmr", 1, 3, null);
-            insertContext(connection, 12, "removed-history-dmr", 1, 3, null);
-            insertContext(connection, 15, "removed-lifecycle-dmr", 1, 3, null);
+            insertContext(connection, 10, configuredGuid, 1, 3, null);
+            insertContext(connection, 11, radresGuid("removed-empty-dmr"), 1, 3, null);
+            insertContext(connection, 12, radresGuid("removed-history-dmr"), 1, 3, null);
+            insertContext(connection, 15, radresGuid("removed-lifecycle-dmr"), 1, 3, null);
             statement.executeUpdate("""
-                INSERT INTO configuration_channel(sort_order, radres_guid, config_json)
-                VALUES(0, 'configured-dmr', '{}')
-                """);
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, radres_guid, config_json
+                ) VALUES('%s', 'TRUNKED', 0, '%s', '{}')
+                """.formatted(configurationId("configured-dmr"), configuredGuid));
 
             TrunkedIdentitySchema.Scope configured = TrunkedIdentitySchema.ensureScope(connection, 10, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
@@ -1671,8 +1683,8 @@ class TrunkedIdentitySchemaTest
                 INSERT INTO p25_system(system_key,wacn,system_id,first_seen_ms,last_seen_ms)
                 VALUES(50, 781824, 840, 1, 1)
                 """);
-            insertContext(connection, 13, "removed-p25-a", 1, 1, 50);
-            insertContext(connection, 14, "removed-p25-b", 1, 1, 50);
+            insertContext(connection, 13, radresGuid("removed-p25-a"), 1, 1, 50);
+            insertContext(connection, 14, radresGuid("removed-p25-b"), 1, 1, 50);
             TrunkedIdentitySchema.Scope shared = TrunkedIdentitySchema.ensureScope(connection, 13, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
             TrunkedIdentitySchema.ensureScope(connection, 14, 1,
@@ -1727,8 +1739,8 @@ class TrunkedIdentitySchemaTest
             assertEquals(5, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
             assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_identity_scope
-                WHERE scope_token='dmr:guid:configured-dmr'
-                """));
+                WHERE scope_token='dmr:guid:%s'
+                """.formatted(configuredGuid)));
         }
     }
 
@@ -1879,11 +1891,27 @@ class TrunkedIdentitySchemaTest
     }
 
     private static P25ActivityLogRecords.DmrConventionalCall dmrConventionalCall(
-        long start, long end, String guid, int talkgroup, int source)
+        long start, long end, String configurationId, int talkgroup, int source)
     {
-        return new P25ActivityLogRecords.DmrConventionalCall(start, end, "GUID:" + guid, guid,
+        return new P25ActivityLogRecords.DmrConventionalCall(start, end,
+            "CONFIGURATION:" + configurationId, null,
             "Conventional DMR", "Aliases", 461_125_000L, 1,
             P25ActivityLogRecords.DmrTargetKind.GROUP, talkgroup, source, null, false);
+    }
+
+    private static String configurationId(String fixture)
+    {
+        return deterministicUuid("configuration:" + fixture);
+    }
+
+    private static String radresGuid(String fixture)
+    {
+        return deterministicUuid("radres:" + fixture);
+    }
+
+    private static String deterministicUuid(String fixture)
+    {
+        return UUID.nameUUIDFromBytes(fixture.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private static void insertContext(Connection connection, int id, String guid, int kind, int protocol,

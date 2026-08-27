@@ -34,7 +34,8 @@ class SdrTrunkDatabaseDdlBoundaryTest
             "ALTER\\s+TABLE|DROP\\s+(?:TABLE|INDEX|VIEW|TRIGGER))\\b");
     private static final Pattern SCHEMA_DDL_CALL = Pattern.compile(
         "\\b(?:(?:SdrTrunkDatabaseSchema|DmrActivitySchema|TrunkedSiteSchema|" +
-            "EncryptionKeyVaultSchema|TrunkedIdentitySchema)\\.create|P25ActivityLogSchema\\.create)\\s*\\(");
+            "EncryptionKeyVaultSchema|TrunkedIdentitySchema)\\.create|P25ActivityLogSchema\\.create|" +
+            "Format(?:2|4|5)SchemaSql\\.create\\w*)\\s*\\(");
     private static final Pattern FRESH_SCHEMA_CALL = Pattern.compile(
         "\\bSdrTrunkDatabaseStartup(?:::|\\.)(?:createGlobalDatabase|createVaultDatabase)\\b");
     private static final Set<String> DDL_OWNERS = Set.of(
@@ -48,11 +49,16 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format2SchemaSql.java",
         "java/io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
-        "java/io/github/dsheirer/database/upgrade/Format4SchemaSql.java");
+        "java/io/github/dsheirer/database/upgrade/Format4SchemaSql.java",
+        "java/io/github/dsheirer/database/upgrade/Format4To5DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format5SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",
+        "java/io/github/dsheirer/database/SdrTrunkDatabaseSchema.java",
         "java/io/github/dsheirer/stats/activity/P25ActivityLogSchema.java",
-        "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java");
+        "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format4To5DatabaseMigration.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",
         "java/io/github/dsheirer/database/importer/LegacyXmlConfigurationImporter.java");

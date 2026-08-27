@@ -38,7 +38,7 @@ record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRec
 
     static ReceiverContextMetadata from(P25ActivityLogRecords.SiteSnapshot snapshot, Integer systemKey)
     {
-        return new ReceiverContextMetadata(ReceiverContextKey.guid(snapshot.guid()), snapshot.guid(),
+        return new ReceiverContextMetadata(ReceiverContextKey.trunked(snapshot.guid()), snapshot.guid(),
             snapshot.contextKind(), snapshot.protocol(), snapshot.channelName(), blankToNull(snapshot.aliasListName()),
             snapshot.decoder(), true, snapshot.observedAtEpochMilliseconds(), snapshot.observedAtEpochMilliseconds(),
             systemKey, snapshot.nac(), snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(),
@@ -72,7 +72,7 @@ record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRec
     {
         String protocol = snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_DMR ? "DMR" :
             snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN ? "NXDN" : null;
-        return new ReceiverContextMetadata(ReceiverContextKey.guid(snapshot.guid()), snapshot.guid(),
+        return new ReceiverContextMetadata(ReceiverContextKey.trunked(snapshot.guid()), snapshot.guid(),
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, protocol, snapshot.channelName(),
             blankToNull(snapshot.aliasListName()), snapshot.decoder(), true, snapshot.observedAtEpochMilliseconds(),
             snapshot.observedAtEpochMilliseconds(), null, null, null, null, snapshot.primaryFrequencyHertz(),

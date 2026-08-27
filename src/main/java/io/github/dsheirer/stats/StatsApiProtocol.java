@@ -64,6 +64,33 @@ enum StatsApiProtocol
         return mWireName;
     }
 
+    int databaseCode()
+    {
+        return switch(this)
+        {
+            case P25 -> 1;
+            case DMR -> 3;
+            case NXDN -> 4;
+            case NBFM -> 10;
+            case AM -> 11;
+            default -> 0;
+        };
+    }
+
+    /** Exact persisted decoder names are translated in one Java-owned API boundary. */
+    static StatsApiProtocol fromDecoder(String decoder)
+    {
+        return switch(decoder != null ? decoder.strip() : "")
+        {
+            case "P25_PHASE1", "P25_PHASE2", "P25_CONVENTIONAL" -> P25;
+            case "DMR" -> DMR;
+            case "NXDN" -> NXDN;
+            case "NBFM" -> NBFM;
+            case "AM" -> AM;
+            default -> UNKNOWN;
+        };
+    }
+
     static StatsApiProtocol fromCode(long code)
     {
         return switch((int)code)

@@ -243,7 +243,7 @@ public class P25ActivityLogSchema
         Integer systemKey = activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE ?
             resolveP25SystemKey(connection, activity) : null;
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(activity, systemKey));
-        ReceiverContextIdentity context = selectContextIdentity(connection, activity.contextKey(), activity.guid());
+        ReceiverContextIdentity context = selectContextIdentity(connection, activity.contextKey());
         int activityProtocol = TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol());
 
         if(!matchesContext(context, contextKindCode(activity.contextKind()), activityProtocol))
@@ -300,7 +300,8 @@ public class P25ActivityLogSchema
         throws SQLException
     {
         if(conventionalOutput == null || conventionalOutput.callStartEpochMilliseconds() <= 0 ||
-            conventionalOutput.output() == null)
+            conventionalOutput.output() == null ||
+            !ReceiverContextKey.isConventional(conventionalOutput.contextKey()))
         {
             return false;
         }
@@ -473,7 +474,7 @@ public class P25ActivityLogSchema
         }
 
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(call));
-        ReceiverContextIdentity context = selectContextIdentity(connection, call.contextKey(), null);
+        ReceiverContextIdentity context = selectContextIdentity(connection, call.contextKey());
         if(!matchesContext(context, CONTEXT_TRUNKED_SITE, protocol))
         {
             return null;
@@ -664,8 +665,7 @@ public class P25ActivityLogSchema
             return false;
         }
 
-        ReceiverContextIdentity context = selectContextIdentity(connection, attribution.contextKey(),
-            attribution.guid());
+        ReceiverContextIdentity context = selectContextIdentity(connection, attribution.contextKey());
 
         if(context == null || context.kindCode() != CONTEXT_TRUNKED_SITE ||
             attribution.callStartEpochMilliseconds() < context.firstSeenEpochMilliseconds())
@@ -847,7 +847,7 @@ public class P25ActivityLogSchema
         DmrActivitySchema.validateCompletedCall(call);
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(call));
 
-        if(!matchesContext(selectContextIdentity(connection, call.contextKey(), call.guid()),
+        if(!matchesContext(selectContextIdentity(connection, call.contextKey()),
             CONTEXT_CONVENTIONAL_DMR, TrunkedIdentityPolicy.PROTOCOL_DMR))
         {
             return null;
@@ -889,7 +889,7 @@ public class P25ActivityLogSchema
         validateNxdnConventionalCall(call);
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(call));
 
-        if(!matchesContext(selectContextIdentity(connection, call.contextKey(), call.guid()),
+        if(!matchesContext(selectContextIdentity(connection, call.contextKey()),
             CONTEXT_CONVENTIONAL_NXDN, TrunkedIdentityPolicy.PROTOCOL_NXDN))
         {
             return null;
@@ -924,7 +924,7 @@ public class P25ActivityLogSchema
     {
         if(call.callStartEpochMilliseconds() <= 0 ||
             call.callEndEpochMilliseconds() < call.callStartEpochMilliseconds() ||
-            call.contextKey() == null || call.contextKey().isBlank() || call.frequencyHertz() <= 0 ||
+            !ReceiverContextKey.isConventional(call.contextKey()) || call.frequencyHertz() <= 0 ||
             call.targetKind() == null || !validNxdnId(call.sourceRadioId()) ||
             !validNxdnId(call.talkgroupId()) || !validNxdnId(call.targetRadioId()))
         {
@@ -953,7 +953,7 @@ public class P25ActivityLogSchema
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
         throws SQLException
     {
-        ReceiverContextIdentity context = selectContextIdentity(connection, update.contextKey(), update.guid());
+        ReceiverContextIdentity context = selectContextIdentity(connection, update.contextKey());
 
         if(context != null && context.kindCode() == CONTEXT_TRUNKED_SITE &&
             update.observedAtEpochMilliseconds() >= context.firstSeenEpochMilliseconds())
@@ -967,7 +967,7 @@ public class P25ActivityLogSchema
     {
         SiteSnapshotState previous = siteSnapshotState(connection, snapshot.guid());
         ReceiverContextState previousContext =
-            receiverContextState(connection, ReceiverContextKey.guid(snapshot.guid()));
+            receiverContextState(connection, ReceiverContextKey.trunked(snapshot.guid()));
 
         if((previous != null &&
             snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds()) ||
@@ -1074,7 +1074,7 @@ public class P25ActivityLogSchema
             return false;
         }
 
-        ReceiverContextState previous = receiverContextState(connection, ReceiverContextKey.guid(snapshot.guid()));
+        ReceiverContextState previous = receiverContextState(connection, ReceiverContextKey.trunked(snapshot.guid()));
         return previous == null ||
             snapshot.observedAtEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
     }
@@ -1092,7 +1092,7 @@ public class P25ActivityLogSchema
             return;
         }
 
-        String contextKey = ReceiverContextKey.guid(snapshot.guid());
+        String contextKey = ReceiverContextKey.trunked(snapshot.guid());
 
         if(!isAuthoritativeTrunkedSiteSnapshot(connection, snapshot))
         {
@@ -1101,7 +1101,7 @@ public class P25ActivityLogSchema
 
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(snapshot));
 
-        ReceiverContextIdentity context = selectContextIdentity(connection, contextKey, snapshot.guid());
+        ReceiverContextIdentity context = selectContextIdentity(connection, contextKey);
 
         if(!matchesContext(context, CONTEXT_TRUNKED_SITE,
             TrunkedIdentityPolicy.protocolFamilyCode(snapshot.protocolCode())))
@@ -3569,11 +3569,10 @@ public class P25ActivityLogSchema
         Connection connection, P25ActivityLogRecords.ConventionalCallOutput output)
         throws SQLException
     {
-        return selectContextIdentity(connection, output.contextKey(), output.guid());
+        return selectContextIdentity(connection, output.contextKey());
     }
 
-    private static ReceiverContextIdentity selectContextIdentity(Connection connection, String contextKey,
-                                                                  String guid)
+    private static ReceiverContextIdentity selectContextIdentity(Connection connection, String contextKey)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -3581,17 +3580,10 @@ public class P25ActivityLogSchema
                    context.primary_frequency_hz, context.first_seen_ms, system.wacn, system.system_id
             FROM receiver_context context
             LEFT JOIN p25_system system ON system.system_key=context.system_key
-            WHERE (? IS NOT NULL AND context.context_key = ?)
-               OR (? IS NOT NULL AND context.guid = ?)
-            ORDER BY CASE WHEN context.context_key = ? THEN 0 ELSE 1 END, context.last_seen_ms DESC
-            LIMIT 1
+            WHERE context.context_key = ?
             """))
         {
             statement.setString(1, contextKey);
-            statement.setString(2, contextKey);
-            statement.setString(3, guid);
-            statement.setString(4, guid);
-            statement.setString(5, contextKey);
 
             try(ResultSet resultSet = statement.executeQuery())
             {

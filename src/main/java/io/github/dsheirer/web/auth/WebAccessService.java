@@ -5,11 +5,15 @@
  */
 package io.github.dsheirer.web.auth;
 
+import io.github.dsheirer.web.settings.WebUserPreferences;
+import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,48 +22,51 @@ import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Transport-neutral owner for web accounts, password verification, and feature access policies.
+ * Security application service over normalized web-user and access-policy repositories.
  *
- * <p>HTTP sessions, cookies, CSRF, request throttling, and route enforcement remain integration concerns.  All
- * mutations here are serialized, saved immediately, and published only after the database write succeeds.</p>
+ * <p>Every request reads one immutable in-memory snapshot. Database work occurs only during startup or serialized
+ * mutations, so session resolution never blocks on SQLite.</p>
  */
 public final class WebAccessService
 {
-    public static final String KEY = "web.access.v1";
-    public static final String SETTING_KEY = KEY;
     public static final String PRIMARY_ADMIN_USERNAME = "admin";
-    public static final int MAXIMUM_USERS = WebAccessConfiguration.MAXIMUM_USERS;
+    /** Maximum administrator-managed users; the fixed primary administrator is not part of this limit. */
+    public static final int MAXIMUM_USERS = 256;
     private static final int MAXIMUM_UNNORMALIZED_USERNAME_CHARACTERS =
-        WebAdminCredential.MAXIMUM_USERNAME_CHARACTERS * 4;
-    private final WebAccessStore mStore;
+        WebPasswordVerifier.MAXIMUM_USERNAME_CHARACTERS * 4;
+    private final WebUserRepository mUsers;
+    private final WebAccessPolicyRepository mPolicies;
     private final Pbkdf2PasswordHasher mPasswordHasher;
     private final ReentrantLock mMutationLock = new ReentrantLock();
-    private final WebAdminCredential mDummyCredential;
-    private volatile WebAccessConfiguration mConfiguration;
+    private final WebPasswordVerifier mDummyVerifier;
+    private volatile SecuritySnapshot mSnapshot;
 
     public WebAccessService(Path databasePath) throws IOException, SQLException
     {
-        this(new WebAccessStore(databasePath), new Pbkdf2PasswordHasher());
+        this(new WebUserRepository(databasePath), new WebAccessPolicyRepository(databasePath),
+            new Pbkdf2PasswordHasher());
     }
 
-    WebAccessService(WebAccessStore store, Pbkdf2PasswordHasher passwordHasher) throws IOException, SQLException
+    WebAccessService(WebUserRepository users, WebAccessPolicyRepository policies,
+                     Pbkdf2PasswordHasher passwordHasher) throws IOException, SQLException
     {
-        mStore = Objects.requireNonNull(store, "Web access store cannot be null");
+        mUsers = Objects.requireNonNull(users, "Web user repository cannot be null");
+        mPolicies = Objects.requireNonNull(policies, "Web policy repository cannot be null");
         mPasswordHasher = Objects.requireNonNull(passwordHasher, "Web password hasher cannot be null");
-        mConfiguration = mStore.load().orElseGet(WebAccessConfiguration::empty);
-        WebAdminCredential existing = firstCredential(mConfiguration);
+        mSnapshot = loadSnapshot();
+        WebPasswordVerifier existing = mSnapshot.accountsByUsername().values().stream().findFirst()
+            .map(WebUserRepository.StoredAccount::verifier).orElse(null);
 
         if(existing != null)
         {
-            mDummyCredential = existing;
+            mDummyVerifier = existing;
         }
         else
         {
             char[] dummyPassword = "sdrtrunk-dummy-password-verifier".toCharArray();
-
             try
             {
-                mDummyCredential = mPasswordHasher.createCredential(PRIMARY_ADMIN_USERNAME, dummyPassword, 1);
+                mDummyVerifier = mPasswordHasher.createVerifier(PRIMARY_ADMIN_USERNAME, dummyPassword, 1);
             }
             finally
             {
@@ -70,109 +77,93 @@ public final class WebAccessService
 
     public boolean isPrimaryAdminConfigured()
     {
-        return mConfiguration.primaryAdmin() != null;
+        return mSnapshot.primaryAdmin() != null;
     }
 
     public Optional<WebAccessAccount> primaryAdmin()
     {
-        WebAdminCredential credential = mConfiguration.primaryAdmin();
-        return credential == null ? Optional.empty() : Optional.of(account(credential, AccessTier.ADMIN, true));
+        return Optional.ofNullable(mSnapshot.primaryAdmin()).map(WebUserRepository.StoredAccount::account);
     }
 
-    /**
-     * Returns verifier-free account metadata with the fixed primary administrator first, followed by sorted users.
-     */
     public List<WebAccessAccount> accounts()
     {
-        WebAccessConfiguration configuration = mConfiguration;
-        List<WebAccessAccount> accounts = new ArrayList<>(configuration.users().size() + 1);
-
-        if(configuration.primaryAdmin() != null)
-        {
-            accounts.add(account(configuration.primaryAdmin(), AccessTier.ADMIN, true));
-        }
-
-        for(WebStoredUser user: configuration.users())
-        {
-            accounts.add(account(user.credential(), user.tier(), false));
-        }
-
-        return List.copyOf(accounts);
+        return mSnapshot.orderedAccounts();
     }
 
     public Optional<WebAccessAccount> account(String username)
     {
         String normalized;
-
         try
         {
-            normalized = WebAdminCredential.normalizeUsername(username);
+            normalized = WebPasswordVerifier.normalizeUsername(username);
         }
         catch(IllegalArgumentException | NullPointerException exception)
         {
             return Optional.empty();
         }
-
-        return findAccount(mConfiguration, normalized);
+        return Optional.ofNullable(mSnapshot.accountsByUsername().get(normalized))
+            .map(WebUserRepository.StoredAccount::account);
     }
 
-    /**
-     * Indicates whether an authenticated account snapshot still matches the current credential and role state.
-     */
+    /** Constant-time snapshot check used while the session-manager lock is held. */
     public boolean isCurrent(WebAccessAccount account)
     {
         if(account == null)
         {
             return false;
         }
-
-        return findAccount(mConfiguration, account.username()).filter(account::equals).isPresent();
+        WebUserRepository.StoredAccount current = mSnapshot.accountsByUsername().get(account.username());
+        return current != null && current.account().equals(account);
     }
 
-    /**
-     * Performs a full PBKDF2 calculation for known and unknown account names.  The caller must place this method behind
-     * the bounded authentication executor and admission controls used by the HTTP integration.
-     */
+    /** Performs one PBKDF2 calculation for both known and unknown usernames. */
     public Optional<WebAccessAccount> authenticate(String username, char[] password)
     {
-        WebAccessConfiguration before = mConfiguration;
+        SecuritySnapshot before = mSnapshot;
         String boundedUsername = boundedUsername(username);
-        CredentialAndTier candidate = findCredential(before, boundedUsername);
-        WebAdminCredential verifier = candidate == null ? mDummyCredential : candidate.credential();
+        WebUserRepository.StoredAccount candidate = before.accountsByUsername().get(boundedUsername);
+        WebPasswordVerifier verifier = candidate == null ? mDummyVerifier : candidate.verifier();
 
         if(!mPasswordHasher.verify(verifier, boundedUsername, password) || candidate == null)
         {
             return Optional.empty();
         }
 
-        WebAccessConfiguration after = mConfiguration;
-        CredentialAndTier current = findCredential(after, verifier.username());
-
-        if(current == null || !current.credential().equals(verifier))
+        WebUserRepository.StoredAccount current = mSnapshot.accountsByUsername().get(verifier.username());
+        if(current == null || !current.verifier().equals(verifier))
         {
             return Optional.empty();
         }
-
-        return Optional.of(account(current.credential(), current.tier(), current.primaryAdmin()));
+        return Optional.of(current.account());
     }
 
-    /**
-     * Local desktop bootstrap/recovery operation for the fixed primary account.  It must not be exposed as an
-     * unauthenticated web route.
-     */
+    /** Local-only primary-administrator bootstrap and recovery. */
     public WebAccessAccount provisionOrResetPrimaryAdmin(char[] password) throws IOException, SQLException
     {
         char[] copy = copyPassword(password);
         mMutationLock.lock();
-
         try
         {
-            WebAccessConfiguration current = mConfiguration;
-            long version = current.primaryAdmin() == null ? 1 :
-                Math.incrementExact(current.primaryAdmin().credentialVersion());
-            WebAdminCredential credential = mPasswordHasher.createCredential(PRIMARY_ADMIN_USERNAME, copy, version);
-            persist(current.withPrimaryAdmin(credential));
-            return account(credential, AccessTier.ADMIN, true);
+            SecuritySnapshot current = mSnapshot;
+            WebUserRepository.StoredAccount existing = mSnapshot.primaryAdmin();
+            long revision = existing == null ? 1 : Math.incrementExact(existing.account().authRevision());
+            WebPasswordVerifier verifier = mPasswordHasher.createVerifier(PRIMARY_ADMIN_USERNAME, copy, revision);
+            WebUserRepository.StoredAccount replacement;
+
+            if(existing == null)
+            {
+                long id = mUsers.insert(verifier, AccessTier.ADMIN, true,
+                    WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
+                replacement = storedAccount(id, verifier, AccessTier.ADMIN, true);
+            }
+            else
+            {
+                mUsers.replaceVerifier(existing.account().id(), existing.account().authRevision(), verifier);
+                replacement = storedAccount(existing.account().id(), verifier, AccessTier.ADMIN, true);
+            }
+
+            mSnapshot = withAccount(current, replacement);
+            return replacement.account();
         }
         finally
         {
@@ -188,32 +179,28 @@ public final class WebAccessService
         requireAccountTier(tier);
         char[] copy = copyPassword(password);
         mMutationLock.lock();
-
         try
         {
-            WebAccessConfiguration current = mConfiguration;
-
+            SecuritySnapshot current = mSnapshot;
             if(current.primaryAdmin() == null)
             {
                 throw new IllegalStateException("The primary web administrator must be configured first");
             }
-
-            if(findStoredUser(current, normalized) != null)
+            if(current.accountsByUsername().containsKey(normalized))
             {
                 throw new IllegalStateException("A web user with that username already exists");
             }
-
-            if(current.users().size() >= MAXIMUM_USERS)
+            if(ordinaryUserCount(current) >= MAXIMUM_USERS)
             {
                 throw new IllegalStateException("The maximum number of web users has been reached");
             }
 
-            WebAdminCredential credential = mPasswordHasher.createCredential(normalized, copy, 1);
-            WebStoredUser added = new WebStoredUser(tier, credential);
-            List<WebStoredUser> users = new ArrayList<>(current.users());
-            users.add(added);
-            persist(current.withUsers(users));
-            return account(credential, tier, false);
+            WebPasswordVerifier verifier = mPasswordHasher.createVerifier(normalized, copy, 1);
+            long id = mUsers.insert(verifier, tier, false,
+                WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
+            WebUserRepository.StoredAccount created = storedAccount(id, verifier, tier, false);
+            mSnapshot = withAccount(current, created);
+            return created.account();
         }
         finally
         {
@@ -227,15 +214,16 @@ public final class WebAccessService
         String normalized = requireOrdinaryUsername(username);
         char[] copy = copyPassword(password);
         mMutationLock.lock();
-
         try
         {
-            WebAccessConfiguration current = mConfiguration;
-            WebStoredUser existing = requireStoredUser(current, normalized);
-            long version = Math.incrementExact(existing.credential().credentialVersion());
-            WebAdminCredential credential = mPasswordHasher.createCredential(normalized, copy, version);
-            replaceUser(current, existing, existing.withCredential(credential));
-            return account(credential, existing.tier(), false);
+            WebUserRepository.StoredAccount existing = requireOrdinaryAccount(normalized);
+            long revision = Math.incrementExact(existing.account().authRevision());
+            WebPasswordVerifier verifier = mPasswordHasher.createVerifier(normalized, copy, revision);
+            mUsers.replaceVerifier(existing.account().id(), existing.account().authRevision(), verifier);
+            WebUserRepository.StoredAccount updated = storedAccount(existing.account().id(), verifier,
+                existing.account().tier(), false);
+            mSnapshot = withAccount(mSnapshot, updated);
+            return updated.account();
         }
         finally
         {
@@ -249,21 +237,20 @@ public final class WebAccessService
         String normalized = requireOrdinaryUsername(username);
         requireAccountTier(tier);
         mMutationLock.lock();
-
         try
         {
-            WebAccessConfiguration current = mConfiguration;
-            WebStoredUser existing = requireStoredUser(current, normalized);
-
-            if(existing.tier() == tier)
+            WebUserRepository.StoredAccount existing = requireOrdinaryAccount(normalized);
+            if(existing.account().tier() == tier)
             {
-                return account(existing.credential(), existing.tier(), false);
+                return existing.account();
             }
-
-            long version = Math.incrementExact(existing.credential().credentialVersion());
-            WebStoredUser replacement = existing.withTier(tier, version);
-            replaceUser(current, existing, replacement);
-            return account(replacement.credential(), replacement.tier(), false);
+            long revision = Math.incrementExact(existing.account().authRevision());
+            mUsers.replaceTier(existing.account().id(), existing.account().authRevision(), tier, revision);
+            WebAccessAccount updated = new WebAccessAccount(existing.account().id(), normalized, tier,
+                existing.account().passwordChangedAtEpochMillis(), revision, false);
+            mSnapshot = withAccount(mSnapshot,
+                new WebUserRepository.StoredAccount(updated, existing.verifier().withAuthRevision(revision)));
+            return updated;
         }
         finally
         {
@@ -275,15 +262,12 @@ public final class WebAccessService
     {
         String normalized = requireOrdinaryUsername(username);
         mMutationLock.lock();
-
         try
         {
-            WebAccessConfiguration current = mConfiguration;
-            WebStoredUser existing = requireStoredUser(current, normalized);
-            List<WebStoredUser> users = new ArrayList<>(current.users());
-            users.remove(existing);
-            persist(current.withUsers(users));
-            return account(existing.credential(), existing.tier(), false);
+            WebUserRepository.StoredAccount existing = requireOrdinaryAccount(normalized);
+            mUsers.delete(existing.account().id(), existing.account().authRevision());
+            mSnapshot = withoutAccount(mSnapshot, normalized);
+            return existing.account();
         }
         finally
         {
@@ -293,44 +277,34 @@ public final class WebAccessService
 
     public List<CapabilityPolicy> policies()
     {
-        WebAccessConfiguration configuration = mConfiguration;
+        SecuritySnapshot snapshot = mSnapshot;
         List<CapabilityPolicy> policies = new ArrayList<>(WebCapability.values().length);
-
         for(WebCapability capability: WebCapability.values())
         {
-            policies.add(policy(configuration, capability));
+            policies.add(policy(snapshot, capability));
         }
-
         return List.copyOf(policies);
     }
 
     public AccessTier requiredTier(WebCapability capability)
     {
-        return policy(mConfiguration, Objects.requireNonNull(capability, "Web capability cannot be null"))
-            .requiredTier();
+        return policy(mSnapshot, Objects.requireNonNull(capability, "Web capability cannot be null")).requiredTier();
     }
 
-    /**
-     * Unknown identifiers are never authorized, including for administrators.
-     */
     public boolean isAllowed(AccessTier actualTier, String capabilityId)
     {
-        Optional<WebCapability> capability = WebCapability.fromId(capabilityId);
-        return capability.isPresent() && isAllowed(actualTier, capability.get());
+        return WebCapability.fromId(capabilityId).map(capability -> isAllowed(actualTier, capability)).orElse(false);
     }
 
     public boolean isAllowed(AccessTier actualTier, WebCapability capability)
     {
         AccessTier actual = actualTier == null ? AccessTier.PUBLIC : actualTier;
-        WebCapability requiredCapability = Objects.requireNonNull(capability, "Web capability cannot be null");
-
-        if(requiredCapability != WebCapability.SITE_ACCESS &&
-            !actual.allows(requiredTier(WebCapability.SITE_ACCESS)))
+        WebCapability required = Objects.requireNonNull(capability, "Web capability cannot be null");
+        if(required != WebCapability.SITE_ACCESS && !actual.allows(requiredTier(WebCapability.SITE_ACCESS)))
         {
             return false;
         }
-
-        return actual.allows(requiredTier(requiredCapability));
+        return actual.allows(requiredTier(required));
     }
 
     public boolean isAllowed(WebAccessAccount account, WebCapability capability)
@@ -345,42 +319,36 @@ public final class WebAccessService
         return setCapabilityTier(capability, tier);
     }
 
-    public CapabilityPolicy setCapabilityTier(WebCapability capability, AccessTier tier)
-        throws IOException, SQLException
+    public CapabilityPolicy setCapabilityTier(WebCapability capability, AccessTier tier) throws IOException, SQLException
     {
         Objects.requireNonNull(capability, "Web capability cannot be null");
         Objects.requireNonNull(tier, "Required web access tier cannot be null");
-
         if(!capability.configurable())
         {
             throw new IllegalArgumentException("This administrative capability is fixed at ADMIN access");
         }
 
         mMutationLock.lock();
-
         try
         {
-            WebAccessConfiguration current = mConfiguration;
-
-            if(current.primaryAdmin() == null)
+            if(mSnapshot.primaryAdmin() == null)
             {
                 throw new IllegalStateException("The primary web administrator must be configured first");
             }
-
-            Map<String,AccessTier> overrides = new LinkedHashMap<>(current.policyOverrides());
-
+            SecuritySnapshot current = mSnapshot;
+            mPolicies.save(capability, tier);
+            Map<WebCapability,AccessTier> policies = new LinkedHashMap<>(current.policies());
             if(tier == capability.defaultTier())
             {
-                overrides.remove(capability.id());
+                policies.remove(capability);
             }
             else
             {
-                overrides.put(capability.id(), tier);
+                policies.put(capability, tier);
             }
-
-            WebAccessConfiguration replacement = current.withPolicyOverrides(overrides);
-            persist(replacement);
-            return policy(replacement, capability);
+            mSnapshot = new SecuritySnapshot(current.accountsByUsername(), current.orderedAccounts(),
+                current.primaryAdmin(), Map.copyOf(policies));
+            return policy(mSnapshot, capability);
         }
         finally
         {
@@ -393,104 +361,118 @@ public final class WebAccessService
         return setCapabilityTier(capability, capability.defaultTier());
     }
 
-    private void replaceUser(WebAccessConfiguration current, WebStoredUser existing, WebStoredUser replacement)
-        throws IOException, SQLException
+    private SecuritySnapshot loadSnapshot() throws IOException, SQLException
     {
-        List<WebStoredUser> users = new ArrayList<>(current.users());
-        int index = users.indexOf(existing);
-
-        if(index < 0)
+        List<WebUserRepository.StoredAccount> stored = mUsers.loadSecurityAccounts();
+        long ordinaryUsers = stored.stream().filter(entry -> !entry.account().primaryAdmin()).count();
+        if(ordinaryUsers > MAXIMUM_USERS)
         {
-            throw new IllegalStateException("Web user changed during mutation");
+            throw new SQLException("Persisted web user count exceeds " + MAXIMUM_USERS);
         }
 
-        users.set(index, replacement);
-        persist(current.withUsers(users));
+        Map<String,WebUserRepository.StoredAccount> byUsername = new LinkedHashMap<>();
+        WebUserRepository.StoredAccount primary = null;
+        List<WebAccessAccount> ordered = new ArrayList<>();
+        for(WebUserRepository.StoredAccount entry: stored)
+        {
+            if(byUsername.put(entry.account().username(), entry) != null)
+            {
+                throw new SQLException("Duplicate persisted web username");
+            }
+            if(entry.account().primaryAdmin())
+            {
+                if(primary != null)
+                {
+                    throw new SQLException("Multiple primary web administrators are persisted");
+                }
+                primary = entry;
+            }
+            ordered.add(entry.account());
+        }
+        if(primary == null && !stored.isEmpty())
+        {
+            throw new SQLException("Ordinary web users exist without the primary administrator");
+        }
+        return new SecuritySnapshot(Map.copyOf(byUsername), List.copyOf(ordered), primary, mPolicies.load());
     }
 
-    private void persist(WebAccessConfiguration replacement) throws IOException, SQLException
+    private WebUserRepository.StoredAccount requireOrdinaryAccount(String username)
     {
-        mStore.save(replacement);
-        mConfiguration = replacement;
+        WebUserRepository.StoredAccount account = mSnapshot.accountsByUsername().get(username);
+        if(account == null || account.account().primaryAdmin())
+        {
+            throw new IllegalStateException("Web user does not exist");
+        }
+        return account;
     }
 
-    private static CapabilityPolicy policy(WebAccessConfiguration configuration, WebCapability capability)
+    private static long ordinaryUserCount(SecuritySnapshot snapshot)
+    {
+        return snapshot.orderedAccounts().stream().filter(account -> !account.primaryAdmin()).count();
+    }
+
+    private static WebUserRepository.StoredAccount storedAccount(long id, WebPasswordVerifier verifier,
+                                                                 AccessTier tier, boolean primary)
+    {
+        WebAccessAccount account = new WebAccessAccount(id, verifier.username(), tier,
+            verifier.passwordChangedAtEpochMillis(), verifier.authRevision(), primary);
+        return new WebUserRepository.StoredAccount(account, verifier);
+    }
+
+    private static SecuritySnapshot withAccount(SecuritySnapshot current,
+                                                WebUserRepository.StoredAccount replacement)
+    {
+        Map<String,WebUserRepository.StoredAccount> accounts = new LinkedHashMap<>(current.accountsByUsername());
+        accounts.put(replacement.account().username(), replacement);
+        return snapshot(accounts.values(), current.policies());
+    }
+
+    private static SecuritySnapshot withoutAccount(SecuritySnapshot current, String username)
+    {
+        Map<String,WebUserRepository.StoredAccount> accounts = new LinkedHashMap<>(current.accountsByUsername());
+        accounts.remove(username);
+        return snapshot(accounts.values(), current.policies());
+    }
+
+    /** Builds the immutable post-write view only from already-validated values; it performs no fallible I/O. */
+    private static SecuritySnapshot snapshot(Collection<WebUserRepository.StoredAccount> accounts,
+                                             Map<WebCapability,AccessTier> policies)
+    {
+        List<WebUserRepository.StoredAccount> orderedStored = new ArrayList<>(accounts);
+        orderedStored.sort(Comparator.comparing((WebUserRepository.StoredAccount entry) ->
+                !entry.account().primaryAdmin())
+            .thenComparing(entry -> entry.account().username()));
+        Map<String,WebUserRepository.StoredAccount> byUsername = new LinkedHashMap<>();
+        List<WebAccessAccount> orderedAccounts = new ArrayList<>(orderedStored.size());
+        WebUserRepository.StoredAccount primary = null;
+        for(WebUserRepository.StoredAccount entry: orderedStored)
+        {
+            byUsername.put(entry.account().username(), entry);
+            orderedAccounts.add(entry.account());
+            if(entry.account().primaryAdmin())
+            {
+                primary = entry;
+            }
+        }
+        return new SecuritySnapshot(Map.copyOf(byUsername), List.copyOf(orderedAccounts), primary,
+            Map.copyOf(policies));
+    }
+
+    private static CapabilityPolicy policy(SecuritySnapshot snapshot, WebCapability capability)
     {
         AccessTier required = capability.configurable() ?
-            configuration.policyOverrides().getOrDefault(capability.id(), capability.defaultTier()) :
-            capability.defaultTier();
+            snapshot.policies().getOrDefault(capability, capability.defaultTier()) : capability.defaultTier();
         return new CapabilityPolicy(capability.id(), capability.displayName(), required, capability.defaultTier(),
             capability.configurable());
     }
 
-    private static Optional<WebAccessAccount> findAccount(WebAccessConfiguration configuration, String username)
-    {
-        CredentialAndTier credential = findCredential(configuration, username);
-        return credential == null ? Optional.empty() : Optional.of(account(credential.credential(), credential.tier(),
-            credential.primaryAdmin()));
-    }
-
-    private static CredentialAndTier findCredential(WebAccessConfiguration configuration, String username)
-    {
-        if(configuration.primaryAdmin() != null && configuration.primaryAdmin().username().equals(username))
-        {
-            return new CredentialAndTier(configuration.primaryAdmin(), AccessTier.ADMIN, true);
-        }
-
-        WebStoredUser user = findStoredUser(configuration, username);
-        return user == null ? null : new CredentialAndTier(user.credential(), user.tier(), false);
-    }
-
-    private static WebStoredUser findStoredUser(WebAccessConfiguration configuration, String username)
-    {
-        for(WebStoredUser user: configuration.users())
-        {
-            if(user.credential().username().equals(username))
-            {
-                return user;
-            }
-        }
-
-        return null;
-    }
-
-    private static WebStoredUser requireStoredUser(WebAccessConfiguration configuration, String username)
-    {
-        WebStoredUser user = findStoredUser(configuration, username);
-
-        if(user == null)
-        {
-            throw new IllegalStateException("Web user does not exist");
-        }
-
-        return user;
-    }
-
-    private static WebAdminCredential firstCredential(WebAccessConfiguration configuration)
-    {
-        if(configuration.primaryAdmin() != null)
-        {
-            return configuration.primaryAdmin();
-        }
-
-        return configuration.users().isEmpty() ? null : configuration.users().getFirst().credential();
-    }
-
-    private static WebAccessAccount account(WebAdminCredential credential, AccessTier tier, boolean primary)
-    {
-        return new WebAccessAccount(credential.username(), tier, credential.passwordChangedAtEpochMillis(),
-            credential.credentialVersion(), primary);
-    }
-
     private static String requireOrdinaryUsername(String username)
     {
-        String normalized = WebAdminCredential.normalizeUsername(username);
-
+        String normalized = WebPasswordVerifier.normalizeUsername(username);
         if(PRIMARY_ADMIN_USERNAME.equals(normalized))
         {
             throw new IllegalArgumentException("The primary administrator is managed only by the JavaFX interface");
         }
-
         return normalized;
     }
 
@@ -508,10 +490,9 @@ public final class WebAccessService
         {
             return "invalid";
         }
-
         try
         {
-            return WebAdminCredential.normalizeUsername(username);
+            return WebPasswordVerifier.normalizeUsername(username);
         }
         catch(IllegalArgumentException exception)
         {
@@ -524,7 +505,10 @@ public final class WebAccessService
         return password == null ? new char[0] : Arrays.copyOf(password, password.length);
     }
 
-    private record CredentialAndTier(WebAdminCredential credential, AccessTier tier, boolean primaryAdmin)
+    private record SecuritySnapshot(Map<String,WebUserRepository.StoredAccount> accountsByUsername,
+                                    List<WebAccessAccount> orderedAccounts,
+                                    WebUserRepository.StoredAccount primaryAdmin,
+                                    Map<WebCapability,AccessTier> policies)
     {
     }
 

@@ -191,7 +191,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("last_seen_utc", "last_seen_ms")
             );
             case "conventional-channels" -> List.of(
-                text("protocol", row -> protocol(row.get("protocol_code"))), text("context", "context_key"),
+                text("protocol", row -> protocol(row.get("protocol_code"))),
+                text("configuration_id", "configuration_id"),
                 text("channel_name", "channel_name"), text("alias_list", "alias_list_name"),
                 text("decoder", "decoder"), number("configured_frequency_hz", "primary_frequency_hz"),
                 text("configured_frequency_mhz", row -> megahertz(row.get("primary_frequency_hz"))),
@@ -203,7 +204,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("last_seen_utc", "last_seen_ms")
             );
             case "conventional-talkgroups" -> List.of(
-                text("protocol", row -> "DMR"), text("context", "context_key"),
+                text("protocol", row -> "DMR"), text("configuration_id", "configuration_id"),
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
                 number("timeslot", "timeslot"), number("talkgroup_id", "talkgroup_id"),
@@ -215,7 +216,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("last_seen_utc", "last_seen_ms")
             );
             case "conventional-radios" -> List.of(
-                text("protocol", row -> "DMR"), text("context", "context_key"),
+                text("protocol", row -> "DMR"), text("configuration_id", "configuration_id"),
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
                 number("timeslot", "timeslot"), number("radio_id", "radio_id"),

@@ -31,6 +31,7 @@ public enum WebCapability
     CREDITS_VIEW("credits", "Credits", AccessTier.PUBLIC),
     CSV_EXPORT("csv-export", "CSV export", AccessTier.PUBLIC),
     WEB_AUDIO_LISTEN("call-audio", "Call audio", AccessTier.PUBLIC),
+    USER_SETTINGS("user-settings", "Personal settings", AccessTier.USER, false),
 
     ADMIN_USERS("admin-users", "User management", AccessTier.ADMIN, false),
     ADMIN_ACCESS("admin-access", "Access management", AccessTier.ADMIN, false),

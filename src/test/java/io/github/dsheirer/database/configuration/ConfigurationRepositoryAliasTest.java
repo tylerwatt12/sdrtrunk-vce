@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -283,20 +284,29 @@ class ConfigurationRepositoryAliasTest
     private static void insertChannel(Connection connection, long id, String aliasListName, String configJson)
         throws SQLException
     {
+        String configurationId = new UUID(0, id).toString();
+        String radresGuid = new UUID(1, id).toString();
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO configuration_channel (
-                id, sort_order, system_name, site_name, name, alias_list_name, radres_guid,
+                id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
+                radres_guid,
                 auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
                 frequency_count, recording_enabled, event_logging_enabled, config_json
-            ) VALUES (?, 7, 'Test System', 'Test Site', ?, ?, ?, 1, 3, 'P25_PHASE1', 'TUNER',
-                      851012500, 1, 1, 1, ?)
+            ) VALUES (?, ?, 'TRUNKED', 7, 'Test System', 'Test Site', ?, ?, ?, 1, 3, 'P25_PHASE1', 'TUNER',
+                      851012500, 1, 0, 0,
+                      json_set(?, '$.configurationId', ?, '$.radresGuid', ?,
+                          '$.decodeConfiguration', json('{"type":"decodeConfigP25Phase1"}'),
+                          '$.sourceConfiguration', json('{"type":"sourceConfigTuner","frequency":851012500}')))
             """))
         {
             statement.setLong(1, id);
-            statement.setString(2, "Channel " + id);
-            statement.setString(3, aliasListName);
-            statement.setString(4, "channel-guid-" + id);
-            statement.setString(5, configJson);
+            statement.setString(2, configurationId);
+            statement.setString(3, "Channel " + id);
+            statement.setString(4, aliasListName);
+            statement.setString(5, radresGuid);
+            statement.setString(6, configJson);
+            statement.setString(7, configurationId);
+            statement.setString(8, radresGuid);
             statement.executeUpdate();
         }
     }

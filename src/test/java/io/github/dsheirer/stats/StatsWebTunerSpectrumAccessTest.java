@@ -13,8 +13,9 @@ import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
-import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebRequestSecurity;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -52,15 +53,15 @@ class StatsWebTunerSpectrumAccessTest
             Arrays.fill(password, '\u0000');
         }
 
-        WebAccessHttpController accessController = new WebAccessHttpController(accessService);
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
         TunerDiagnosticService tunerDiagnostics = new TunerDiagnosticService(List::of,
             (target, viewport, profile, consumer) -> null);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         ExecutorService executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
-        accessController.register(server);
-        new StatsApiV1Controller(null, Map::of, accessController, tunerDiagnostics).register(server);
+        new StatsApiV1Controller(null, Map::of, requestSecurity, tunerDiagnostics).register(server);
         server.start();
 
         try
@@ -88,6 +89,7 @@ class StatsWebTunerSpectrumAccessTest
             server.stop(0);
             executor.shutdownNow();
             tunerDiagnostics.close();
+            requestSecurity.close();
         }
     }
 }

@@ -46,6 +46,16 @@ learned P25 site observation. Its adjacent migration step records an explicit co
 backfill either metric from older physical call activity; every other preservation or reset remains declared by its
 registered migration step.
 
+Global database format 5 is the current format. It stores normalized web users, exact password verifiers and roles,
+per-user browser preferences, configurable access overrides, a site-settings revision, and canonical saved-channel
+identities. Active conventional channels use their configuration UUID; active trunked channels use both their
+configuration UUID and nonblank RadioResolve GUID. The format 4-to-5 step preserves supported accounts, access,
+receiver preferences, and active channel configuration; rebuilds reproducible channel query projections from each
+authoritative channel document even when the old derived columns are stale; moves personal browser choices into each
+account; and drops and counts recognized retired MPT-1327 and sound-card rows, retired web-policy overrides, and
+superseded personal setting storage. Malformed or ambiguous administrator-owned channel documents, identities,
+credentials, access policy, and shared preferences are refused rather than repaired or guessed.
+
 Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
 the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS
 console packages store their active data only under `<install>/data`, unless an explicit

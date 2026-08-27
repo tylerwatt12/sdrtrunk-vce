@@ -41,6 +41,12 @@ public final class ApiHttpResponse
         sendJson(exchange, status, response);
     }
 
+    /** Sends a complete endpoint-owned JSON document without the shared data envelope. */
+    public static void sendDocument(HttpExchange exchange, int status, Object value) throws IOException
+    {
+        sendJson(exchange, status, normalize(OBJECT_MAPPER.valueToTree(value)));
+    }
+
     /** Sends explicitly separated collection data and metadata; field names never determine envelope structure. */
     public static void sendDataWithMeta(HttpExchange exchange, int status, Object data, Object meta)
         throws IOException

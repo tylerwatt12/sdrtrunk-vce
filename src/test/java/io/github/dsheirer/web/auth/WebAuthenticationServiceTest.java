@@ -11,7 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebRequestSecurity;
+import io.github.dsheirer.web.http.WebSessionHttpController;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -78,12 +79,14 @@ class WebAuthenticationServiceTest
         WebAuthenticationService authenticationService = new WebAuthenticationService(accessService,
             sessionManager, LoginThrottle.Configuration.defaults(),
             new AccountLoginAdmissionLimiter.Configuration(16, Duration.ofMinutes(1)), Clock.systemUTC(), 2);
-        WebAccessHttpController controller = new WebAccessHttpController(accessService, authenticationService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
+        WebSessionHttpController sessionController =
+            new WebSessionHttpController(accessService, authenticationService, requestSecurity);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         ExecutorService executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
-        controller.register(server);
+        sessionController.register(server);
         server.start();
 
         try
@@ -103,16 +106,16 @@ class WebAuthenticationServiceTest
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             String body = "{\"username\":\"admin\",\"password\":\"primary admin password\"}";
             HttpResponse<String> ninth = client.send(HttpRequest.newBuilder(origin.resolve(
-                    WebAccessHttpController.LOGIN_PATH))
+                    WebSessionHttpController.LOGIN_PATH))
                 .timeout(Duration.ofSeconds(10))
                 .header("Origin", origin.toString())
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(503, ninth.statusCode(), "a cookie-less ninth session must be rejected");
 
-            String cookie = WebAccessHttpController.SESSION_COOKIE_NAME + "=" + current.sessionId();
+            String cookie = WebRequestSecurity.SESSION_COOKIE_NAME + "=" + current.sessionId();
             HttpResponse<String> relogin = client.send(HttpRequest.newBuilder(origin.resolve(
-                    WebAccessHttpController.LOGIN_PATH))
+                    WebSessionHttpController.LOGIN_PATH))
                 .timeout(Duration.ofSeconds(10))
                 .header("Origin", origin.toString())
                 .header("Content-Type", "application/json")
@@ -140,7 +143,7 @@ class WebAuthenticationServiceTest
         finally
         {
             server.stop(0);
-            controller.close();
+            requestSecurity.close();
             executor.shutdownNow();
         }
     }

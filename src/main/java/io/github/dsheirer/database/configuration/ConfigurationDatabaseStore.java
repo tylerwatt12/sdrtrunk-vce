@@ -18,13 +18,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
-import io.github.dsheirer.module.decode.config.DecodeConfiguration;
-import io.github.dsheirer.module.log.config.EventLogConfiguration;
-import io.github.dsheirer.record.config.RecordConfiguration;
-import io.github.dsheirer.source.config.SourceConfigRecording;
-import io.github.dsheirer.source.config.SourceConfigTuner;
-import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
-import io.github.dsheirer.source.config.SourceConfiguration;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -36,10 +29,10 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 
 /**
- * SQLite persistence for active channel and stream configuration. Retired channel rows and the legacy channel-map
- * table remain untouched compatibility data.
+ * SQLite persistence for active channel and stream configuration. The legacy channel-map table remains untouched.
  */
 public class ConfigurationDatabaseStore
 {
@@ -96,9 +89,7 @@ public class ConfigurationDatabaseStore
             throw new IllegalArgumentException("Channel and broadcast configuration cannot be null");
         }
 
-        List<RetainedChannelRow> retainedChannels = loadRetainedChannelRows(connection);
         clearConfigurationState(connection);
-        restoreRetainedChannelRows(connection, retainedChannels);
         insertChannels(connection, configuration.channels());
         insertBroadcastConfigurations(connection, configuration.broadcastConfigurations());
     }
@@ -196,8 +187,9 @@ public class ConfigurationDatabaseStore
         List<Channel> channels = new ArrayList<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT system_name, site_name, name, alias_list_name, radres_guid, auto_start, auto_start_order,
-                   decoder_type, source_type, config_json
+            SELECT configuration_id, channel_kind, system_name, site_name, name, alias_list_name, radres_guid,
+                   auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
+                   recording_enabled, event_logging_enabled, config_json
             FROM configuration_channel
             ORDER BY sort_order, id
             """);
@@ -205,59 +197,36 @@ public class ConfigurationDatabaseStore
         {
             while(resultSet.next())
             {
-                if(ChannelConfigurationPolicy.isRetiredPersisted(resultSet.getString("decoder_type"),
-                    resultSet.getString("source_type")))
+                String json = resultSet.getString("config_json");
+                String configurationId = requireConfigurationId(json, resultSet.getString("configuration_id"));
+                Channel channel = mObjectMapper.readValue(json, Channel.class);
+
+                if(!configurationId.equals(channel.getConfigurationId()))
                 {
-                    continue;
+                    throw new IOException("Channel configuration identity changed while decoding persisted JSON");
                 }
 
-                Channel channel = mObjectMapper.readValue(resultSet.getString("config_json"), Channel.class);
+                if(!ChannelConfigurationPolicy.requireChannelKind(channel).name()
+                    .equals(resultSet.getString("channel_kind")))
+                {
+                    throw new IOException("Channel kind scalar does not match config_json");
+                }
+
+                ConfigurationChannelProjection.from(channel).requireMatches(
+                    ConfigurationChannelProjection.read(resultSet), "Channel " + configurationId);
                 channel.setSystem(resultSet.getString("system_name"));
                 channel.setSite(resultSet.getString("site_name"));
                 channel.setName(resultSet.getString("name"));
                 channel.setAliasListName(resultSet.getString("alias_list_name"));
                 channel.setRadresGuid(resultSet.getString("radres_guid"));
-                channel.setAutoStart(resultSet.getInt("auto_start") == 1);
-                channel.setAutoStartOrder(getInteger(resultSet, "auto_start_order"));
+                channel.setAutoStart(ConfigurationChannelProjection.readBooleanFlag(resultSet, "auto_start"));
+                channel.setAutoStartOrder(ConfigurationChannelProjection.readNullableInt(resultSet,
+                    "auto_start_order"));
                 channels.add(channel);
             }
         }
 
         return channels;
-    }
-
-    private List<RetainedChannelRow> loadRetainedChannelRows(Connection connection) throws SQLException
-    {
-        List<RetainedChannelRow> rows = new ArrayList<>();
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
-                   auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
-                   recording_enabled, event_logging_enabled, config_json
-            FROM configuration_channel
-            """);
-            ResultSet resultSet = statement.executeQuery())
-        {
-            while(resultSet.next())
-            {
-                String decoderType = resultSet.getString("decoder_type");
-                String sourceType = resultSet.getString("source_type");
-
-                if(ChannelConfigurationPolicy.isRetiredPersisted(decoderType, sourceType))
-                {
-                    rows.add(new RetainedChannelRow(resultSet.getLong("id"), resultSet.getInt("sort_order"),
-                        resultSet.getString("system_name"), resultSet.getString("site_name"),
-                        resultSet.getString("name"), resultSet.getString("alias_list_name"),
-                        resultSet.getString("radres_guid"), resultSet.getInt("auto_start"),
-                        getInteger(resultSet, "auto_start_order"), decoderType, sourceType,
-                        getLong(resultSet, "primary_frequency_hz"), resultSet.getInt("frequency_count"),
-                        resultSet.getInt("recording_enabled"), resultSet.getInt("event_logging_enabled"),
-                        resultSet.getString("config_json")));
-                }
-            }
-        }
-
-        return rows;
     }
 
     private List<BroadcastConfiguration> loadBroadcastConfigurations(Connection connection)
@@ -291,39 +260,6 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private void restoreRetainedChannelRows(Connection connection, List<RetainedChannelRow> rows) throws SQLException
-    {
-        for(RetainedChannelRow row: rows)
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO configuration_channel (
-                    id, sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
-                    auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
-                    recording_enabled, event_logging_enabled, config_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """))
-            {
-                statement.setLong(1, row.id());
-                statement.setInt(2, row.sortOrder());
-                statement.setString(3, row.system());
-                statement.setString(4, row.site());
-                statement.setString(5, row.name());
-                statement.setString(6, row.aliasListName());
-                statement.setString(7, row.radresGuid());
-                statement.setInt(8, row.autoStart());
-                setInteger(statement, 9, row.autoStartOrder());
-                statement.setString(10, row.decoderType());
-                statement.setString(11, row.sourceType());
-                setLong(statement, 12, row.primaryFrequency());
-                statement.setInt(13, row.frequencyCount());
-                statement.setInt(14, row.recordingEnabled());
-                statement.setInt(15, row.eventLoggingEnabled());
-                statement.setString(16, row.configJson());
-                statement.executeUpdate();
-            }
-        }
-    }
-
     private void insertChannels(Connection connection, List<Channel> channels) throws SQLException, IOException
     {
         int sortOrder = 0;
@@ -332,33 +268,38 @@ public class ConfigurationDatabaseStore
         {
             if(ChannelConfigurationPolicy.isRetired(channel))
             {
-                continue;
+                throw new IOException("Retired channel configuration cannot be stored in the active database");
             }
+
+            ChannelConfigurationPolicy.ChannelKind channelKind =
+                ChannelConfigurationPolicy.requireChannelKind(channel);
+            //Conventional routing is owned by configuration_id. radres_guid remains separate correlation metadata
+            //required by RadioResolve call uploads, so the lazy getter deliberately assigns it before scalar/JSON
+            //serialization and both persisted representations receive the same value.
+            String radresGuid = channel.getRadresGuid();
+            ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
-                    sort_order, system_name, site_name, name, alias_list_name, radres_guid,
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
+                    radres_guid,
                     auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
                     frequency_count, recording_enabled, event_logging_enabled, config_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """))
             {
-                List<Long> frequencies = channel.getFrequencyList();
-                statement.setInt(1, sortOrder++);
-                statement.setString(2, channel.getSystem());
-                statement.setString(3, channel.getSite());
-                statement.setString(4, channel.getName());
-                statement.setString(5, channel.getAliasListName());
-                statement.setString(6, channel.getRadresGuid());
-                statement.setInt(7, channel.getAutoStart() ? 1 : 0);
-                setInteger(statement, 8, channel.getAutoStartOrder());
-                statement.setString(9, decoderType(channel));
-                statement.setString(10, sourceType(channel));
-                setLong(statement, 11, primaryFrequency(channel));
-                statement.setInt(12, frequencies != null ? frequencies.size() : 0);
-                statement.setInt(13, hasRecorders(channel) ? 1 : 0);
-                statement.setInt(14, hasEventLoggers(channel) ? 1 : 0);
-                statement.setString(15, mObjectMapper.writeValueAsString(channel));
+                statement.setString(1, requireCanonicalConfigurationId(channel.getConfigurationId()));
+                statement.setString(2, channelKind.name());
+                statement.setInt(3, sortOrder++);
+                statement.setString(4, channel.getSystem());
+                statement.setString(5, channel.getSite());
+                statement.setString(6, channel.getName());
+                statement.setString(7, channel.getAliasListName());
+                statement.setString(8, radresGuid);
+                statement.setInt(9, channel.getAutoStart() ? 1 : 0);
+                setInteger(statement, 10, channel.getAutoStartOrder());
+                projection.bind(statement, 11);
+                statement.setString(17, mObjectMapper.writeValueAsString(channel));
                 statement.executeUpdate();
             }
         }
@@ -392,53 +333,6 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private static String decoderType(Channel channel)
-    {
-        DecodeConfiguration configuration = channel.getDecodeConfiguration();
-        return configuration != null && configuration.getDecoderType() != null ?
-            configuration.getDecoderType().name() : null;
-    }
-
-    private static String sourceType(Channel channel)
-    {
-        SourceConfiguration configuration = channel.getSourceConfiguration();
-        return configuration != null && configuration.getSourceType() != null ?
-            configuration.getSourceType().name() : null;
-    }
-
-    private static Long primaryFrequency(Channel channel)
-    {
-        SourceConfiguration configuration = channel.getSourceConfiguration();
-
-        if(configuration instanceof SourceConfigTuner tuner)
-        {
-            return tuner.getFrequency();
-        }
-        else if(configuration instanceof SourceConfigTunerMultipleFrequency multiple)
-        {
-            long frequency = multiple.getPreferredFrequency();
-            return frequency > 0 ? frequency : null;
-        }
-        else if(configuration instanceof SourceConfigRecording recording)
-        {
-            return recording.getFrequency();
-        }
-
-        return null;
-    }
-
-    private static boolean hasRecorders(Channel channel)
-    {
-        RecordConfiguration configuration = channel.getRecordConfiguration();
-        return configuration != null && configuration.getRecorders() != null && !configuration.getRecorders().isEmpty();
-    }
-
-    private static boolean hasEventLoggers(Channel channel)
-    {
-        EventLogConfiguration configuration = channel.getEventLogConfiguration();
-        return configuration != null && configuration.getLoggers() != null && !configuration.getLoggers().isEmpty();
-    }
-
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException
     {
         if(value != null)
@@ -451,35 +345,36 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private static void setLong(PreparedStatement statement, int index, Long value) throws SQLException
+    private String requireConfigurationId(String json, String scalar) throws IOException
     {
-        if(value != null)
+        String jsonId = mObjectMapper.readTree(json).path("configurationId").textValue();
+        String canonicalScalar = requireCanonicalConfigurationId(scalar);
+
+        if(!canonicalScalar.equals(requireCanonicalConfigurationId(jsonId)) || !canonicalScalar.equals(jsonId))
         {
-            statement.setLong(index, value);
+            throw new IOException("Channel configuration identity scalar does not match config_json");
         }
-        else
+
+        return canonicalScalar;
+    }
+
+    private static String requireCanonicalConfigurationId(String value) throws IOException
+    {
+        try
         {
-            statement.setNull(index, Types.INTEGER);
+            String canonical = UUID.fromString(value).toString();
+
+            if(!canonical.equals(value))
+            {
+                throw new IllegalArgumentException("not canonical");
+            }
+
+            return canonical;
+        }
+        catch(IllegalArgumentException | NullPointerException exception)
+        {
+            throw new IOException("Channel configuration identity must be a canonical lowercase UUID", exception);
         }
     }
 
-    private static Integer getInteger(ResultSet resultSet, String column) throws SQLException
-    {
-        int value = resultSet.getInt(column);
-        return resultSet.wasNull() ? null : value;
-    }
-
-    private static Long getLong(ResultSet resultSet, String column) throws SQLException
-    {
-        long value = resultSet.getLong(column);
-        return resultSet.wasNull() ? null : value;
-    }
-
-    private record RetainedChannelRow(long id, int sortOrder, String system, String site, String name,
-                                      String aliasListName, String radresGuid, int autoStart, Integer autoStartOrder,
-                                      String decoderType, String sourceType, Long primaryFrequency,
-                                      int frequencyCount, int recordingEnabled, int eventLoggingEnabled,
-                                      String configJson)
-    {
-    }
 }

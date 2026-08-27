@@ -56,7 +56,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
-        String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange, selectedCustom)");
+        String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
         String optional = function(source, "function aliasCatalogEnrichmentColumns()");
         String configuration = function(source, "function aliasCustomConfigurationColumns()");
         String base = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
@@ -68,7 +68,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(columns.contains("view === 'calls'"));
         assertTrue(columns.contains("view === 'evidence'"));
         assertTrue(columns.contains("view === 'custom'"));
-        assertTrue(source.contains("aliasColumnChooser(definitions, selectedCustom"));
+        assertFalse(source.contains("function aliasColumnChooser("));
+        assertTrue(source.contains("defaultHiddenColumns: view === 'custom' ? definitions"));
         assertTrue(source.contains("exportCsvLink('aliases', exportContext)"));
         assertTrue(base.contains("id: 'description'"));
         for(String facet: new String[]{"alias-id", "alias-list", "family", "alias", "description", "group",
@@ -145,8 +146,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("value: 'RESET', label: 'Reset to default'"));
         assertTrue(source.contains("Discard your unsaved changes?"));
         assertFalse(source.contains("Discard your unsaved alias changes?"));
-        assertTrue(function(source, "async function render()").contains("if (!closeReadOnlyModal(false)) return"));
-        assertTrue(source.contains("if (!closeReadOnlyModal(false)) return;\n  window.history.pushState"));
+        assertTrue(function(source, "async function render()").contains("if (!closeReadOnlyModal()) return"));
+        assertTrue(source.contains("if (!closeReadOnlyModal()) {\n    window.history.pushState"));
     }
 
     @Test

@@ -16,7 +16,7 @@ import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
 /**
- * Java-standard PBKDF2-HMAC-SHA-256 password verifier, ported from the webfirst authentication core.
+ * Java-standard PBKDF2-HMAC-SHA-256 password hashing and verification.
  */
 public final class Pbkdf2PasswordHasher
 {
@@ -42,8 +42,8 @@ public final class Pbkdf2PasswordHasher
 
     Pbkdf2PasswordHasher(int iterations, SecureRandom secureRandom, Clock clock)
     {
-        if(iterations < WebAdminCredential.MINIMUM_ITERATIONS ||
-            iterations > WebAdminCredential.MAXIMUM_ITERATIONS)
+        if(iterations < WebPasswordVerifier.MINIMUM_ITERATIONS ||
+            iterations > WebPasswordVerifier.MAXIMUM_ITERATIONS)
         {
             throw new IllegalArgumentException("PBKDF2 work factor is outside safe bounds");
         }
@@ -53,7 +53,7 @@ public final class Pbkdf2PasswordHasher
         mClock = Objects.requireNonNull(clock, "Clock cannot be null");
     }
 
-    public WebAdminCredential createCredential(String username, char[] password, long credentialVersion)
+    public WebPasswordVerifier createVerifier(String username, char[] password, long authRevision)
     {
         requireNewPassword(password);
         byte[] salt = new byte[SALT_BYTES];
@@ -62,10 +62,10 @@ public final class Pbkdf2PasswordHasher
 
         try
         {
-            return new WebAdminCredential(WebAdminCredential.CURRENT_VERSION,
-                WebAdminCredential.normalizeUsername(username), WebAdminCredential.PBKDF2_SHA256, mIterations,
-                WebAdminCredential.DERIVED_KEY_BITS, Base64.getEncoder().encodeToString(salt),
-                Base64.getEncoder().encodeToString(derived), positiveNow(), credentialVersion);
+            return new WebPasswordVerifier(WebPasswordVerifier.CURRENT_VERSION,
+                WebPasswordVerifier.normalizeUsername(username), WebPasswordVerifier.PBKDF2_SHA256, mIterations,
+                WebPasswordVerifier.DERIVED_KEY_BITS, Base64.getEncoder().encodeToString(salt),
+                Base64.getEncoder().encodeToString(derived), positiveNow(), authRevision);
         }
         finally
         {
@@ -77,9 +77,9 @@ public final class Pbkdf2PasswordHasher
     /**
      * Derives and compares the verifier even when the supplied username is invalid or does not match.
      */
-    public boolean verify(WebAdminCredential credential, String username, char[] password)
+    public boolean verify(WebPasswordVerifier verifier, String username, char[] password)
     {
-        Objects.requireNonNull(credential, "Web credential cannot be null");
+        Objects.requireNonNull(verifier, "Web password verifier cannot be null");
         boolean candidateValid = password != null && password.length > 0 &&
             password.length <= MAXIMUM_PASSWORD_CHARACTERS;
         char[] candidate = candidateValid ? password : INVALID_PASSWORD;
@@ -87,16 +87,16 @@ public final class Pbkdf2PasswordHasher
 
         try
         {
-            usernameMatches = credential.username().equals(WebAdminCredential.normalizeUsername(username));
+            usernameMatches = verifier.username().equals(WebPasswordVerifier.normalizeUsername(username));
         }
         catch(IllegalArgumentException | NullPointerException exception)
         {
             // Continue through the expensive verifier to avoid exposing account-name validity through timing.
         }
 
-        byte[] salt = credential.decodeSalt();
-        byte[] expected = credential.decodePasswordHash();
-        byte[] actual = derive(candidate, salt, credential.iterations());
+        byte[] salt = verifier.decodeSalt();
+        byte[] expected = verifier.decodePasswordHash();
+        byte[] actual = derive(candidate, salt, verifier.iterations());
 
         try
         {
@@ -112,11 +112,11 @@ public final class Pbkdf2PasswordHasher
 
     private static byte[] derive(char[] password, byte[] salt, int iterations)
     {
-        PBEKeySpec keySpec = new PBEKeySpec(password, salt, iterations, WebAdminCredential.DERIVED_KEY_BITS);
+        PBEKeySpec keySpec = new PBEKeySpec(password, salt, iterations, WebPasswordVerifier.DERIVED_KEY_BITS);
 
         try
         {
-            return SecretKeyFactory.getInstance(WebAdminCredential.PBKDF2_SHA256).generateSecret(keySpec).getEncoded();
+            return SecretKeyFactory.getInstance(WebPasswordVerifier.PBKDF2_SHA256).generateSecret(keySpec).getEncoded();
         }
         catch(GeneralSecurityException exception)
         {

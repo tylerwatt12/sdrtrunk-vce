@@ -23,6 +23,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
@@ -57,7 +58,7 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains("already current and valid"));
         assertTrue(result.error().isEmpty());
 
@@ -128,8 +129,11 @@ class ApplicationDatabaseMigratorTest
             statement.executeUpdate("UPDATE alias_list SET name='default p25' WHERE name='Default P25'");
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    id, sort_order, name, decoder_type, source_type, frequency_count, config_json
-                ) VALUES (1, 1, 'Blank P25', 'P25_PHASE1', 'TUNER', 0, ?)
+                    id, sort_order, name, radres_guid, decoder_type, source_type, frequency_count, config_json
+                ) VALUES (
+                    1, 1, 'Blank P25', '00000000-0000-4000-8000-000000000001',
+                    'P25_PHASE1', 'TUNER', 0, ?
+                )
                 """))
             {
                 insert.setString(1, channelJson("Blank P25", null, null, null,
@@ -182,9 +186,8 @@ class ApplicationDatabaseMigratorTest
         Path database = Format1TestDatabase.create(newStagedDatabase());
         char[] adminPassword = "format-one-admin-secret".toCharArray();
         char[] listenerPassword = "format-one-listener-secret".toCharArray();
-        WebAccessService sourceAccess = new WebAccessService(database);
-        sourceAccess.provisionOrResetPrimaryAdmin(adminPassword);
-        sourceAccess.createUser("listener", listenerPassword, AccessTier.USER);
+        LegacyWebAccessTestData.storePrimaryAdminAndUser(database, adminPassword, "listener",
+            listenerPassword, AccessTier.USER);
 
         CommandResult result = run(database);
 
@@ -220,7 +223,7 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database, sourceRoot, targetRoot);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains("PLAN STEP: 1 -> 2 [format-1-to-2]"));
         assertTrue(result.output().contains("TRANSFORM unmatched-talkgroup catch-all aliases: 4 row(s)"));
         assertTrue(result.output().contains("DROP retired fully-qualified talkgroup aliases: 1 row(s)"));
@@ -231,6 +234,7 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains("without inventing site presence"));
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.output().contains("COMPLETED STEP: 3 -> 4 [format-3-to-4]"));
+        assertTrue(result.output().contains("COMPLETED STEP: 4 -> 5 [format-4-to-5]"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -342,7 +346,7 @@ class ApplicationDatabaseMigratorTest
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
-                "82:Default NXDN|83:Default NBFM|84:Default NBFM|85:NULL", scalar(connection, """
+                "82:Default NXDN|83:Default NBFM|84:Default NBFM", scalar(connection, """
                 SELECT group_concat(value, '|')
                 FROM (
                     SELECT id || ':' || COALESCE(alias_list_name, 'NULL') AS value
@@ -352,7 +356,7 @@ class ApplicationDatabaseMigratorTest
                 )
                 """));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
-                "82:Default NXDN|83:Default NBFM|84:Default NBFM|85:NULL", scalar(connection, """
+                "82:Default NXDN|83:Default NBFM|84:Default NBFM", scalar(connection, """
                 SELECT group_concat(value, '|')
                 FROM (
                     SELECT id || ':' || COALESCE(json_extract(config_json, '$.aliasListName'), 'NULL') AS value
@@ -361,6 +365,8 @@ class ApplicationDatabaseMigratorTest
                     ORDER BY id
                 )
                 """));
+            assertEquals("0", scalar(connection,
+                "SELECT COUNT(*) FROM configuration_channel WHERE id=85"));
             assertEquals("preserved-context", scalar(connection,
                 "SELECT context_key FROM receiver_context WHERE id=50"));
             assertEquals("92.5", scalar(connection, """
@@ -936,7 +942,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void malformedRelocationSettingsRollBackWithoutSchemaChanges() throws Exception
+    void malformedCurrentSiteSettingsAreRefusedBeforeRelocationWithoutSchemaChanges() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -953,8 +959,8 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database, source, target);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertFalse(result.error().isBlank());
+        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
+        assertTrue(result.error().contains("portable preference document is not strict JSON"), result::error);
 
         try(Connection connection = open(database))
         {
@@ -1275,6 +1281,19 @@ class ApplicationDatabaseMigratorTest
                 DecoderType.NBFM, 453000000);
             updateChannelJson(connection, 84, "AM", "Analog", "AM", null,
                 DecoderType.AM, 118500000);
+            updateChannelJson(connection, 85, "MPT", "Retired", "MPT", null,
+                DecoderType.MPT1327, 454000000);
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET radres_guid = CASE id
+                    WHEN 77 THEN '00000000-0000-4000-8000-000000000077'
+                    WHEN 78 THEN '00000000-0000-4000-8000-000000000078'
+                    WHEN 79 THEN '00000000-0000-4000-8000-000000000079'
+                    WHEN 82 THEN '00000000-0000-4000-8000-000000000082'
+                    WHEN 85 THEN '00000000-0000-4000-8000-000000000085'
+                END
+                WHERE id IN (77, 78, 79, 82, 85)
+                """);
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)
                 VALUES ('migration-sentinel', '{"preserved":true}', 1000)
@@ -1403,7 +1422,8 @@ class ApplicationDatabaseMigratorTest
         channel.setSystem(system);
         channel.setSite(site);
         channel.setAliasListName(aliasListName);
-        channel.setDecodeConfiguration(DecoderFactory.getDecodeConfiguration(decoderType));
+        channel.setDecodeConfiguration(decoderType == DecoderType.MPT1327 ? new DecodeConfigMPT1327() :
+            DecoderFactory.getDecodeConfiguration(decoderType));
         SourceConfigTuner source = new SourceConfigTuner();
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);

@@ -20,15 +20,6 @@ public record StatsWebNavigationState(boolean running, int port, boolean https, 
                                       boolean detailedHistoryActive)
 {
     /**
-     * Compatibility constructor for callers that represent the original plain-HTTP server state.
-     */
-    public StatsWebNavigationState(boolean running, int port, boolean summaryLoggingActive,
-                                   boolean detailedHistoryActive)
-    {
-        this(running, port, false, summaryLoggingActive, detailedHistoryActive);
-    }
-
-    /**
      * Loopback address used by desktop controls to open the embedded web interface.
      */
     public URI baseUri()
