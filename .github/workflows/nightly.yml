@@ -31,6 +31,8 @@ jobs:
             os: windows-latest
             gradle_command: .\gradlew.bat
     runs-on: ${{ matrix.os }}
+    env:
+      UPDATE_BUILD: ${{ github.run_id }}
 
     steps:
       - name: Check out source
@@ -53,7 +55,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run clean build
-        run: ${{ matrix.gradle_command }} --no-configuration-cache clean build -PprojectVersion=nightly
+        run: >-
+          ${{ matrix.gradle_command }} --no-configuration-cache clean build
+          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${{ env.UPDATE_BUILD }}
 
   package-and-publish:
     name: Package and publish nightly
@@ -62,6 +66,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      UPDATE_BUILD: ${{ github.run_id }}
 
     steps:
       - name: Check out source
@@ -78,28 +84,64 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Package Linux and macOS releases
-        run: ./gradlew --no-configuration-cache runtimeZipOthers -PprojectVersion=nightly
+        run: >-
+          ./gradlew --no-configuration-cache runtimeZipOthers
+          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
 
       - name: Package Windows releases
-        run: ./gradlew --no-configuration-cache runtimeZipWindows -PprojectVersion=nightly
+        run: >-
+          ./gradlew --no-configuration-cache runtimeZipWindows
+          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
 
-      - name: Create build information
+      - name: Refuse an out-of-order nightly publication
+        shell: bash
         run: |
-          printf 'ref: %s\ncommit: %s\nbuild: %s\n' \
+          remote_manifest="$(mktemp)"
+          if curl --fail --silent --show-error --location \
+            https://github.com/tylerwatt12/sdrtrunk-vce/releases/download/nightly/update.properties \
+            --output "${remote_manifest}"
+          then
+            remote_track="$(sed -n 's/^track=//p' "${remote_manifest}")"
+            remote_build="$(sed -n 's/^build=//p' "${remote_manifest}")"
+            if [[ "${remote_track}" == "nightly" && "${remote_build}" =~ ^[0-9]+$ ]] &&
+              (( remote_build >= UPDATE_BUILD ))
+            then
+              echo "Refusing stale nightly build ${UPDATE_BUILD}; published build is ${remote_build}."
+              exit 1
+            fi
+          fi
+
+      - name: Create build information and updater manifest
+        shell: bash
+        run: |
+          nightly_version="nightly-${UPDATE_BUILD}-${GITHUB_SHA:0:7}"
+          printf 'channel: nightly\nref: %s\ncommit: %s\nupdate-build: %s\nbuilt-at: %s\n' \
             "$GITHUB_REF" \
             "$GITHUB_SHA" \
+            "$UPDATE_BUILD" \
             "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             > build/image/build_info.txt
+          printf 'format=2\ntrack=nightly\nbuild=%s\nversion=%s\nurl=%s\n' \
+            "$UPDATE_BUILD" \
+            "$nightly_version" \
+            'https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly' \
+            > build/image/update.properties
 
       - name: Add build artifacts to nightly release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
+          name: SDRTrunk VCE Nightly
           prerelease: true
+          body: |
+            Rolling build of the current `main` branch. Nightlies contain the newest features and may differ from the numbered Alpha line.
+
+            For the more conservative line, use the [numbered Alpha releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest). The in-app updater remains on the channel embedded in the installed package.
           files: |
             build/image/*.zip
             build/image/build_info.txt
+            build/image/update.properties
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

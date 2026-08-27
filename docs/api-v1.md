@@ -1,5 +1,8 @@
 # Web API v1
 
+> **Release scope:** This document describes the current `main` and Nightly interface. Numbered Alpha builds may omit
+> newer endpoints or website features; use the documentation shipped with the installed Alpha.
+
 The supported web API is rooted at `/api/v1`. This is a hard version boundary: earlier unversioned read, export,
 live, and call-audio paths are not registered.
 

@@ -35,6 +35,9 @@ the new data folder. Deliberately shared paths outside the previous data folder 
 
 ### Alpha 8+ Database Compatibility
 
+Numbered Alpha and Nightly builds can have different application features, but they share one forward-only database-
+format history. A channel name never selects a different schema or migration route.
+
 This source tree contains the Alpha 8+ format catalog, linear migration chain, and deterministic format fixtures.
 Older binaries retain the source formats and migration behavior documented by their version-matched release notes.
 
@@ -49,8 +52,8 @@ console packages store their active data only under `<install>/data`, unless an 
 `sdrtrunk.vce.data.root` override is supplied.
 
 The bundled migrator accepts every verified successfully published database format from Alpha 8 through the format
-used by the running build. Main, alpha, and nightly builds share one global integer format and one linear forward
-migration chain; the build label does not choose the route. Alpha 8, Alpha 9, and Alpha 10 share one legacy signature
+used by the running build. Alpha and Nightly builds share one global integer format and one linear forward migration
+chain; the build label does not choose the route. Alpha 8, Alpha 9, and Alpha 10 share one legacy signature
 and enter at the same baseline. Known-unpublished developer layouts are refused rather than guessed.
 
 Preflight validates the complete schema, expected metadata, and critical invariants; resolves the source format;
@@ -63,7 +66,7 @@ version-matched What's New document for the exact preservation and reset behavio
 
 Every persisted schema or semantic change lands with its global format bump, in-repository adjacent migration step,
 deterministic prior-format fixture, and tests. The bundled chain retains those steps back to the Alpha 8 baseline, so
-a verified older alpha, nightly, or main database does not require sequential installation of skipped builds.
+a verified older Alpha or Nightly database does not require sequential installation of skipped builds.
 Ordinary application services remain validation-only.
 
 When startup finds a verified older format, it offers the Application Migrator. The migrator first creates a
@@ -71,18 +74,18 @@ timestamped backup under `data/database/backups`, migrates another staged copy t
 the exact target signature and complete database, and then replaces the current database atomically. If migration
 fails, the application does not start and the completed backup is retained.
 
+See the target build's version-matched release notes for its accepted sources and the exact data it preserves, resets,
+or retires. An Alpha with an older database format cannot open data already used by a newer Nightly. Keep separate
+installation and data folders when comparing channels, and never copy a newer database into an older build.
+
 ## Recording Storage
 
-`main` is the supported development and release track.
-
-Main releases keep classic call recording. Recorded audio remains administrator-owned in the configured recording
-directory. Main releases do not create or require the web recorded-call catalog and do not apply automatic time/space
-retention to recordings.
+Both supported release channels keep classic call recording. Recorded audio remains administrator-owned in the
+configured recording directory. Alpha and Nightly do not create or require a web recorded-call catalog and do not
+apply automatic time/space retention to recordings.
 
 The retired `webfirst` development branch used an incompatible managed-recording catalog. Its database is not a
-supported migration input for `main`, so an old `webfirst` data directory must remain separate. Features selected from
-that branch must be adapted to the current `main` storage and migration rules instead of copying its database contract
-into a release unintentionally.
+supported migration input for either active channel, so an old `webfirst` data directory must remain separate.
 
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.
@@ -108,9 +111,10 @@ Headless launches require one explicit option when the database is absent:
 --upgrade-data <previous-install-data-folder-or-sqlite-file>
 ```
 
-Every new installation must also configure the fixed `admin` web account before the application can start. The
-graphical setup wizard collects and confirms this password. For an unattended headless setup, put only the password
-in a protected UTF-8 file and add:
+Current `main` and Nightly builds require a password for the fixed `admin` web account before a new installation can
+start. Numbered Alpha builds may omit this newer startup feature; use that Alpha's version-matched documentation. In a
+build that includes it, the graphical setup wizard collects and confirms the password. For an unattended headless
+setup, put only the password in a protected UTF-8 file and add:
 
 ```text
 --admin-password-file <path>

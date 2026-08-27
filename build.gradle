@@ -76,11 +76,11 @@ if(javafxPlatform == "win") {
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
-def updateTrack = (project.findProperty('updateTrack') ?: 'main').toString()
+def updateTrack = (project.findProperty('updateTrack') ?: 'none').toString()
 def updateBuild = (project.findProperty('updateBuild') ?: '0').toString()
 
-if(!(updateTrack in ['main', 'webfirst'])) {
-    throw new GradleException("updateTrack must be 'main' or 'webfirst'")
+if(!(updateTrack in ['alpha', 'nightly', 'none'])) {
+    throw new GradleException("updateTrack must be 'alpha', 'nightly', or 'none'")
 }
 
 if(!(updateBuild ==~ /\d+/)) {
@@ -94,6 +94,50 @@ def releaseNotesHtmlFile = file("${releaseNotesDirectory}/${releaseVersion}.html
 def isNumberedPublicRelease = { String candidate ->
     def normalized = candidate.toLowerCase(Locale.US)
     !normalized.contains('nightly') && !normalized.contains('snapshot') && !normalized.contains('dev')
+}
+
+tasks.register('verifyUpdateChannelMetadata') {
+    group = 'verification'
+    description = 'Checks that packaged version and updater metadata identify the same release channel.'
+    inputs.property('releaseVersion', releaseVersion)
+    inputs.property('updateTrack', updateTrack)
+    inputs.property('updateBuild', updateBuild)
+
+    doLast {
+        long numericBuild
+
+        try {
+            numericBuild = Long.parseLong(updateBuild)
+        } catch(NumberFormatException e) {
+            throw new GradleException('updateBuild exceeds the supported 64-bit integer range', e)
+        }
+
+        if(updateTrack == 'none') {
+            if(isNumberedPublicRelease(releaseVersion)) {
+                throw new GradleException("Numbered release ${releaseVersion} must use the alpha update channel")
+            }
+
+            if(numericBuild != 0L) {
+                throw new GradleException('A build with updateTrack=none must use updateBuild=0')
+            }
+        } else if(updateTrack == 'alpha') {
+            if(!(releaseVersion ==~ /\d+\.\d+\.\d+-alpha-\d+/)) {
+                throw new GradleException("Alpha update metadata requires an Alpha version, not ${releaseVersion}")
+            }
+
+            if(numericBuild <= 0L) {
+                throw new GradleException('An Alpha package must have a positive updateBuild')
+            }
+        } else if(updateTrack == 'nightly') {
+            if(!releaseVersion.toLowerCase(Locale.US).contains('nightly')) {
+                throw new GradleException("Nightly update metadata requires a nightly version, not ${releaseVersion}")
+            }
+
+            if(numericBuild <= 0L) {
+                throw new GradleException('A nightly package must have a positive updateBuild')
+            }
+        }
+    }
 }
 
 tasks.register('verifyReleaseNotesContent') {
@@ -171,6 +215,7 @@ tasks.configureEach { candidate ->
     if(publicPackagingTasks.contains(candidate.name)) {
         candidate.dependsOn('verifyApprovedReleaseNotes')
         candidate.dependsOn('verifyBundledApplicationDatabaseMigrator')
+        candidate.dependsOn('verifyUpdateChannelMetadata')
     }
 }
 
@@ -459,6 +504,7 @@ tasks.register('verifyNoBundledVoiceDecryption') {
 
 check.dependsOn tasks.named('verifyNoBundledVoiceDecryption')
 check.dependsOn tasks.named('verifyBundledApplicationDatabaseMigrator')
+check.dependsOn tasks.named('verifyUpdateChannelMetadata')
 
 idea {
     module {
