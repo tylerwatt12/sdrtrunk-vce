@@ -27,26 +27,30 @@ class PreviousBuildLocatorTest
         Path dataRoot = createPortableDataRoot(installRoot.resolve("data"));
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
 
-        assertEquals(dataRoot, PreviousBuildLocator.resolveSelection(installRoot).orElseThrow());
-        assertEquals(dataRoot, PreviousBuildLocator.resolveSelection(dataRoot).orElseThrow());
-        assertEquals(dataRoot, PreviousBuildLocator.resolveSelection(database).orElseThrow());
+        assertSelection(dataRoot, PreviousBuildLocator.InputScope.PORTABLE_PROFILE,
+            PreviousBuildLocator.resolveSelection(installRoot).orElseThrow());
+        assertSelection(dataRoot, PreviousBuildLocator.InputScope.PORTABLE_PROFILE,
+            PreviousBuildLocator.resolveSelection(dataRoot).orElseThrow());
+        assertSelection(database, PreviousBuildLocator.InputScope.DATABASE_FILE,
+            PreviousBuildLocator.resolveSelection(database).orElseThrow());
 
         Path application = Files.createDirectories(mTemporaryFolder.resolve("Applications/Receiver Alpha 5.app"));
         Path applicationData = createPortableDataRoot(application.resolveSibling("Receiver Alpha 5-data"));
-        assertEquals(applicationData, PreviousBuildLocator.resolveSelection(application).orElseThrow());
+        assertSelection(applicationData, PreviousBuildLocator.InputScope.PORTABLE_PROFILE,
+            PreviousBuildLocator.resolveSelection(application).orElseThrow());
     }
 
     @Test
     void rejectsSelectionsThatDoNotIdentifyPortableData() throws Exception
     {
         Path emptyInstall = Files.createDirectories(mTemporaryFolder.resolve("empty-install"));
-        Path arbitraryDatabase = mTemporaryFolder.resolve("database/other.sqlite");
-        Files.createDirectories(arbitraryDatabase.getParent());
-        Files.createFile(arbitraryDatabase);
+        Path arbitraryFile = mTemporaryFolder.resolve("database/other.txt");
+        Files.createDirectories(arbitraryFile.getParent());
+        Files.createFile(arbitraryFile);
 
         assertTrue(PreviousBuildLocator.resolveSelection(null).isEmpty());
         assertTrue(PreviousBuildLocator.resolveSelection(emptyInstall).isEmpty());
-        assertTrue(PreviousBuildLocator.resolveSelection(arbitraryDatabase).isEmpty());
+        assertTrue(PreviousBuildLocator.resolveSelection(arbitraryFile).isEmpty());
     }
 
     @Test
@@ -82,7 +86,8 @@ class PreviousBuildLocatorTest
         Path dataRoot = createPortableDataRoot(installRoot.resolve("data"));
         Path unnormalized = installRoot.resolve("unused/../data");
 
-        assertEquals(dataRoot, PreviousBuildLocator.resolveSelection(unnormalized).orElseThrow());
+        assertSelection(dataRoot, PreviousBuildLocator.InputScope.PORTABLE_PROFILE,
+            PreviousBuildLocator.resolveSelection(unnormalized).orElseThrow());
     }
 
     @Test
@@ -110,5 +115,15 @@ class PreviousBuildLocatorTest
         Files.createDirectories(database.getParent());
         Files.createFile(database);
         return normalized.toRealPath();
+    }
+
+    private static void assertSelection(Path expectedPath, PreviousBuildLocator.InputScope expectedScope,
+                                        PreviousBuildLocator.Selection actual)
+    {
+        assertEquals(expectedPath, actual.path());
+        assertEquals(expectedScope, actual.scope());
+        assertEquals(expectedScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE, actual.portableProfile());
+        assertEquals(expectedScope == PreviousBuildLocator.InputScope.DATABASE_FILE ? expectedPath :
+            SdrTrunkDatabasePath.getDatabasePath(expectedPath), actual.database());
     }
 }

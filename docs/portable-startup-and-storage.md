@@ -31,27 +31,38 @@ streaming output remain in the previous data folder instead of being duplicated.
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
-Older macOS `.app` releases remain supported migration sources. The setup workflow can find or open the old bundle
-and use its sibling `<app-name>-data` folder without changing that old installation. Current macOS console packages
-store their active data only under `<install>/data`, unless an explicit `sdrtrunk.vce.data.root` override is supplied.
+### Alpha 8+ Database Compatibility
 
-Current main and Alpha 11 builds accept their own exact current schema or one exact public predecessor layout: Alias
-v4/P25 v24 as shipped unchanged by Alpha 8, Alpha 9, and Alpha 10. Those releases have the same schema fingerprint and
-store no release provenance, so an exact profile from any of them is structurally indistinguishable and satisfies the
-same single source gate. The transition advances Alias storage to v6 and P25 activity storage directly to v27. It
-converts only a single plain, unambiguous
-full-domain talkgroup catch-all per Alias list into the list-owned unmatched-talkgroup policy and removes retired P25
-fully-qualified Alias rows and their dependent routes. The v24 shared projection cannot establish qualifier-safe P25
-history. The clean direct migration rebuilds that shared storage instead of retaining partial projection state, so
-projected P25, DMR, and NXDN identity history resets. The migrator preserves system-wide current P25 affiliations by
-re-keying them and reconstructing only the required ordinary P25 radio, talkgroup, and relationship rows within the
-current per-scope limits. Authoritative site presence, clear watermarks, and zero-local review evidence start empty
-because the source layout cannot prove them. The staged migration refuses invalid or over-capacity affiliation state
-instead of truncating it. Mixed schemas, intermediate development schemas including v25, and `webfirst` databases
-remain unsupported.
+This source tree contains the Alpha 8+ format catalog, linear migration chain, and deterministic format fixtures.
+Older binaries retain the source formats and migration behavior documented by their version-matched release notes.
 
-See the version-matched What's New document for the exact preserved and reset data. Layouts older than the shared
-Alpha 8/Alpha 9/Alpha 10 boundary must be upgraded sequentially until they reach that exact source layout.
+Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
+the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS
+console packages store their active data only under `<install>/data`, unless an explicit
+`sdrtrunk.vce.data.root` override is supplied.
+
+The bundled migrator accepts every verified successfully published database format from Alpha 8 through the format
+used by the running build. Main, alpha, and nightly builds share one global integer format and one linear forward
+migration chain; the build label does not choose the route. Alpha 8, Alpha 9, and Alpha 10 share one legacy signature
+and enter at the same baseline. Known-unpublished developer layouts are refused rather than guessed.
+
+Preflight validates the complete schema, expected metadata, and critical invariants; resolves the source format;
+and lists every step plus any declared reset or dropped retired state. Pre-Alpha 8, unknown, mixed, partially migrated,
+newer-than-the-app, and retired `webfirst` databases are refused without mutation. See
+[Database Migration Contract](database-migration.md) and the
+version-matched What's New document for the exact preservation and reset behavior supplied by a build.
+
+### Format Change And Safe Execution Rule
+
+Every persisted schema or semantic change lands with its global format bump, in-repository adjacent migration step,
+deterministic prior-format fixture, and tests. The bundled chain retains those steps back to the Alpha 8 baseline, so
+a verified older alpha, nightly, or main database does not require sequential installation of skipped builds.
+Ordinary application services remain validation-only.
+
+When startup finds a verified older format, it offers the Application Migrator. The migrator first creates a
+timestamped backup under `data/database/backups`, migrates another staged copy through the required steps, validates
+the exact target signature and complete database, and then replaces the current database atomically. If migration
+fails, the application does not start and the completed backup is retained.
 
 ## Recording Storage
 
@@ -66,15 +77,6 @@ supported migration input for `main`, so an old `webfirst` data directory must r
 that branch must be adapted to the current `main` storage and migration rules instead of copying its database contract
 into a release unintentionally.
 
-During unreleased development, test databases are converted once with a backed-up utility kept outside the repository.
-Each public release receives one reviewed transition from the preceding public release. Ordinary application services
-remain validation-only, and skip-release migration chains are not accumulated in the current source tree.
-
-When a numbered release contains a transition for its immediately preceding release, startup offers the Application
-Migrator. It first creates a timestamped backup under `data/database/backups`, migrates another staged copy, validates
-the complete database, and then replaces the current database atomically. If migration fails, the application does
-not start and the completed backup is retained.
-
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.
 
@@ -87,7 +89,7 @@ Headless launches require one explicit option when the database is absent:
 ```text
 --fresh
 --import-xml <path>
---upgrade-data <previous-install-or-data-folder>
+--upgrade-data <previous-install-data-folder-or-sqlite-file>
 ```
 
 Every new installation must also configure the fixed `admin` web account before the application can start. The
@@ -103,9 +105,14 @@ the salted PBKDF2 verifier in the portable database. Existing installations are 
 step; copied profiles retain an already configured administrator.
 
 Fresh creation and XML import build the complete current schema in a temporary database, validate it, and then install
-it atomically. `--upgrade-data` is the non-graphical equivalent of choosing accepted portable data. In a numbered
-release that supports its immediate predecessor, `--upgrade-current` explicitly authorizes the release transition.
-Unreleased development builds do not add intermediate schema transitions.
+it atomically. Older binaries apply the source compatibility stated in their release notes. `--upgrade-data` is the
+non-graphical equivalent of choosing a verified Alpha 8-or-newer SQLite file or portable data source and authorizes
+the same bundled migration chain. A SQLite-file source contains no vault, JMBE library,
+optional modules, or other external profile files, so the completion report will identify those items as not copied.
+
+For an existing older database already in the active data path, headless startup uses `--upgrade-current` as the
+explicit authorization to run the migrator. That flag authorizes any verified older format in the bundled Alpha
+8-to-current chain.
 
 Once a portable database exists, the app holds an operating-system lock for that data folder until shutdown. A second
 sdrtrunk-vce process receives a clear “already in use” error before it can validate, upgrade, or write the same data.

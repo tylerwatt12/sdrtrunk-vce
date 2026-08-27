@@ -121,34 +121,47 @@ Startup validation checks the tuple table's exact DDL and column set, its four-c
 foreign key, and both indexes including column order and descending recency direction. Normal application services do
 not create or repair a missing or mismatched table or index.
 
-## Alpha 8/Alpha 9/Alpha 10 layout to current migration boundary
+## Alpha 8 Family Baseline Migration Behavior
 
-The bundled Application Migrator converts one exact Alias v4/P25 v24 source layout directly to current Alias v6/P25
-v27 on a backed-up staged copy. Alpha 8, Alpha 9, and Alpha 10 shipped that same layout and schema fingerprint, with
-no stored release provenance, so an exact profile from any of those releases satisfies the same single source gate. It converts only
-one plain, structurally unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls
-remain aliases for manual review. The v24 shared projection cannot establish qualifier-safe P25 history, so the clean
-direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It then
-recreates only the compact ordinary P25 identities and relationships required by preserved authoritative P25
-affiliations. The zero-local tuple projection starts empty.
+This section describes the bundled global chain. Older binaries retain the migration boundary documented by their
+version-matched release notes.
+
+Alpha 8, Alpha 9, and Alpha 10 shipped the same exact Alias v4/P25 v24 schema fingerprint and stored no release
+provenance. The bundled migrator therefore resolves all three to one legacy baseline format without attempting to
+infer a release label, then applies the registered adjacent steps through the target format.
+
+Across the steps that advance this baseline to Alias v6/P25 v27, the migrator converts only one plain, structurally
+unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls remain aliases for manual
+review. The v24 shared projection cannot establish qualifier-safe P25 history, so the relevant step rebuilds that
+shared storage and projected P25, DMR, and NXDN identity history restarts. It then recreates only the compact ordinary
+P25 identities and relationships required by preserved authoritative P25 affiliations. The zero-local tuple
+projection starts empty.
 
 Existing system-wide P25 affiliations are re-keyed into the protocol-neutral affiliation table. Authoritative site
 presence and presence-lifecycle state start empty because neither call history nor a source affiliation row proves
 which site last accepted a radio or when it deregistered. Supported administrator-owned aliases and unrelated
 configuration remain intact. Stored P25 fully-qualified talkgroup and radio Alias rows and their dependent routes are
-removed; their home values are not converted into ordinary local aliases. Intermediate development schemas are not
-accepted.
+removed; their home values are not converted into ordinary local aliases. These resets and removals are declared in
+preflight and the completion report.
 
-## Development migration boundary
+The legacy schema also permitted WACN or System ID qualifier columns on non-fully-qualified matcher types, even though
+that combination has no supported meaning in Alias v6. The migrator refuses such a database with the affected rows
+unchanged instead of silently discarding administrator-owned qualifier values.
 
-Alias v6 and P25 activity v27 are the clean current schemas during unreleased development. Normal startup validates
-them and does not upgrade an Alias v5 database. Existing Alias v5 development profiles require the narrowly scoped
-external staged-copy candidate before they can use this branch. The candidate creates `Default`, maps every Alias
-whose effective priority is not `-1` into it, maps every Alias List whose unmatched-talkgroup priority is not `-1` to
-the same list, and then removes both receiver-local playback-priority columns. This preserves the prior per-Alias and
-global unmatched listen-enabled populations as browser scan-list memberships. Development candidates remain outside
-the repository and are not deployed product support.
+## Later Format Migration Rule
 
-During numbered-release preparation, the exact preceding public schema must be compared with the final release
-schema and the required transition consolidated into the backed-up Application Migrator. Intermediate
-development-only paths are discarded rather than accumulated in normal startup.
+The release audit found no successfully published nightly with the intermediate Alias v5 layout. The source-recovered
+Alias v5 fingerprint is therefore a known unsupported developer state, not a guessed migration input. If a database
+from that state was actually deployed, retain it with its matching `build_info.txt`; adding support requires an exact
+deployed fixture and an explicit adjacent step.
+
+The first published later format is Alias v6/P25 v26. The Alpha 8-family -> v26 step creates `Default`, maps every
+retained Alias whose effective priority is not `-1` into it, maps each converted unmatched-talkgroup catch-all whose
+priority is not `-1` to the same list, and removes the retired priority columns. Normal startup remains
+validation-only; the backed-up staged Application Migrator runs this and every later registered step. See
+[Database Migration Contract](database-migration.md).
+
+The following v26-to-v27 step creates a missing canonical factory Alias List and its unmatched-talkgroup Default
+scan-list route only when that name is absent. A case-insensitive existing list in the correct family keeps its stored
+spelling and existing routing, and compatible blank channels are assigned to that spelling. A canonical name already
+owned by the wrong family is an explicit preflight refusal.

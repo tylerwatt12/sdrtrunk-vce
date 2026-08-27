@@ -12,6 +12,7 @@
 package io.github.dsheirer.database;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
@@ -65,5 +66,33 @@ class SqliteSchemaValidatorTest
             assertDoesNotThrow(() ->
                 SqliteSchemaValidator.validateDefinitions(connection, List.of(actual)));
         }
+    }
+
+    @Test
+    void canonicalizationPreservesMeaningfulSqlLiteralCharacters()
+    {
+        String spacedLiteral = SqliteSchemaValidator.canonicalSql("""
+            CREATE VIEW sample AS SELECT 'a, b' AS value
+            """);
+        String compactLiteral = SqliteSchemaValidator.canonicalSql("""
+            CREATE VIEW sample AS SELECT 'a,b' AS value
+            """);
+
+        assertNotEquals(spacedLiteral, compactLiteral);
+    }
+
+    @Test
+    void canonicalizationStillIgnoresFormattingAndSimpleIdentifierQuotes()
+    {
+        String first = SqliteSchemaValidator.canonicalSql("""
+            CREATE TABLE IF NOT EXISTS "sample" (
+                "id" INTEGER PRIMARY KEY,
+                value TEXT DEFAULT 'keep  this, exactly'
+            );
+            """);
+        String second = SqliteSchemaValidator.canonicalSql(
+            "CREATE TABLE sample(id INTEGER PRIMARY KEY,value TEXT DEFAULT 'keep  this, exactly')");
+
+        org.junit.jupiter.api.Assertions.assertEquals(first, second);
     }
 }

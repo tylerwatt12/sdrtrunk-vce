@@ -64,7 +64,8 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
   delivery attempts must not multiply the original-call count.
 - Keep normal runtime paths validation-only for existing schemas. Schema creation belongs to the startup schema routine;
   supported deployed changes belong exclusively to the bundled Application Migrator, which must back up the database,
-  migrate a staged copy, and complete schema, integrity, and foreign-key validation before atomic promotion.
+  migrate a staged copy through the global adjacent-step chain, and complete format, exact-schema, integrity, and
+  foreign-key validation before atomic promotion.
 
 ## Website Query Rules
 
@@ -80,12 +81,17 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 
 Schema and query changes must include tests that cover:
 
-- schema validation and Application Migrator behavior;
+- the global format bump, expected prior and target format signatures, adjacent migration step, and populated
+  prior-format fixture for every persisted schema or semantic change;
+- schema validation, every registered Alpha 8-or-newer source-to-current route, and Application Migrator behavior;
 - duplicate-event/output suppression and aggregate correctness;
 - system/site/context scoping;
 - bounded ranges, pagination, and chart point limits;
 - representative-volume query plans with no unintended full scan of detailed history; and
 - `PRAGMA integrity_check` or `quick_check` after migration tests.
+
+CI must reject persisted-schema fingerprint drift without the matching format bump, migration step, fixture, and
+preservation/reset/drop assertions. See [Database Migration Contract](database-migration.md).
 
 Any exception to these guidelines must document the user-visible purpose and the measured storage/query tradeoff in the
 change that introduces it.

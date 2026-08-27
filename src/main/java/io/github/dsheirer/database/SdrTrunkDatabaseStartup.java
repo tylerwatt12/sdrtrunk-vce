@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database;
 
+import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
@@ -33,8 +34,6 @@ import org.sqlite.SQLiteConfig;
  */
 public final class SdrTrunkDatabaseStartup
 {
-    private static final String CURRENT_GLOBAL_SCHEMA_FINGERPRINT =
-        "d1a300bf3cfc32870a36c6c4d009d5eb3ae0fea794782357ed2ea3c2948d270d";
     private SdrTrunkDatabaseStartup()
     {
     }
@@ -59,12 +58,15 @@ public final class SdrTrunkDatabaseStartup
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
             InitialAdminSetup.markRequired(connection);
+            //The whole-file marker is authoritative only after every current schema, seed row, and required
+            //fresh-profile marker has been installed successfully.
+            DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);
             requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            requireCurrentSchemaFingerprint(connection);
+            DatabaseFormatCatalog.requireCurrent(connection);
         }
     }
 
@@ -79,7 +81,7 @@ public final class SdrTrunkDatabaseStartup
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            requireCurrentSchemaFingerprint(connection);
+            DatabaseFormatCatalog.requireCurrent(connection);
         }
 
         //Only a database proven to be the current main-track schema may be opened read/write and placed in the
@@ -181,15 +183,6 @@ public final class SdrTrunkDatabaseStartup
         {
             throw new SQLException("This main release cannot open a webfirst managed-recording database; found " +
                 footprints + ". Use separate portable data folders for main and webfirst.");
-        }
-    }
-
-    public static void requireCurrentSchemaFingerprint(Connection connection) throws SQLException
-    {
-        String actual = SqliteSchemaValidator.fingerprint(connection);
-        if(!CURRENT_GLOBAL_SCHEMA_FINGERPRINT.equals(actual))
-        {
-            throw new SQLException("SQLite database is not the exact current main schema layout (" + actual + ")");
         }
     }
 

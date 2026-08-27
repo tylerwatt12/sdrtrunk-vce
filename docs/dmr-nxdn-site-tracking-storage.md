@@ -399,8 +399,8 @@ No normal runtime path creates or repairs these tables or indexes. New databases
 at v2, so no public v1 migration is supported. Conventional DMR summaries use the independent
 `dmr_activity_schema_version=1` subsystem. Protocol-neutral identity storage entered P25 activity schema v24 and
 records the positive `trunked_identity_metrics_started_at_ms` boundary so pages do not imply that partially backfilled
-DMR/NXDN totals cover time before collection began. Alpha 10 advances directly from P25 activity schema v24 to v26,
-which adds qualifier-safe P25 talkgroup evidence plus three bounded protocol-neutral current-affiliation,
+DMR/NXDN totals cover time before collection began. The later format that introduces P25 activity schema v26 adds
+qualifier-safe P25 talkgroup evidence plus three bounded protocol-neutral current-affiliation,
 authoritative-site-presence, and lifecycle tables. New databases create every current subsystem in the same global
 routine; existing databases remain validation-only except through the bundled Application Migrator.
 
@@ -421,14 +421,18 @@ or write fan-out: site values update the one row per receiver GUID, and callsign
 summary row, Statistics retention, per-site clear, and full-reset lifecycle. The existing GUID/frequency index serves
 the control-channel callsign lookup; the current tables alone cannot answer it after current facts are replaced.
 
+The bundled chain applies the following Alpha 8-family handling. Older binaries retain the migration boundary in their
+version-matched release notes.
+
 Alpha 8, Alpha 9, and Alpha 10 shipped the same P25 activity schema v24 layout and exact schema fingerprint, with no
-stored release provenance. The bundled transition therefore recognizes that one exact source layout rather than
-attempting to distinguish the three release labels. The v24 shared projection cannot establish qualifier-safe P25 history, so the
-clean direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It
-preserves system-wide current P25 affiliations, reconstructs only their required compact ordinary P25 identities and
-relationships within current per-scope admission caps, and leaves authoritative site presence and clear watermarks
-empty because the source layout cannot prove a site or deregistration time. Other activity and supported
-administrator-owned configuration are preserved. Intermediate development schemas are not accepted.
+stored release provenance. The format catalog therefore maps that exact layout to one Alpha 8-family baseline without
+attempting to distinguish the three release labels. As the linear chain advances from v24, the relevant step rebuilds
+shared storage because the old projection cannot establish qualifier-safe P25 history, so projected P25, DMR, and NXDN
+identity history restarts. It preserves system-wide current P25 affiliations, reconstructs only their required compact
+ordinary P25 identities and relationships within current per-scope admission caps, and leaves authoritative site
+presence and clear watermarks empty because the source layout cannot prove a site or deregistration time. Other
+activity and supported administrator-owned configuration are preserved. Later recognized development and nightly
+formats enter at their own registered version and continue through the same chain.
 
 ## Retention
 
@@ -535,6 +539,7 @@ known trunking variant on that exact running channel and decoder configuration. 
 sustained decode loss and is cleared by the quality monitor's inactive shutdown snapshot, channel/configuration
 replacement, statistics disablement, or writer shutdown. Samples use the existing bounded statistics queue and single
 database writer. Existing retention, site-specific clear, and full reset paths already operate on this shared
-GUID-keyed table. New databases create the index in the single startup schema routine. The exact shared Alpha 8/Alpha
-9 layout-to-Alpha 10 transition preserves this quality history and its index unchanged; older and intermediate schemas
-are not accepted directly. Ordinary application services never create or repair the index.
+GUID-keyed table. New databases create the index in the single startup schema routine. The Alpha 8-family baseline
+step preserves this quality history and its index unchanged, and each verified later
+format follows its registered adjacent step. Pre-Alpha 8, unknown, and mixed layouts remain unsupported. Ordinary
+application services never create or repair the index.

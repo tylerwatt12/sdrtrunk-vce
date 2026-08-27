@@ -16,6 +16,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
+import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -23,6 +25,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -42,10 +45,9 @@ import org.sqlite.SQLiteConfig;
  * The single application-owned database migration entry point.
  *
  * <p>The application creates a safety backup, makes a staged copy, and launches this class in a child process. This
- * migrator accepts only a completely recognizable schema, rebases portable paths when importing an already-current
- * profile, and validates the staged database before the application can promote it. Release-to-release schema
- * transitions are added here only during preparation of a numbered public release. It must never be aimed directly
- * at a live database.</p>
+ * migrator accepts only an exact format-catalog signature, runs the complete adjacent global-format chain, optionally
+ * rebases portable paths for a full-profile import, and validates the staged database before the application can
+ * promote it. It must never be aimed directly at a live database.</p>
  */
 public final class ApplicationDatabaseMigrator
 {
@@ -55,13 +57,6 @@ public final class ApplicationDatabaseMigrator
     public static final int EXIT_UNSUPPORTED_VERSION = 4;
     public static final int EXIT_MIGRATION_FAILED = 5;
 
-    private static final String ALIAS_VERSION_KEY = "alias_schema_version";
-    private static final String P25_VERSION_KEY = "p25_activity_schema_version";
-    private static final String ALIAS_TARGET_VERSION =
-        Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION);
-    private static final String P25_TARGET_VERSION = Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION);
-    private static final String DMR_TARGET_VERSION = Integer.toString(DmrActivitySchema.SCHEMA_VERSION);
-    private static final String TRUNKED_SITE_TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
     private static final Set<String> PORTABLE_DIRECTORY_KEYS = Set.of(
         "directory.application.logs",
@@ -141,7 +136,7 @@ public final class ApplicationDatabaseMigrator
             migrate(database, relocation, output);
             return EXIT_SUCCESS;
         }
-        catch(UnsupportedSchemaVersionException e)
+        catch(UnsupportedDatabaseFormatException e)
         {
             error.println("ERROR: " + e.getMessage());
             return EXIT_UNSUPPORTED_VERSION;
@@ -159,45 +154,52 @@ public final class ApplicationDatabaseMigrator
     }
 
     private static void migrate(Path database, DataRootRelocation relocation, PrintStream output)
-        throws IOException, SQLException, UnsupportedSchemaVersionException
+        throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
-        if(!Files.isRegularFile(database))
+        if(Files.isSymbolicLink(database))
+        {
+            throw new IOException("The staged database must not be a symbolic link: " + database);
+        }
+
+        if(!Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS))
         {
             throw new IOException("Staged database not found: " + database);
         }
+
+        requireSingleFilesystemLinkWhenSupported(database);
 
         requireApplicationStage(database);
         output.println("Checking staged database: " + database);
 
         try(Connection connection = open(database))
         {
-            SchemaState state = SchemaState.read(connection);
-            output.println("Detected " + state.description() + ".");
-            SourceKind sourceKind = state.requireSupported();
-            preflight(connection, sourceKind);
+            DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
+            output.println("Detected database format " + source.version() + " [" + source.id() + "]: " +
+                source.description() + (source.markerPresent() ? "." : " (legacy layout without global marker)."));
+            DatabaseMigrationChain.PreflightReport preflight = requireSupportedPreflight(connection, source);
+            printPreflight(output, preflight, relocation);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
 
-            if(sourceKind == SourceKind.CURRENT && !relocationRequired)
+            if(!source.requiresMigration() && !relocationRequired)
             {
                 validateCurrentDatabase(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 finalizeStagedDatabase(connection);
+                validateConfiguration(database);
                 output.println("RESULT: Application database is already current and valid; no schema changes made.");
                 return;
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            MigrationSummary migration = migrateInTransaction(connection, sourceKind, relocation);
+            MigrationSummary migration = migrateInTransaction(connection, source, relocation);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
+            validateConfiguration(database);
 
-            if(sourceKind == SourceKind.ALPHA_9)
-            {
-                output.println(migration.releaseSummary());
-            }
+            printCompletion(output, migration.chainReport());
             output.println("Portable directory preferences updated: " + migration.rebasedDirectories() + ".");
             output.println("RESULT: Application database migration and validation complete.");
         }
@@ -205,14 +207,15 @@ public final class ApplicationDatabaseMigrator
 
     private static void requireApplicationStage(Path database) throws IOException
     {
-        Path fileName = database.getFileName();
+        Path physicalDatabase = database.toRealPath();
+        Path fileName = physicalDatabase.getFileName();
 
         if(fileName != null && STAGED_DATABASE_FILE.matcher(fileName.toString()).matches())
         {
             return;
         }
 
-        Path databaseDirectory = database.getParent();
+        Path databaseDirectory = physicalDatabase.getParent();
         Path stageRoot = databaseDirectory == null ? null : databaseDirectory.getParent();
 
         if(fileName != null && SdrTrunkDatabasePath.DATABASE_FILENAME.equals(fileName.toString()) &&
@@ -225,53 +228,67 @@ public final class ApplicationDatabaseMigrator
         }
 
         throw new IOException("The Application Migrator accepts only an application-created staged database. " +
-            "Refusing direct database path: " + database);
+            "The selected path resolves outside an application stage: " + database);
     }
 
-    static void validateAcceptedSource(Path database, ApplicationMigrationService.MigrationState state)
+    private static void requireSingleFilesystemLinkWhenSupported(Path database) throws IOException
+    {
+        try
+        {
+            Object value = Files.getAttribute(database, "unix:nlink", LinkOption.NOFOLLOW_LINKS);
+            if(value instanceof Number links && links.longValue() > 1)
+            {
+                throw new IOException("The staged database has multiple filesystem links and may alias a live " +
+                    "database: " + database);
+            }
+        }
+        catch(UnsupportedOperationException | IllegalArgumentException ignored)
+        {
+            //The Unix link-count view is unavailable on this platform. The application normally creates the stage
+            //itself; the physical-path and symbolic-link gates still prevent the portable accidental aliases.
+        }
+    }
+
+    static DatabaseMigrationChain.PreflightReport validateAcceptedSource(Path database,
+                                                                          DatabaseFormatCatalog.DetectedFormat expected)
         throws IOException, SQLException
     {
         try(Connection connection = openReadOnly(database))
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-            if(state.current())
-            {
-                validateCurrentDatabase(connection);
-                requireForeignKeysValid(connection);
-            }
-            else if(state.alpha9())
-            {
-                Alpha9DatabaseMigration.validateSource(connection);
-                requireForeignKeysValid(connection);
-            }
-            else
-            {
-                throw new IOException("No bundled migration accepts " + state.description() + ".");
-            }
-
+            DatabaseMigrationChain.PreflightReport report = DatabaseMigrationChain.validateSource(connection,
+                expected);
+            requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+            return report;
         }
     }
 
-    private static void preflight(Connection connection, SourceKind sourceKind) throws SQLException
+    private static DatabaseFormatCatalog.DetectedFormat requireSupportedFormat(Connection connection)
+        throws SQLException, UnsupportedDatabaseFormatException
+    {
+        try
+        {
+            return DatabaseFormatCatalog.inspect(connection);
+        }
+        catch(DatabaseFormatCatalog.FormatRejectionException e)
+        {
+            throw new UnsupportedDatabaseFormatException(message(e), e);
+        }
+    }
+
+    private static DatabaseMigrationChain.PreflightReport requireSupportedPreflight(Connection connection,
+            DatabaseFormatCatalog.DetectedFormat source) throws SQLException
     {
         SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-
-        if(sourceKind == SourceKind.CURRENT)
-        {
-            validateCurrentDatabase(connection);
-        }
-        else
-        {
-            Alpha9DatabaseMigration.validateSource(connection);
-        }
-
+        DatabaseMigrationChain.PreflightReport report = DatabaseMigrationChain.validateSource(connection, source);
         requireForeignKeysValid(connection);
         requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+        return report;
     }
 
-    private static MigrationSummary migrateInTransaction(Connection connection, SourceKind sourceKind,
-                                                          DataRootRelocation relocation)
+    private static MigrationSummary migrateInTransaction(Connection connection,
+            DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -283,8 +300,15 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
-                String releaseSummary = sourceKind == SourceKind.ALPHA_9 ?
-                    Alpha9DatabaseMigration.migrate(connection).releaseSummary() : "";
+                DatabaseMigrationChain.MigrationReport chainReport = DatabaseMigrationChain.migrate(connection);
+                if(chainReport.source().version() != expectedSource.version() ||
+                    !chainReport.source().id().equals(expectedSource.id()) ||
+                    chainReport.source().markerPresent() != expectedSource.markerPresent())
+                {
+                    throw new SQLException("Staged SQLite database changed after preflight; expected format [" +
+                        expectedSource.id() + ", marker=" + expectedSource.markerPresent() + "] but migration saw [" +
+                        chainReport.source().id() + ", marker=" + chainReport.source().markerPresent() + "]");
+                }
                 int rebased = rebasePortableDirectoryPreferences(connection, relocation);
 
                 validateCurrentDatabase(connection);
@@ -292,7 +316,7 @@ public final class ApplicationDatabaseMigrator
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                return new MigrationSummary(rebased, releaseSummary);
+                return new MigrationSummary(rebased, chainReport);
             }
             catch(IOException | SQLException | RuntimeException e)
             {
@@ -439,13 +463,74 @@ public final class ApplicationDatabaseMigrator
         return PORTABLE_PATH_KEY_PREFIXES.stream().anyMatch(key::startsWith);
     }
 
+    private static void printPreflight(PrintStream output, DatabaseMigrationChain.PreflightReport report,
+                                       DataRootRelocation relocation)
+    {
+        String scope;
+        if(relocation == null)
+        {
+            scope = "SQLite database only; external portable-profile artifacts and stored paths will not be copied " +
+                "or remapped.";
+        }
+        else if(relocation.source().equals(relocation.target()))
+        {
+            scope = "existing portable-profile database; neighboring artifacts remain in place and stored paths " +
+                "will not be remapped.";
+        }
+        else
+        {
+            scope = "portable-profile import; supported stored paths may be remapped within the copied profile.";
+        }
+        output.println("Migration scope: " + scope);
+        output.println("Migration plan: format " + report.source().version() + " [" + report.source().id() +
+            "] -> format " + report.target().version() + " [" + report.target().id() + "] through " +
+            report.steps().size() + " step(s).");
+
+        for(DatabaseMigrationChain.StepPreflight step: report.steps())
+        {
+            output.println("PLAN STEP: " + step.sourceVersion() + " -> " + step.targetVersion() + " [" +
+                step.id() + "] " + step.description());
+            for(DatabaseMigrationEffect effect: step.effects())
+            {
+                output.println("  " + formatEffect(effect));
+            }
+        }
+    }
+
+    private static void printCompletion(PrintStream output, DatabaseMigrationChain.MigrationReport report)
+    {
+        for(DatabaseMigrationChain.StepReport step: report.steps())
+        {
+            output.println("COMPLETED STEP: " + step.sourceVersion() + " -> " + step.targetVersion() + " [" +
+                step.id() + "] " + step.description());
+            for(DatabaseMigrationEffect effect: step.effects())
+            {
+                output.println("  " + formatEffect(effect));
+            }
+        }
+
+        output.println(report.releaseSummary());
+    }
+
+    private static String formatEffect(DatabaseMigrationEffect effect)
+    {
+        String count = effect.affectedRows() >= 0 ? effect.affectedRows() + " row(s)" :
+            "count determined during migration";
+        return effect.kind() + " " + effect.subject() + ": " + count + " - " + effect.detail();
+    }
+
     static void validateCurrentDatabase(Connection connection) throws SQLException
     {
         SdrTrunkDatabaseSchema.validate(connection);
         P25ActivityLogSchema.validate(connection);
         DmrActivitySchema.validate(connection);
         TrunkedSiteSchema.validate(connection);
-        SdrTrunkDatabaseStartup.requireCurrentSchemaFingerprint(connection);
+        DatabaseFormatCatalog.requireCurrent(connection);
+    }
+
+    private static void validateConfiguration(Path database) throws IOException, SQLException
+    {
+        ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
     }
 
     private static Connection open(Path database) throws SQLException
@@ -531,78 +616,17 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    private static String metadata(Connection connection, String key) throws SQLException
-    {
-        try(PreparedStatement statement =
-                connection.prepareStatement("SELECT value FROM database_metadata WHERE key=?"))
-        {
-            statement.setString(1, key);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next() ? resultSet.getString(1) : null;
-            }
-        }
-    }
-
     private static String message(Exception exception)
     {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
-    private record SchemaState(String aliasVersion, String p25Version, String trunkedSiteVersion, String dmrVersion)
+    private static final class UnsupportedDatabaseFormatException extends Exception
     {
-        private static SchemaState read(Connection connection) throws SQLException
+        private UnsupportedDatabaseFormatException(String message, Throwable cause)
         {
-            return new SchemaState(metadata(connection, ALIAS_VERSION_KEY), metadata(connection, P25_VERSION_KEY),
-                metadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY),
-                metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
-        }
-
-        private SourceKind requireSupported() throws UnsupportedSchemaVersionException
-        {
-            if(ALIAS_TARGET_VERSION.equals(aliasVersion) && P25_TARGET_VERSION.equals(p25Version) &&
-                TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) && DMR_TARGET_VERSION.equals(dmrVersion))
-            {
-                return SourceKind.CURRENT;
-            }
-
-            if(Integer.toString(Alpha9DatabaseMigration.ALIAS_VERSION).equals(aliasVersion) &&
-                Integer.toString(Alpha9DatabaseMigration.P25_VERSION).equals(p25Version) &&
-                Integer.toString(Alpha9DatabaseMigration.TRUNKED_SITE_VERSION).equals(trunkedSiteVersion) &&
-                Integer.toString(Alpha9DatabaseMigration.DMR_VERSION).equals(dmrVersion))
-            {
-                return SourceKind.ALPHA_9;
-            }
-
-            throw new UnsupportedSchemaVersionException(
-                "Expected the complete current tuple (Alias v" + ALIAS_TARGET_VERSION +
-                    ", P25 activity v" + P25_TARGET_VERSION +
-                    ", trunked-site v" + TRUNKED_SITE_TARGET_VERSION + ", DMR activity v" +
-                    DMR_TARGET_VERSION + ") or the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 tuple (Alias v" +
-                    Alpha9DatabaseMigration.ALIAS_VERSION + ", P25 activity v" +
-                    Alpha9DatabaseMigration.P25_VERSION + ", trunked-site v" +
-                    Alpha9DatabaseMigration.TRUNKED_SITE_VERSION + ", DMR activity v" +
-                    Alpha9DatabaseMigration.DMR_VERSION + "). Found " + description() + ". Refusing migration.");
-        }
-
-        private String description()
-        {
-            return "Alias schema v" + (aliasVersion == null ? "unknown" : aliasVersion) +
-                ", P25 activity schema v" + (p25Version == null ? "unknown" : p25Version) +
-                ", trunked-site schema " +
-                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion) +
-                ", and DMR activity schema " +
-                (dmrVersion == null ? "not installed" : "v" + dmrVersion);
-        }
-    }
-
-    private static final class UnsupportedSchemaVersionException extends Exception
-    {
-        private UnsupportedSchemaVersionException(String message)
-        {
-            super(message);
+            super(message, cause);
         }
     }
 
@@ -610,14 +634,8 @@ public final class ApplicationDatabaseMigrator
     {
     }
 
-    private record MigrationSummary(int rebasedDirectories, String releaseSummary)
+    private record MigrationSummary(int rebasedDirectories, DatabaseMigrationChain.MigrationReport chainReport)
     {
-    }
-
-    private enum SourceKind
-    {
-        ALPHA_9,
-        CURRENT
     }
 
 }

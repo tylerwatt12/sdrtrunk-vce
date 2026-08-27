@@ -13,8 +13,11 @@ package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -66,5 +69,27 @@ class ApplicationMigratorLauncherTest
                 System.setProperty("java.class.path", originalClassPath);
             }
         }
+    }
+
+    @Test
+    void boundedOutputRetainsTheBeginningAndFinalFailure() throws Exception
+    {
+        String beginning = "migration-plan-beginning\n";
+        String ending = "\nERROR: final migration failure";
+        byte[] padding = new byte[2 * 1024 * 1024];
+        java.util.Arrays.fill(padding, (byte)'x');
+        var source = new java.io.ByteArrayOutputStream();
+        source.write(beginning.getBytes(StandardCharsets.UTF_8));
+        source.write(padding);
+        source.write(ending.getBytes(StandardCharsets.UTF_8));
+
+        byte[] captured = ApplicationMigratorLauncher.readBounded(
+            new ByteArrayInputStream(source.toByteArray()));
+        String output = new String(captured, StandardCharsets.UTF_8);
+
+        assertEquals(1024 * 1024, captured.length);
+        assertTrue(output.startsWith(beginning));
+        assertTrue(output.contains("output truncated; final diagnostics follow"));
+        assertTrue(output.endsWith(ending));
     }
 }

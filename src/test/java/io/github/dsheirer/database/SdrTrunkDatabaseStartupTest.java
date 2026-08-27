@@ -348,7 +348,7 @@ class SdrTrunkDatabaseStartupTest
         assertEquals("delete", journalMode(database));
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("exact current main schema layout"));
+        assertTrue(failure.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertEquals("delete", journalMode(database));
     }
 
@@ -369,7 +369,7 @@ class SdrTrunkDatabaseStartupTest
 
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("exact current main schema layout"));
+        assertTrue(failure.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
     }
 
     private static String journalMode(Path database) throws Exception

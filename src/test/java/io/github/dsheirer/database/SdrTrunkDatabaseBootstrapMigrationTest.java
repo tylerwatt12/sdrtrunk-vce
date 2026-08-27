@@ -16,10 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.upgrade.Alpha9TestDatabase;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
+import io.github.dsheirer.database.upgrade.Format1TestDatabase;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,16 +33,16 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class SdrTrunkDatabaseBootstrapAlpha9Test
+class SdrTrunkDatabaseBootstrapMigrationTest
 {
     @TempDir
     Path mTemporaryFolder;
 
     @Test
-    void headlessAlpha9WithoutUpgradeFlagRefusesWithoutMutation() throws Exception
+    void headlessFormat1WithoutUpgradeFlagRefusesWithoutMutation() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("no-upgrade-flag");
-        Path database = createAlpha9Database(dataRoot, "Retained Without Flag");
+        Path database = createFormat1Database(dataRoot, "Retained Without Flag");
         byte[] before = sha256(database);
 
         IOException exception = assertThrows(IOException.class,
@@ -50,16 +50,16 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
 
         assertTrue(exception.getMessage().contains("--upgrade-current"));
         assertArrayEquals(before, sha256(database));
-        assertEquals(alpha9State(), ApplicationMigrationService.readMigrationState(database));
+        assertFormat(database, 1, "alpha8-shared", false);
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
     @Test
-    void headlessUpgradeCurrentMigratesAlpha9AndRetainsItsSafetyBackup() throws Exception
+    void headlessUpgradeCurrentMigratesFormat1AndRetainsItsSafetyBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("upgrade-current");
-        Path database = createAlpha9Database(dataRoot, "Migrated In Place");
+        Path database = createFormat1Database(dataRoot, "Migrated In Place");
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
             SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true);
@@ -70,7 +70,7 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         assertEquals("Migrated In Place", scalar(database, "SELECT name FROM alias WHERE id=1"));
         List<Path> backups = regularFiles(database.getParent().resolve("backups"));
         assertEquals(1, backups.size());
-        assertEquals(alpha9State(), ApplicationMigrationService.readMigrationState(backups.getFirst()));
+        assertFormat(backups.getFirst(), 1, "alpha8-shared", false);
         assertEquals("Migrated In Place", scalar(backups.getFirst(), "SELECT name FROM alias WHERE id=1"));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoSqliteSidecars(backups.getFirst());
@@ -78,10 +78,10 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
     }
 
     @Test
-    void upgradeDataImportsAndMigratesAlpha9WithoutChangingItsSource() throws Exception
+    void upgradeDataImportsAndMigratesFormat1WithoutChangingItsSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("import-source");
-        Path sourceDatabase = createAlpha9Database(sourceRoot, "Imported Alpha 9");
+        Path sourceDatabase = createFormat1Database(sourceRoot, "Imported Format 1");
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("import-target");
         Path passwordFile = passwordFile("import-target-password.txt");
@@ -93,11 +93,42 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
-        assertEquals(alpha9State(), ApplicationMigrationService.readMigrationState(sourceDatabase));
+        assertFormat(sourceDatabase, 1, "alpha8-shared", false);
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertCurrentDatabase(targetDatabase);
-        assertEquals("Imported Alpha 9", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertEquals("Imported Format 1", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
         assertFalse(Files.exists(targetDatabase.getParent().resolve("backups")));
+        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
+        assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    @Test
+    void upgradeDataWithDirectDatabaseSelectionImportsOnlyThatFile() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("database-file-import-source");
+        Path sourceDatabase = createFormat1Database(sourceRoot, "Imported Database File");
+        byte[] sourceHash = sha256(sourceDatabase);
+        Files.createDirectories(sourceRoot.resolve("jmbe"));
+        Files.writeString(sourceRoot.resolve("jmbe/jmbe-test.jar"), "must not be copied");
+        Files.createDirectories(sourceRoot.resolve("modules"));
+        Files.writeString(sourceRoot.resolve("modules/module-test.jar"), "must not be copied");
+        Files.createDirectories(sourceRoot.resolve("vault"));
+        Files.writeString(EncryptionKeyVaultPath.getVaultPath(sourceRoot), "invalid unselected vault");
+        Path targetRoot = mTemporaryFolder.resolve("database-file-import-target");
+        Path passwordFile = passwordFile("database-file-import-password.txt");
+
+        SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
+            new String[]{"--upgrade-data", sourceDatabase.toString(), "--admin-password-file",
+                passwordFile.toString()}, targetRoot, true);
+
+        assertTrue(result.startApplication());
+        assertFalse(result.initializeNewPreferences());
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
+        assertCurrentDatabase(targetDatabase);
+        assertEquals("Imported Database File", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertFalse(Files.exists(targetRoot.resolve("jmbe")));
+        assertFalse(Files.exists(targetRoot.resolve("modules")));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
@@ -122,28 +153,27 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
     }
 
     @Test
-    void unsupportedExistingAlpha9LayoutLeavesNoBackupOrStagedDatabase() throws Exception
+    void unsupportedExistingFormat1LayoutLeavesNoBackupOrStagedDatabase() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("unsupported-current");
-        Path database = createAlpha9Database(dataRoot, "Unsupported Existing");
+        Path database = createFormat1Database(dataRoot, "Unsupported Existing");
         addUnexpectedSchemaObject(database);
         byte[] before = sha256(database);
 
         SQLException exception = assertThrows(SQLException.class,
             () -> SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true));
 
-        assertTrue(exception.getMessage().contains(
-            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
+        assertTrue(exception.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
     @Test
-    void unsupportedImportedAlpha9LayoutLeavesSourceAndTargetUntouched() throws Exception
+    void unsupportedImportedFormat1LayoutLeavesSourceAndTargetUntouched() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("unsupported-import-source");
-        Path sourceDatabase = createAlpha9Database(sourceRoot, "Unsupported Import");
+        Path sourceDatabase = createFormat1Database(sourceRoot, "Unsupported Import");
         addUnexpectedSchemaObject(sourceDatabase);
         byte[] before = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("unsupported-import-target");
@@ -151,17 +181,16 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         SQLException exception = assertThrows(SQLException.class, () -> SdrTrunkDatabaseBootstrap.run(
             new String[]{"--upgrade-data", sourceRoot.toString()}, targetRoot, true));
 
-        assertTrue(exception.getMessage().contains(
-            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
+        assertTrue(exception.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertArrayEquals(before, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
-    private static Path createAlpha9Database(Path dataRoot, String aliasName) throws Exception
+    private static Path createFormat1Database(Path dataRoot, String aliasName) throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Alpha9TestDatabase.create(database);
+        Format1TestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -179,7 +208,7 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
     {
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("CREATE TABLE unexpected_alpha9_bootstrap_object(id INTEGER PRIMARY KEY)");
+            statement.executeUpdate("CREATE TABLE unexpected_format_1_bootstrap_object(id INTEGER PRIMARY KEY)");
         }
     }
 
@@ -203,27 +232,18 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
 
     private static void assertCurrentDatabase(Path database) throws Exception
     {
-        assertEquals(currentState(), ApplicationMigrationService.readMigrationState(database));
+        assertFormat(database, DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.current().id(), true);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         assertEquals("wal", scalar(database, "PRAGMA journal_mode"));
     }
 
-    private static ApplicationMigrationService.MigrationState alpha9State()
+    private static void assertFormat(Path database, int version, String id, boolean markerPresent) throws Exception
     {
-        return new ApplicationMigrationService.MigrationState(
-            ApplicationMigrationService.ALPHA_9_ALIAS_VERSION,
-            ApplicationMigrationService.ALPHA_9_P25_VERSION,
-            TrunkedSiteSchema.SCHEMA_VERSION,
-            ApplicationMigrationService.CURRENT_DMR_VERSION);
-    }
-
-    private static ApplicationMigrationService.MigrationState currentState()
-    {
-        return new ApplicationMigrationService.MigrationState(
-            ApplicationMigrationService.CURRENT_ALIAS_VERSION,
-            ApplicationMigrationService.CURRENT_P25_VERSION,
-            TrunkedSiteSchema.SCHEMA_VERSION,
-            ApplicationMigrationService.CURRENT_DMR_VERSION);
+        DatabaseFormatCatalog.DetectedFormat source =
+            ApplicationMigrationService.readMigrationPlan(database).source();
+        assertEquals(version, source.version());
+        assertEquals(id, source.id());
+        assertEquals(markerPresent, source.markerPresent());
     }
 
     private static List<Path> regularFiles(Path directory) throws Exception

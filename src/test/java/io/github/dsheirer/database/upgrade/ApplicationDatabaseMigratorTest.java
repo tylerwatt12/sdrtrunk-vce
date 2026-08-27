@@ -16,12 +16,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.module.decode.DecoderFactory;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.web.auth.AccessTier;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -32,6 +38,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.UUID;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -67,9 +74,134 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void migratesExactPublishedAlpha8Alpha9Alpha10LayoutDirectlyToCurrentSchema() throws Exception
+    void adoptsMarkerlessCurrentLayoutWithoutRunningSchemaSteps() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); var statement = connection.prepareStatement(
+            "DELETE FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("adopt-global-format-marker"));
+        assertFalse(result.output().contains("format-1-to-2"));
+        assertFalse(result.output().contains("format-2-to-3"));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+    }
+
+    @Test
+    void migratesExactPublishedFormat2NightlyToCurrent() throws Exception
+    {
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertFalse(result.output().contains("format-1-to-2"));
+        assertTrue(result.output().contains("PLAN STEP: 2 -> 3 [format-2-to-3]"));
+        assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+                SqliteSchemaValidator.fingerprint(connection));
+        }
+    }
+
+    @Test
+    void preservesNoncanonicalSameFamilyFactoryNameAndUsesItsStoredSpelling() throws Exception
+    {
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE alias_list SET name='default p25' WHERE name='Default P25'");
+            try(var insert = connection.prepareStatement("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, name, decoder_type, source_type, frequency_count, config_json
+                ) VALUES (1, 1, 'Blank P25', 'P25_PHASE1', 'TUNER', 0, ?)
+                """))
+            {
+                insert.setString(1, channelJson("Blank P25", null, null, null,
+                    DecoderType.P25_PHASE1, 0));
+                insert.executeUpdate();
+            }
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertEquals("default p25", scalar(database,
+            "SELECT name FROM alias_list WHERE name='Default P25' COLLATE NOCASE"));
+        assertEquals("default p25:default p25", scalar(database, """
+            SELECT alias_list_name || ':' || json_extract(config_json, '$.aliasListName')
+            FROM configuration_channel WHERE id=1
+            """));
+        assertEquals("27", metadata(database, "p25_activity_schema_version"));
+    }
+
+    @Test
+    void preservesExistingCanonicalAliasListRoutingInsteadOfRepurposingIt() throws Exception
+    {
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership
+                WHERE alias_list_id=(SELECT id FROM alias_list WHERE name='Default P25')
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*)
+            FROM alias_list_unmatched_talkgroup_scan_list_membership
+            WHERE alias_list_id=(SELECT id FROM alias_list WHERE name='Default P25')
+            """));
+        assertEquals("27", metadata(database, "p25_activity_schema_version"));
+    }
+
+    @Test
+    void preservesOpaqueWebCredentialsWithoutReportingSecrets() throws Exception
+    {
+        Path database = Format1TestDatabase.create(newStagedDatabase());
+        char[] adminPassword = "format-one-admin-secret".toCharArray();
+        char[] listenerPassword = "format-one-listener-secret".toCharArray();
+        WebAccessService sourceAccess = new WebAccessService(database);
+        sourceAccess.provisionOrResetPrimaryAdmin(adminPassword);
+        sourceAccess.createUser("listener", listenerPassword, AccessTier.USER);
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        WebAccessService migratedAccess = new WebAccessService(database);
+        assertEquals(AccessTier.ADMIN,
+            migratedAccess.authenticate("admin", adminPassword).orElseThrow().tier());
+        assertEquals(AccessTier.USER,
+            migratedAccess.authenticate("listener", listenerPassword).orElseThrow().tier());
+        assertFalse(result.output().contains(new String(adminPassword)));
+        assertFalse(result.output().contains(new String(listenerPassword)));
+        assertFalse(result.error().contains(new String(adminPassword)));
+        assertFalse(result.error().contains(new String(listenerPassword)));
+    }
+
+    @Test
+    void migratesExactPublishedAlpha8Alpha9Alpha10LayoutThroughEveryAdjacentStep() throws Exception
+    {
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9MigrationCases(database);
         Path sourceRoot = mTemporaryFolder.resolve("alpha9-source").toAbsolutePath();
         Path targetRoot = mTemporaryFolder.resolve("alpha10-target").toAbsolutePath();
@@ -87,12 +219,15 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database, sourceRoot, targetRoot);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
-        assertTrue(result.output().contains("converted 4 unmatched-talkgroup"));
-        assertTrue(result.output().contains("removed 1 retired fully-qualified talkgroup"));
-        assertTrue(result.output().contains("1 retired fully-qualified radio"));
-        assertTrue(result.output().contains("preserved 3 current P25 affiliation"));
+        assertTrue(result.output().contains("PLAN STEP: 1 -> 2 [format-1-to-2]"));
+        assertTrue(result.output().contains("TRANSFORM unmatched-talkgroup catch-all aliases: 4 row(s)"));
+        assertTrue(result.output().contains("DROP retired fully-qualified talkgroup aliases: 1 row(s)"));
+        assertTrue(result.output().contains("DROP retired fully-qualified radio aliases: 1 row(s)"));
+        assertTrue(result.output().contains(
+            "DROP broadcast routes attached to retired fully-qualified aliases: 2 row(s)"));
+        assertTrue(result.output().contains("PRESERVE current P25 affiliations: 3 row(s)"));
         assertTrue(result.output().contains("without inventing site presence"));
+        assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -130,7 +265,7 @@ class ApplicationDatabaseMigratorTest
                     SELECT alias_id FROM alias_scan_list_membership ORDER BY alias_id
                 )
                 """));
-            assertEquals("5|6|7|11|12|13|14", scalar(connection, """
+            assertEquals("5|6|7|12|13|14", scalar(connection, """
                 SELECT group_concat(alias_list_id, '|')
                 FROM (
                     SELECT alias_list_id
@@ -322,7 +457,7 @@ class ApplicationDatabaseMigratorTest
         try(Connection migrated = open(database); Connection current = open(exactCurrent))
         {
             assertEquals(SqliteSchemaValidator.fingerprint(current), SqliteSchemaValidator.fingerprint(migrated),
-                "The direct Alpha 8/Alpha 9/Alpha 10 transition must produce the exact current schema, not a " +
+                "The complete Alpha 8/Alpha 9/Alpha 10 chain must produce the exact current schema, not a " +
                     "compatibility layout");
         }
     }
@@ -330,7 +465,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9VersionStampsOnTheWrongSchema() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -339,9 +474,8 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains(
-            "not the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 schema layout"));
+        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
+        assertTrue(result.error().contains("Unrecognized SQLite database schema fingerprint"));
         try(Connection connection = open(database))
         {
             assertEquals("4", metadata(connection, "alias_schema_version"));
@@ -352,7 +486,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void alpha9MigrationRejectsWrongFamilyFactoryNameCollisionWithoutChangingTheSource() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -369,28 +503,51 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.error().contains("expected [P25]"));
         assertEquals("4", metadata(database, "alias_schema_version"));
         assertEquals("DMR", scalar(database, "SELECT family FROM alias_list WHERE name='Default P25'"));
-        try(Connection connection = open(database))
+        assertFalse(result.output().contains("Updating the staged database"));
+    }
+
+    @Test
+    void refusesLegacyP25QualifiersOnAnOtherwiseRetainedAliasWithoutChangingTheSource() throws Exception
+    {
+        Path database = Format1TestDatabase.create(newStagedDatabase());
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            Alpha9DatabaseMigration.validateSource(connection);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'Qualified', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(
+                    id, alias_list_id, name, matcher_type, protocol, value, wacn, p25_system_id
+                ) VALUES (1, 1, 'Unexpected Qualifier', 'TALKGROUP', 'APCO25', 43, 781824, 840)
+                """);
         }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains("legacy P25 qualifier values"));
+        assertFalse(result.output().contains("Updating the staged database"));
+        assertEquals("4", metadata(database, "alias_schema_version"));
+        assertEquals("781824:840", scalar(database, """
+            SELECT wacn || ':' || p25_system_id FROM alias WHERE id=1
+            """));
     }
 
     @Test
     void alpha9MigrationAssignsDefaultsToBlankAliasListNames() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9MigrationCases(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
                 UPDATE configuration_channel
-                SET alias_list_name = '', config_json = '{"aliasListName":""}'
+                SET alias_list_name = '', config_json = json_set(config_json, '$.aliasListName', '')
                 WHERE id = 78
                 """);
             statement.executeUpdate("""
                 UPDATE configuration_channel
-                SET alias_list_name = '   ', config_json = '{"aliasListName":"   "}'
+                SET alias_list_name = '   ', config_json = json_set(config_json, '$.aliasListName', '   ')
                 WHERE id = 81
                 """);
         }
@@ -413,7 +570,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationWithoutAProtocolNeutralScope() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -439,7 +596,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationWithANonstandardP25IdentityDomain() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -463,7 +620,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationWithAReservedP25Identity() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -477,7 +634,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("reserved identities"));
+        assertTrue(result.error().contains("invalid identities or confirmation times"));
         assertEquals("24", metadata(database, "p25_activity_schema_version"));
         assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
     }
@@ -485,7 +642,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationWithoutAValidConfirmationTime() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -499,7 +656,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("invalid confirmation times"));
+        assertTrue(result.error().contains("invalid identities or confirmation times"));
         assertEquals("24", metadata(database, "p25_activity_schema_version"));
         assertEquals("0", scalar(database,
             "SELECT updated_at_ms FROM p25_radio_affiliation WHERE system_key=70 AND radio_id=1800001"));
@@ -508,7 +665,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationWithNonIntegerStorageClasses() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -522,7 +679,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("non-integer values"));
+        assertTrue(result.error().contains("invalid identities or confirmation times"));
         assertEquals("4", metadata(database, "alias_schema_version"));
         assertEquals("24", metadata(database, "p25_activity_schema_version"));
         assertEquals("real:real:text", scalar(database, """
@@ -534,14 +691,14 @@ class ApplicationDatabaseMigratorTest
     @Test
     void usesIndexBackedBoundedIdentityAdmissionChecks() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
         boolean usesAffiliationIndex = false;
 
         try(Connection connection = open(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery(
-                "EXPLAIN QUERY PLAN " + Alpha9DatabaseMigration.IDENTITY_ADMISSION_CAP_QUERY))
+                "EXPLAIN QUERY PLAN " + Format1To2DatabaseMigration.IDENTITY_ADMISSION_CAP_QUERY))
         {
             while(resultSet.next())
             {
@@ -557,7 +714,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationsAboveTheBoundedCurrentStateCap() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -584,7 +741,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesAlpha9AffiliationsWhoseEndpointsExceedTheIdentityCap() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -611,7 +768,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void migratesAtTheExactIdentityAdmissionCap() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -639,7 +796,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void migratesMinimumAndMaximumP25IdentitiesAcrossIndependentScopes() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9P25Scope(database, 70, 840);
         insertAlpha9P25Scope(database, 71, 841);
 
@@ -738,7 +895,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("complete current tuple"));
+        assertTrue(result.error().contains("mixed or partially migrated"));
 
         try(Connection connection = open(database))
         {
@@ -763,7 +920,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("complete current tuple"));
+        assertTrue(result.error().contains("mixed or partially migrated"));
         try(Connection connection = open(database))
         {
             assertEquals("3", metadata(connection, "alias_schema_version"));
@@ -786,7 +943,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("complete current tuple"));
+        assertTrue(result.error().contains("mixed or partially migrated"));
 
         try(Connection connection = open(database))
         {
@@ -797,7 +954,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesIntermediateP25Version25WithoutChangingIt() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database))
         {
@@ -807,7 +964,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 tuple"));
+        assertTrue(result.error().contains("mixed or partially migrated"));
         assertEquals("25", metadata(database, "p25_activity_schema_version"));
         assertEquals("1", scalar(database, """
             SELECT COUNT(*) FROM sqlite_schema
@@ -848,7 +1005,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void alpha9LateRelocationFailureRollsBackTheEntireReleaseMigration() throws Exception
     {
-        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9MigrationCases(database);
         Path source = mTemporaryFolder.resolve("alpha9-rollback-source").toAbsolutePath();
         Path target = mTemporaryFolder.resolve("alpha9-rollback-target").toAbsolutePath();
@@ -868,7 +1025,7 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database))
         {
-            Alpha9DatabaseMigration.validateSource(connection);
+            new Format1To2DatabaseMigration().validateSource(connection);
             assertEquals("4", metadata(connection, "alias_schema_version"));
             assertEquals("24", metadata(connection, "p25_activity_schema_version"));
             assertEquals("15", scalar(connection, "SELECT COUNT(*) FROM alias"));
@@ -908,6 +1065,86 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    void refusesAStagedLookingSymbolicLinkToALiveDatabase() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("live-symlink-data");
+        Path liveDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(liveDatabase);
+        byte[] before = Files.readAllBytes(liveDatabase);
+        Path stagedLink = newStagedDatabase();
+
+        try
+        {
+            Files.createSymbolicLink(stagedLink, liveDatabase);
+        }
+        catch(UnsupportedOperationException | IllegalArgumentException | java.io.IOException | SecurityException e)
+        {
+            Assumptions.assumeTrue(false, "Symbolic links are unavailable: " + e.getMessage());
+        }
+
+        CommandResult result = run(stagedLink);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_INPUT, result.exitCode());
+        assertTrue(result.error().contains("must not be a symbolic link"));
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(liveDatabase)));
+    }
+
+    @Test
+    void refusesAStagedLookingAncestorSymlinkToALiveDataRoot() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("live-ancestor-data");
+        Path liveDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(liveDatabase);
+        byte[] before = Files.readAllBytes(liveDatabase);
+        Path deceptiveStageRoot = mTemporaryFolder.resolve(".live-ancestor-data.migration-" + UUID.randomUUID());
+
+        try
+        {
+            Files.createSymbolicLink(deceptiveStageRoot, dataRoot);
+        }
+        catch(UnsupportedOperationException | java.io.IOException | SecurityException e)
+        {
+            Assumptions.assumeTrue(false, "Symbolic links are unavailable: " + e.getMessage());
+        }
+
+        Path disguisedLiveDatabase = deceptiveStageRoot.resolve("database")
+            .resolve(SdrTrunkDatabasePath.DATABASE_FILENAME);
+        CommandResult result = run(disguisedLiveDatabase);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_INPUT, result.exitCode());
+        assertTrue(result.error().contains("resolves outside an application stage"));
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(liveDatabase)));
+    }
+
+    @Test
+    void refusesAStagedLookingHardLinkToALiveDatabaseWhenLinkCountsAreAvailable() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("live-hard-link-data");
+        Path liveDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(liveDatabase);
+        byte[] before = Files.readAllBytes(liveDatabase);
+        Path stagedLink = newStagedDatabase();
+
+        try
+        {
+            Files.createLink(stagedLink, liveDatabase);
+            Object links = Files.getAttribute(stagedLink, "unix:nlink", java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            Assumptions.assumeTrue(links instanceof Number && ((Number)links).longValue() > 1,
+                "Filesystem link counts are unavailable");
+        }
+        catch(UnsupportedOperationException | IllegalArgumentException | java.io.IOException | SecurityException e)
+        {
+            Assumptions.assumeTrue(false, "Hard links are unavailable: " + e.getMessage());
+        }
+
+        CommandResult result = run(stagedLink);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_INPUT, result.exitCode());
+        assertTrue(result.error().contains("multiple filesystem links"));
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(liveDatabase)));
+    }
+
+    @Test
     void reportsUsageAndMissingInputWithStableExitCodes()
     {
         CommandResult help = runArguments("--help");
@@ -917,6 +1154,20 @@ class ApplicationDatabaseMigratorTest
         CommandResult missing = runArguments();
         assertEquals(ApplicationDatabaseMigrator.EXIT_USAGE, missing.exitCode());
         assertTrue(missing.error().contains("staged database path"));
+    }
+
+    @Test
+    void reportsCorruptSqliteAsMigrationFailureInsteadOfUnsupportedFormat() throws Exception
+    {
+        Path database = newStagedDatabase();
+        byte[] corrupt = "not a sqlite database".getBytes(StandardCharsets.UTF_8);
+        Files.write(database, corrupt);
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains("Database migration failed"));
+        assertTrue(java.util.Arrays.equals(corrupt, Files.readAllBytes(database)));
     }
 
     private Path newStagedDatabase() throws Exception
@@ -1045,6 +1296,22 @@ class ApplicationDatabaseMigratorTest
                     (85, 9, 'Retired', 'MPT', 'MPT', NULL,
                         'MPT1327', 'TUNER', 454000000, 1, '{}')
                 """);
+            updateChannelJson(connection, 77, "Preserved Channel", "Preserved System", "Preserved Site", "Safe",
+                DecoderType.P25_PHASE1, 851012500);
+            updateChannelJson(connection, 78, "P25 Phase 1", "P25", "Phase 1", null,
+                DecoderType.P25_PHASE1, 851012500);
+            updateChannelJson(connection, 79, "P25 Phase 2", "P25", "Phase 2", null,
+                DecoderType.P25_PHASE2, 851012500);
+            updateChannelJson(connection, 80, "P25 Conventional", "P25", "Conventional", null,
+                DecoderType.P25_CONVENTIONAL, 155000000);
+            updateChannelJson(connection, 81, "DMR", "DMR", "Trunked", null,
+                DecoderType.DMR, 451000000);
+            updateChannelJson(connection, 82, "NXDN", "NXDN", "Trunked", null,
+                DecoderType.NXDN, 452000000);
+            updateChannelJson(connection, 83, "NBFM", "Analog", "NBFM", null,
+                DecoderType.NBFM, 453000000);
+            updateChannelJson(connection, 84, "AM", "Analog", "AM", null,
+                DecoderType.AM, 118500000);
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)
                 VALUES ('migration-sentinel', '{"preserved":true}', 1000)
@@ -1151,6 +1418,33 @@ class ApplicationDatabaseMigratorTest
                 WHERE key='trunked_identity_metrics_started_at_ms'
                 """);
         }
+    }
+
+    private static void updateChannelJson(Connection connection, int id, String name, String system, String site,
+                                          String aliasListName, DecoderType decoderType, long frequency)
+        throws Exception
+    {
+        try(var statement = connection.prepareStatement(
+            "UPDATE configuration_channel SET config_json=? WHERE id=?"))
+        {
+            statement.setString(1, channelJson(name, system, site, aliasListName, decoderType, frequency));
+            statement.setInt(2, id);
+            assertEquals(1, statement.executeUpdate());
+        }
+    }
+
+    private static String channelJson(String name, String system, String site, String aliasListName,
+                                      DecoderType decoderType, long frequency) throws Exception
+    {
+        Channel channel = new Channel(name);
+        channel.setSystem(system);
+        channel.setSite(site);
+        channel.setAliasListName(aliasListName);
+        channel.setDecodeConfiguration(DecoderFactory.getDecodeConfiguration(decoderType));
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(frequency);
+        channel.setSourceConfiguration(source);
+        return OBJECT_MAPPER.writeValueAsString(channel);
     }
 
     private static void insertAlpha9P25Scope(Path database, int systemKey) throws Exception

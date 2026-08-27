@@ -44,11 +44,13 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/stats/activity/DmrActivitySchema.java",
         "java/io/github/dsheirer/stats/site/TrunkedSiteSchema.java",
         "java/io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultSchema.java",
-        "java/io/github/dsheirer/database/upgrade/Alpha9DatabaseMigration.java");
+        "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format2SchemaSql.java",
+        "java/io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",
         "java/io/github/dsheirer/stats/activity/P25ActivityLogSchema.java",
-        "java/io/github/dsheirer/database/upgrade/Alpha9DatabaseMigration.java");
+        "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",
         "java/io/github/dsheirer/database/importer/LegacyXmlConfigurationImporter.java");

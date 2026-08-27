@@ -15,6 +15,8 @@ import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
+import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
@@ -48,35 +50,36 @@ import org.sqlite.SQLiteConfig;
  * Stages, validates, and promotes portable data accepted by the current sdrtrunk-vce build.
  *
  * <p>The Application Migrator always runs in a child process and only receives a staged database. Normal startup
- * services remain validation-only for an existing SQLite schema. Numbered release preparation may temporarily add
- * the immediately preceding public release as a supported schema source.</p>
+ * services remain validation-only for an existing SQLite schema. Every supported Alpha 8-or-newer source is resolved
+ * by the whole-file format catalog and advanced through the same adjacent migration chain.</p>
  */
 public final class ApplicationMigrationService
 {
-    public static final int ALPHA_9_P25_VERSION = Alpha9DatabaseMigration.P25_VERSION;
-    public static final int ALPHA_9_ALIAS_VERSION = Alpha9DatabaseMigration.ALIAS_VERSION;
-    public static final int CURRENT_P25_VERSION = P25ActivityLogSchema.SCHEMA_VERSION;
-    public static final int CURRENT_ALIAS_VERSION = SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION;
-    public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
-
-    private static final String P25_VERSION_KEY = "p25_activity_schema_version";
-    private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final long FREE_SPACE_MARGIN_BYTES = 64L * 1024L * 1024L;
     private static final DateTimeFormatter BACKUP_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final List<String> COPIED_DIRECTORIES = List.of("jmbe", "modules");
 
     private final Snapshotter mSnapshotter;
     private final MigrationRunner mMigrationRunner;
+    private final StagePromoter mStagePromoter;
 
     public ApplicationMigrationService()
     {
-        this(SqliteDatabaseSnapshot::create, ApplicationMigratorLauncher::run);
+        this(SqliteDatabaseSnapshot::create, ApplicationMigratorLauncher::run,
+            ApplicationMigrationService::moveAtomically);
     }
 
     ApplicationMigrationService(Snapshotter snapshotter, MigrationRunner migrationRunner)
     {
+        this(snapshotter, migrationRunner, ApplicationMigrationService::moveAtomically);
+    }
+
+    ApplicationMigrationService(Snapshotter snapshotter, MigrationRunner migrationRunner,
+                                StagePromoter stagePromoter)
+    {
         mSnapshotter = Objects.requireNonNull(snapshotter);
         mMigrationRunner = Objects.requireNonNull(migrationRunner);
+        mStagePromoter = Objects.requireNonNull(stagePromoter);
     }
 
     /**
@@ -85,12 +88,48 @@ public final class ApplicationMigrationService
     public MigrationResult importPrevious(Path sourceDataRoot, Path targetDataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
+        return importPrevious(new PreviousBuildLocator.Selection(sourceDataRoot.toAbsolutePath().normalize(),
+            PreviousBuildLocator.InputScope.PORTABLE_PROFILE), targetDataRoot, progress);
+    }
+
+    /**
+     * Imports either a complete previous portable profile or only a directly selected SQLite database into a data
+     * root that does not yet have a database. Database-only input never copies neighboring profile artifacts or
+     * rebases portable paths.
+     */
+    public MigrationResult importPrevious(PreviousBuildLocator.Selection source, Path targetDataRoot,
+                                          ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        return importPrevious(source, targetDataRoot, null, progress);
+    }
+
+    /**
+     * Imports a previous source only if it still matches the plan already presented to the operator.
+     */
+    public MigrationResult importPrevious(PreviousBuildLocator.Selection source, Path targetDataRoot,
+                                          DatabaseMigrationChain.PreflightReport approvedPlan,
+                                          ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
-        Path sourceRoot = sourceDataRoot.toAbsolutePath().normalize();
+        Objects.requireNonNull(source, "Previous-build input cannot be null");
+        Path sourcePath = source.path().toAbsolutePath().normalize();
+        PreviousBuildLocator.InputScope inputScope = source.scope();
+        Path sourceRoot = inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ? sourcePath : null;
+        Path sourceDatabase = inputScope == PreviousBuildLocator.InputScope.DATABASE_FILE ? sourcePath :
+            SdrTrunkDatabasePath.getDatabasePath(sourcePath);
         Path targetRoot = targetDataRoot.toAbsolutePath().normalize();
-        requireSeparatePhysicalRoots(sourceRoot, targetRoot);
-        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
+
+        if(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE)
+        {
+            requireSeparatePhysicalRoots(sourceRoot, targetRoot);
+        }
+        else
+        {
+            requireSeparatePhysicalDatabases(sourceDatabase, targetDatabase);
+        }
 
         if(Files.exists(targetDatabase))
         {
@@ -99,7 +138,13 @@ public final class ApplicationMigrationService
         SqliteDatabaseSnapshot.requireSourceUsable(sourceDatabase);
 
         listener.update("Checking previous data");
-        MigrationState sourceState = requireSupportedState(sourceDatabase);
+        DatabaseMigrationChain.PreflightReport sourcePlan = readMigrationPlan(sourceDatabase);
+        if(approvedPlan != null)
+        {
+            requireMatchingPlan(approvedPlan, sourcePlan, "source database selected after confirmation");
+        }
+        listener.update("Migration plan: " + describePlan(sourcePlan));
+        listener.update("Migration scope: " + describeScope(inputScope));
         requireEmptyOrMissing(targetRoot);
         FileAccessAttributeSnapshot targetRootAttributes =
             Files.exists(targetRoot, LinkOption.NOFOLLOW_LINKS) ? FileAccessAttributeSnapshot.capture(targetRoot) :
@@ -112,27 +157,38 @@ public final class ApplicationMigrationService
         }
 
         Files.createDirectories(targetParent);
-        ensureFreeSpace(targetParent, requiredImportSpace(sourceRoot));
+        ensureFreeSpace(targetParent, requiredImportSpace(sourceDatabase, sourceRoot));
         Path stageRoot = targetParent.resolve("." + targetRoot.getFileName() + ".migration-" + UUID.randomUUID());
         boolean promoted = false;
 
         try
         {
             Files.createDirectory(stageRoot);
-            listener.update("Copying setup");
+            listener.update(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ? "Copying setup" :
+                "Copying selected database");
             Path stagedDatabase = SdrTrunkDatabasePath.getDatabasePath(stageRoot);
             mSnapshotter.create(sourceDatabase, stagedDatabase);
-            copyOptionalProfileData(sourceRoot, stageRoot);
+            requireMatchingPlan(sourcePlan, readMigrationPlan(stagedDatabase), "staged import snapshot");
 
-            listener.update("Creating safety backup");
-            copyVaultSnapshot(sourceRoot, stageRoot);
+            if(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE)
+            {
+                copyOptionalProfileData(sourceRoot, stageRoot);
+                listener.update("Creating safety backup");
+                copyVaultSnapshot(sourceRoot, stageRoot);
+            }
 
             listener.update("Updating database");
-            String helperOutput = mMigrationRunner.run(stagedDatabase, sourceRoot, targetRoot);
+            String helperOutput = inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
+                mMigrationRunner.run(stagedDatabase, sourceRoot, targetRoot) :
+                mMigrationRunner.run(stagedDatabase, null, null);
 
             listener.update("Checking updated data");
             validateGlobalDatabase(stagedDatabase);
-            validateVaultIfPresent(stageRoot);
+
+            if(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE)
+            {
+                validateVaultIfPresent(stageRoot);
+            }
 
             listener.update("Finishing");
             requireNoSidecars(stagedDatabase,
@@ -141,10 +197,32 @@ public final class ApplicationMigrationService
             {
                 targetRootAttributes.applyTo(stageRoot);
             }
-            removeEmptyTreeIfPresent(targetRoot);
-            moveAtomically(stageRoot, targetRoot);
+            boolean removedOriginalTarget = false;
+            try
+            {
+                removeEmptyTreeIfPresent(targetRoot);
+                removedOriginalTarget = targetRootAttributes != null;
+                mStagePromoter.promote(stageRoot, targetRoot);
+            }
+            catch(IOException | RuntimeException promotionFailure)
+            {
+                if(removedOriginalTarget && !Files.exists(targetRoot, LinkOption.NOFOLLOW_LINKS))
+                {
+                    try
+                    {
+                        Files.createDirectory(targetRoot);
+                        targetRootAttributes.applyTo(targetRoot);
+                    }
+                    catch(IOException restoreFailure)
+                    {
+                        promotionFailure.addSuppressed(restoreFailure);
+                    }
+                }
+                throw promotionFailure;
+            }
             promoted = true;
-            return new MigrationResult(true, null, sourceState, helperOutput);
+            return new MigrationResult(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE, null,
+                sourcePlan, helperOutput, inputScope);
         }
         finally
         {
@@ -161,6 +239,14 @@ public final class ApplicationMigrationService
     public MigrationResult migrateCurrent(Path dataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
+        return migrateCurrent(dataRoot, null, progress);
+    }
+
+    /** Migrates in place only if the source still matches the plan already presented to the operator. */
+    public MigrationResult migrateCurrent(Path dataRoot, DatabaseMigrationChain.PreflightReport approvedPlan,
+                                          ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path normalizedRoot = dataRoot.toAbsolutePath().normalize();
         Path database = SdrTrunkDatabasePath.getDatabasePath(normalizedRoot);
@@ -168,10 +254,18 @@ public final class ApplicationMigrationService
         FileAccessAttributeSnapshot liveDatabaseAttributes = FileAccessAttributeSnapshot.capture(database);
 
         listener.update("Checking previous data");
-        MigrationState sourceState = requireSupportedState(database);
+        DatabaseMigrationChain.PreflightReport sourcePlan = readMigrationPlan(database);
+        if(approvedPlan != null)
+        {
+            requireMatchingPlan(approvedPlan, sourcePlan, "source database selected after confirmation");
+        }
+        listener.update("Migration plan: " + describePlan(sourcePlan));
+        listener.update("Migration scope: existing portable-profile database; external artifacts remain in place " +
+            "and stored paths are not remapped.");
 
         Path databaseDirectory = database.getParent();
-        int databaseCopies = 2;
+        //Safety backup + staged database + worst-case rollback journal/WAL for the staged transformation.
+        int databaseCopies = 3;
         long requiredDatabaseSpace = safeMultiply(sqliteFootprint(database), databaseCopies);
         ensureFreeSpace(databaseDirectory, safeAdd(requiredDatabaseSpace, FREE_SPACE_MARGIN_BYTES));
         Path backupDirectory = databaseDirectory.resolve("backups");
@@ -189,11 +283,8 @@ public final class ApplicationMigrationService
             listener.update("Creating safety backup");
             mSnapshotter.create(database, stagedBackup);
             liveDatabaseAttributes.applyTo(stagedBackup);
-            MigrationState backupState = requireSupportedState(stagedBackup);
-            if(!sourceState.equals(backupState))
-            {
-                throw new IOException("The safety backup schema state differs from the source database.");
-            }
+            DatabaseMigrationChain.PreflightReport backupPlan = readMigrationPlan(stagedBackup);
+            requireMatchingPlan(sourcePlan, backupPlan, "safety backup");
             finalizeStandaloneSnapshot(stagedBackup);
             requireNoSidecars(stagedBackup,
                 "The safety backup still has SQLite sidecar files and cannot be published safely.");
@@ -219,7 +310,7 @@ public final class ApplicationMigrationService
                 validateGlobalDatabase(database);
                 liveDatabaseAttributes.applyTo(database);
             }
-            catch(IOException | SQLException validationFailure)
+            catch(IOException | SQLException | RuntimeException validationFailure)
             {
                 try
                 {
@@ -233,7 +324,8 @@ public final class ApplicationMigrationService
                 throw validationFailure;
             }
 
-            return new MigrationResult(false, backup, sourceState, helperOutput);
+            return new MigrationResult(false, backup, sourcePlan, helperOutput,
+                PreviousBuildLocator.InputScope.DATABASE_FILE);
         }
         catch(IOException | SQLException | InterruptedException | RuntimeException e)
         {
@@ -285,10 +377,9 @@ public final class ApplicationMigrationService
         }
     }
 
-    /**
-     * Reads all application-migrator schema versions without creating or repairing anything.
-     */
-    public static MigrationState readMigrationState(Path database) throws IOException, SQLException
+    /** Inspects a source read-only and returns its exact ordered migration plan. */
+    public static DatabaseMigrationChain.PreflightReport readMigrationPlan(Path database)
+        throws IOException, SQLException
     {
         Path normalized = database.toAbsolutePath().normalize();
 
@@ -299,71 +390,52 @@ public final class ApplicationMigrationService
 
         try(Connection connection = openReadOnly(normalized))
         {
-            int aliasVersion = readRequiredVersion(connection, ALIAS_VERSION_KEY, "Alias");
-            int p25Version = readRequiredVersion(connection, P25_VERSION_KEY, "P25 activity");
-            Integer trunkedSiteVersion = readOptionalVersion(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY,
-                "trunked-site");
-            Integer dmrVersion = readOptionalVersion(connection, DmrActivitySchema.SCHEMA_VERSION_KEY,
-                "DMR activity");
-            return new MigrationState(aliasVersion, p25Version, trunkedSiteVersion, dmrVersion);
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspect(connection);
+            DatabaseMigrationChain.PreflightReport report =
+                DatabaseMigrationChain.validateSource(connection, source);
+            requireIntegrity(connection);
+            requireForeignKeysValid(connection);
+            return report;
         }
     }
 
-    private MigrationState requireSupportedState(Path database) throws IOException, SQLException
+    /** User-facing, value-free description of the ordered migration and its declared effects. */
+    public static String describePlan(DatabaseMigrationChain.PreflightReport plan)
     {
-        MigrationState state = readMigrationState(database);
-
-        if(!state.supported())
+        if(plan.steps().isEmpty())
         {
-            throw new IOException("This release accepts only the complete current database (Alias v" +
-                CURRENT_ALIAS_VERSION + ", P25 activity v" + CURRENT_P25_VERSION +
-                ", trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION +
-                ") or the exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout. Found " +
-                state.description() + ".");
+            return "No database changes are required.";
         }
 
-        ApplicationDatabaseMigrator.validateAcceptedSource(database, state);
+        StringBuilder description = new StringBuilder("format ")
+            .append(plan.source().version()).append(" [").append(plan.source().id()).append("] to format ")
+            .append(plan.target().version()).append(" [").append(plan.target().id()).append("]");
 
-        return state;
-    }
-
-    private static int readRequiredVersion(Connection connection, String key, String label) throws SQLException
-    {
-        Integer version = readOptionalVersion(connection, key, label);
-
-        if(version == null)
+        for(DatabaseMigrationChain.StepPreflight step: plan.steps())
         {
-            throw new SQLException("The database does not identify its " + label + " schema version.");
-        }
+            description.append("; ").append(step.description());
 
-        return version;
-    }
-
-    private static Integer readOptionalVersion(Connection connection, String key, String label) throws SQLException
-    {
-        try(var statement = connection.prepareStatement("SELECT value FROM database_metadata WHERE key=?"))
-        {
-            statement.setString(1, key);
-
-            try(ResultSet resultSet = statement.executeQuery())
+            for(DatabaseMigrationEffect effect: step.effects())
             {
-                if(!resultSet.next())
+                description.append("; ").append(effect.kind().name().toLowerCase()).append(' ')
+                    .append(effect.subject());
+                if(effect.affectedRows() >= 0)
                 {
-                    return null;
-                }
-
-                String value = resultSet.getString(1);
-
-                try
-                {
-                    return Integer.parseInt(value);
-                }
-                catch(NumberFormatException e)
-                {
-                    throw new SQLException("Invalid " + label + " schema version: " + value, e);
+                    description.append(" (").append(effect.affectedRows()).append(" row(s))");
                 }
             }
         }
+
+        return description.toString();
+    }
+
+    private static String describeScope(PreviousBuildLocator.InputScope inputScope)
+    {
+        return inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
+            "portable-profile import; supported neighboring artifacts are copied and stored paths may be remapped." :
+            "SQLite database only; neighboring vault, JMBE, module, and other profile files are not copied, and " +
+                "stored paths are not remapped.";
     }
 
     private static void validateGlobalDatabase(Path database) throws IOException, SQLException
@@ -384,8 +456,21 @@ public final class ApplicationMigrationService
             requireForeignKeysValid(connection);
         }
 
+        ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
+
         //The read-only checks above establish that it is safe to apply the main runtime's WAL configuration.
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+    }
+
+    private static void requireMatchingPlan(DatabaseMigrationChain.PreflightReport expected,
+                                            DatabaseMigrationChain.PreflightReport actual, String snapshot)
+        throws IOException
+    {
+        if(!expected.equals(actual))
+        {
+            throw new IOException("The " + snapshot + " does not match the migration plan approved for the " +
+                "source database. The source may have changed; close it and try again.");
+        }
     }
 
     private static void validateVaultIfPresent(Path dataRoot) throws SQLException
@@ -675,10 +760,16 @@ public final class ApplicationMigrationService
         }
     }
 
-    private static long requiredImportSpace(Path sourceRoot) throws IOException
+    private static long requiredImportSpace(Path sourceDatabase, Path sourceRoot) throws IOException
     {
-        long databaseFootprint = sqliteFootprint(SdrTrunkDatabasePath.getDatabasePath(sourceRoot));
-        long required = databaseFootprint;
+        //The source remains untouched while the staged snapshot may need a rollback journal/WAL of comparable size.
+        long required = safeMultiply(sqliteFootprint(sourceDatabase), 2);
+
+        if(sourceRoot == null)
+        {
+            return safeAdd(required, FREE_SPACE_MARGIN_BYTES);
+        }
+
         Path vault = EncryptionKeyVaultPath.getVaultPath(sourceRoot);
 
         if(Files.isRegularFile(vault))
@@ -720,6 +811,24 @@ public final class ApplicationMigrationService
         if(physicalSource.startsWith(physicalTarget) || physicalTarget.startsWith(physicalSource))
         {
             throw new IOException("The previous and current portable data folders overlap.");
+        }
+    }
+
+    private static void requireSeparatePhysicalDatabases(Path sourceDatabase, Path targetDatabase) throws IOException
+    {
+        Path physicalSource = sourceDatabase.toRealPath();
+        Path targetParent = targetDatabase.getParent();
+
+        if(targetParent == null || targetDatabase.getFileName() == null)
+        {
+            throw new IOException("The target database has no parent: " + targetDatabase);
+        }
+
+        Path physicalTarget = effectivePhysicalPath(targetParent).resolve(targetDatabase.getFileName()).normalize();
+
+        if(physicalSource.equals(physicalTarget))
+        {
+            throw new IOException("The previous and current SQLite database paths are the same.");
         }
     }
 
@@ -843,59 +952,19 @@ public final class ApplicationMigrationService
             throws IOException, InterruptedException;
     }
 
-    public record MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion, Integer dmrVersion)
+    @FunctionalInterface
+    interface StagePromoter
     {
-        public boolean supported()
-        {
-            return current() || alpha9();
-        }
-
-        public boolean current()
-        {
-            return aliasVersion == CURRENT_ALIAS_VERSION && p25Version == CURRENT_P25_VERSION &&
-                Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) &&
-                Integer.valueOf(CURRENT_DMR_VERSION).equals(dmrVersion);
-        }
-
-        public boolean requiresMigration()
-        {
-            return alpha9();
-        }
-
-        public boolean alpha9()
-        {
-            return aliasVersion == ALPHA_9_ALIAS_VERSION && p25Version == ALPHA_9_P25_VERSION &&
-                Integer.valueOf(Alpha9DatabaseMigration.TRUNKED_SITE_VERSION).equals(trunkedSiteVersion) &&
-                Integer.valueOf(Alpha9DatabaseMigration.DMR_VERSION).equals(dmrVersion);
-        }
-
-        public String description()
-        {
-            return "Alias v" + aliasVersion + ", P25 activity v" + p25Version + ", trunked-site " +
-                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion) +
-                ", and DMR activity " + (dmrVersion == null ? "not installed" : "v" + dmrVersion);
-        }
-
-        public String requiredChanges()
-        {
-            if(current())
-            {
-                return "";
-            }
-
-            if(alpha9())
-            {
-                return "update Alias storage, remove retired fully-qualified P25 aliases, reset unqualified " +
-                    "trunked identity history, preserve current P25 affiliations, and begin authoritative site " +
-                    "presence empty";
-            }
-
-            return "no bundled transition exists for this schema combination";
-        }
+        void promote(Path stagedDataRoot, Path targetDataRoot) throws IOException;
     }
 
-    public record MigrationResult(boolean importedPreviousProfile, Path safetyBackup, MigrationState sourceState,
-                                  String helperOutput)
+    public record MigrationResult(boolean importedPreviousProfile, Path safetyBackup,
+                                  DatabaseMigrationChain.PreflightReport sourcePlan,
+                                  String helperOutput, PreviousBuildLocator.InputScope inputScope)
     {
+        public DatabaseFormatCatalog.DetectedFormat sourceFormat()
+        {
+            return sourcePlan.source();
+        }
     }
 }

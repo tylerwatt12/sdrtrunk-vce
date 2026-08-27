@@ -31,11 +31,14 @@ key integers, four value/timestamp integers, and SQLite B-tree overhead, with no
 
 The decoder publishes message-scoped facts through the existing bounded statistics queue and single background writer.
 Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
-path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. Alpha 8 and
-Alpha 9 shipped the same P25 activity schema v24 layout and exact schema fingerprint, and Alpha 10 advances directly
-to v26 with qualifier-safe P25 talkgroup facts plus bounded protocol-neutral current-affiliation and
-authoritative-site-presence state; the foreign-band tables themselves are unchanged. The bundled migration accepts
-that one exact shared source layout, and older or intermediate schema combinations are rejected.
+path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables.
+
+In the bundled chain, Alpha 8, Alpha 9, and Alpha 10 share the same P25 activity schema v24 signature. The Alpha
+8-family baseline step preserves these foreign-band tables unchanged while later adjacent steps add qualifier-safe P25
+talkgroup facts and bounded protocol-neutral current-affiliation and authoritative-site-presence state. Every verified
+later format follows the same global chain; pre-Alpha 8, unknown, and mixed layouts are rejected. Older binaries
+retain the boundary documented by their version-matched release notes. See
+[Database Migration Contract](database-migration.md).
 
 ## Query access path
 

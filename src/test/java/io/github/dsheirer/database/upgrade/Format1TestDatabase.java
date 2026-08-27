@@ -18,8 +18,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-/** Exact shared schema emitted by published v0.6.2 Alpha 8, Alpha 9, and Alpha 10, for release-boundary tests only. */
-public final class Alpha9TestDatabase
+/** Exact global format 1 schema emitted by published Alpha 8, Alpha 9, and Alpha 10 builds. */
+public final class Format1TestDatabase
 {
     private static final String ACTION_COUNTS = """
         acknowledge_count INTEGER NOT NULL DEFAULT 0 CHECK(acknowledge_count >= 0),
@@ -47,7 +47,7 @@ public final class Alpha9TestDatabase
         unknown_count INTEGER NOT NULL DEFAULT 0 CHECK(unknown_count >= 0)
         """;
 
-    private Alpha9TestDatabase()
+    private Format1TestDatabase()
     {
     }
 
@@ -70,6 +70,8 @@ public final class Alpha9TestDatabase
                 statement.executeUpdate(
                     "UPDATE database_metadata SET value='24' WHERE key='p25_activity_schema_version'");
                 statement.executeUpdate(
+                    "DELETE FROM database_metadata WHERE key='" + DatabaseFormatCatalog.FORMAT_VERSION_KEY + "'");
+                statement.executeUpdate(
                     "DELETE FROM database_metadata WHERE key='initial_admin_setup'");
                 connection.commit();
             }
@@ -86,10 +88,10 @@ public final class Alpha9TestDatabase
 
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
-            if(!Alpha9DatabaseMigration.SOURCE_SCHEMA_FINGERPRINT.equals(fingerprint))
+            if(!DatabaseFormatCatalog.requireVersion(1).fingerprint().equals(fingerprint))
             {
                 throw new IllegalStateException(
-                    "Alpha 8/Alpha 9/Alpha 10 fixture fingerprint mismatch: " + fingerprint);
+                    "Global format 1 fixture fingerprint mismatch: " + fingerprint);
             }
         }
 

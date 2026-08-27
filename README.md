@@ -174,10 +174,12 @@ it before the new version starts. The old installation is left unchanged, making
 Existing logs, recordings, screenshots, event logs, and streaming output are not copied into the new installation.
 Check the saved folder locations before deleting an old version.
 
-Each release normally supports upgrading from the immediately previous release on the same branch. If you skipped
-releases, upgrade through them in order unless the release notes explicitly document that those releases share the
-same accepted schema layout, as Alpha 8 and Alpha 9 do for Alpha 10. Do not copy a newer database into an older
-version.
+> **Database compatibility in this source:** The bundled Application Migrator supports every verified successfully
+> published database format from Alpha 8 through the current format across alpha and nightly builds, without
+> installing skipped releases first. It refuses pre-Alpha 8, retired `webfirst`, known-unpublished developer,
+> unknown, mixed, and newer-than-the-app databases without changing the source. Older distributions retain the
+> compatibility documented by their own version-matched release notes. See the
+> [Database Migration Contract](docs/database-migration.md).
 
 ## Where VCE Stores Data
 

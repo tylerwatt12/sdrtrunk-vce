@@ -387,9 +387,16 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
         def archive = inputs.files.singleFile
         def helperEntries = [
             'io/github/dsheirer/database/upgrade/ApplicationDatabaseMigrator.class',
-            'io/github/dsheirer/database/upgrade/Alpha9DatabaseMigration.class'
+            'io/github/dsheirer/database/upgrade/DatabaseFormatCatalog.class',
+            'io/github/dsheirer/database/upgrade/DatabaseMigrationChain.class',
+            'io/github/dsheirer/database/upgrade/DatabaseMigrationEffect.class',
+            'io/github/dsheirer/database/upgrade/DatabaseMigrationStep.class',
+            'io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.class',
+            'io/github/dsheirer/database/upgrade/Format2SchemaSql.class',
+            'io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.class'
         ]
         def retiredEntries = [
+            'io/github/dsheirer/database/upgrade/Alpha9DatabaseMigration.class',
             'io/github/dsheirer/database/upgrade/P25ActivitySchemaUpgrade.class',
             'io/github/dsheirer/database/upgrade/TrunkedSiteSchemaInstaller.class',
             'io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultMigrationTool.class'

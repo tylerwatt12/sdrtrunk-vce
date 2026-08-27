@@ -17,11 +17,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.module.decode.DecoderFactory;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,7 +37,9 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -42,69 +47,53 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ApplicationMigrationServiceTest
 {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     @TempDir
     Path mTemporaryFolder;
 
     @Test
-    void supportsExactAlpha9AndCurrentSchemaTuples()
+    void readsExactFormat1AndCurrentCatalogPlans() throws Exception
     {
-        ApplicationMigrationService.MigrationState current =
-            currentState();
-        assertTrue(current.supported());
-        assertFalse(current.requiresMigration());
-        assertEquals("", current.requiredChanges());
+        Path format1Database = Format1TestDatabase.create(
+            SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("format-1-plan")));
+        DatabaseMigrationChain.PreflightReport format1Plan =
+            ApplicationMigrationService.readMigrationPlan(format1Database);
+        assertFormat(format1Plan.source(), 1, "alpha8-shared", false);
+        assertEquals(DatabaseFormatCatalog.current(), format1Plan.target());
+        assertEquals(2, format1Plan.steps().size());
+        assertEquals(1, format1Plan.steps().getFirst().sourceVersion());
+        assertEquals(2, format1Plan.steps().getFirst().targetVersion());
+        assertEquals(2, format1Plan.steps().getLast().sourceVersion());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().getLast().targetVersion());
+        assertTrue(format1Plan.steps().getLast().effects().stream()
+            .anyMatch(effect -> "unassigned channel Alias Lists".equals(effect.subject())));
 
-        ApplicationMigrationService.MigrationState alpha9 =
-            new ApplicationMigrationService.MigrationState(
-                ApplicationMigrationService.ALPHA_9_ALIAS_VERSION,
-                ApplicationMigrationService.ALPHA_9_P25_VERSION, 2, 1);
-        assertTrue(alpha9.supported());
-        assertTrue(alpha9.requiresMigration());
-        assertTrue(alpha9.requiredChanges().contains("preserve current P25 affiliations"));
-        assertTrue(alpha9.requiredChanges().contains("site presence empty"));
-
-        ApplicationMigrationService.MigrationState alpha7 =
-            new ApplicationMigrationService.MigrationState(3, 21, 2, null);
-        assertFalse(alpha7.supported());
-        assertFalse(alpha7.requiresMigration());
-        assertTrue(alpha7.requiredChanges().contains("no bundled transition"));
-
-        for(ApplicationMigrationService.MigrationState predecessor: List.of(
-            new ApplicationMigrationService.MigrationState(2, 20, 2, null),
-            new ApplicationMigrationService.MigrationState(3, 21, 2, 1),
-            new ApplicationMigrationService.MigrationState(
-                ApplicationMigrationService.CURRENT_ALIAS_VERSION - 1,
-                P25ActivityLogSchema.SCHEMA_VERSION, 2, 1),
-            new ApplicationMigrationService.MigrationState(
-                ApplicationMigrationService.CURRENT_ALIAS_VERSION,
-                P25ActivityLogSchema.SCHEMA_VERSION - 1, 2, 1),
-            new ApplicationMigrationService.MigrationState(
-                ApplicationMigrationService.CURRENT_ALIAS_VERSION,
-                P25ActivityLogSchema.SCHEMA_VERSION, null, 1),
-            new ApplicationMigrationService.MigrationState(
-                ApplicationMigrationService.CURRENT_ALIAS_VERSION,
-                P25ActivityLogSchema.SCHEMA_VERSION, 2, null)))
-        {
-            assertFalse(predecessor.supported());
-            assertFalse(predecessor.requiresMigration());
-            assertTrue(predecessor.requiredChanges().contains("no bundled transition"));
-        }
+        Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
+        SdrTrunkDatabaseStartup.createGlobalDatabase(currentDatabase);
+        DatabaseMigrationChain.PreflightReport currentPlan =
+            ApplicationMigrationService.readMigrationPlan(currentDatabase);
+        assertFormat(currentPlan.source(), DatabaseFormatCatalog.CURRENT_VERSION,
+            DatabaseFormatCatalog.current().id(), true);
+        assertEquals(DatabaseFormatCatalog.current(), currentPlan.target());
+        assertTrue(currentPlan.steps().isEmpty());
     }
 
     @Test
-    void migratesExactAlpha9ProfileWithSafetyBackup() throws Exception
+    void migratesExactFormat1ProfileWithSafetyBackup() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("alpha9-data");
+        Path dataRoot = mTemporaryFolder.resolve("format-1-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Alpha9TestDatabase.create(database);
-        insertAlias(database, "Retained Alpha 9 Alias");
+        Format1TestDatabase.create(database);
+        insertAlias(database, "Retained Format 1 Alias");
 
         ApplicationMigrationService.MigrationResult result =
             new ApplicationMigrationService().migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
-        assertTrue(result.sourceState().alpha9());
-        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
+        assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
+        assertEquals(result.sourceFormat(), result.sourcePlan().source());
+        assertTrue(result.helperOutput().contains("Migrated database format 1 [alpha8-shared]"));
         assertNotNull(result.safetyBackup());
         assertEquals("4", scalar(result.safetyBackup(), """
             SELECT value FROM database_metadata WHERE key='alias_schema_version'
@@ -113,34 +102,36 @@ class ApplicationMigrationServiceTest
             SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
             """));
         assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertEquals(currentState(), ApplicationMigrationService.readMigrationState(database));
+        assertCurrentFormat(database);
         assertEquals(1, count(database, "alias"));
         assertEquals("wal", journalMode(database));
     }
 
     @Test
-    void importsExactAlpha9ProfileThroughMigrateExistingWithoutChangingSource() throws Exception
+    void importsExactFormat1ProfileThroughMigrateExistingWithoutChangingSource() throws Exception
     {
-        Path sourceRoot = mTemporaryFolder.resolve("alpha9-import-source");
+        Path sourceRoot = mTemporaryFolder.resolve("format-1-import-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        Alpha9TestDatabase.create(sourceDatabase);
-        insertAlias(sourceDatabase, "Imported Alpha 9 Alias");
+        Format1TestDatabase.create(sourceDatabase);
+        insertAlias(sourceDatabase, "Imported Format 1 Alias");
         Path sourceJmbe = Files.createDirectories(sourceRoot.resolve("jmbe/nested")).resolve("jmbe-test.jar");
         Path sourceModule = Files.createDirectories(sourceRoot.resolve("modules")).resolve("module-test.jar");
         Files.write(sourceJmbe, new byte[] {1, 2, 3});
         Files.write(sourceModule, new byte[] {4, 5, 6});
         byte[] sourceHash = sha256(sourceDatabase);
-        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("alpha9-import-target"));
+        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("format-1-import-target"));
 
         ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
-        assertTrue(result.sourceState().alpha9());
-        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9/Alpha 10 layout migration"));
+        assertEquals(PreviousBuildLocator.InputScope.PORTABLE_PROFILE, result.inputScope());
+        assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
+        assertEquals(result.sourceFormat(), result.sourcePlan().source());
+        assertTrue(result.helperOutput().contains("Migrated database format 1 [alpha8-shared]"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertEquals(currentState(), ApplicationMigrationService.readMigrationState(targetDatabase));
-        assertEquals("Imported Alpha 9 Alias", scalar(targetDatabase,
+        assertCurrentFormat(targetDatabase);
+        assertEquals("Imported Format 1 Alias", scalar(targetDatabase,
             "SELECT name FROM alias WHERE id=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertEquals("4", scalar(sourceDatabase, """
@@ -154,6 +145,57 @@ class ApplicationMigrationServiceTest
         assertArrayEquals(Files.readAllBytes(sourceModule),
             Files.readAllBytes(targetRoot.resolve("modules/module-test.jar")));
         assertEquals("wal", journalMode(targetDatabase));
+    }
+
+    @Test
+    void directDatabaseImportDoesNotCopyOrRebaseNeighboringProfileData() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("database-only-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        insertAlias(sourceDatabase, "Database Only Alias");
+        byte[] sourceHash = sha256(sourceDatabase);
+        Files.createDirectories(sourceRoot.resolve("jmbe"));
+        Files.writeString(sourceRoot.resolve("jmbe/jmbe-test.jar"), "must not be copied");
+        Files.createDirectories(sourceRoot.resolve("modules"));
+        Files.writeString(sourceRoot.resolve("modules/module-test.jar"), "must not be copied");
+        Files.createDirectories(sourceRoot.resolve("vault"));
+        Files.writeString(sourceRoot.resolve("vault/encryption-key-vault.sqlite"), "invalid and not selected");
+        PreviousBuildLocator.Selection selection = PreviousBuildLocator.resolveSelection(sourceDatabase)
+            .orElseThrow();
+        Path targetRoot = mTemporaryFolder.resolve("database-only-target");
+        AtomicReference<Path> receivedSourceRoot = new AtomicReference<>();
+        AtomicReference<Path> receivedTargetRoot = new AtomicReference<>();
+        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            (staged, source, target) ->
+            {
+                receivedSourceRoot.set(source);
+                receivedTargetRoot.set(target);
+                return "database-only validation";
+            });
+        List<String> progress = new ArrayList<>();
+
+        ApplicationMigrationService.MigrationResult result =
+            service.importPrevious(selection, targetRoot, progress::add);
+
+        assertFalse(result.importedPreviousProfile());
+        assertEquals(PreviousBuildLocator.InputScope.DATABASE_FILE, result.inputScope());
+        assertFormat(result.sourceFormat(), DatabaseFormatCatalog.CURRENT_VERSION,
+            DatabaseFormatCatalog.current().id(), true);
+        assertEquals(null, receivedSourceRoot.get());
+        assertEquals(null, receivedTargetRoot.get());
+        Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
+        assertEquals("Database Only Alias", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertFalse(Files.exists(targetRoot.resolve("jmbe")));
+        assertFalse(Files.exists(targetRoot.resolve("modules")));
+        assertFalse(Files.exists(targetRoot.resolve("vault")));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        int scopeIndex = java.util.stream.IntStream.range(0, progress.size())
+            .filter(index -> progress.get(index).startsWith("Migration scope:"))
+            .findFirst().orElseThrow();
+        int copyIndex = progress.indexOf("Copying selected database");
+        assertTrue(scopeIndex >= 0 && scopeIndex < copyIndex);
+        assertTrue(progress.get(scopeIndex).contains("SQLite database only"));
     }
 
     @Test
@@ -187,17 +229,109 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void readsTheExactCurrentSchemaState() throws Exception
+    void refusesAStagedSnapshotWhoseMigrationPlanDiffersFromTheApprovedSource() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("plan-change-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = mTemporaryFolder.resolve("plan-change-target");
+        AtomicBoolean helperRan = new AtomicBoolean();
+        ApplicationMigrationService service = new ApplicationMigrationService(
+            (source, destination) ->
+            {
+                Files.createDirectories(destination.getParent());
+                Files.copy(source, destination);
+                try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + destination);
+                    var statement = connection.prepareStatement(
+                        "DELETE FROM database_metadata WHERE key=?"))
+                {
+                    statement.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+                    assertEquals(1, statement.executeUpdate());
+                }
+            },
+            (staged, source, target) ->
+            {
+                helperRan.set(true);
+                return "must not run";
+            });
+
+        IOException exception = assertThrows(IOException.class,
+            () -> service.importPrevious(sourceRoot, targetRoot, null));
+
+        assertTrue(exception.getMessage().contains("does not match the migration plan"));
+        assertFalse(helperRan.get());
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertFalse(Files.exists(targetRoot));
+    }
+
+    @Test
+    void refusesAChangedSourcePlanAfterOperatorApproval() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("approved-plan-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        DatabaseMigrationChain.PreflightReport approvedPlan =
+            ApplicationMigrationService.readMigrationPlan(sourceDatabase);
+
+        try(Connection connection = open(sourceDatabase); var statement = connection.prepareStatement(
+            "DELETE FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        Path targetRoot = mTemporaryFolder.resolve("approved-plan-target");
+        PreviousBuildLocator.Selection selection = new PreviousBuildLocator.Selection(sourceRoot,
+            PreviousBuildLocator.InputScope.PORTABLE_PROFILE);
+
+        IOException exception = assertThrows(IOException.class,
+            () -> new ApplicationMigrationService().importPrevious(selection, targetRoot, approvedPlan, null));
+
+        assertTrue(exception.getMessage().contains("source database selected after confirmation"));
+        assertFalse(Files.exists(targetRoot));
+    }
+
+    @Test
+    void refusesSourceForeignKeyViolationsBeforeCreatingMigrationOutput() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("foreign-key-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+
+        try(Connection connection = open(sourceDatabase); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=OFF");
+            statement.executeUpdate("""
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
+                VALUES (999999, 'Orphan Alias', 'TALKGROUP', 'APCO25', 1)
+                """);
+        }
+
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = mTemporaryFolder.resolve("foreign-key-target");
+
+        SQLException exception = assertThrows(SQLException.class,
+            () -> new ApplicationMigrationService().importPrevious(sourceRoot, targetRoot, null));
+
+        assertTrue(exception.getMessage().contains("foreign-key check failed"));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertFalse(Files.exists(targetRoot));
+    }
+
+    @Test
+    void readsTheExactCurrentFormatPlan() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-state");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
-        ApplicationMigrationService.MigrationState state =
-            ApplicationMigrationService.readMigrationState(database);
+        DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
 
-        assertEquals(currentState(), state);
-        assertTrue(state.supported());
+        assertFormat(plan.source(), DatabaseFormatCatalog.CURRENT_VERSION,
+            DatabaseFormatCatalog.current().id(), true);
+        assertEquals(DatabaseFormatCatalog.current(), plan.target());
+        assertTrue(plan.steps().isEmpty());
     }
 
     @Test
@@ -216,13 +350,14 @@ class ApplicationMigrationServiceTest
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
-        assertEquals(currentState(), result.sourceState());
+        assertFormat(result.sourceFormat(), DatabaseFormatCatalog.CURRENT_VERSION,
+            DatabaseFormatCatalog.current().id(), true);
+        assertEquals(result.sourceFormat(), result.sourcePlan().source());
         assertTrue(result.helperOutput().contains("Application database migration and validation complete"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(1, count(targetDatabase, "alias"));
         assertCurrentProfileSentinels(targetDatabase);
-        assertEquals(currentState(),
-            ApplicationMigrationService.readMigrationState(targetDatabase));
+        assertCurrentFormat(targetDatabase);
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertEquals("wal", journalMode(targetDatabase));
     }
@@ -242,11 +377,9 @@ class ApplicationMigrationServiceTest
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
         assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertEquals(currentState(),
-            ApplicationMigrationService.readMigrationState(result.safetyBackup()));
+        assertCurrentFormat(result.safetyBackup());
         assertEquals(1, count(database, "alias"));
-        assertEquals(currentState(),
-            ApplicationMigrationService.readMigrationState(database));
+        assertCurrentFormat(database);
         assertEquals("wal", journalMode(database));
     }
 
@@ -302,11 +435,10 @@ class ApplicationMigrationServiceTest
         removeDmrActivitySchema(database);
         byte[] before = sha256(database);
 
-        IOException exception = assertThrows(IOException.class,
+        SQLException exception = assertThrows(SQLException.class,
             () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains(
-            "exact shared v0.6.2 Alpha 8/Alpha 9/Alpha 10 database layout"));
+        assertTrue(exception.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
@@ -373,8 +505,14 @@ class ApplicationMigrationServiceTest
         {
             List<Path> backups = paths.toList();
             assertEquals(1, backups.size());
-            assertEquals(currentState(), ApplicationMigrationService.readMigrationState(backups.getFirst()));
+            assertCurrentFormat(backups.getFirst());
         }
+
+        ApplicationMigrationService.MigrationResult retry =
+            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
+        assertNotNull(retry.safetyBackup());
+        assertCurrentFormat(database);
+        assertEquals(1, count(database, "alias"));
     }
 
     @Test
@@ -440,6 +578,110 @@ class ApplicationMigrationServiceTest
         assertTrue(exception.getMessage().contains("webfirst managed-recording"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
+    }
+
+    @Test
+    void invalidFinalConfigurationIsNotPromoted() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("invalid-config-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        insertCurrentProfileSentinels(sourceDatabase);
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = mTemporaryFolder.resolve("invalid-config-target");
+        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            (staged, source, target) ->
+            {
+                try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + staged);
+                    Statement statement = connection.createStatement())
+                {
+                    statement.executeUpdate("""
+                        UPDATE configuration_channel SET config_json='{}'
+                        WHERE name='Preserved Channel'
+                        """);
+                }
+                catch(SQLException e)
+                {
+                    throw new IOException("Unable to inject invalid configuration", e);
+                }
+                return "injected invalid configuration";
+            });
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+            () -> service.importPrevious(sourceRoot, targetRoot, null));
+
+        assertTrue(exception.getMessage().contains("incompatible Alias List"));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertFalse(Files.exists(targetRoot));
+    }
+
+    @Test
+    void targetPopulationAtPromotionTimePreventsImportWithoutLosingEitherSide() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("promotion-race-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("promotion-race-target"));
+        Path competingFile = targetRoot.resolve("created-by-another-first-run.txt");
+
+        IOException exception = assertThrows(IOException.class,
+            () -> new ApplicationMigrationService().importPrevious(sourceRoot, targetRoot, progress ->
+            {
+                if("Finishing".equals(progress))
+                {
+                    try
+                    {
+                        Files.writeString(competingFile, "keep me");
+                    }
+                    catch(IOException e)
+                    {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }
+            }));
+
+        assertTrue(exception.getMessage().contains("already contains data"));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertEquals("keep me", Files.readString(competingFile));
+        try(var paths = Files.list(mTemporaryFolder))
+        {
+            assertTrue(paths.noneMatch(path -> path.getFileName().toString()
+                .startsWith(".promotion-race-target.migration-")));
+        }
+    }
+
+    @Test
+    void atomicImportPromotionFailureRestoresThePreexistingEmptyTarget() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("atomic-promotion-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("atomic-promotion-target"));
+        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            ApplicationMigratorLauncher::run,
+            (staged, target) ->
+            {
+                assertFalse(Files.exists(target));
+                throw new IOException("forced atomic promotion failure");
+            });
+
+        IOException exception = assertThrows(IOException.class,
+            () -> service.importPrevious(sourceRoot, targetRoot, null));
+
+        assertTrue(exception.getMessage().contains("forced atomic promotion failure"));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertTrue(Files.isDirectory(targetRoot));
+        try(var paths = Files.list(targetRoot))
+        {
+            assertTrue(paths.findAny().isEmpty());
+        }
+        try(var paths = Files.list(mTemporaryFolder))
+        {
+            assertTrue(paths.noneMatch(path -> path.getFileName().toString()
+                .startsWith(".atomic-promotion-target.migration-")));
+        }
     }
 
     @Test
@@ -524,15 +766,20 @@ class ApplicationMigrationServiceTest
     {
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("""
+            try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
                     sort_order, system_name, site_name, name, alias_list_name, decoder_type,
                     source_type, primary_frequency_hz, frequency_count, config_json
                 ) VALUES (
-                    1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Test', 'DMR',
-                    'TUNER', 451000000, 1, '{}'
+                    1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Test', 'P25_PHASE1',
+                    'TUNER', 451000000, 1, ?
                 )
-                """);
+                """))
+            {
+                insert.setString(1, channelJson("Preserved Channel", "Preserved System", "Preserved Site", "Test",
+                    DecoderType.P25_PHASE1, 451000000));
+                insert.executeUpdate();
+            }
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)
                 VALUES ('current_profile_sentinel', '{"value":"preserved"}', 1000)
@@ -575,6 +822,20 @@ class ApplicationMigrationServiceTest
         }
     }
 
+    private static String channelJson(String name, String system, String site, String aliasListName,
+                                      DecoderType decoderType, long frequency) throws Exception
+    {
+        Channel channel = new Channel(name);
+        channel.setSystem(system);
+        channel.setSite(site);
+        channel.setAliasListName(aliasListName);
+        channel.setDecodeConfiguration(DecoderFactory.getDecodeConfiguration(decoderType));
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(frequency);
+        channel.setSourceConfiguration(source);
+        return OBJECT_MAPPER.writeValueAsString(channel);
+    }
+
     private static void assertCurrentProfileSentinels(Path database) throws Exception
     {
         assertEquals("Preserved Channel", scalar(database, """
@@ -595,13 +856,18 @@ class ApplicationMigrationServiceTest
             """));
     }
 
-    private static ApplicationMigrationService.MigrationState currentState()
+    private static void assertCurrentFormat(Path database) throws Exception
     {
-        return new ApplicationMigrationService.MigrationState(
-            ApplicationMigrationService.CURRENT_ALIAS_VERSION,
-            ApplicationMigrationService.CURRENT_P25_VERSION,
-            TrunkedSiteSchema.SCHEMA_VERSION,
-            ApplicationMigrationService.CURRENT_DMR_VERSION);
+        assertFormat(ApplicationMigrationService.readMigrationPlan(database).source(),
+            DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.current().id(), true);
+    }
+
+    private static void assertFormat(DatabaseFormatCatalog.DetectedFormat format, int expectedVersion,
+                                     String expectedId, boolean expectedMarkerPresent)
+    {
+        assertEquals(expectedVersion, format.version());
+        assertEquals(expectedId, format.id());
+        assertEquals(expectedMarkerPresent, format.markerPresent());
     }
 
     private static void removeDmrActivitySchema(Path database) throws Exception
