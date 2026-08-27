@@ -22,11 +22,13 @@ portable data from an earlier sdrtrunk-vce build. The setup window offers these 
 - **Use Found XML** or **Choose XML…** to import an older XML playlist.
 - **Start Fresh** with an empty profile.
 
-The bundled Application Migrator is the only supported release database-migration entry point. It copies an accepted
-SQLite database into a staging folder, updates only that staged copy, runs schema, integrity, and foreign-key checks,
-and installs it only after every check succeeds. The previous database is never replaced. The saved vault, JMBE
-libraries, and optional module files are also copied when present. Logs, recordings, event logs, screenshots, and
-streaming output remain in the previous data folder instead of being duplicated.
+The bundled Application Migrator is the only supported release database-migration entry point. During first-launch
+migration it copies an accepted SQLite database into a private staging folder, updates only that staged copy, runs
+schema, integrity, and foreign-key checks, and installs it only after every check succeeds. The source database and
+previous installation are never changed. In-place upgrades and post-setup database replacement instead retain a
+timestamped safety backup before atomically promoting their validated staged copy. The saved vault, JMBE libraries,
+and optional module files are also copied when present during a full portable-data migration. Logs, recordings, event
+logs, screenshots, and streaming output remain in the previous data folder instead of being duplicated.
 
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
@@ -35,6 +37,11 @@ the new data folder. Deliberately shared paths outside the previous data folder 
 
 This source tree contains the Alpha 8+ format catalog, linear migration chain, and deterministic format fixtures.
 Older binaries retain the source formats and migration behavior documented by their version-matched release notes.
+
+Global database format 4/P25 activity schema v28 stores one system-level logical call separately from each distinct
+learned P25 site observation. Its adjacent migration step records an explicit collection boundary and does not
+backfill either metric from older physical call activity; every other preservation or reset remains declared by its
+registered migration step.
 
 Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
 the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS

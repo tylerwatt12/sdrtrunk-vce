@@ -19,8 +19,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.Form;
@@ -56,6 +61,7 @@ import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
@@ -707,7 +713,7 @@ class P25ActivityLogMapperTest
     }
 
     @Test
-    void preservesFullyQualifiedP25TargetForActivityAndCompletedOutput()
+    void preservesFullyQualifiedP25TargetForActivityAndResolvedCall()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
@@ -722,12 +728,9 @@ class P25ActivityLogMapperTest
         P25ActivityLogMapper mapper = new P25ActivityLogMapper();
 
         P25ActivityLogRecords.ActivityEvent activity = mapper.map(channel(DecoderType.P25_PHASE1), event);
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, 2L, 1), null, null,
-            identifiers, Set.of(), 1_000L, 2_000L, 1, 1, 1_000L, 2_000L,
-            false, true, false, true, false);
-        P25ActivityLogRecords.CompletedCallOutput output = mapper.mapCompletedCallOutput(
-            new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.RECORDED);
+        P25ActivityLogRecords.ResolvedLogicalCall output = mapper.mapResolvedLogicalCall(
+            trafficCompletedCall(1, identifiers, DecoderType.P25_PHASE1, 17,
+                new P25SiteIdentity(0x924, 0x649, 1, 1), 1_000L, 2_000L));
 
         assertNotNull(activity);
         assertEquals("56138", activity.targetId());
@@ -749,19 +752,16 @@ class P25ActivityLogMapperTest
             .build();
         P25ActivityLogRecords.ActivityEvent zeroLocalActivity = mapper.map(
             channel(DecoderType.P25_PHASE1), zeroLocalEvent);
-        AudioCallSnapshot zeroLocalSnapshot = new AudioCallSnapshot(new AudioCallId(2L, 3L, 1), null, null,
-            zeroLocalIdentifiers, Set.of(), 2_000L, 3_000L, 1, 1, 2_000L, 3_000L,
-            false, true, false, true, false);
-        P25ActivityLogRecords.CompletedCallOutput zeroLocalOutput = mapper.mapCompletedCallOutput(
-            new CompletedAudioCall(zeroLocalSnapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.RECORDED);
+        P25ActivityLogRecords.ResolvedLogicalCall zeroLocalOutput = mapper.mapResolvedLogicalCall(
+            trafficCompletedCall(2, zeroLocalIdentifiers, DecoderType.P25_PHASE1, 17,
+                new P25SiteIdentity(0x924, 0x649, 1, 1), 2_000L, 3_000L));
 
         assertNotNull(zeroLocalActivity);
         assertEquals("0", zeroLocalActivity.targetId());
         assertFullyQualified(zeroLocalActivity.p25TargetIdentity(), 0xABCDE, 0x321, 1_201);
         assertNotNull(zeroLocalOutput);
         assertEquals(0, zeroLocalOutput.destinationId());
-        assertEquals(Form.TALKGROUP.name(), zeroLocalOutput.targetKind());
+        assertEquals(Form.TALKGROUP.name(), zeroLocalOutput.destinationKind());
         assertFullyQualified(zeroLocalOutput.p25TargetIdentity(), 0xABCDE, 0x321, 1_201);
     }
 
@@ -795,22 +795,60 @@ class P25ActivityLogMapperTest
     }
 
     @Test
-    void mapsCompletedCallOutputToSiteTalkgroupAndCallStartHour()
+    void mapsDmrAndNxdnTrafficLegsToLogicalCallsNotConventionalOutputs()
+    {
+        MutableIdentifierCollection dmrIdentifiers = new MutableIdentifierCollection();
+        dmrIdentifiers.update(DMRRadio.createFrom(101));
+        dmrIdentifiers.update(DMRTalkgroup.create(91));
+        dmrIdentifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.DMR));
+        CompletedAudioCall dmr = trafficCompletedCall(10, dmrIdentifiers, DecoderType.DMR, 0, null,
+            4_000L, 5_000L);
+
+        MutableIdentifierCollection nxdnIdentifiers = new MutableIdentifierCollection();
+        nxdnIdentifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
+        nxdnIdentifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
+        nxdnIdentifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
+        CompletedAudioCall nxdn = trafficCompletedCall(11, nxdnIdentifiers, DecoderType.NXDN, 0, null,
+            6_000L, 7_000L);
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+
+        P25ActivityLogRecords.ResolvedLogicalCall dmrResolved = mapper.mapResolvedLogicalCall(dmr);
+        P25ActivityLogRecords.ResolvedLogicalCall nxdnResolved = mapper.mapResolvedLogicalCall(nxdn);
+        assertNotNull(dmrResolved);
+        assertEquals(Protocol.DMR.name(), dmrResolved.protocol());
+        assertEquals(91, dmrResolved.destinationId());
+        assertEquals(101, dmrResolved.sourceRadioId());
+        assertTrue(dmrResolved.learnedP25Sites().isEmpty());
+        assertNotNull(nxdnResolved);
+        assertEquals(Protocol.NXDN.name(), nxdnResolved.protocol());
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, nxdnResolved.identityDomain());
+        assertNull(mapper.mapConventionalCallOutput(dmr, P25ActivityLogRecords.CallOutput.RECORDED));
+        assertNull(mapper.mapConventionalCallOutput(nxdn, P25ActivityLogRecords.CallOutput.STREAMED));
+    }
+
+    @Test
+    void mapsConventionalCallOutputToSiteTalkgroupAndCallStartHour()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Talkgroup.create(56138));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, 2L, 1), null, null,
+        AudioCallId callId = new AudioCallId(1L, 2L, 1);
+        CallLegSource source = new CallLegSource(DecoderType.P25_CONVENTIONAL, "p25-conventional",
+            "P25 Conventional", GUID, 0, null, false);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true,
+            AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers),
+            VoiceCallQuality.EMPTY, CallLegId.from(callId), source, null);
         CompletedAudioCall call = new CompletedAudioCall(snapshot, List.of(new float[800]));
 
-        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(call,
+        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(call,
             P25ActivityLogRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
         assertEquals(3_600_123L, metric.callStartEpochMilliseconds());
         assertEquals(GUID, metric.guid());
+        assertEquals("GUID:" + GUID, metric.contextKey());
         assertEquals(56138, metric.talkgroupId());
         assertEquals(P25ActivityLogRecords.CallOutput.RECORDED, metric.output());
     }
@@ -821,11 +859,13 @@ class P25ActivityLogMapperTest
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(FrequencyConfigurationIdentifier.create(154_310_000L));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(7L, 8L, 0), null, null,
+        AudioCallId callId = new AudioCallId(7L, 8L, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
             P25ActivityLogRecords.CallOutput.STREAMED);
 
@@ -843,11 +883,13 @@ class P25ActivityLogMapperTest
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(FrequencyConfigurationIdentifier.create(461_125_000L));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(9L, 10L, 0), null, null,
+        AudioCallId callId = new AudioCallId(9L, 10L, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
             P25ActivityLogRecords.CallOutput.RECORDED);
 
@@ -877,10 +919,12 @@ class P25ActivityLogMapperTest
 
         P25ActivityLogMapper mapper = new P25ActivityLogMapper();
         P25ActivityLogRecords.ActivityEvent activity = mapper.map(channel, signaling);
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(9L, 10L, 0), null, null,
+        AudioCallId callId = new AudioCallId(9L, 10L, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
-            false, true, false, true, false);
-        P25ActivityLogRecords.CompletedCallOutput output = mapper.mapCompletedCallOutput(
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
+        P25ActivityLogRecords.ConventionalCallOutput output = mapper.mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
             P25ActivityLogRecords.CallOutput.RECORDED);
 
@@ -897,11 +941,13 @@ class P25ActivityLogMapperTest
         identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
         identifiers.update(APCO25RadioIdentifier.createTo(1_822_001));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(7L, 10L, 1), null, null,
+        AudioCallId callId = new AudioCallId(7L, 10L, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
             P25ActivityLogRecords.CallOutput.RECORDED);
 
@@ -919,11 +965,13 @@ class P25ActivityLogMapperTest
         identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
         identifiers.update(FrequencyConfigurationIdentifier.create(451_012_500L));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.DMR));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(7L, 9L, 1), null, null,
+        AudioCallId callId = new AudioCallId(7L, 9L, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
             P25ActivityLogRecords.CallOutput.RECORDED);
 
@@ -932,16 +980,18 @@ class P25ActivityLogMapperTest
     }
 
     @Test
-    void preservesPatchMembersForCompletedCallOutput()
+    void preservesPatchMembersForConventionalCallOutput()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(patchGroup());
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, 2L, 1), null, null,
+        AudioCallId callId = new AudioCallId(1L, 2L, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
             P25ActivityLogRecords.CallOutput.STREAMED);
 
@@ -1106,6 +1156,21 @@ class P25ActivityLogMapperTest
             new P25NetworkConfigurationSnapshot.SiteStatus(broadcastClock, Math.toIntExact(broadcastClock / 10),
                 true, "REQUEST", 30, true, 0, voiceService),
             List.of());
+    }
+
+    private static CompletedAudioCall trafficCompletedCall(long sequence, MutableIdentifierCollection identifiers,
+                                                            DecoderType decoderType, long aliasListId,
+                                                            P25SiteIdentity siteIdentity, long start, long end)
+    {
+        AudioCallId callId = new AudioCallId(100, sequence, 1);
+        CallLegId callLegId = CallLegId.from(callId);
+        CallLegSource source = new CallLegSource(decoderType, "traffic-configuration", "Traffic Site", GUID,
+            aliasListId, siteIdentity, true);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), start, end,
+            1, 1, start, end, false, true, CallEncryptionState.CLEAR, true,
+            AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers), VoiceCallQuality.EMPTY,
+            callLegId, source, null);
+        return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 
     private static DecodeEvent event(DecodeEventType eventType, String details)

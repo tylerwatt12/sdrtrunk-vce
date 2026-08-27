@@ -16,7 +16,10 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -210,18 +213,22 @@ class CompletedCallScanListMatcherTest
             identifiers.add(identifier);
         }
 
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 0), null, aliasList,
+        AudioCallId callId = new AudioCallId(1, 1, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, aliasList,
             new IdentifierCollection(identifiers), Set.of(), now, now + 100, 1, 1, now, now + 100,
-            false, true, false, false, false);
+            false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 
     private static CompletedAudioCall call(ResolvedCallPolicy policy)
     {
         long now = System.currentTimeMillis();
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(2, 1, 0), null, null,
+        AudioCallId callId = new AudioCallId(2, 1, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             new IdentifierCollection(List.of(APCO25Talkgroup.create(100))), Set.of(), now, now + 100, 1, 1,
-            now, now + 100, false, true, false, false, false);
+            now, now + 100, false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, List.of(new float[800]), policy);
     }
 

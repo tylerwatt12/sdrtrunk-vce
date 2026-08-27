@@ -46,7 +46,9 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultSchema.java",
         "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format2SchemaSql.java",
-        "java/io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.java");
+        "java/io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format4SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",
         "java/io/github/dsheirer/stats/activity/P25ActivityLogSchema.java",

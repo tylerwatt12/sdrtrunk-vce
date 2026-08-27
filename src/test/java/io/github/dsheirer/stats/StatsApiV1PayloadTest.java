@@ -52,6 +52,35 @@ class StatsApiV1PayloadTest
         assertFalse(dashboard.has("sourceActivity24h"));
     }
 
+    @Test
+    void rejectsLegacyTrunkedMetricNamesAtThePublicBoundary()
+    {
+        JsonNode payload = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("call_count", 9),
+            Map.entry("source_call_count", 4),
+            Map.entry("target_call_count", 5),
+            Map.entry("recorded_count", 3),
+            Map.entry("streamed_count", 2),
+            Map.entry("encrypted_count", 1),
+            Map.entry("grant_count", 8),
+            Map.entry("join_count", 6),
+            Map.entry("event_count", 12),
+            Map.entry("signaling_count", 8),
+            Map.entry("logical_call_count", 7),
+            Map.entry("site_observation_count", 11),
+            Map.entry("stream_submitted_logical_call_count", 2)));
+
+        assertEquals(7, payload.path("logical_call_count").intValue());
+        assertEquals(11, payload.path("site_observation_count").intValue());
+        assertEquals(2, payload.path("stream_submitted_logical_call_count").intValue());
+        for(String field: new String[]{"call_count", "source_call_count", "target_call_count",
+            "recorded_count", "streamed_count", "encrypted_count", "grant_count", "join_count",
+            "event_count", "signaling_count"})
+        {
+            assertFalse(payload.has(field), () -> "Legacy metric escaped into v1 payload: " + field);
+        }
+    }
+
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "protocol_code", "scope_kind_code", "variant_code", "identity_domain_code", "scope_id", "context_id",
         "system_key", "p25_system_key", "resolved_system_key", "site_type",

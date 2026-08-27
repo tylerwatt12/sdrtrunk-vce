@@ -61,6 +61,13 @@ record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRec
             call.callEndEpochMilliseconds(), null, null, null, null, call.frequencyHertz(), null);
     }
 
+    static ReceiverContextMetadata from(P25ActivityLogRecords.ResolvedLogicalCall call)
+    {
+        return new ReceiverContextMetadata(call.contextKey(), call.guid(),
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, call.protocol(), null, null, call.protocol(), false,
+            call.callStartEpochMilliseconds(), call.callStartEpochMilliseconds(), null, null, null, null, null, null);
+    }
+
     static ReceiverContextMetadata from(TrunkedSiteSchema.Snapshot snapshot)
     {
         String protocol = snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_DMR ? "DMR" :

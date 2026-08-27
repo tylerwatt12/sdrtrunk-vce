@@ -155,7 +155,8 @@ final class StatsLiveService implements AutoCloseable
 
     private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows)
     {
-        List<ChannelActivitySnapshot> snapshots = source.tables().stream().sorted(Comparator
+        List<ChannelActivitySnapshot> snapshots = source.tables().stream()
+            .filter(StatsLiveService::isVisibleLiveTable).sorted(Comparator
             .comparingInt((ChannelActivitySnapshot table) -> "conventional".equals(table.tableId()) ? 0 : 1)
             .thenComparing(ChannelActivitySnapshot::tableId)).toList();
         List<Map<String,Object>> tables = new ArrayList<>(Math.min(snapshots.size(), MAXIMUM_LIVE_TABLES));
@@ -188,6 +189,16 @@ final class StatsLiveService implements AutoCloseable
         response.put("truncated", snapshots.size() > tableCount || rowsTotal > rowsIncluded);
         response.put("revision", source.revision());
         return Map.copyOf(response);
+    }
+
+    /**
+     * A stopped trunked channel remains in the desktop activity model long enough for the current live browser to
+     * show its stopped state and close control.  It is not active receiver state, however, so recovery snapshots must
+     * not restore it after a browser refresh or reconnect.
+     */
+    private static boolean isVisibleLiveTable(ChannelActivitySnapshot snapshot)
+    {
+        return snapshot != null && ("conventional".equals(snapshot.tableId()) || snapshot.channelRunning());
     }
 
     byte[] encodedSnapshot() throws IOException

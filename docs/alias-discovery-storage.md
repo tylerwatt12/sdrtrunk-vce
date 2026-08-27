@@ -144,6 +144,10 @@ configuration remain intact. Stored P25 fully-qualified talkgroup and radio Alia
 removed; their home values are not converted into ordinary local aliases. These resets and removals are declared in
 preflight and the completion report.
 
+P25 activity schema v28 introduces resolved-call accounting and starts its system-level logical-call and P25
+site-observation counters at an explicit collection boundary. It does not reinterpret older physical call counters as
+resolved logical calls.
+
 The legacy schema also permitted WACN or System ID qualifier columns on non-fully-qualified matcher types, even though
 that combination has no supported meaning in Alias v6. The migrator refuses such a database with the affected rows
 unchanged instead of silently discarding administrator-owned qualifier values.

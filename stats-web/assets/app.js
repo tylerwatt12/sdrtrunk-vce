@@ -76,14 +76,14 @@ const LIVE_EVENT_CATEGORY_CLASSES = Object.freeze({
   OTHER: 'live-event-category-other'
 });
 const CALL_ACTIVITY_SERIES = Object.freeze([
-  { field: 'call_count', label: 'Tracked Calls', color: 'var(--chart-call)', visible: true },
-  { field: 'recorded_count', label: 'Recorded', color: 'var(--chart-recorded)', visible: true },
-  { field: 'streamed_count', label: 'Sent to Streamer', color: 'var(--chart-streamed)', visible: true }
+  { field: 'logical_call_count', label: 'Logical Calls', color: 'var(--chart-call)', visible: true },
+  { field: 'recorded_logical_call_count', label: 'Recorded', color: 'var(--chart-recorded)', visible: true },
+  { field: 'stream_submitted_logical_call_count', label: 'Submitted to Streamer', color: 'var(--chart-streamed)', visible: true }
 ]);
 const DASHBOARD_CALL_METRICS = Object.freeze([
-  { field: 'call_count', label: 'Calls' },
-  { field: 'recorded_count', label: 'Recorded' },
-  { field: 'streamed_count', label: 'Sent' }
+  { field: 'logical_call_count', label: 'Logical Calls' },
+  { field: 'recorded_logical_call_count', label: 'Recorded' },
+  { field: 'stream_submitted_logical_call_count', label: 'Submitted' }
 ]);
 const DASHBOARD_PROTOCOL_SERIES = Object.freeze([
   { key: 'AM', label: 'AM', color: 'var(--chart-join)' },
@@ -99,37 +99,36 @@ const DASHBOARD_CHANNEL_KIND_FILTERS = Object.freeze([
 ]);
 const TALKGROUP_CALL_ACTIVITY_SERIES = Object.freeze([
   ...CALL_ACTIVITY_SERIES,
-  { field: 'encrypted_count', label: 'Encrypted', color: 'var(--chart-encrypted)', visible: true }
+  { field: 'encrypted_logical_call_count', label: 'Encrypted', color: 'var(--chart-encrypted)', visible: true }
 ]);
 const TALKGROUP_SIGNALING_SERIES = Object.freeze([
-  { field: 'emergency_count', label: 'Emergency', color: 'var(--chart-emergency)' },
-  { field: 'data_count', label: 'Data', color: 'var(--chart-data)' },
-  { field: 'join_count', label: 'Join', color: 'var(--chart-join)' },
-  { field: 'register_count', label: 'Register', color: 'var(--chart-register)' },
-  { field: 'denial_count', label: 'Denial', color: 'var(--chart-denial)' },
-  { field: 'busy_count', label: 'Busy', color: 'var(--chart-busy)' },
-  { field: 'queued_count', label: 'Queued', color: 'var(--chart-queued)' },
-  { field: 'continue_count', label: 'Continue', color: 'var(--chart-continue)' },
-  { field: 'active_count', label: 'Active', color: 'var(--chart-active)' },
-  { field: 'acknowledge_count', label: 'Acknowledge', color: 'var(--chart-acknowledge)' },
-  { field: 'check_count', label: 'Check', color: 'var(--chart-check)' },
-  { field: 'check_ack_count', label: 'Check Ack', color: 'var(--chart-check-ack)' },
-  { field: 'gps_count', label: 'GPS', color: 'var(--chart-gps)' },
-  { field: 'logout_count', label: 'Logout', color: 'var(--chart-logout)' },
-  { field: 'page_count', label: 'Page', color: 'var(--chart-page)' },
-  { field: 'patch_count', label: 'Patch', color: 'var(--chart-patch)' },
-  { field: 'patch_cancel_count', label: 'Patch Cancel', color: 'var(--chart-patch-cancel)' },
-  { field: 'patch_create_count', label: 'Patch Create', color: 'var(--chart-patch-create)' },
-  { field: 'request_count', label: 'Request', color: 'var(--chart-request)' },
-  { field: 'status_count', label: 'Status', color: 'var(--chart-status)' },
-  { field: 'unknown_count', label: 'Unknown', color: 'var(--chart-unknown)' }
+  { field: 'emergency_observation_count', label: 'Emergency', color: 'var(--chart-emergency)' },
+  { field: 'data_observation_count', label: 'Data', color: 'var(--chart-data)' },
+  { field: 'join_observation_count', label: 'Join', color: 'var(--chart-join)' },
+  { field: 'register_observation_count', label: 'Register', color: 'var(--chart-register)' },
+  { field: 'denial_observation_count', label: 'Denial', color: 'var(--chart-denial)' },
+  { field: 'busy_observation_count', label: 'Busy', color: 'var(--chart-busy)' },
+  { field: 'queued_observation_count', label: 'Queued', color: 'var(--chart-queued)' },
+  { field: 'continue_observation_count', label: 'Continue', color: 'var(--chart-continue)' },
+  { field: 'active_observation_count', label: 'Active', color: 'var(--chart-active)' },
+  { field: 'acknowledge_observation_count', label: 'Acknowledge', color: 'var(--chart-acknowledge)' },
+  { field: 'check_observation_count', label: 'Check', color: 'var(--chart-check)' },
+  { field: 'check_ack_observation_count', label: 'Check Ack', color: 'var(--chart-check-ack)' },
+  { field: 'gps_observation_count', label: 'GPS', color: 'var(--chart-gps)' },
+  { field: 'logout_observation_count', label: 'Logout', color: 'var(--chart-logout)' },
+  { field: 'page_observation_count', label: 'Page', color: 'var(--chart-page)' },
+  { field: 'patch_observation_count', label: 'Patch', color: 'var(--chart-patch)' },
+  { field: 'patch_cancel_observation_count', label: 'Patch Cancel', color: 'var(--chart-patch-cancel)' },
+  { field: 'patch_create_observation_count', label: 'Patch Create', color: 'var(--chart-patch-create)' },
+  { field: 'request_observation_count', label: 'Request', color: 'var(--chart-request)' },
+  { field: 'status_observation_count', label: 'Status', color: 'var(--chart-status)' },
+  { field: 'unknown_observation_count', label: 'Unknown', color: 'var(--chart-unknown)' }
 ]);
 const DASHBOARD_ACTIVITY_SERIES = Object.freeze([
-  { action: 'CALL', label: 'Call', color: 'var(--chart-call)' },
   { action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' },
-  ...TALKGROUP_SIGNALING_SERIES.filter((series) => series.field !== 'continue_count')
+  ...TALKGROUP_SIGNALING_SERIES.filter((series) => series.field !== 'continue_observation_count')
     .map((series) => ({
-      action: series.field.replace(/_count$/, '').toUpperCase(),
+      action: series.field.replace(/_observation_count$/, '').toUpperCase(),
       label: series.label,
       color: series.color
     }))
@@ -138,10 +137,10 @@ const DASHBOARD_ACTIVITY_RANGES = Object.freeze([
   ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']
 ]);
 const CALL_METRIC_GUIDE = Object.freeze([
-  ['Tracked Calls', 'Traffic calls accepted by the channel manager. A tracked call can have no usable audio.'],
-  ['Recorded', 'Completed calls written to a nonempty recording file. Recording rules and duplicate suppression apply.'],
-  ['Sent to Streamer', 'Completed calls encoded into a nonempty temporary file and handed to at least one configured stream. This does not mean the remote service accepted the upload.'],
-  ['Encrypted', 'Tracked activity for which encrypted audio was confirmed.']
+  ['Logical Calls', 'One transmission after matching copies heard by multiple monitored sites have been combined.'],
+  ['Recorded', 'Logical calls whose selected best copy was written to a nonempty recording file.'],
+  ['Submitted to Streamer', 'Logical calls whose selected best copy was encoded and handed to at least one configured stream. This does not mean the remote service accepted the upload.'],
+  ['Encrypted', 'Logical calls for which encrypted voice was confirmed.']
 ]);
 const ACTION_METRIC_GUIDE = Object.freeze([
   ['Active', 'A voice-channel grant event observed outside the dedicated call-start assignment. It is an event count, not the number of calls currently active.'],
@@ -971,7 +970,17 @@ function systemLabel(row) {
 }
 
 function systemValue(row) {
-  return systemLabel(row);
+  const system = systemLabel(row);
+  const aliasList = scopeAliasListLabel(row);
+  return [system, aliasList].filter(Boolean).join(' · ');
+}
+
+function scopeAliasListLabel(row) {
+  if (!isP25(row)) return '';
+  const id = Number(row?.alias_list_id);
+  if (!Number.isInteger(id) || id <= 0) return '';
+  const name = String(row?.alias_list_name || '').trim();
+  return name ? `${name} (#${id})` : `Alias List #${id}`;
 }
 
 function systemInfoValue(row) {
@@ -1327,10 +1336,11 @@ function exportCsvLink(dataset, context = {}) {
 }
 
 function aliasListLink(name, id) {
-  const label = String(name || '').trim();
+  const configuredLabel = String(name || '').trim();
   const aliasListId = Number(id);
-  if (!label || !Number.isInteger(aliasListId) || aliasListId <= 0 ||
-      !aliasAdminAllowed()) return label;
+  const validId = Number.isInteger(aliasListId) && aliasListId > 0;
+  const label = configuredLabel || (validId ? `Alias List #${aliasListId}` : '');
+  if (!configuredLabel || !validId || !aliasAdminAllowed()) return label;
   return anchor(label, href('aliases', { list: aliasListId }));
 }
 
@@ -2248,23 +2258,23 @@ function aliasCatalogEnrichmentColumns() {
   });
   const evidence = 'Signaling / Relationship Evidence';
   return [
-    count('calls', 'Calls', 'call_count', 'Call Activity',
-      'Call observations associated with this alias. 0 means coverage was collected and no calls were observed.'),
-    count('recorded', 'Recorded', 'recorded_count', 'Call Activity',
-      'Recorded call observations associated with this alias.'),
-    count('streamed', 'Sent', 'streamed_count', 'Call Activity',
-      'Call observations sent to at least one configured streamer.'),
-    count('encrypted-evidence', 'Enc Obs.', 'encrypted_evidence_count', 'Call Activity',
-      'Encrypted observations. This is evidence of encryption, not necessarily a unique completed-call count.'),
-    count('grants', 'Grants', 'grant_count', evidence, 'Channel-grant observations.'),
-    count('joins', 'Join', 'join_count', evidence, 'Group affiliation or join observations.'),
-    count('emergency', 'Emergency', 'emergency_count', evidence, 'Emergency signaling observations.'),
-    count('register', 'Register', 'register_count', evidence, 'Unit registration observations.'),
-    count('logout', 'Logout', 'logout_count', evidence,
+    count('logical-calls', 'Logical Calls', 'logical_call_count', 'Call Activity',
+      'Unique transmissions associated with this alias after matching multisite copies are combined.'),
+    count('recorded-logical-calls', 'Recorded', 'recorded_logical_call_count', 'Call Activity',
+      'Logical calls whose selected best copy was recorded.'),
+    count('stream-submitted-logical-calls', 'Submitted', 'stream_submitted_logical_call_count',
+      'Call Activity', 'Logical calls whose selected best copy was submitted to a configured streamer.'),
+    count('encrypted-logical-calls', 'Encrypted', 'encrypted_logical_call_count', 'Call Activity',
+      'Logical calls for which encrypted voice was confirmed.'),
+    count('grant-observations', 'Grants', 'grant_observation_count', evidence, 'Channel-grant observations.'),
+    count('join-observations', 'Join', 'join_observation_count', evidence, 'Group affiliation or join observations.'),
+    count('emergency-observations', 'Emergency', 'emergency_observation_count', evidence, 'Emergency signaling observations.'),
+    count('register-observations', 'Register', 'register_observation_count', evidence, 'Unit registration observations.'),
+    count('logout-observations', 'Logout', 'logout_observation_count', evidence,
       'Unit deregistration or logout observations. This does not mean a radio left a talkgroup.'),
-    count('denial', 'Denial', 'denial_count', evidence, 'Denied service observations.'),
-    count('data', 'Data', 'data_count', evidence, 'Data-service observations.'),
-    count('other-signaling', 'Other', 'other_signaling_count', evidence,
+    count('denial-observations', 'Denial', 'denial_observation_count', evidence, 'Denied service observations.'),
+    count('data-observations', 'Data', 'data_observation_count', evidence, 'Data-service observations.'),
+    count('other-signaling-observations', 'Other', 'other_signaling_observation_count', evidence,
       'Other signaling observations that do not fit the named categories.'),
     count('relationships', 'Relationships', 'relationship_count', evidence,
       'Distinct retained radio/talkgroup relationship evidence.'),
@@ -2497,11 +2507,13 @@ function aliasScopeMetricSummary(row, definitions, emptyText) {
 }
 
 function aliasEditorScopeBreakdownColumns() {
-  const callUse = [['Calls', 'call_count'], ['Rec', 'recorded_count'], ['Sent', 'streamed_count'],
-    ['Enc', 'encrypted_evidence_count']];
-  const systemEvidence = [['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
-    ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
-    ['Data', 'data_count'], ['Other', 'other_signaling_count'], ['Relationships', 'relationship_count'],
+  const callUse = [['Logical Calls', 'logical_call_count'], ['Rec', 'recorded_logical_call_count'],
+    ['Submitted', 'stream_submitted_logical_call_count'], ['Enc', 'encrypted_logical_call_count']];
+  const systemEvidence = [['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
+    ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
+    ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
+    ['Data', 'data_observation_count'], ['Other', 'other_signaling_observation_count'],
+    ['Relationships', 'relationship_count'],
     ['Join Rel.', 'join_relationship_count'], ['Current Affil.', 'current_affiliation_count']];
   const total = (row, definitions) => definitions.reduce((sum, [, field]) => sum + Number(row[field] || 0), 0);
   return [
@@ -3178,14 +3190,16 @@ function aliasUsageContent(response) {
   const scopeRows = response?.breakdown || [];
   const wrapper = node('div', 'alias-usage-content');
   wrapper.append(section('Call Use', aliasDetailMetricBand(alias, [
-    ['Calls', 'call_count'], ['Recorded', 'recorded_count'], ['Sent', 'streamed_count'],
-    ['Enc Obs.', 'encrypted_evidence_count']
+    ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
+    ['Submitted', 'stream_submitted_logical_call_count'], ['Encrypted', 'encrypted_logical_call_count']
   ])));
   wrapper.append(section('System Evidence', fragment(
     aliasDetailMetricBand(alias, [
-      ['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
-      ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
-      ['Data', 'data_count'], ['Other', 'other_signaling_count'], ['Relationships', 'relationship_count'],
+      ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
+      ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
+      ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
+      ['Data', 'data_observation_count'], ['Other', 'other_signaling_observation_count'],
+      ['Relationships', 'relationship_count'],
       ['Join Relationships', 'join_relationship_count'], ['Current Affiliations', 'current_affiliation_count']
     ]),
     keyValues([
@@ -4140,13 +4154,14 @@ function observedTalkgroupDetail(row, selectedList) {
   }
   wrapper.append(section('Alias Coverage', keyValues(coverage)));
   wrapper.append(section('Call Use', aliasDetailMetricBand(row, [
-    ['Calls', 'call_count'], ['Recorded', 'recorded_count'], ['Sent', 'streamed_count'],
-    ['Encrypted', 'encrypted_count']
+    ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
+    ['Submitted', 'stream_submitted_logical_call_count'], ['Encrypted', 'encrypted_logical_call_count']
   ])));
   wrapper.append(section('System Evidence', aliasDetailMetricBand(row, [
-    ['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
-    ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
-    ['Data', 'data_count'], ['Other', 'other_signaling_count']
+    ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
+    ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
+    ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
+    ['Data', 'data_observation_count'], ['Other', 'other_signaling_observation_count']
   ])));
   wrapper.append(section('Observed', keyValues([
     ['First Activity', observedTalkgroupTime(row, row.first_seen_ms)],
@@ -4206,11 +4221,12 @@ function renderObservedTalkgroups(main, page, selectedList) {
       render: observedTalkgroupIdentity },
     { id: 'system', label: 'System', sort: 'system', className: 'alias-cell', render: observedTalkgroupSystem },
     { id: 'match', label: 'Alias Match', className: 'alias-cell', render: observedTalkgroupMatch },
-    { id: 'call-use', label: 'Call Use', sort: 'calls', render: (row) => observedTalkgroupCounts([
-      ['Calls', row.call_count], ['Rec', row.recorded_count], ['Sent', row.streamed_count]
+    { id: 'call-use', label: 'Call Use', sort: 'logical_call_count', render: (row) => observedTalkgroupCounts([
+      ['Logical', row.logical_call_count], ['Rec', row.recorded_logical_call_count],
+      ['Submitted', row.stream_submitted_logical_call_count]
     ]) },
     { id: 'evidence', label: 'Evidence', render: (row) => observedTalkgroupCounts([
-      ['Enc', row.encrypted_count], ['Signal', row.signaling_count]
+      ['Enc', row.encrypted_logical_call_count], ['Signal', row.signaling_observation_count]
     ]) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', sort: 'last_seen',
       render: (row) => observedTalkgroupTime(row, row.last_seen_ms) },
@@ -4587,7 +4603,7 @@ function signalingCounts(row) {
 function signalingActionRows(rows) {
   return (rows || []).filter((row) => {
     const field = `${String(row.action || '').trim().toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')}_count`;
+      .replace(/[^a-z0-9]+/g, '_')}_observation_count`;
     return SIGNALING_COUNT_LABELS.has(field);
   });
 }
@@ -4598,7 +4614,7 @@ function talkgroupSignaling(row) {
 }
 
 function talkgroupSignalingSortValue(row) {
-  const total = Number(row.signaling_count || 0);
+  const total = Number(row.signaling_observation_count || 0);
   return Number.isFinite(total) && total > 0 ? total : 0;
 }
 
@@ -5603,10 +5619,10 @@ async function talkgroupActivityHistorySection(scopeParameters) {
         scopeParameters.talkgroup_id, 'activity'), { range: selectedRange });
       if (sequence !== loadingSequence) return;
       host.replaceChildren(metrics([
-        ['Tracked Calls', response.totals?.call_count],
-        ['Recorded', response.totals?.recorded_count],
-        ['Sent to Streamer', response.totals?.streamed_count],
-        ['Encrypted', response.totals?.encrypted_count]
+        ['Logical Calls', response.totals?.logical_call_count],
+        ['Recorded', response.totals?.recorded_logical_call_count],
+        ['Submitted to Streamer', response.totals?.stream_submitted_logical_call_count],
+        ['Encrypted', response.totals?.encrypted_logical_call_count]
       ], true),
       section('Call Activity', talkgroupActivityChart(response, TALKGROUP_CALL_ACTIVITY_SERIES,
         'Talkgroup calls and call outcomes by time')),
@@ -5641,7 +5657,7 @@ async function talkgroupActivityHistorySection(scopeParameters) {
 
 async function siteTopTalkgroupsSection(site) {
   const host = node('div', 'site-top-talkgroups');
-  const block = section('Talkgroup Call Activity', host);
+  const block = section('Talkgroup Site Observations', host);
   let selectedRange = '24h';
   let loadingSequence = 0;
   let loading = false;
@@ -5655,12 +5671,14 @@ async function siteTopTalkgroupsSection(site) {
     { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
     { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
     { label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
-    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
-    { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
-    { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sortValue: (row) => Number(row.streamed_count || 0) },
-    { id: 'encrypted', label: 'Enc', fullLabel: 'Encrypted',
-      render: (row) => number(row.encrypted_count), className: 'numeric encrypted',
-      sortValue: (row) => Number(row.encrypted_count || 0) }
+    { id: 'site-observations', label: 'Site Observations',
+      render: (row) => number(row.site_observation_count), className: 'numeric',
+      sortValue: (row) => Number(row.site_observation_count || 0) },
+    { id: 'encrypted-site-observations', label: 'Encrypted',
+      fullLabel: 'Encrypted Site Observations',
+      render: (row) => number(row.encrypted_site_observation_count),
+      className: 'numeric encrypted',
+      sortValue: (row) => Number(row.encrypted_site_observation_count || 0) }
   ];
 
   const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
@@ -5669,7 +5687,7 @@ async function siteTopTalkgroupsSection(site) {
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
-      host.replaceChildren(node('div', 'loading', 'Loading talkgroup call activity'));
+      host.replaceChildren(node('div', 'loading', 'Loading talkgroup site observations'));
     }
     try {
       const response = await api(siteApiPath(site.guid, 'group-identities'), {
@@ -6973,27 +6991,30 @@ function scannerHex(value, width) {
   return numeric === null ? '' : numeric.toString(16).toUpperCase().padStart(width, '0');
 }
 
-function scannerNativeIdentifier(call) {
+function scannerIsP25(call) {
   const protocol = String(call?.protocol || call?.decoder || '').toUpperCase();
-  if (protocol.includes('P25') || protocol.includes('APCO25')) {
-    const values = [];
+  return protocol.includes('P25') || protocol.includes('APCO25');
+}
+
+function scannerNetworkSiteIdentity(call) {
+  if (scannerIsP25(call)) {
     const wacn = scannerHex(call?.wacn, 5);
     const system = scannerHex(call?.system_id, 3);
-    const rfss = scannerIdentifierNumber(call?.rfss_id);
-    const site = scannerIdentifierNumber(call?.site_id);
-    if (wacn) values.push(`WACN ${wacn}`);
-    if (system) values.push(`SYSID ${system}`);
-    if (rfss !== null) values.push(`RFSS ${rfss}`);
-    if (site !== null) values.push(`SITE ${site}`);
-    return values.join(' · ');
+    const rfss = scannerHex(call?.rfss_id, 2);
+    const site = scannerHex(call?.site_id, 2);
+    const network = wacn && system ? `${wacn}-${system}` : wacn || (system ? `SYS ${system}` : '');
+    const location = rfss && site ? `${rfss}-${site}` : rfss ? `RFSS ${rfss}` : site ? `SITE ${site}` : '';
+    return [network, location].filter(Boolean).join(' · ');
   }
+
   const values = [];
   const network = scannerIdentifierNumber(call?.network_id);
   const system = scannerIdentifierNumber(call?.system_id);
   const site = scannerIdentifierNumber(call?.site_id);
   const ran = scannerIdentifierNumber(call?.ran);
-  if (network !== null) values.push(`Network ${network}`);
-  if (system !== null) values.push(`System ${system}`);
+  if (network !== null && system !== null) values.push(`${network}-${system}`);
+  else if (network !== null) values.push(`Network ${network}`);
+  else if (system !== null) values.push(`System ${system}`);
   if (site !== null) values.push(`Site ${site}`);
   if (ran !== null) values.push(`RAN ${ran}`);
   return values.join(' · ');
@@ -7119,8 +7140,47 @@ function scannerVoiceMeter(call) {
   return bars;
 }
 
+function scannerCallQuality(call) {
+  const quality = node('section', 'scanner-call-quality');
+  quality.append(node('span', 'scanner-call-quality-heading', 'Call Quality'));
+  const values = node('div', 'scanner-call-quality-values');
+  [
+    ['Decoded', call?.vc_decoded_frames], ['Repeated', call?.vc_repeated_frames],
+    ['Concealed', call?.vc_concealed_frames], ['Missing', call?.vc_missing_frames],
+    ['FEC Errors', call?.vc_fec_errors], ['FEC Protected', call?.vc_fec_protected_bits]
+  ].forEach(([label, value]) => {
+    const metric = node('div', 'scanner-call-quality-stat');
+    metric.append(node('span', '', label), node('strong', '',
+      value === null || value === undefined || value === '' ? '—' : String(value)));
+    values.append(metric);
+  });
+  quality.append(values);
+  return quality;
+}
+
+function scannerCallRenderKey(call, state, site) {
+  if (!call) return `idle:${scannerDetailMode}:${state.paused ? 'paused' : 'listening'}`;
+  return JSON.stringify([
+    scannerDetailMode, call.call_id || call._logicalCallId || '', call.started_at_ms || '',
+    scannerMatchedScanLists(call, state), site?.scope_token || '', site?.p25_decoder_mode || '',
+    site?.modulation || ''
+  ]);
+}
+
 function renderScannerCall(host, state, site) {
   const call = state.current;
+  const renderKey = scannerCallRenderKey(call, state, site);
+  host.dataset.scannerMode = scannerDetailMode;
+  if (host.dataset.renderKey === renderKey && host.childNodes.length) {
+    const wave = host.querySelector('.scanner-audio-wave');
+    if (wave) {
+      const paused = state.paused || !state.currentReady;
+      wave.classList.toggle('paused', paused);
+      wave.setAttribute('aria-label', paused ? 'Audio paused' : 'Audio playing');
+    }
+    return;
+  }
+  host.dataset.renderKey = renderKey;
   host.replaceChildren();
   if (!call) {
     const idle = node('div', 'scanner-idle');
@@ -7152,16 +7212,16 @@ function renderScannerCall(host, state, site) {
     scannerParticipant('Source', scannerSourceAlias(call), call.source_id, call.source_description,
       call.source_group, open('source-alias'), open('source'))
   );
-  const nativeIdentifier = scannerNativeIdentifier(call);
-  const nac = scannerHex(call.nac, 3) || (scannerIdentifierNumber(call.ran) !== null ? String(call.ran) : '');
+  const networkSiteIdentity = scannerNetworkSiteIdentity(call);
+  const nac = scannerIsP25(call) ? scannerHex(call.nac, 3) : '';
   const modulation = site?.p25_decoder_mode || call.modulation || '';
   [
     scannerField('System', call.system, 0, open('system')),
     scannerField('Site', call.site, 0, open('site')),
     scannerField('Matched Scan Lists', scannerMatchedScanLists(call, state), 1, null, true),
     scannerField('Channel', call.channel, 1, open('channel'), true),
-    scannerField('Identifier', nativeIdentifier, 2, open('identifier'), true),
-    scannerField(call.ran !== null && call.ran !== undefined ? 'RAN' : 'NAC', nac, 2, open('identifier')),
+    scannerField('Network / Site', networkSiteIdentity, 1, open('site'), true),
+    scannerField('NAC', nac, 2, open('identifier')),
     scannerField('Frequency', scannerFrequency(call), 1, open('frequency')),
     scannerField('LCN', call.lcn, 2, open('lcn')),
     scannerField('Decoder', call.decoder, 1, open('decoder')),
@@ -7172,16 +7232,11 @@ function renderScannerCall(host, state, site) {
   if (scannerDetailMode === 'engineer') {
     const values = [
       ['Call ID', call.call_id], ['Protocol', call.protocol],
-      ['Started', exactDateTime(call.started_at_ms)], ['Completed', exactDateTime(call.completed_at_ms)],
+      ['Started', exactDateTime(call.started_at_ms)],
       ['Duration', scannerDuration(call.duration_ms)], ['Timeslot', call.timeslot],
-      ['Encryption', call.encrypted ? 'Encrypted' : 'Clear'], ['Alias List', call.alias_list],
-      ['Decoded Frames', call.vc_decoded_frames], ['Repeated Frames', call.vc_repeated_frames],
-      ['Concealed Frames', call.vc_concealed_frames], ['Missing Frames', call.vc_missing_frames],
-      ['FEC Errors', call.vc_fec_errors], ['FEC Protected Bits', call.vc_fec_protected_bits],
-      ['Configuration ID', call.configuration_id], ['Site GUID', call.site_guid],
-      ['System Identity', call.system_identity], ['Site Identity', call.site_identity],
-      ['Channel Identity', call.channel_identity]
+      ['Encryption', call.encrypted ? 'Encrypted' : 'Clear'], ['Alias List', call.alias_list]
     ];
+    engineer.append(scannerCallQuality(call));
     values.forEach(([label, value]) => {
       const item = node('div', 'scanner-engineer-item');
       item.append(node('span', '', label), node('strong', '', value === null || value === undefined || value === '' ?
@@ -7791,17 +7846,19 @@ function dashboardIdentity(row) {
 }
 
 const dashboardCallSourceColumns = [
-  { id: 'receiver', label: 'Site / Channel', render: callSourceLink, className: 'alias-cell',
+  { id: 'receiver', label: 'Conventional Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
   { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
     render: dashboardMode, sortValue: dashboardModeLabel },
-  { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
-    sortValue: (row) => Number(row.call_count || 0) },
-  { id: 'recorded', label: 'Recorded', render: (row) => number(row.recorded_count),
-    className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
-  { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer',
-    render: (row) => number(row.streamed_count), className: 'numeric',
-    sortValue: (row) => Number(row.streamed_count || 0) }
+  { id: 'logical-calls', label: 'Logical Calls',
+    render: (row) => number(row.logical_call_count), className: 'numeric',
+    sortValue: (row) => Number(row.logical_call_count || 0) },
+  { id: 'recorded-logical-calls', label: 'Recorded',
+    render: (row) => number(row.recorded_logical_call_count), className: 'numeric',
+    sortValue: (row) => Number(row.recorded_logical_call_count || 0) },
+  { id: 'stream-submitted-logical-calls', label: 'Submitted', fullLabel: 'Submitted to Streamer',
+    render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric',
+    sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) }
 ];
 
 function dashboardIdentityColumns(identityLabel) {
@@ -7809,7 +7866,19 @@ function dashboardIdentityColumns(identityLabel) {
     { id: 'identity', label: identityLabel, render: dashboardIdentity, className: 'alias-cell',
       sortValue: (row) =>
         `${row.alias_name || row.last_talker_alias || ''}\u0000${dashboardIdentityId(row)}` },
-    ...dashboardCallSourceColumns
+    { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
+    { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
+      render: dashboardMode, sortValue: dashboardModeLabel },
+    { id: 'logical-calls', label: 'Logical Calls',
+      render: (row) => number(row.logical_call_count), className: 'numeric',
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'recorded-logical-calls', label: 'Recorded',
+      render: (row) => number(row.recorded_logical_call_count), className: 'numeric',
+      sortValue: (row) => Number(row.recorded_logical_call_count || 0) },
+    { id: 'stream-submitted-logical-calls', label: 'Submitted',
+      fullLabel: 'Submitted to Streamer',
+      render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric',
+      sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) }
   ];
 }
 
@@ -7835,7 +7904,7 @@ function dashboardActivityActionRows(response) {
     return {
       ...row,
       ...configuration,
-      count: Math.max(0, Number(row.count || 0))
+      count: Math.max(0, Number(row.observation_count || 0))
     };
   }).filter((row) => row.action && row.action !== 'CONTINUE' && row.count > 0)
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
@@ -7851,7 +7920,7 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   const chart = node('div', 'dashboard-activity-chart');
   const svg = svgNode('svg', {
     class: 'dashboard-activity-donut', viewBox: '0 0 220 220', role: 'group',
-    'aria-label': `Activity mix, ${number(total)} events`
+    'aria-label': `Activity mix, ${number(total)} observations`
   });
   svg.append(svgNode('circle', {
     class: 'dashboard-activity-donut-background', cx: 110, cy: 110, r: 78
@@ -7958,7 +8027,8 @@ const dashboardActivityRadioColumns = [
   { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
   { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'numeric' },
   { id: 'alias', label: 'Alias', render: dashboardActivityAlias, className: 'alias-cell' },
-  { id: 'events', label: 'Events', render: (row) => number(row.event_count), className: 'numeric' },
+  { id: 'observations', label: 'Observations', render: (row) => number(row.observation_count),
+    className: 'numeric' },
   { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
 ];
 
@@ -7989,10 +8059,10 @@ function dashboardActivityRadioPager(page, onOffset) {
 
 function dashboardActivityRadioNote(page, actionLabel) {
   return node('p', 'metric-meaning-note',
-    `Hourly ${actionLabel.toLowerCase()} total: ${number(page.action_total)}. ` +
-    `Exact currently retained detail: ${number(page.retained_event_count)} events; ` +
-    `${number(page.identified_event_count)} identify a source radio and ` +
-    `${number(page.unknown_source_event_count)} have no source radio ID.`);
+    `Hourly ${actionLabel.toLowerCase()} observations: ${number(page.action_observation_count)}. ` +
+    `Exact currently retained detail: ${number(page.retained_observation_count)} observations; ` +
+    `${number(page.identified_observation_count)} identify a source radio and ` +
+    `${number(page.unknown_source_observation_count)} have no source radio ID.`);
 }
 
 async function renderDashboardActivity(renderContext) {
@@ -8180,12 +8250,12 @@ const talkgroupColumns = [
   { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
   { id: 'talkgroup-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
   { label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
-  { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-  { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sort: 'recorded', sortValue: (row) => Number(row.recorded_count || 0) },
-  { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sort: 'streamed', sortValue: (row) => Number(row.streamed_count || 0) },
-  { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+  { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+  { id: 'recorded-logical-calls', label: 'Rec', fullLabel: 'Recorded Logical Calls', render: (row) => number(row.recorded_logical_call_count), className: 'numeric', sort: 'recorded_logical_call_count', sortValue: (row) => Number(row.recorded_logical_call_count || 0) },
+  { id: 'stream-submitted-logical-calls', label: 'Submitted', fullLabel: 'Submitted to Streamer', render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric', sort: 'stream_submitted_logical_call_count', sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) },
+  { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
   { id: 'signaling', label: 'Signaling', fullLabel: 'Signaling observations',
-    render: talkgroupSignaling, className: 'numeric', sort: 'signaling',
+    render: talkgroupSignaling, className: 'numeric', sort: 'signaling_observation_count',
     sortValue: talkgroupSignalingSortValue },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
@@ -8209,11 +8279,13 @@ function systemRadioColumns(system) {
       className: 'alias-cell', sort: 'site', sortValue: presenceSiteSortValue });
   }
   columns.push(
-    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
-      sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-    { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count),
-      className: 'numeric encrypted', sort: 'encrypted',
-      sortValue: (row) => Number(row.encrypted_count || 0) },
+    { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count),
+      className: 'numeric', sort: 'logical_call_count',
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'encrypted-logical-calls', label: 'Enc',
+      render: (row) => number(row.encrypted_logical_call_count),
+      className: 'numeric encrypted', sort: 'encrypted_logical_call_count',
+      sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen',
       sortValue: (row) => Number(row.last_seen_ms || 0) }
@@ -8257,18 +8329,20 @@ async function renderDashboard() {
     return;
   }
 
-  content.append(dashboardSummarySection('Call Totals · Last 24 Hours', [
-    [dashboardMetricLabel(callActivity, 'call_count', 'Calls'), callTotals.call_count,
-      dashboardMetricDisplay(callActivity, 'call_count')],
-    [dashboardMetricLabel(callActivity, 'recorded_count', 'Recorded'), callTotals.recorded_count,
-      dashboardMetricDisplay(callActivity, 'recorded_count')],
-    [dashboardMetricLabel(callActivity, 'streamed_count', 'Sent'), callTotals.streamed_count,
-      dashboardMetricDisplay(callActivity, 'streamed_count')]
+  content.append(dashboardSummarySection('Logical Call Totals · Last 24 Hours', [
+    [dashboardMetricLabel(callActivity, 'logical_call_count', 'Logical Calls'),
+      callTotals.logical_call_count, dashboardMetricDisplay(callActivity, 'logical_call_count')],
+    [dashboardMetricLabel(callActivity, 'recorded_logical_call_count', 'Recorded'),
+      callTotals.recorded_logical_call_count,
+      dashboardMetricDisplay(callActivity, 'recorded_logical_call_count')],
+    [dashboardMetricLabel(callActivity, 'stream_submitted_logical_call_count', 'Submitted'),
+      callTotals.stream_submitted_logical_call_count,
+      dashboardMetricDisplay(callActivity, 'stream_submitted_logical_call_count')]
   ]));
   content.append(section('Call Activity · Last 24 Hours', dashboardCallActivityChart(callActivity)));
   const sourceRows = Array.isArray(dashboard.source_activity_24h) ? dashboard.source_activity_24h :
     dashboard.source_activity_24h?.rows || [];
-  content.append(section('Calls by Site / Channel · Last 24 Hours',
+  content.append(section('Logical Calls by Conventional Channel · Last 24 Hours',
     table(sourceRows, dashboardCallSourceColumns, 'No call activity recorded',
       { type: 'dashboard-call-sources' })));
   const destinations = section('Top Destinations · Last 24 Hours',
@@ -12468,6 +12542,8 @@ function systemsDirectoryContent(data) {
         const heading = node('strong');
         heading.append(systemLink(row, label));
         wrapper.append(heading);
+        const aliasList = scopeAliasListLabel(row);
+        if (aliasList) wrapper.append(node('span', 'muted', aliasList));
       } else {
         wrapper.append(node('span', 'directory-branch', '↳'), siteNameSummary(row));
       }
@@ -12572,8 +12648,8 @@ async function renderSystem() {
         render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_',
           row.last_talkgroup_kind), className: 'alias-cell', sort: 'last_talkgroup_name',
         sortValue: (row) => row.talkgroup_alias_name || '' },
-      { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-      { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+      { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+      { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
     ];
     const block = pagedSection('Talker Alias Summary', page, columns,
@@ -12589,11 +12665,12 @@ async function renderSystem() {
       ['Known Talkgroups', system.talkgroups],
       ['Known Patch Groups', system.patch_groups],
       ['Known Radios', system.radios]
-    ], true)), section('Retained Call Activity', metrics([
-      ['Calls', system.activity_retained_calls],
-      ['Recorded', system.activity_recorded],
-      ['Sent to Streamer', system.activity_streamed],
-      ['Encrypted', system.activity_encrypted]
+    ], true)), section('Logical Call Activity', metrics([
+      ['Logical Calls', system.logical_call_count],
+      ['Site Observations', system.site_observation_count],
+      ['Recorded', system.recorded_logical_call_count],
+      ['Submitted to Streamer', system.stream_submitted_logical_call_count],
+      ['Encrypted', system.encrypted_logical_call_count]
     ], true))];
     if (systemCapability(system, 'current_affiliations')) {
       blocks.push(section('Current State', metrics([
@@ -12602,11 +12679,14 @@ async function renderSystem() {
     }
     blocks.push(section('System Info', keyValues([
       ['System', systemInfoValue(system)],
+      ['Alias List', aliasListLink(system.alias_list_name, system.alias_list_id)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
     ])), section('Retained Signaling Observations', fragment(table(
       signalingActionRows(response.action_counts), [
       { label: 'Action', key: 'action' },
-      { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
+      { id: 'observations', label: 'Observations',
+        render: (row) => number(row.observation_count), className: 'numeric',
+        sortValue: (row) => Number(row.observation_count || 0) }
     ], 'No signaling observations recorded', { type: 'action-counts' }), activityMetricGuide())));
     infoColumn.append(...blocks);
 
@@ -12646,8 +12726,8 @@ async function renderTalkgroup() {
     const columns = [
       { id: 'radio', label: 'Radio', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
       { id: 'alias', label: 'Alias', render: (row) => row.radio_alias_name ? radioLink(row, row.radio_id, row.radio_alias_name) : '', className: 'alias-cell', sort: 'radio_alias', sortValue: (row) => row.radio_alias_name || '' },
-      { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-      { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+      { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+      { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     if (systemCapability(talkgroup, 'talker_aliases')) {
@@ -12680,11 +12760,12 @@ async function renderTalkgroup() {
       ['Alias', aliasLabel(talkgroup)],
       ['Description', talkgroup.alias_description],
       ['Group', talkgroup.alias_group]
-    ])), section('Collected Call Activity', metrics([
-      ['Calls', talkgroup.call_count],
-      ['Recorded', talkgroup.recorded_count],
-      ['Sent to Streamer', talkgroup.streamed_count],
-      ['Encrypted', talkgroup.encrypted_count]
+    ])), section('Logical Call Activity', metrics([
+      ['Logical Calls', talkgroup.logical_call_count],
+      ['Site Observations', talkgroup.site_observation_count],
+      ['Recorded', talkgroup.recorded_logical_call_count],
+      ['Submitted to Streamer', talkgroup.stream_submitted_logical_call_count],
+      ['Encrypted', talkgroup.encrypted_logical_call_count]
     ], true)), section('Relationships', metrics([
       ['Observed Radios', talkgroup.radios]
     ], true))];
@@ -12743,8 +12824,8 @@ async function renderRadio() {
         row.talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'talkgroup_alias', sortValue: (row) => row.talkgroup_alias_name || '' },
       { id: 'talkgroup-description', label: 'Description', key: 'talkgroup_alias_description',
         className: 'alias-cell' },
-      { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-      { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+      { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+      { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     content.append(pagedSection('Talkgroups', relationships, columns, null, 'radio-talkgroups'));
@@ -12760,11 +12841,11 @@ async function renderRadio() {
     if (systemCapability(radio, 'talker_aliases')) {
       identityValues.push(['Talker Alias', radio.last_talker_alias]);
     }
-    const blocks = [section('Identity', keyValues(identityValues)), section('Collected Call Activity', metrics([
-      ['Calls', radio.call_count],
-      ['Recorded', radio.recorded_count],
-      ['Sent to Streamer', radio.streamed_count],
-      ['Encrypted', radio.encrypted_count]
+    const blocks = [section('Identity', keyValues(identityValues)), section('Logical Call Activity', metrics([
+      ['Logical Calls', radio.logical_call_count],
+      ['Recorded', radio.recorded_logical_call_count],
+      ['Submitted to Streamer', radio.stream_submitted_logical_call_count],
+      ['Encrypted', radio.encrypted_logical_call_count]
     ], true))];
     if (systemCapability(radio, 'current_affiliations')) {
       blocks.push(section('Current Affiliation', keyValues([
@@ -13477,7 +13558,7 @@ function conventionalColumns() {
     { label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
       render: (row) => identifierNumber(row.timeslot) },
     { id: 'nac', label: 'NAC', render: (row) => hex(row.nac, 3), sort: 'nac', sortValue: (row) => Number(row.nac || 0) },
-    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+    { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
 }
@@ -13535,10 +13616,13 @@ function conventionalTalkgroupColumns() {
       sortValue: (row) => Number(row.frequency_hz || 0) },
     { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
       render: (row) => identifierNumber(row.timeslot) },
-    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
-      sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-    { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
-      className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+    { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count),
+      className: 'numeric', sort: 'logical_call_count',
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'encrypted-logical-calls', label: 'Encrypted',
+      render: (row) => number(row.encrypted_logical_call_count), className: 'numeric',
+      sort: 'encrypted_logical_call_count',
+      sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
     { id: 'source', label: 'Last Source', key: 'last_source_radio_id', className: 'numeric',
       render: (row) => identifierNumber(row.last_source_radio_id) },
     { id: 'source-alias', label: 'Source Alias', key: 'last_source_alias_name', className: 'alias-cell' },
@@ -13561,18 +13645,29 @@ function conventionalRadioColumns() {
       sortValue: (row) => Number(row.frequency_hz || 0) },
     { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
       render: (row) => identifierNumber(row.timeslot) },
-    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
-      sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-    { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
-      className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-    { id: 'source-calls', label: 'As Source', render: (row) => number(row.source_call_count),
-      className: 'numeric', sort: 'source_calls', sortValue: (row) => Number(row.source_call_count || 0) },
-    { id: 'target-calls', label: 'As Target', render: (row) => number(row.target_call_count),
-      className: 'numeric', sort: 'target_calls', sortValue: (row) => Number(row.target_call_count || 0) },
-    { id: 'group-calls', label: 'Group', render: (row) => number(row.group_call_count),
-      className: 'numeric', sort: 'group_calls', sortValue: (row) => Number(row.group_call_count || 0) },
-    { id: 'private-calls', label: 'Private', render: (row) => number(row.private_call_count),
-      className: 'numeric', sort: 'private_calls', sortValue: (row) => Number(row.private_call_count || 0) },
+    { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count),
+      className: 'numeric', sort: 'logical_call_count',
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'encrypted-logical-calls', label: 'Encrypted',
+      render: (row) => number(row.encrypted_logical_call_count), className: 'numeric',
+      sort: 'encrypted_logical_call_count',
+      sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
+    { id: 'source-logical-calls', label: 'As Source',
+      render: (row) => number(row.source_logical_call_count), className: 'numeric',
+      sort: 'source_logical_call_count',
+      sortValue: (row) => Number(row.source_logical_call_count || 0) },
+    { id: 'target-logical-calls', label: 'As Target',
+      render: (row) => number(row.target_logical_call_count), className: 'numeric',
+      sort: 'target_logical_call_count',
+      sortValue: (row) => Number(row.target_logical_call_count || 0) },
+    { id: 'group-logical-calls', label: 'Group',
+      render: (row) => number(row.group_logical_call_count), className: 'numeric',
+      sort: 'group_logical_call_count',
+      sortValue: (row) => Number(row.group_logical_call_count || 0) },
+    { id: 'private-logical-calls', label: 'Private',
+      render: (row) => number(row.private_logical_call_count), className: 'numeric',
+      sort: 'private_logical_call_count',
+      sortValue: (row) => Number(row.private_logical_call_count || 0) },
     { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric',
       render: (row) => identifierNumber(row.last_talkgroup_id) },
     { id: 'talkgroup-name', label: 'Talkgroup Alias', key: 'last_talkgroup_alias_name',
@@ -13639,16 +13734,18 @@ async function renderConventionalDetail() {
       { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
       { label: 'Slot', key: 'timeslot', className: 'numeric',
         render: (row) => identifierNumber(row.timeslot) },
-      { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
-      { id: 'recorded', label: 'Rec', fullLabel: 'Recorded',
-        render: (row) => number(row.recorded_count), className: 'numeric',
-        sortValue: (row) => Number(row.recorded_count || 0) },
-      { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer',
-        render: (row) => number(row.streamed_count), className: 'numeric',
-        sortValue: (row) => Number(row.streamed_count || 0) },
-      { id: 'encrypted', label: 'Enc', fullLabel: 'Encrypted',
-        render: (row) => number(row.encrypted_count), className: 'numeric encrypted',
-        sortValue: (row) => Number(row.encrypted_count || 0) },
+      { id: 'logical-calls', label: 'Logical Calls',
+        render: (row) => number(row.logical_call_count), className: 'numeric',
+        sortValue: (row) => Number(row.logical_call_count || 0) },
+      { id: 'recorded-logical-calls', label: 'Rec', fullLabel: 'Recorded Logical Calls',
+        render: (row) => number(row.recorded_logical_call_count), className: 'numeric',
+        sortValue: (row) => Number(row.recorded_logical_call_count || 0) },
+      { id: 'stream-submitted-logical-calls', label: 'Submitted', fullLabel: 'Submitted to Streamer',
+        render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric',
+        sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) },
+      { id: 'encrypted-logical-calls', label: 'Enc', fullLabel: 'Encrypted Logical Calls',
+        render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted',
+        sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'first-seen', label: 'First', fullLabel: 'First Observed', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Observed', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No frequency summaries recorded', { type: 'conventional-frequencies' })));

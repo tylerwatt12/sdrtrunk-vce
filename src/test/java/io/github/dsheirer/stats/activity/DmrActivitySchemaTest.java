@@ -118,7 +118,7 @@ class DmrActivitySchemaTest
             assertEquals(1, scalar(connection,
                 "SELECT call_count FROM dmr_conventional_radio_summary"));
             assertEquals(2, scalar(connection,
-                "SELECT SUM(call_count) FROM call_identity_bucket"));
+                "SELECT SUM(call_count) FROM conventional_call_identity_bucket"));
 
             try(ResultSet resultSet = statement.executeQuery("""
                 SELECT channel_kind, protocol, action, event_type, source_radio_id, target_id, target_kind,

@@ -34,6 +34,16 @@ final class StatsApiV1Payload
         "p25_home_talkgroup_id", "channel_kind_code", "kind_code", "identity_role_code", "model_code",
         "brand_code", "mode_code", "channel_type_code", "service_flags", "failure_code", "role_flags",
         "status_flags", "last_event_type_code");
+    private static final Set<String> LEGACY_METRIC_FIELDS = Set.of(
+        "call_count", "source_call_count", "target_call_count", "group_call_count", "private_call_count",
+        "recorded_count", "streamed_count", "encrypted_count", "grant_count", "join_count",
+        "register_count", "active_count", "continue_count", "denial_count", "acknowledge_count",
+        "emergency_count", "request_count", "queued_count", "busy_count", "check_count",
+        "check_ack_count", "page_count", "status_count", "gps_count", "logout_count", "patch_count",
+        "patch_create_count", "patch_cancel_count", "data_count", "unknown_count", "signaling_count",
+        "other_signaling_count", "encrypted_evidence_count", "event_count", "total_event_count",
+        "activity_retained_calls", "activity_calls", "activity_recorded", "activity_streamed",
+        "activity_encrypted");
     private static final Set<String> BOOLEAN_FIELDS = Set.of(
         "data_service", "registration_service", "tdma", "voice_service", "encrypted", "record_enabled",
         "active_rfss_network_connection",
@@ -86,7 +96,7 @@ final class StatsApiV1Payload
             Map.Entry<String,JsonNode> field = fields.next();
             String name = field.getKey();
 
-            if(INTERNAL_FIELDS.contains(name))
+            if(INTERNAL_FIELDS.contains(name) || LEGACY_METRIC_FIELDS.contains(name))
             {
                 continue;
             }

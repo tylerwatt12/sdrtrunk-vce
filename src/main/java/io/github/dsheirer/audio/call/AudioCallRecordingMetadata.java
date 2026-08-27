@@ -23,6 +23,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
@@ -78,6 +79,26 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
             safeDestination.aliasDescription(), safeDestination.aliasGroup(), safeDestination.matcherIdentity(),
             safeDestination.recordEnabled(), safeSource.protocol(), safeSource.value(), safeSource.aliasName(),
             safeSource.aliasDescription(), safeSource.aliasGroup());
+    }
+
+    /**
+     * Applies the coordinator's final, most-exact user identities while retaining the alias and output decisions
+     * frozen by the physical legs.  Resolution runs after audio-quality election, so these identities need not come
+     * from the receiver that supplied the selected audio.
+     */
+    AudioCallRecordingMetadata withResolvedUserIdentifiers(Identifier<?> destination, Identifier<?> source)
+    {
+        String resolvedDestinationProtocol = destination != null ? protocol(destination) : destinationProtocol;
+        String resolvedDestinationValue = destination != null ? destinationValue(destination) : destinationValue;
+        String resolvedDestinationIdentity = destination != null ?
+            receivedDestinationIdentity(destination) : destinationIdentity;
+        String resolvedSourceProtocol = source != null ? protocol(source) : sourceProtocol;
+        String resolvedSourceValue = source != null ? receivedSourceIdentity(source) : sourceValue;
+        return new AudioCallRecordingMetadata(systemName, systemIdentity, siteName, siteIdentity, channelName,
+            channelIdentity, aliasListName, resolvedDestinationProtocol, resolvedDestinationValue,
+            resolvedDestinationIdentity, destinationAlias, destinationDescription, destinationGroup,
+            destinationMatcherIdentity, destinationTalkgroupRecordEnabled, resolvedSourceProtocol,
+            resolvedSourceValue, sourceAlias, sourceDescription, sourceGroup);
     }
 
     public static boolean isDestination(Identifier<?> identifier)
@@ -283,6 +304,16 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
         return destination != null ?
             protocol(destination) + ":" + destination.getForm() + ':' + destination.getValue() : null;
+    }
+
+    private static String receivedSourceIdentity(Identifier<?> source)
+    {
+        if(source instanceof FullyQualifiedRadioIdentifier fullyQualified)
+        {
+            return fullyQualified.getFullyQualifiedRadioAddress();
+        }
+
+        return source != null && source.getValue() != null ? source.getValue().toString() : null;
     }
 
     private static String identifierText(IdentifierCollection identifiers, IdentifierClass identifierClass,

@@ -176,17 +176,6 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
             broadcastRoutingKeys = immutableStrings(broadcastRoutingKeys);
         }
 
-        /** Compatibility constructor for contexts that do not carry runtime alias-list matching evidence. */
-        public MatchContext(String channelConfigurationId, long aliasListId, String aliasListName,
-                            String systemName, List<DestinationIdentity> destinationIdentities,
-                            Set<Long> matchedAliasIds, boolean recordAudio,
-                            boolean destinationTalkgroupRecordEnabled, Set<String> broadcastRoutingKeys)
-        {
-            this(channelConfigurationId, aliasListId, aliasListName, systemName, destinationIdentities,
-                matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, recordAudio,
-                destinationTalkgroupRecordEnabled, broadcastRoutingKeys);
-        }
-
         private static MatchContext capture(AudioCallSnapshot snapshot, boolean recordAudio,
                                             boolean destinationRecordEnabled, Set<String> broadcastRoutingKeys)
         {

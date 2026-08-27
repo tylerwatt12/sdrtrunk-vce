@@ -24,21 +24,28 @@ import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
-import io.github.dsheirer.audio.call.DuplicateCallPriorityProvider;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDecisionOutcome;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticDecision;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.preference.duplicate.CallManagementPreference;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,7 +91,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     @Test
     void westOnlyObservationOnTheSharedAliasListReachesTheWestProvider() throws Exception
     {
-        try(WorkflowHarness harness = harness("west-only", false, false))
+        try(WorkflowHarness harness = harness("west-only"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
             AudioCallSnapshot west = harness.snapshot(1L, 1000, 9001, WEST_CHANNEL_ID, WEST_SITE_GUID,
@@ -108,15 +115,15 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     @Test
     void selectedWestSiteStillReceivesWhenItsDuplicateCopyLosesTheElection() throws Exception
     {
-        try(WorkflowHarness harness = harness("losing-west", true, false))
+        try(WorkflowHarness harness = harness("losing-west"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
             AudioCallSnapshot eastWinner = harness.snapshot(11L, 1000, 9001, EAST_CHANNEL_ID, EAST_SITE_GUID,
                 Set.of(SITE_ROUTE));
-            AudioCallSnapshot westLoser = harness.snapshot(12L, 1000, 9002, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot westLoser = harness.snapshot(12L, 1000, 9001, WEST_CHANNEL_ID, WEST_SITE_GUID,
                 Set.of(SITE_ROUTE));
 
-            //Equal-quality copies use registration order as the deterministic final tie-breaker.
+            //Equal-quality copies use the stable site identity as a deterministic final tie-breaker.
             harness.submit(eastWinner, westLoser);
 
             assertEquals(EAST_CHANNEL_ID, harness.electedChannelConfigurationId(),
@@ -131,14 +138,14 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     @Test
     void oneDedupedCallDeliversOnceToEachSiteThatObservedItsOwnRoute() throws Exception
     {
-        try(WorkflowHarness harness = harness("east-west-providers", true, false))
+        try(WorkflowHarness harness = harness("east-west-providers"))
         {
             harness.addSiteProvider(EAST_ROUTE, EAST_CHANNEL_ID);
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
             harness.addSiteProvider(CENTRAL_ROUTE, CENTRAL_CHANNEL_ID);
             AudioCallSnapshot eastWinner = harness.snapshot(15L, 1000, 9050, EAST_CHANNEL_ID, EAST_SITE_GUID,
                 Set.of(EAST_ROUTE, CENTRAL_ROUTE));
-            AudioCallSnapshot westLoser = harness.snapshot(16L, 1000, 9051, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot westLoser = harness.snapshot(16L, 1000, 9050, WEST_CHANNEL_ID, WEST_SITE_GUID,
                 Set.of(SITE_ROUTE));
 
             harness.submit(eastWinner, westLoser);
@@ -161,12 +168,12 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     @Test
     void routeAndSelectedChannelFromDifferentDuplicateContextsAreRejected() throws Exception
     {
-        try(WorkflowHarness harness = harness("cross-context", false, true))
+        try(WorkflowHarness harness = harness("cross-context"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
             AudioCallSnapshot eastRoute = harness.snapshot(21L, 1000, 9100, EAST_CHANNEL_ID, EAST_SITE_GUID,
                 Set.of(SITE_ROUTE));
-            AudioCallSnapshot westWithoutRoute = harness.snapshot(22L, 1010, 9100, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot westWithoutRoute = harness.snapshot(22L, 1000, 9100, WEST_CHANNEL_ID, WEST_SITE_GUID,
                 Set.of());
 
             harness.submit(eastRoute, westWithoutRoute);
@@ -183,7 +190,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     @Test
     void missingAndMismatchedChannelEvidenceFailClosedWithoutPendingReplay() throws Exception
     {
-        try(WorkflowHarness harness = harness("missing-mismatch", false, false))
+        try(WorkflowHarness harness = harness("missing-mismatch"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
             AudioCallSnapshot mismatched = harness.snapshot(31L, 1000, 9200, EAST_CHANNEL_ID, EAST_SITE_GUID,
@@ -203,7 +210,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     @Test
     void legacyBroadcastifyCallsProviderKeepsAcceptAllRouting() throws Exception
     {
-        try(WorkflowHarness harness = harness("legacy", false, false))
+        try(WorkflowHarness harness = harness("legacy"))
         {
             harness.addLegacyProvider(LEGACY_ROUTE);
             AudioCallSnapshot withoutSiteEvidence = harness.snapshot(41L, 1020, 9300, null, null,
@@ -218,9 +225,9 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         }
     }
 
-    private WorkflowHarness harness(String directoryName, boolean byTalkgroup, boolean byRadio) throws IOException
+    private WorkflowHarness harness(String directoryName) throws IOException
     {
-        return new WorkflowHarness(mTemporaryFolder.resolve(directoryName), byTalkgroup, byRadio);
+        return new WorkflowHarness(mTemporaryFolder.resolve(directoryName));
     }
 
     private static void awaitCondition(BooleanSupplier condition, String message) throws InterruptedException
@@ -253,9 +260,10 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
             snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
-            false, true, snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
-            snapshot.recordingMetadata(), snapshot.voiceCallQuality());
-        return new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, null);
+            false, true, snapshot.encryptionState(), snapshot.recordAudio(), snapshot.recordingMetadata(),
+            snapshot.voiceCallQuality(), snapshot.callLegId(), snapshot.callLegSource(),
+            snapshot.callEncryptionEvidence());
+        return new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, null, false, 0L, 0L);
     }
 
     private final class WorkflowHarness implements AutoCloseable
@@ -266,10 +274,11 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         private final TestBroadcastModel mBroadcastModel;
         private final List<AudioRecording> mRecordings = new CopyOnWriteArrayList<>();
         private final List<CompletedAudioCall> mStreamedCalls = new CopyOnWriteArrayList<>();
+        private final List<LogicalCallDiagnosticDecision> mDecisions = new CopyOnWriteArrayList<>();
         private final AudioStreamingManager mStreamingManager;
         private final AudioCallCoordinator mCoordinator;
 
-        private WorkflowHarness(Path streamingDirectory, boolean byTalkgroup, boolean byRadio) throws IOException
+        private WorkflowHarness(Path streamingDirectory) throws IOException
         {
             Files.createDirectories(streamingDirectory);
             AliasListDefinition definition = new AliasListDefinition(ALIAS_LIST_NAME, AliasListFamily.P25);
@@ -277,7 +286,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             AliasModel aliasModel = new AliasModel();
             aliasModel.replaceCommittedConfiguration(List.of(definition), List.of());
             mAliasList = new AliasList(definition);
-            mPreferences = new WorkflowUserPreferences(streamingDirectory, byTalkgroup, byRadio);
+            mPreferences = new WorkflowUserPreferences(streamingDirectory);
             mBroadcastModel = new TestBroadcastModel(aliasModel, mPreferences);
             mStreamingManager = new AudioStreamingManager(recording -> {
                 mRecordings.add(recording);
@@ -286,8 +295,10 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                 (call, path, preferences, identifiers) ->
                     Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW));
             mStreamingManager.start();
-            mCoordinator = new AudioCallCoordinator(mPreferences, null, mStreamingManager, null,
-                DuplicateCallPriorityProvider.NONE);
+            mCoordinator = new AudioCallCoordinator(null, mStreamingManager, null, null, decision -> {
+                mDecisions.add(decision);
+                return true;
+            });
         }
 
         private void addSiteProvider(String routeName, String channelConfigurationId)
@@ -339,18 +350,38 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             Set<BroadcastChannel> broadcastChannels = routes.stream().map(BroadcastChannel::new)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
             long now = System.currentTimeMillis();
-            return new AudioCallSnapshot(new AudioCallId(producerId, 1L, 0), null, mAliasList,
-                new io.github.dsheirer.identifier.IdentifierCollection(identifiers), broadcastChannels,
-                now, now, 1, 1, now, now, false, false, false, false, false);
+            long end = now + 1_000L;
+            AudioCallId callId = new AudioCallId(producerId, 1L, 0);
+            int site = EAST_CHANNEL_ID.equals(channelConfigurationId) ? 1 :
+                WEST_CHANNEL_ID.equals(channelConfigurationId) ? 2 : (int)(producerId % 200L) + 1;
+            CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, channelConfigurationId,
+                "Site " + site, siteGuid, ALIAS_LIST_ID, new P25SiteIdentity(0xBEE00, 0x348, 1, site), true);
+            return new AudioCallSnapshot(callId, null, mAliasList, new IdentifierCollection(identifiers),
+                broadcastChannels, now, end, 1, 1, now, end, false, false, CallEncryptionState.CLEAR,
+                false, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), source, null);
         }
 
         private void submit(AudioCallSnapshot... snapshots) throws InterruptedException
         {
             int expectedRecordings = mRecordings.size() + 1;
+            int expectedDecisions = mDecisions.size() + 1;
+            long carrierTimestamp = System.currentTimeMillis();
 
             for(AudioCallSnapshot snapshot : snapshots)
             {
-                mCoordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot, new float[800]));
+                mCoordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot, null,
+                    false, 0L, 0L));
+            }
+
+            for(int index = 0; index < 3; index++)
+            {
+                long fingerprint = 10_000L + index;
+
+                for(AudioCallSnapshot snapshot : snapshots)
+                {
+                    mCoordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot,
+                        new float[160], false, fingerprint, carrierTimestamp + index * 20L));
+                }
             }
 
             for(AudioCallSnapshot snapshot : snapshots)
@@ -358,8 +389,21 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                 mCoordinator.receive(completionEvent(snapshot));
             }
 
-            awaitCondition(() -> mStreamingManager.getQueueStatus().retainedCalls() == 1,
+            awaitCondition(() -> mDecisions.size() >= expectedDecisions &&
+                    mStreamingManager.getQueueStatus().retainedCalls() > 0,
                 "Coordinator did not hand one resolved call to the streaming manager");
+            assertEquals(expectedDecisions, mDecisions.size(),
+                "Every submission must produce exactly one logical-call decision: " + mDecisions);
+            assertEquals(1, mStreamingManager.getQueueStatus().retainedCalls(),
+                "Every submission must hand exactly one logical call to streaming: " + mDecisions);
+
+            if(snapshots.length > 1)
+            {
+                assertEquals(LogicalCallDecisionOutcome.MERGED,
+                    mDecisions.get(expectedDecisions - 1).outcome(),
+                    "The two physical site observations must resolve as one logical call: " + mDecisions);
+            }
+
             mStreamingManager.new AudioSegmentProcessor().run();
             awaitCondition(() -> mRecordings.size() == expectedRecordings,
                 "Streaming manager did not hand the recording to the broadcast model");
@@ -430,9 +474,8 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     private static class WorkflowUserPreferences extends UserPreferences
     {
         private final DirectoryPreference mDirectoryPreference;
-        private final CallManagementPreference mCallManagementPreference;
 
-        private WorkflowUserPreferences(Path streamingDirectory, boolean byTalkgroup, boolean byRadio)
+        private WorkflowUserPreferences(Path streamingDirectory)
         {
             mDirectoryPreference = new DirectoryPreference(null)
             {
@@ -442,44 +485,12 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                     return streamingDirectory;
                 }
             };
-            mCallManagementPreference = new CallManagementPreference(null)
-            {
-                @Override
-                public boolean isDuplicateCallDetectionEnabled()
-                {
-                    return byTalkgroup || byRadio;
-                }
-
-                @Override
-                public boolean isDuplicateCallDetectionByTalkgroupEnabled()
-                {
-                    return byTalkgroup;
-                }
-
-                @Override
-                public boolean isDuplicateCallDetectionByRadioEnabled()
-                {
-                    return byRadio;
-                }
-
-                @Override
-                public boolean isDuplicateStreamingSuppressionEnabled()
-                {
-                    return true;
-                }
-            };
         }
 
         @Override
         public DirectoryPreference getDirectoryPreference()
         {
             return mDirectoryPreference;
-        }
-
-        @Override
-        public CallManagementPreference getCallManagementPreference()
-        {
-            return mCallManagementPreference;
         }
     }
 

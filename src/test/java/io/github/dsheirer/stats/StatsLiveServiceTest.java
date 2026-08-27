@@ -37,7 +37,7 @@ class StatsLiveServiceTest
     @Test
     void browserSubscribersDoNotOwnReceiverActivityLifetime() throws Exception
     {
-        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        ChannelProcessingManager manager = managerForManualActivityEvents();
         StatsLiveService service = new StatsLiveService(manager);
         Channel channel = trunkedDmrChannel();
         assertTrue(manager.getChannelActivityModel().isWorkerAlive());
@@ -60,13 +60,13 @@ class StatsLiveServiceTest
         service.stop();
         assertTrue(manager.getChannelActivityModel().isWorkerAlive());
         service.close();
-        manager.shutdown();
+        manager.close();
     }
 
     @Test
     void webAdapterUsesTheCoreSnapshotWithoutASecondProjectionWorker() throws Exception
     {
-        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        ChannelProcessingManager manager = managerForManualActivityEvents();
         StatsLiveService service = new StatsLiveService(manager);
         Channel channel = trunkedDmrChannel();
 
@@ -74,7 +74,10 @@ class StatsLiveServiceTest
         {
             service.start();
             manager.getChannelActivityModel().channelStarted(channel, List.of());
-            waitUntil(() -> manager.getChannelActivityModel().getSnapshotSet().tables().size() == 2);
+            waitUntil(() -> tables(service).stream()
+                .filter(table -> !"conventional".equals(table.get("table_id")))
+                .map(table -> (List<?>)table.get("rows"))
+                .anyMatch(rows -> rows != null && !rows.isEmpty()));
 
             try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
             {
@@ -91,7 +94,42 @@ class StatsLiveServiceTest
         finally
         {
             service.close();
-            manager.shutdown();
+            manager.close();
+        }
+    }
+
+    @Test
+    void recoverySnapshotDoesNotRestoreAStoppedTrunkedChannel() throws Exception
+    {
+        ChannelProcessingManager manager = managerForManualActivityEvents();
+        StatsLiveService service = new StatsLiveService(manager);
+        Channel channel = trunkedDmrChannel();
+
+        try
+        {
+            service.start();
+            manager.getChannelActivityModel().channelStarted(channel, List.of());
+            waitUntil(() -> tables(service).size() == 2);
+
+            String stoppedTableId = manager.getChannelActivityModel().getSnapshotSet().tables().stream()
+                .filter(table -> !"conventional".equals(table.tableId()))
+                .map(ChannelActivitySnapshot::tableId).findFirst().orElseThrow();
+            manager.getChannelActivityModel().channelStopped(channel);
+            waitUntil(() -> manager.getChannelActivityModel().getSnapshotSet().tables().stream()
+                .anyMatch(table -> stoppedTableId.equals(table.tableId()) && !table.channelRunning()));
+
+            assertEquals(2, manager.getChannelActivityModel().getSnapshotSet().tables().size(),
+                "the desktop model may retain the stopped table for its lifecycle display");
+            assertEquals(List.of("conventional"), tables(service).stream()
+                .map(table -> String.valueOf(table.get("table_id"))).toList(),
+                "a browser recovery snapshot must contain only active channels");
+            assertFalse(new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8)
+                .contains(stoppedTableId), "refresh uses the encoded recovery snapshot");
+        }
+        finally
+        {
+            service.close();
+            manager.close();
         }
     }
 
@@ -130,6 +168,18 @@ class StatsLiveServiceTest
         source.setFrequency(451_000_000L);
         channel.setSourceConfiguration(source);
         return channel;
+    }
+
+    /**
+     * These adapter tests inject lifecycle events directly into the activity model.  Disable the processing
+     * manager's normal reconciliation so it does not correctly remove that synthetic channel for having no live
+     * processing chain.
+     */
+    private static ChannelProcessingManager managerForManualActivityEvents()
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        manager.getChannelActivityModel().setActiveChannelSupplier(null);
+        return manager;
     }
 
     private static void waitUntil(BooleanSupplier condition) throws Exception

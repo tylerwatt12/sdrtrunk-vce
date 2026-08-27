@@ -76,10 +76,14 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import javafx.application.Platform;
@@ -100,6 +104,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
     private static final String CONFIGURATION_UNAVAILABLE_DESCRIPTION = "CHANNEL CONFIGURATION UNAVAILABLE";
     private static final long DMR_REST_CHANNEL_RETRY_DELAY_MILLISECONDS = 500;
+    private static final long SITE_METADATA_DRAIN_RETRY_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
 
@@ -119,6 +124,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
     private final Executor mSiteMetadataExecutor = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
+    private final AtomicInteger mSiteMetadataSubmissions = new AtomicInteger();
     private final Map<Channel,DMRRestChannelAttempt> mDmrRestChannelAttempts = new HashMap<>();
     private final DMRRestChannelHandoffCoordinator mDmrRestChannelHandoffCoordinator;
     private final long mDmrRestChannelRetryDelayMilliseconds;
@@ -1796,7 +1802,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(SiteMetadataEvent event)
     {
-        mSiteMetadataExecutor.execute(() -> dispatchSiteMetadata(event));
+        submitSiteMetadata(() -> dispatchSiteMetadata(event));
     }
 
     private void dispatchSiteMetadata(SiteMetadataEvent event)
@@ -1820,7 +1826,86 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(ProtocolSiteMetadataEvent event)
     {
-        mSiteMetadataExecutor.execute(() -> dispatchProtocolSiteMetadata(event));
+        submitSiteMetadata(() -> dispatchProtocolSiteMetadata(event));
+    }
+
+    /**
+     * Performs a fixed-attempt handoff to the shared sequential site-metadata observer. The in-flight counter lets a
+     * lifecycle thread fence submissions without making decoder callbacks acquire a contended lock.
+     */
+    private void submitSiteMetadata(Runnable task)
+    {
+        if(task == null || mClosed)
+        {
+            return;
+        }
+
+        mSiteMetadataSubmissions.incrementAndGet();
+
+        try
+        {
+            if(!mClosed)
+            {
+                mSiteMetadataExecutor.execute(task);
+            }
+        }
+        finally
+        {
+            mSiteMetadataSubmissions.decrementAndGet();
+        }
+    }
+
+    /**
+     * Waits for every site-metadata callback accepted before {@link #close()} to finish. Callers must close this
+     * manager first so new callbacks are rejected. This bounded lifecycle method must not run on a receiver thread.
+     */
+    public boolean awaitSiteMetadataDrain(long timeout, TimeUnit unit)
+    {
+        Objects.requireNonNull(unit, "unit cannot be null");
+
+        if(!mClosed)
+        {
+            throw new IllegalStateException("Channel processing manager must be closed before draining site metadata");
+        }
+
+        long timeoutNanos = Math.max(0L, unit.toNanos(timeout));
+        long startedNanos = System.nanoTime();
+
+        while(mSiteMetadataSubmissions.get() != 0)
+        {
+            long remainingNanos = timeoutNanos - (System.nanoTime() - startedNanos);
+
+            if(remainingNanos <= 0 || Thread.currentThread().isInterrupted())
+            {
+                return false;
+            }
+
+            LockSupport.parkNanos(this, Math.min(SITE_METADATA_DRAIN_RETRY_NANOS, remainingNanos));
+        }
+
+        CountDownLatch barrier = new CountDownLatch(1);
+
+        try
+        {
+            mSiteMetadataExecutor.execute(barrier::countDown);
+        }
+        catch(RejectedExecutionException exception)
+        {
+            mLog.warn("Unable to enqueue the site-metadata shutdown barrier", exception);
+            return false;
+        }
+
+        long remainingNanos = Math.max(0L, timeoutNanos - (System.nanoTime() - startedNanos));
+
+        try
+        {
+            return barrier.await(remainingNanos, TimeUnit.NANOSECONDS);
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private void dispatchProtocolSiteMetadata(ProtocolSiteMetadataEvent event)

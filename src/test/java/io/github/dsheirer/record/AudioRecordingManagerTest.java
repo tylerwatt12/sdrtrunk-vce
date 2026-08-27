@@ -18,6 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -85,21 +88,18 @@ class AudioRecordingManagerTest
     void completedCallQueueIsBoundedByCount() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
-        boolean originalDuplicateSuppression =
-            preferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            AudioCallRecorder::write);
+            (call, path, format, userPreferences) -> {});
 
         try
         {
-            preferences.getCallManagementPreference().setDuplicateRecordingSuppressionEnabled(true);
             manager.start();
-            CompletedAudioCall duplicate = completedCall(1, true, List.of(new float[80]));
+            CompletedAudioCall call = completedCall(1, List.of(new float[80]));
 
             for(int index = 0; index < AudioRecordingManager.MAXIMUM_QUEUED_CALLS + 2; index++)
             {
-                manager.receive(duplicate);
+                manager.receive(call);
             }
 
             AudioRecordingManager.RecordingQueueStatus status = manager.getQueueStatus();
@@ -113,8 +113,6 @@ class AudioRecordingManagerTest
         {
             manager.stop();
             scheduler.shutdownNow();
-            preferences.getCallManagementPreference()
-                .setDuplicateRecordingSuppressionEnabled(originalDuplicateSuppression);
         }
     }
 
@@ -122,22 +120,19 @@ class AudioRecordingManagerTest
     void completedCallQueueIsBoundedBySourceBytes() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
-        boolean originalDuplicateSuppression =
-            preferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            AudioCallRecorder::write);
+            (call, path, format, userPreferences) -> {});
         float[] sharedEightMiBBuffer = new float[2 * 1024 * 1024];
-        CompletedAudioCall duplicate = completedCall(1, true, List.of(sharedEightMiBBuffer));
+        CompletedAudioCall call = completedCall(1, List.of(sharedEightMiBBuffer));
 
         try
         {
-            preferences.getCallManagementPreference().setDuplicateRecordingSuppressionEnabled(true);
             manager.start();
 
             for(int index = 0; index < 40; index++)
             {
-                manager.receive(duplicate);
+                manager.receive(call);
             }
 
             AudioRecordingManager.RecordingQueueStatus status = manager.getQueueStatus();
@@ -151,8 +146,30 @@ class AudioRecordingManagerTest
         {
             manager.stop();
             scheduler.shutdownNow();
-            preferences.getCallManagementPreference()
-                .setDuplicateRecordingSuppressionEnabled(originalDuplicateSuppression);
+        }
+    }
+
+    @Test
+    void emptyAudioCallsNeverEnterRecordingQueue()
+    {
+        UserPreferences preferences = new UserPreferences();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
+            (call, path, format, userPreferences) -> {});
+
+        try
+        {
+            manager.start();
+            manager.receive(completedCall(1, List.of()));
+            AudioRecordingManager.RecordingQueueStatus status = manager.getQueueStatus();
+            assertEquals(0, status.queuedCalls());
+            assertEquals(0, status.queuedSourceBytes());
+            assertEquals(0, status.droppedRecordings());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
         }
     }
 
@@ -211,8 +228,8 @@ class AudioRecordingManagerTest
             preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
             preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.WAVE);
             manager.start();
-            manager.receive(completedCall(1, false, List.of(new float[80])));
-            manager.receive(completedCall(2, false, List.of(new float[80])));
+            manager.receive(completedCall(1, List.of(new float[80])));
+            manager.receive(completedCall(2, List.of(new float[80])));
             Future<?> processor = executor.submit(manager.new QueueProcessor());
             assertTrue(firstWriterEntered.await(1, TimeUnit.SECONDS));
             Future<?> stopping = executor.submit(() -> {
@@ -250,18 +267,19 @@ class AudioRecordingManagerTest
 
     private static CompletedAudioCall completedCall()
     {
-        return completedCall(1, false, List.of(new float[800]));
+        return completedCall(1, List.of(new float[800]));
     }
 
-    private static CompletedAudioCall completedCall(long sequence, boolean duplicate, List<float[]> audioBuffers)
+    private static CompletedAudioCall completedCall(long sequence, List<float[]> audioBuffers)
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Talkgroup.create(56138));
         long now = System.currentTimeMillis();
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, sequence, 1), null,
+        AudioCallId callId = new AudioCallId(1L, sequence, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null,
             AliasList.empty("test"),
-            identifiers, Set.of(), now, now + 100, 1, 1, now, now + 100, false, true, false, true,
-            duplicate);
+            identifiers, Set.of(), now, now + 100, 1, 1, now, now + 100, false, true,
+            CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, audioBuffers);
     }
 

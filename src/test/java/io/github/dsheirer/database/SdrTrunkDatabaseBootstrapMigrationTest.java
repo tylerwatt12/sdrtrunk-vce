@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.database.upgrade.Format1TestDatabase;
+import io.github.dsheirer.database.upgrade.Format3TestDatabase;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -74,6 +75,40 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals("Migrated In Place", scalar(backups.getFirst(), "SELECT name FROM alias WHERE id=1"));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoSqliteSidecars(backups.getFirst());
+        assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    @Test
+    void headlessUpgradeCurrentMigratesExactFormat3ThroughThePinnedStep() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("upgrade-format-3");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Format3TestDatabase.create(database);
+        Path passwordFile = passwordFile("upgrade-format-3-password.txt");
+
+        SdrTrunkDatabaseBootstrap.BootstrapResult result =
+            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--admin-password-file",
+                passwordFile.toString()}, dataRoot, true);
+
+        assertTrue(result.startApplication());
+        assertFalse(result.initializeNewPreferences());
+        assertCurrentDatabase(database);
+        assertEquals("{\"preserved\":true}", scalar(database, """
+            SELECT settings_json FROM application_settings WHERE key='format-3-preserve-sentinel'
+            """));
+        assertEquals("5:2:3:1", scalar(database, """
+            SELECT call_count || ':' || encrypted_count || ':' || recorded_count || ':' || streamed_count
+            FROM conventional_call_identity_bucket WHERE context_id=701 AND identity_id=4101
+            """));
+        assertEquals("3:2", scalar(database, """
+            SELECT grant_count || ':' || page_count
+            FROM trunked_signaling_activity_bucket WHERE context_id=700
+            """));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
+        List<Path> backups = regularFiles(database.getParent().resolve("backups"));
+        assertEquals(1, backups.size());
+        assertFormat(backups.getFirst(), 3, "p25-site-projection-v27", true);
+        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 

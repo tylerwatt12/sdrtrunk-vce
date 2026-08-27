@@ -22,6 +22,8 @@ package io.github.dsheirer.gui;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.update.UpdateCheckResult;
+import io.github.dsheirer.audio.call.AudioCallCoordinator;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
@@ -35,6 +37,8 @@ import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEdito
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
+import io.github.dsheirer.gui.viewer.LogicalCallMonitor;
+import io.github.dsheirer.gui.viewer.ViewLogicalCallMonitorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.jmbe.JmbeEditor;
@@ -50,6 +54,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import io.github.dsheirer.stats.StatsWebServerService;
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -102,7 +107,11 @@ public class JavaFxWindowManager extends Application
     private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
     private volatile StatsWebServerService mStatsWebServerService;
+    private volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
+    private volatile AudioCallCoordinator mAudioCallCoordinator;
+    private volatile Consumer<Path> mLogicalCallDiagnosticDirectoryConsumer;
     private MessageRecordingViewer mMessageRecordingViewer;
+    private LogicalCallMonitor mLogicalCallMonitor;
 
     private Stage mIconManagerStage;
     private Stage mJmbeEditorStage;
@@ -110,6 +119,7 @@ public class JavaFxWindowManager extends Application
     private Stage mEncryptionKeyStage;
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
+    private Stage mLogicalCallMonitorStage;
     private JFXPanel mStatusPanel;
     private LoadingShell mConfigurationLoadingShell;
     private LoadingShell mUserPreferencesLoadingShell;
@@ -169,6 +179,31 @@ public class JavaFxWindowManager extends Application
                 if(mUserPreferencesEditor != null)
                 {
                     mUserPreferencesEditor.setStatsWebServerService(statsWebServerService);
+                }
+            });
+        }
+    }
+
+    /**
+     * Connects the temporary logical-call monitor after the application has created the coordinator and its bounded
+     * diagnostic service. The directory consumer is responsible for leaving the JavaFX thread before invoking the
+     * native desktop integration.
+     */
+    public void setLogicalCallDiagnostics(LogicalCallDiagnosticService diagnosticService,
+                                          AudioCallCoordinator audioCallCoordinator,
+                                          Consumer<Path> diagnosticDirectoryConsumer)
+    {
+        mLogicalCallDiagnosticService = diagnosticService;
+        mAudioCallCoordinator = audioCallCoordinator;
+        mLogicalCallDiagnosticDirectoryConsumer = diagnosticDirectoryConsumer;
+
+        if(mLogicalCallMonitor != null)
+        {
+            execute(() -> {
+                if(mLogicalCallMonitor != null)
+                {
+                    mLogicalCallMonitor.setSources(diagnosticService, audioCallCoordinator,
+                        diagnosticDirectoryConsumer);
                 }
             });
         }
@@ -278,6 +313,38 @@ public class JavaFxWindowManager extends Application
         }
 
         return mMessageRecordingViewer;
+    }
+
+    /** Stage for the session-only logical-call resolver monitor. */
+    public Stage getLogicalCallMonitorStage()
+    {
+        if(mLogicalCallMonitorStage == null)
+        {
+            Scene scene = new Scene(getLogicalCallMonitor(), 1400, 800);
+            ThemeManager.getInstance().register(scene);
+            mLogicalCallMonitorStage = new Stage();
+            mLogicalCallMonitorStage.setTitle("sdrtrunk-vce - Call Matching Monitor");
+            mLogicalCallMonitorStage.setScene(scene);
+            mLogicalCallMonitorStage.setMinWidth(900);
+            mLogicalCallMonitorStage.setMinHeight(600);
+            ApplicationIcon.apply(mLogicalCallMonitorStage);
+            mLogicalCallMonitorStage.setOnShown(event -> getLogicalCallMonitor().activate());
+            mLogicalCallMonitorStage.setOnHidden(event -> getLogicalCallMonitor().deactivate());
+            //This temporary diagnostic window deliberately does not create a persistent stage preference.
+        }
+
+        return mLogicalCallMonitorStage;
+    }
+
+    public LogicalCallMonitor getLogicalCallMonitor()
+    {
+        if(mLogicalCallMonitor == null)
+        {
+            mLogicalCallMonitor = new LogicalCallMonitor(mLogicalCallDiagnosticService, mAudioCallCoordinator,
+                mLogicalCallDiagnosticDirectoryConsumer);
+        }
+
+        return mLogicalCallMonitor;
     }
 
     public Stage getIconManagerStage()
@@ -706,6 +773,13 @@ public class JavaFxWindowManager extends Application
     public void process(final ViewRecordingViewerRequest request)
     {
         execute(() -> restoreStage(getRecordingViewerStage()));
+    }
+
+    /** Process a logical-call monitor request. */
+    @Subscribe
+    public void process(final ViewLogicalCallMonitorRequest request)
+    {
+        execute(() -> restoreStage(getLogicalCallMonitorStage()));
     }
 
     /**

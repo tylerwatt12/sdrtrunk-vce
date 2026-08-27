@@ -24,8 +24,11 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
-import io.github.dsheirer.audio.call.DuplicateCallPriorityProvider;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputEvent;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputType;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
@@ -33,6 +36,7 @@ import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -50,6 +54,7 @@ import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.startup.CoordinatedStartupDialog;
 import io.github.dsheirer.gui.theme.ThemeManager;
+import io.github.dsheirer.gui.viewer.ViewLogicalCallMonitorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -102,6 +107,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
 import javafx.application.Platform;
@@ -139,10 +145,15 @@ public class SDRTrunk
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
     private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
     private static final String APPLICATION_MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
+    private static final long SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS = 8_000L;
+    private static final long CALL_COORDINATOR_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
+    private static final long STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS = 2_000L;
+    private static final long STATISTICS_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
+    private LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private P25ActivityLogService mP25ActivityLogService;
     private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
@@ -169,6 +180,7 @@ public class SDRTrunk
     private JMenuItem mCheckForUpdatesMenuItem;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
+    private JButton mCallMatchingMonitorShortcutButton;
     private JButton mWebInterfaceButton;
     private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
@@ -235,12 +247,15 @@ public class SDRTrunk
 
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
 
+        mLogicalCallDiagnosticService = new LogicalCallDiagnosticService(
+            mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
+
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
-            mP25ActivityLogService::receiveRecordedCall);
+            this::receiveRecordedCall);
         mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
-            mUserPreferences, mP25ActivityLogService::receiveStreamedCall);
+            mUserPreferences, this::receiveStreamedCall);
         mAudioStreamingManager.start();
 
         mDecodeEventViewService = new DecodeEventViewService(
@@ -258,8 +273,16 @@ public class SDRTrunk
             mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
         }
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
-        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioRecordingManager,
-            mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE);
+        mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
+            mStatsWebServerService::receive, mP25ActivityLogService::receiveResolvedCall,
+            mLogicalCallDiagnosticService);
+
+        if(mJavaFxWindowManager != null)
+        {
+            mJavaFxWindowManager.setLogicalCallDiagnostics(mLogicalCallDiagnosticService, mAudioCallCoordinator,
+                path -> EventQueue.invokeLater(() -> openFileExplorer(path.toFile())));
+        }
+
         mStatsWebServerService.setReceiverHealthOutputSources(mAudioCallCoordinator, mAudioRecordingManager,
             mAudioStreamingManager);
 
@@ -551,6 +574,13 @@ public class SDRTrunk
         recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
         viewMenu.add(recordingViewerMenu);
 
+        JMenuItem logicalCallMonitorMenu = new JMenuItem("Call Matching Monitor");
+        logicalCallMonitorMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.SITEMAP, 12));
+        logicalCallMonitorMenu.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_M, ActionEvent.ALT_MASK));
+        logicalCallMonitorMenu.addActionListener(e ->
+            MyEventBus.getGlobalEventBus().post(new ViewLogicalCallMonitorRequest()));
+        viewMenu.add(logicalCallMonitorMenu);
+
         JMenuItem viewScreenCapturesMenu = new JMenuItem("Screen Captures");
         viewScreenCapturesMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
         viewScreenCapturesMenu.addActionListener(arg0 ->
@@ -739,9 +769,45 @@ public class SDRTrunk
         });
     }
 
-    /**
-     * Performs shutdown operations
-     */
+    /** Records the completed local file action and preserves the existing activity-statistics callback. */
+    private void receiveRecordedCall(CompletedAudioCall completedAudioCall)
+    {
+        try
+        {
+            mP25ActivityLogService.receiveRecordedCall(completedAudioCall);
+        }
+        finally
+        {
+            offerDiagnosticOutput(completedAudioCall, LogicalCallDiagnosticOutputType.RECORDED);
+        }
+    }
+
+    /** Records local streamer submission, not acknowledgement or publication by a remote provider. */
+    private void receiveStreamedCall(CompletedAudioCall completedAudioCall)
+    {
+        try
+        {
+            mP25ActivityLogService.receiveStreamedCall(completedAudioCall);
+        }
+        finally
+        {
+            offerDiagnosticOutput(completedAudioCall, LogicalCallDiagnosticOutputType.STREAM_SUBMITTED);
+        }
+    }
+
+    private void offerDiagnosticOutput(CompletedAudioCall completedAudioCall,
+                                       LogicalCallDiagnosticOutputType outputType)
+    {
+        LogicalCallDiagnosticService diagnosticService = mLogicalCallDiagnosticService;
+
+        if(diagnosticService != null && completedAudioCall != null && completedAudioCall.logicalCallId() != null)
+        {
+            diagnosticService.offerOutput(new LogicalCallDiagnosticOutputEvent(
+                completedAudioCall.logicalCallId().sequence(), System.currentTimeMillis(), outputType));
+        }
+    }
+
+    /** Opens a local directory with the platform file browser. */
     private void openFileExplorer(File directory)
     {
         try
@@ -820,7 +886,9 @@ public class SDRTrunk
 
         if(!replacementSucceeded)
         {
-            releaseDataRootLock();
+            //Keep the portable-root lock until process termination. A shutdown failure can mean a database-owning
+            //worker is still unwinding, so explicitly releasing the lock before exit would permit another process
+            //to enter the data folder too early.
             System.exit(1);
             return;
         }
@@ -914,6 +982,7 @@ public class SDRTrunk
         }
 
         mShutdownProcessed = true;
+        boolean databaseBoundarySafe = true;
         MyEventBus.getGlobalEventBus().unregister(this);
         mLog.info("Application shutdown started ...");
         mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
@@ -934,34 +1003,83 @@ public class SDRTrunk
             mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
                 mControlChannelQualityRegistry);
         }
-        mConfigurationManager.getChannelProcessingManager().close();
+        ChannelProcessingManager channelProcessingManager =
+            mConfigurationManager.getChannelProcessingManager();
+        channelProcessingManager.close();
+        boolean siteMetadataDrained = channelProcessingManager.awaitSiteMetadataDrain(
+            SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
+        databaseBoundarySafe &= siteMetadataDrained;
+
+        if(!siteMetadataDrained)
+        {
+            mLog.warn("Site-metadata observers did not drain before shutdown");
+        }
+
+        if(mAudioCallCoordinator != null)
+        {
+            //Channel close emits terminal call events. Resolve and hand those calls to statistics/output consumers
+            //before disposing the activity writer or the downstream recording and streaming queues.
+            boolean callCoordinatorStopped = mAudioCallCoordinator.disposeAndAwait(
+                CALL_COORDINATOR_SHUTDOWN_STOP_MILLISECONDS, TimeUnit.MILLISECONDS);
+            databaseBoundarySafe &= callCoordinatorStopped;
+
+            if(!callCoordinatorStopped)
+            {
+                mLog.warn("Logical-call resolver did not fully stop before shutdown");
+            }
+        }
         if(mP25ActivityLogService != null)
         {
-            mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
+            channelProcessingManager.removeChannelDecodeEventListener(
                 mP25ActivityLogService.getDecodeEventListener());
-            mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
+            channelProcessingManager.removeControlChannelQualityListener(
                 mP25ActivityLogService.getControlChannelQualityListener());
-            mConfigurationManager.getChannelProcessingManager().removeSiteMetadataListener(mP25ActivityLogService);
-            mConfigurationManager.getChannelProcessingManager()
-                .removeProtocolSiteMetadataListener(mP25ActivityLogService);
-            mP25ActivityLogService.dispose();
+            channelProcessingManager.removeSiteMetadataListener(mP25ActivityLogService);
+            channelProcessingManager.removeProtocolSiteMetadataListener(mP25ActivityLogService);
         }
         if(mDecodeEventViewService != null)
         {
-            mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
+            channelProcessingManager.removeChannelDecodeEventListener(
                 mDecodeEventViewService.getDecodeEventListener());
             mDecodeEventViewService.close();
         }
         EventLogger.flushPendingWrites();
-        if(mAudioCallCoordinator != null)
-        {
-            mAudioCallCoordinator.dispose();
-        }
         if(mAudioStreamingManager != null)
         {
             mAudioStreamingManager.stop();
         }
         mAudioRecordingManager.stop();
+
+        if(mP25ActivityLogService != null)
+        {
+            //Resolved calls can still be completing their recording and streaming work during the final drains.
+            //Keep the statistics writer alive until those local output confirmations have crossed the observer
+            //barrier. Disposing the service then drains the already-mapped database records.
+            boolean statisticsDrained = mP25ActivityLogService.awaitObservationDrain(
+                STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
+            boolean statisticsStopped = mP25ActivityLogService.disposeAndAwait(
+                STATISTICS_SHUTDOWN_STOP_MILLISECONDS, TimeUnit.MILLISECONDS);
+            databaseBoundarySafe &= statisticsDrained && statisticsStopped;
+
+            if(!statisticsDrained || !statisticsStopped)
+            {
+                mLog.warn("Statistics service did not fully drain and stop before shutdown [observations={}, " +
+                    "workers={}]", statisticsDrained, statisticsStopped);
+            }
+        }
+
+        if(!releaseDataRootLock && !databaseBoundarySafe)
+        {
+            throw new IllegalStateException(
+                "Database-owning observers did not fully stop before SQLite database replacement");
+        }
+
+        if(mLogicalCallDiagnosticService != null)
+        {
+            //Output managers report their final recorded/stream-submitted confirmations while draining.
+            mLogicalCallDiagnosticService.close();
+        }
+
         if(mControlChannelQualityRegistry != null)
         {
             mControlChannelQualityRegistry.clear();
@@ -974,9 +1092,14 @@ public class SDRTrunk
         mApplicationLog.stop();
         SqlitePreferencesFactory.shutdown();
 
-        if(releaseDataRootLock)
+        if(releaseDataRootLock && databaseBoundarySafe)
         {
             releaseDataRootLock();
+        }
+        else if(releaseDataRootLock)
+        {
+            mLog.warn("Retaining the portable-data lock until process termination because shutdown did not " +
+                "establish a safe database boundary");
         }
     }
 
@@ -1050,9 +1173,10 @@ public class SDRTrunk
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][][grow,fill]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
+        panel.add(getCallMatchingMonitorShortcutButton());
         panel.add(getWebInterfaceButton());
         panel.add(new JPanel(), "grow");
         return panel;
@@ -1099,6 +1223,21 @@ public class SDRTrunk
         }
 
         return mWebInterfaceButton;
+    }
+
+    private JButton getCallMatchingMonitorShortcutButton()
+    {
+        if(mCallMatchingMonitorShortcutButton == null)
+        {
+            mCallMatchingMonitorShortcutButton = new JButton("Call Monitor",
+                IconFontSwing.buildIcon(FontAwesome.SITEMAP, 14));
+            mCallMatchingMonitorShortcutButton.setFocusable(false);
+            mCallMatchingMonitorShortcutButton.setToolTipText("Call Matching Monitor");
+            mCallMatchingMonitorShortcutButton.addActionListener(event ->
+                MyEventBus.getGlobalEventBus().post(new ViewLogicalCallMonitorRequest()));
+        }
+
+        return mCallMatchingMonitorShortcutButton;
     }
 
     private void openWebInterface()

@@ -24,6 +24,8 @@ import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
@@ -781,14 +783,16 @@ class ChannelActivityModelTest
             List.of(FrequencyConfigurationIdentifier.create(451_012_500L)));
         identifiers.setTimeslot(1);
         VoiceCallQuality voiceQuality = new VoiceCallQuality(1, 0, 0, 0, 2, 47);
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 1), null, null,
+        AudioCallId callId = new AudioCallId(1, 1, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 1_000L, 1_020L, 1, 1, 1_000L, 1_020L,
-            true, false, false, false, false, null, voiceQuality);
+            true, false, CallEncryptionState.CLEAR, false, null, voiceQuality,
+            CallLegId.from(callId), null, null);
 
         run(model, () -> {
             model.channelStarted(channel, List.of(metadata));
             model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot,
-                new float[160]));
+                new float[160], false, 0L, snapshot.lastActivityTimestamp()));
         });
 
         ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
@@ -818,15 +822,15 @@ class ChannelActivityModelTest
         VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
         AudioCallId currentCallId = new AudioCallId(1, 1, 1);
         AudioCallSnapshot current = new AudioCallSnapshot(currentCallId, null, null, identifiers, Set.of(),
-            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, false, null,
-            voiceQuality);
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, CallEncryptionState.CLEAR, false,
+            null, voiceQuality, CallLegId.from(currentCallId), null, null);
 
         run(model, () -> {
             model.channelStarted(channel, List.of(metadata));
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
             model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
-                new float[160]));
+                new float[160], false, 0L, current.lastActivityTimestamp()));
         });
 
         ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
@@ -834,36 +838,40 @@ class ChannelActivityModelTest
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
-        AudioCallSnapshot stale = new AudioCallSnapshot(new AudioCallId(1, 2, 1), null, null, identifiers, Set.of(),
-            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, false, false, false, null,
-            voiceQuality);
+        AudioCallId staleCallId = new AudioCallId(1, 2, 1);
+        AudioCallSnapshot stale = new AudioCallSnapshot(staleCallId, null, null, identifiers, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, CallEncryptionState.CLEAR, false,
+            null, voiceQuality, CallLegId.from(staleCallId), null, null);
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, stale, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, stale, null, false, 0L, 0L)));
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null, true)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null, true, 0L, 0L)));
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
         AudioCallId linkedCallId = new AudioCallId(1, 3, 1);
         AudioCallSnapshot linkedWithoutMeasurements = new AudioCallSnapshot(linkedCallId, currentCallId, null,
-            identifiers, Set.of(), 2_000L, 2_100L, 1, 1, 2_000L, 2_100L, true, false, false, false,
-            false, null, new VoiceCallQuality(0, 0, 0, 5, 0, 0));
+            identifiers, Set.of(), 2_000L, 2_100L, 1, 1, 2_000L, 2_100L, true, false,
+            CallEncryptionState.CLEAR, false, null, new VoiceCallQuality(0, 0, 0, 5, 0, 0),
+            CallLegId.from(linkedCallId), null, null);
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_CREATED, linkedWithoutMeasurements, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_CREATED, linkedWithoutMeasurements, null,
+                false, 0L, 0L)));
         assertEquals(linkedCallId, row.getVoiceCallId());
         assertEquals(voiceQuality, row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, null,
+                false, 0L, 0L)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
         assertEquals(95.0d, row.getDecodeQuality().controlPercent());
 
         model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
-            new float[160]));
+            new float[160], false, 0L, current.lastActivityTimestamp()));
         run(model, () -> {});
         assertEquals(currentCallId, row.getVoiceCallId());
 
@@ -876,7 +884,7 @@ class ChannelActivityModelTest
         assertNull(ChannelActivitySnapshot.from(model.getConventionalTable()).rows().getFirst().voiceQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null, false, 0L, 0L)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
     }
@@ -909,14 +917,14 @@ class ChannelActivityModelTest
         AudioCallId callId = new AudioCallId(1, 1, 1);
         VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(),
-            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, false, null,
-            voiceQuality);
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, CallEncryptionState.CLEAR, false,
+            null, voiceQuality, CallLegId.from(callId), null, null);
 
         run(model, () -> {
             model.trunkedTrafficEvent(parent, trafficChannel, traffic, 1, identifiers,
                 DecodeEventType.CALL_GROUP, 139_781_250L);
             model.receiveAudioCallEvent(trafficChannel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME,
-                snapshot, new float[160]));
+                snapshot, new float[160], false, 0L, snapshot.lastActivityTimestamp()));
         });
 
         ChannelActivityRow row = model.getTables().get(1).getRows().stream()
@@ -932,7 +940,7 @@ class ChannelActivityModelTest
         assertNull(row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(trafficChannel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, null, false, 0L, 0L)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
     }

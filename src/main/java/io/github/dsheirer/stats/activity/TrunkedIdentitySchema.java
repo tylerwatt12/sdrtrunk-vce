@@ -50,7 +50,9 @@ final class TrunkedIdentitySchema
     static final int MAX_RELATIONSHIPS_PER_SCOPE = 500_000;
 
     private static final List<P25ActivityLogRecords.Action> ACTIONS =
-        Arrays.asList(P25ActivityLogRecords.Action.values());
+        Arrays.stream(P25ActivityLogRecords.Action.values())
+            .filter(action -> action != P25ActivityLogRecords.Action.CALL)
+            .toList();
     static final List<String> ACTION_COUNT_COLUMNS = ACTIONS.stream()
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
         .toList();
@@ -157,13 +159,17 @@ final class TrunkedIdentitySchema
                 protocol_code INTEGER NOT NULL CHECK(protocol_code IN (1, 3, 4)),
                 scope_kind_code INTEGER NOT NULL CHECK(scope_kind_code IN (1, 2)),
                 identity_domain_code INTEGER NOT NULL DEFAULT 0 CHECK(identity_domain_code IN (0, 1, 2)),
-                p25_system_key INTEGER UNIQUE REFERENCES p25_system(system_key) ON DELETE CASCADE,
+                alias_list_id INTEGER,
+                p25_system_key INTEGER REFERENCES p25_system(system_key) ON DELETE CASCADE,
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
+                UNIQUE(p25_system_key, alias_list_id),
                 CHECK(
-                    (scope_kind_code = 1 AND protocol_code = 1 AND p25_system_key IS NOT NULL)
+                    (scope_kind_code = 1 AND protocol_code = 1 AND p25_system_key IS NOT NULL
+                        AND alias_list_id IS NOT NULL AND alias_list_id > 0)
                     OR
-                    (scope_kind_code = 2 AND protocol_code IN (3, 4) AND p25_system_key IS NULL)
+                    (scope_kind_code = 2 AND protocol_code IN (1, 3, 4) AND p25_system_key IS NULL
+                        AND alias_list_id IS NULL)
                 )
             )
             """;
@@ -196,11 +202,12 @@ final class TrunkedIdentitySchema
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
                 %s,
-                source_call_count INTEGER NOT NULL DEFAULT 0 CHECK(source_call_count >= 0),
-                target_call_count INTEGER NOT NULL DEFAULT 0 CHECK(target_call_count >= 0),
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
+                source_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(source_logical_call_count >= 0),
+                target_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(target_logical_call_count >= 0),
+                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
                 last_counterpart_kind_code INTEGER CHECK(last_counterpart_kind_code IN (1, 2, 3)),
                 last_counterpart_id INTEGER CHECK(last_counterpart_id > 0),
                 last_encryption_algorithm_id INTEGER,
@@ -244,9 +251,10 @@ final class TrunkedIdentitySchema
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
                 %s,
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
+                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
                 PRIMARY KEY(scope_id, home_wacn, home_system_id, home_talkgroup_id)
             ) WITHOUT ROWID
             """.formatted(ACTION_COUNT_DEFINITIONS);
@@ -263,9 +271,10 @@ final class TrunkedIdentitySchema
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
                 %s,
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
+                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
                 last_encryption_algorithm_id INTEGER,
                 last_encryption_key_id INTEGER,
                 PRIMARY KEY(scope_id, radio_id, talkgroup_id, target_kind_code)
@@ -319,25 +328,29 @@ final class TrunkedIdentitySchema
             "scope_id", "identity_kind_code", "identity_id", "p25_identity_state_code", "p25_home_wacn",
             "p25_home_system_id", "p25_home_talkgroup_id", "first_seen_ms", "last_seen_ms"));
         identityColumns.addAll(ACTION_COUNT_COLUMNS);
-        identityColumns.addAll(List.of("source_call_count", "target_call_count", "encrypted_count",
-            "recorded_count", "streamed_count", "last_counterpart_kind_code", "last_counterpart_id",
+        identityColumns.addAll(List.of("logical_call_count", "source_logical_call_count",
+            "target_logical_call_count", "encrypted_logical_call_count",
+            "recorded_output_count", "streamed_output_count", "last_counterpart_kind_code", "last_counterpart_id",
             "last_encryption_algorithm_id", "last_encryption_key_id", "last_talker_alias",
             "last_talker_alias_seen_ms"));
 
         List<String> relationshipColumns = new ArrayList<>(List.of(
             "scope_id", "radio_id", "talkgroup_id", "target_kind_code", "first_seen_ms", "last_seen_ms"));
         relationshipColumns.addAll(ACTION_COUNT_COLUMNS);
-        relationshipColumns.addAll(List.of("encrypted_count", "recorded_count", "streamed_count",
+        relationshipColumns.addAll(List.of("logical_call_count", "encrypted_logical_call_count",
+            "recorded_output_count", "streamed_output_count",
             "last_encryption_algorithm_id", "last_encryption_key_id"));
 
         List<String> zeroLocalFullyQualifiedColumns = new ArrayList<>(List.of(
             "scope_id", "home_wacn", "home_system_id", "home_talkgroup_id", "first_seen_ms", "last_seen_ms"));
         zeroLocalFullyQualifiedColumns.addAll(ACTION_COUNT_COLUMNS);
-        zeroLocalFullyQualifiedColumns.addAll(List.of("encrypted_count", "recorded_count", "streamed_count"));
+        zeroLocalFullyQualifiedColumns.addAll(List.of("logical_call_count", "encrypted_logical_call_count",
+            "recorded_output_count", "streamed_output_count"));
 
         return List.of(
             new SqliteSchemaValidator.Table("trunked_identity_scope", "scope_id", "scope_token", "protocol_code",
-                "scope_kind_code", "identity_domain_code", "p25_system_key", "first_seen_ms", "last_seen_ms"),
+                "scope_kind_code", "identity_domain_code", "alias_list_id", "p25_system_key", "first_seen_ms",
+                "last_seen_ms"),
             new SqliteSchemaValidator.Table("trunked_identity_scope_context", "context_id", "scope_id",
                 "first_seen_ms", "last_seen_ms"),
             new SqliteSchemaValidator.Table("trunked_identity_summary", identityColumns),
@@ -495,7 +508,9 @@ final class TrunkedIdentitySchema
         List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
             activity.targetId(), activity.targetKind(), activity.patchMemberTalkgroupIds(), targetIdentity,
             patchMemberIdentities);
-        int encrypted = activity.encrypted() ? 1 : 0;
+        //Receiver observations establish identity/signaling metadata only. Logical-call completion owns call and
+        //encryption counters so copies heard on several receiver legs cannot inflate them.
+        int encrypted = 0;
 
         if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), activity.targetId(), activity.targetKind(),
             observedTargetIdentity))
@@ -503,13 +518,13 @@ final class TrunkedIdentitySchema
             //Unlike a positive local identity, the tuple has no earlier local row that can be refined. Preserve
             //direct/untracked mid-call observations here; any later attribution adds the physical call count once.
             upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), observedTargetIdentity,
-                activity.observedAtEpochMilliseconds(), activity.action(), activity.countedCall(), encrypted, 0, 0);
+                activity.observedAtEpochMilliseconds(), activity.action(), false, encrypted, 0, 0);
         }
 
         for(Identity destination: destinations)
         {
             upsertIdentity(connection, scope.scopeId(), destination, activity.observedAtEpochMilliseconds(),
-                activity.action(), activity.countedCall(), false, true, encrypted, 0, 0,
+                activity.action(), false, false, true, encrypted, 0, 0,
                 validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                 activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null);
         }
@@ -519,13 +534,13 @@ final class TrunkedIdentitySchema
             Identity sourceIdentity = new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source);
             Identity counterpart = destinations.isEmpty() ? null : destinations.get(0);
             upsertIdentity(connection, scope.scopeId(), sourceIdentity, activity.observedAtEpochMilliseconds(),
-                activity.action(), activity.countedCall(), true, false, encrypted, 0, 0, counterpart,
+                activity.action(), false, true, false, encrypted, 0, 0, counterpart,
                 activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null);
 
             for(Identity destination: groupDestinations(destinations))
             {
                 upsertRelationship(connection, scope.scopeId(), source, destination,
-                    activity.observedAtEpochMilliseconds(), activity.action(), activity.countedCall(), encrypted,
+                    activity.observedAtEpochMilliseconds(), activity.action(), false, encrypted,
                     0, 0, activity.encryptionAlgorithmId(), activity.encryptionKeyId());
             }
         }
@@ -658,53 +673,98 @@ final class TrunkedIdentitySchema
         }
     }
 
-    static void applyCompletedCallOutput(Connection connection, int contextId,
-                                         P25ActivityLogRecords.CompletedCallOutput output,
-                                         int recorded, int streamed) throws SQLException
+    /** Updates bounded lifetime identity and relationship summaries exactly once for a resolved logical call. */
+    static void recordResolvedLogicalCall(Connection connection, Scope scope,
+                                          P25ActivityLogRecords.ResolvedLogicalCall call) throws SQLException
     {
-        Scope scope = ensureScope(connection, contextId, output.callStartEpochMilliseconds(),
-            output.identityDomain(), false);
-
-        if(scope == null ||
-            (scope.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                output.callStartEpochMilliseconds() < scope.firstSeenEpochMilliseconds()))
+        if(scope == null || call == null)
         {
             return;
         }
 
         List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
-            output.destinationId() > 0 ? Integer.toString(output.destinationId()) : null, output.targetKind(),
-            output.patchMemberTalkgroupIds(), output.p25TargetIdentity(), output.p25PatchMemberIdentities());
-        Integer source = output.sourceRadioId();
+            call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
+            call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities());
+        Integer source = call.sourceRadioId();
         boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
             source);
+        int encrypted = call.encrypted() ? 1 : 0;
 
-        if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), output.destinationId(), output.targetKind(),
-            output.p25TargetIdentity()))
+        if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), call.destinationId(), call.destinationKind(),
+            call.p25TargetIdentity()))
         {
-            upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), output.p25TargetIdentity(),
-                output.callStartEpochMilliseconds(), null, false, 0, recorded, streamed);
+            upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), call.p25TargetIdentity(),
+                call.callStartEpochMilliseconds(), null, true, encrypted, 0, 0);
         }
 
         for(Identity destination: destinations)
         {
-            upsertIdentity(connection, scope.scopeId(), destination, output.callStartEpochMilliseconds(),
-                null, false, false, false, 0, recorded, streamed,
+            upsertIdentity(connection, scope.scopeId(), destination, call.callStartEpochMilliseconds(), null, true,
+                false, true, encrypted, 0, 0,
+                validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
+                call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null,
+                P25IdentityMerge.SAME_CALL_REFINEMENT);
+        }
+
+        if(validSource)
+        {
+            Identity sourceIdentity = new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source);
+            upsertIdentity(connection, scope.scopeId(), sourceIdentity, call.callStartEpochMilliseconds(), null,
+                true, true, false, encrypted, 0, 0, destinations.isEmpty() ? null : destinations.get(0),
+                call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null);
+
+            for(Identity destination: groupDestinations(destinations))
+            {
+                upsertRelationship(connection, scope.scopeId(), source, destination,
+                    call.callStartEpochMilliseconds(), null, true, encrypted, 0, 0,
+                    call.encryptionAlgorithmId(), call.encryptionKeyId());
+            }
+        }
+    }
+
+    /** Updates output counters for the already-counted resolved logical call without adding another call. */
+    static void applyLogicalCallOutput(Connection connection, Scope scope,
+                                       P25ActivityLogRecords.LogicalCallOutput output, int recorded, int streamed)
+        throws SQLException
+    {
+        if(scope == null || output == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.ResolvedLogicalCall call = output.call();
+        List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
+            call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
+            call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities());
+        Integer source = call.sourceRadioId();
+        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
+            source);
+
+        if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), call.destinationId(), call.destinationKind(),
+            call.p25TargetIdentity()))
+        {
+            upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), call.p25TargetIdentity(),
+                call.callStartEpochMilliseconds(), null, false, 0, recorded, streamed);
+        }
+
+        for(Identity destination: destinations)
+        {
+            upsertIdentity(connection, scope.scopeId(), destination, call.callStartEpochMilliseconds(), null, false,
+                false, false, 0, recorded, streamed,
                 validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                 null, null, null, null, P25IdentityMerge.SAME_CALL_REFINEMENT);
         }
 
         if(validSource)
         {
-            Identity sourceIdentity = new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source);
-            upsertIdentity(connection, scope.scopeId(), sourceIdentity, output.callStartEpochMilliseconds(),
+            upsertIdentity(connection, scope.scopeId(),
+                new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source), call.callStartEpochMilliseconds(),
                 null, false, false, false, 0, recorded, streamed,
                 destinations.isEmpty() ? null : destinations.get(0), null, null, null, null);
-
             for(Identity destination: groupDestinations(destinations))
             {
                 upsertRelationship(connection, scope.scopeId(), source, destination,
-                    output.callStartEpochMilliseconds(), null, false, 0, recorded, streamed, null, null);
+                    call.callStartEpochMilliseconds(), null, false, 0, recorded, streamed, null, null);
             }
         }
     }
@@ -729,7 +789,7 @@ final class TrunkedIdentitySchema
         Integer source = attribution.sourceRadioId();
         boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
             source);
-        int priorEncrypted = attribution.encryptedBeforeObservation() ? 1 : 0;
+        int priorEncrypted = 0;
         boolean p25TargetIdentityApplied = false;
         boolean zeroLocalFullyQualified = isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(),
             attribution.destinationId(), attribution.destinationKind(), attribution.p25TargetIdentity());
@@ -739,8 +799,7 @@ final class TrunkedIdentitySchema
         {
             p25TargetIdentityApplied = upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(),
                 attribution.p25TargetIdentity(), attribution.callStartEpochMilliseconds(),
-                attribution.destinationBecameKnown() ? P25ActivityLogRecords.Action.CALL : null,
-                attribution.destinationBecameKnown(), attribution.destinationBecameKnown() ? priorEncrypted : 0,
+                null, false, 0,
                 0, 0);
         }
 
@@ -762,7 +821,7 @@ final class TrunkedIdentitySchema
             for(Identity destination: destinations)
             {
                 upsertIdentity(connection, scope.scopeId(), destination, attribution.callStartEpochMilliseconds(),
-                    P25ActivityLogRecords.Action.CALL, true, false, true, priorEncrypted, 0, 0,
+                    null, false, false, true, 0, 0, 0,
                     validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                     null, null, null, null);
             }
@@ -772,8 +831,8 @@ final class TrunkedIdentitySchema
         {
             upsertIdentity(connection, scope.scopeId(),
                 new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source),
-                attribution.callStartEpochMilliseconds(), P25ActivityLogRecords.Action.CALL, true,
-                true, false, priorEncrypted, 0, 0, destinations.isEmpty() ? null : destinations.get(0),
+                attribution.callStartEpochMilliseconds(), null, false,
+                true, false, 0, 0, 0, destinations.isEmpty() ? null : destinations.get(0),
                 null, null, null, null);
         }
 
@@ -801,14 +860,14 @@ final class TrunkedIdentitySchema
             for(Identity destination: groupDestinations(destinations))
             {
                 upsertRelationship(connection, scope.scopeId(), source, destination,
-                    attribution.callStartEpochMilliseconds(), P25ActivityLogRecords.Action.CALL, true,
-                    priorEncrypted, 0, 0, null, null);
+                    attribution.callStartEpochMilliseconds(), null, false,
+                    0, 0, 0, null, null);
             }
         }
 
         if(attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails())
         {
-            int newlyEncrypted = attribution.encryptionBecameKnown() ? 1 : 0;
+            int newlyEncrypted = 0;
 
             if(zeroLocalFullyQualified && attribution.encryptionBecameKnown())
             {
@@ -846,6 +905,45 @@ final class TrunkedIdentitySchema
             attribution.sourceBecameKnown() && validSource || attribution.encryptionBecameKnown() ||
             attribution.hasEncryptionDetails() && (!destinations.isEmpty() || validSource) ||
             p25TargetIdentityApplied;
+    }
+
+    /**
+     * Indicates whether delayed attribution still belongs to the current identity generation. A lack of an eligible
+     * directory scope is not itself incompatible: P25 detail can still be enriched before an Alias List-backed
+     * system scope exists. NXDN Type-C and Type-D generations, however, must never enrich one another.
+     */
+    static boolean isAttributionCompatible(Connection connection, int contextId,
+                                           P25ActivityLogRecords.TrunkedCallAttribution attribution)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT scope.protocol_code, scope.identity_domain_code, scope.first_seen_ms
+            FROM trunked_identity_scope_context mapping
+            JOIN trunked_identity_scope scope ON scope.scope_id = mapping.scope_id
+            WHERE mapping.context_id = ?
+            """))
+        {
+            statement.setInt(1, contextId);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                if(!resultSet.next() ||
+                    resultSet.getInt("protocol_code") != TrunkedIdentityPolicy.PROTOCOL_NXDN)
+                {
+                    return true;
+                }
+
+                if(attribution.callStartEpochMilliseconds() < resultSet.getLong("first_seen_ms"))
+                {
+                    return false;
+                }
+
+                int observedDomain = identityDomainCode(TrunkedIdentityPolicy.PROTOCOL_NXDN,
+                    attribution.identityDomain());
+                return observedDomain == IDENTITY_DOMAIN_STANDARD ||
+                    observedDomain == resultSet.getInt("identity_domain_code");
+            }
+        }
     }
 
     static boolean updateTalkerAlias(Connection connection, int contextId, int radioId, String talkerAlias,
@@ -887,6 +985,22 @@ final class TrunkedIdentitySchema
                              P25ActivityLogRecords.IdentityDomain observationDomain,
                              boolean allowIdentityDomainChange) throws SQLException
     {
+        return ensureScope(connection, contextId, observedAt, observationDomain, allowIdentityDomainChange, false);
+    }
+
+    /** Resolves one completed receiver-local logical call, including fail-open P25 context scopes. */
+    static Scope ensureContextLogicalCallScope(Connection connection, int contextId, long observedAt,
+                                                P25ActivityLogRecords.IdentityDomain observationDomain)
+        throws SQLException
+    {
+        return ensureScope(connection, contextId, observedAt, observationDomain, false, true);
+    }
+
+    private static Scope ensureScope(Connection connection, int contextId, long observedAt,
+                                     P25ActivityLogRecords.IdentityDomain observationDomain,
+                                     boolean allowIdentityDomainChange, boolean allowP25ContextFallback)
+        throws SQLException
+    {
         Context context = context(connection, contextId);
 
         if(context == null)
@@ -904,17 +1018,30 @@ final class TrunkedIdentitySchema
         int scopeKind;
         String scopeToken;
         Integer p25SystemKey = null;
+        Long aliasListId = null;
 
         if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25)
         {
-            if(context.systemKey() == null || context.wacn() == null || context.systemId() == null)
+            if(context.systemKey() == null || context.wacn() == null || context.systemId() == null ||
+                context.aliasListId() == null || context.aliasListId() <= 0)
             {
-                return null;
-            }
+                if(!allowP25ContextFallback)
+                {
+                    return null;
+                }
 
-            scopeKind = SCOPE_KIND_LINKED_SYSTEM;
-            p25SystemKey = context.systemKey();
-            scopeToken = String.format(Locale.ROOT, "p25:%05X:%03X", context.wacn(), context.systemId());
+                scopeKind = SCOPE_KIND_CONTEXT;
+                scopeToken = context.guid() != null && !context.guid().isBlank() ?
+                    "p25:uncertain:guid:" + context.guid() : "p25:uncertain:context:" + context.contextId();
+            }
+            else
+            {
+                scopeKind = SCOPE_KIND_LINKED_SYSTEM;
+                p25SystemKey = context.systemKey();
+                aliasListId = context.aliasListId();
+                scopeToken = String.format(Locale.ROOT, "p25:%05X:%03X:alias-list:%d", context.wacn(),
+                    context.systemId(), aliasListId);
+            }
         }
         else
         {
@@ -951,9 +1078,9 @@ final class TrunkedIdentitySchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_identity_scope (
-                scope_token, protocol_code, scope_kind_code, identity_domain_code, p25_system_key,
+                scope_token, protocol_code, scope_kind_code, identity_domain_code, alias_list_id, p25_system_key,
                 first_seen_ms, last_seen_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope_token) DO UPDATE SET
                 first_seen_ms = CASE
                     WHEN excluded.identity_domain_code != 0
@@ -975,9 +1102,10 @@ final class TrunkedIdentitySchema
             statement.setInt(2, protocol);
             statement.setInt(3, scopeKind);
             statement.setInt(4, identityDomainCode);
-            setInteger(statement, 5, p25SystemKey);
-            statement.setLong(6, observedAt);
+            setLong(statement, 5, aliasListId);
+            setInteger(statement, 6, p25SystemKey);
             statement.setLong(7, observedAt);
+            statement.setLong(8, observedAt);
             statement.executeUpdate();
         }
 
@@ -1035,6 +1163,96 @@ final class TrunkedIdentitySchema
 
         deleteOrphanContextScopes(connection);
         return scope;
+    }
+
+    /**
+     * Resolves a P25 system-and-alias-list scope for a completed logical call.  Unlike receiver observations, the
+     * global coordinator result does not belong to one receiver context.
+     */
+    static Scope ensureP25LogicalCallScope(Connection connection, int wacn, int systemId, long aliasListId,
+                                           long observedAt) throws SQLException
+    {
+        if(wacn < 0 || wacn > 0xFFFFF || systemId < 0 || systemId > 0xFFF || aliasListId <= 0 || observedAt <= 0)
+        {
+            return null;
+        }
+
+        String scopeToken = String.format(Locale.ROOT, "p25:%05X:%03X:alias-list:%d", wacn, systemId,
+            aliasListId);
+        Scope retainedScope = selectScope(connection, scopeToken);
+        if(retainedScope != null)
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                UPDATE trunked_identity_scope SET last_seen_ms=max(last_seen_ms, ?) WHERE scope_id=?
+                """))
+            {
+                statement.setLong(1, observedAt);
+                statement.setInt(2, retainedScope.scopeId());
+                statement.executeUpdate();
+            }
+            return retainedScope;
+        }
+
+        Integer systemKey;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_system(wacn, system_id, first_seen_ms, last_seen_ms)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(wacn, system_id) DO UPDATE SET
+                first_seen_ms = min(p25_system.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(p25_system.last_seen_ms, excluded.last_seen_ms)
+            RETURNING system_key
+            """))
+        {
+            statement.setInt(1, wacn);
+            statement.setInt(2, systemId);
+            statement.setLong(3, observedAt);
+            statement.setLong(4, observedAt);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                systemKey = resultSet.next() ? resultSet.getInt(1) : null;
+            }
+        }
+
+        if(systemKey == null)
+        {
+            return null;
+        }
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO trunked_identity_scope(
+                scope_token, protocol_code, scope_kind_code, identity_domain_code, alias_list_id, p25_system_key,
+                first_seen_ms, last_seen_ms
+            ) VALUES (?, 1, 1, 0, ?, ?, ?, ?)
+            ON CONFLICT(scope_token) DO UPDATE SET
+                first_seen_ms = min(trunked_identity_scope.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(trunked_identity_scope.last_seen_ms, excluded.last_seen_ms)
+            """))
+        {
+            statement.setString(1, scopeToken);
+            statement.setLong(2, aliasListId);
+            statement.setInt(3, systemKey);
+            statement.setLong(4, observedAt);
+            statement.setLong(5, observedAt);
+            statement.executeUpdate();
+        }
+
+        return selectScope(connection, scopeToken);
+    }
+
+    private static Scope selectScope(Connection connection, String scopeToken) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT scope_id, protocol_code, identity_domain_code, first_seen_ms
+            FROM trunked_identity_scope WHERE scope_token = ?
+            """))
+        {
+            statement.setString(1, scopeToken);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? new Scope(resultSet.getInt("scope_id"),
+                    resultSet.getInt("protocol_code"), identityDomain(resultSet.getInt("identity_domain_code")),
+                    scopeToken, resultSet.getLong("first_seen_ms")) : null;
+            }
+        }
     }
 
     private static ExistingScope existingScope(Connection connection, String scopeToken) throws SQLException
@@ -1141,8 +1359,7 @@ final class TrunkedIdentitySchema
      */
     private static void clearContextIdentityState(Connection connection, int contextId) throws SQLException
     {
-        for(String table: List.of("trunked_radio_site_presence", "call_identity_bucket",
-            "p25_site_talkgroup_bucket", "p25_site_activity_bucket", "p25_site_frequency_summary",
+        for(String table: List.of("trunked_radio_site_presence", "trunked_signaling_activity_bucket",
             "p25_activity_event"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
@@ -1190,26 +1407,6 @@ final class TrunkedIdentitySchema
 
     static int clearContext(Connection connection, int contextId) throws SQLException
     {
-        Integer scopeId = null;
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT scope.scope_id, scope.scope_kind_code
-            FROM trunked_identity_scope_context mapping
-            JOIN trunked_identity_scope scope ON scope.scope_id = mapping.scope_id
-            WHERE mapping.context_id = ?
-            """))
-        {
-            statement.setInt(1, contextId);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                if(resultSet.next())
-                {
-                    scopeId = resultSet.getInt("scope_id");
-                }
-            }
-        }
-
         int deleted;
 
         try(PreparedStatement statement = connection.prepareStatement(
@@ -1217,22 +1414,6 @@ final class TrunkedIdentitySchema
         {
             statement.setInt(1, contextId);
             deleted = statement.executeUpdate();
-        }
-
-        if(scopeId != null)
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                DELETE FROM trunked_identity_scope
-                WHERE scope_id = ?
-                  AND NOT EXISTS (
-                      SELECT 1 FROM trunked_identity_scope_context mapping
-                      WHERE mapping.scope_id = trunked_identity_scope.scope_id
-                  )
-                """))
-            {
-                statement.setInt(1, scopeId);
-                deleted += statement.executeUpdate();
-            }
         }
 
         return deleted;
@@ -1258,18 +1439,21 @@ final class TrunkedIdentitySchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_zero_local_fq_talkgroup_summary (
                 scope_id, home_wacn, home_system_id, home_talkgroup_id,
-                first_seen_ms, last_seen_ms, %s, encrypted_count, recorded_count, streamed_count
-            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?)
+                first_seen_ms, last_seen_ms, %s, logical_call_count, encrypted_logical_call_count,
+                recorded_output_count, streamed_output_count
+            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?)
             ON CONFLICT(scope_id, home_wacn, home_system_id, home_talkgroup_id) DO UPDATE SET
                 first_seen_ms = min(p25_zero_local_fq_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(p25_zero_local_fq_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
-                encrypted_count = p25_zero_local_fq_talkgroup_summary.encrypted_count +
-                    excluded.encrypted_count,
-                recorded_count = p25_zero_local_fq_talkgroup_summary.recorded_count +
-                    excluded.recorded_count,
-                streamed_count = p25_zero_local_fq_talkgroup_summary.streamed_count +
-                    excluded.streamed_count
+                logical_call_count = p25_zero_local_fq_talkgroup_summary.logical_call_count +
+                    excluded.logical_call_count,
+                encrypted_logical_call_count = p25_zero_local_fq_talkgroup_summary.encrypted_logical_call_count +
+                    excluded.encrypted_logical_call_count,
+                recorded_output_count = p25_zero_local_fq_talkgroup_summary.recorded_output_count +
+                    excluded.recorded_output_count,
+                streamed_output_count = p25_zero_local_fq_talkgroup_summary.streamed_output_count +
+                    excluded.streamed_output_count
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
             actionUpdateSql("p25_zero_local_fq_talkgroup_summary"))))
         {
@@ -1281,6 +1465,7 @@ final class TrunkedIdentitySchema
             statement.setLong(index++, observedAt);
             statement.setLong(index++, observedAt);
             index = setActionCounts(statement, index, action, countedCall);
+            statement.setInt(index++, countedCall ? 1 : 0);
             statement.setInt(index++, encrypted);
             statement.setInt(index++, recorded);
             statement.setInt(index, streamed);
@@ -1348,11 +1533,12 @@ final class TrunkedIdentitySchema
                 scope_id, identity_kind_code, identity_id,
                 p25_identity_state_code, p25_home_wacn, p25_home_system_id, p25_home_talkgroup_id,
                 first_seen_ms, last_seen_ms, %s,
-                source_call_count, target_call_count, encrypted_count, recorded_count, streamed_count,
+                logical_call_count, source_logical_call_count, target_logical_call_count,
+                encrypted_logical_call_count, recorded_output_count, streamed_output_count,
                 last_counterpart_kind_code, last_counterpart_id,
                 last_encryption_algorithm_id, last_encryption_key_id,
                 last_talker_alias, last_talker_alias_seen_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope_id, identity_kind_code, identity_id) DO UPDATE SET
                 p25_identity_state_code = CASE
                     WHEN excluded.p25_identity_state_code = 0
@@ -1429,11 +1615,17 @@ final class TrunkedIdentitySchema
                 first_seen_ms = min(trunked_identity_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(trunked_identity_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
-                source_call_count = trunked_identity_summary.source_call_count + excluded.source_call_count,
-                target_call_count = trunked_identity_summary.target_call_count + excluded.target_call_count,
-                encrypted_count = trunked_identity_summary.encrypted_count + excluded.encrypted_count,
-                recorded_count = trunked_identity_summary.recorded_count + excluded.recorded_count,
-                streamed_count = trunked_identity_summary.streamed_count + excluded.streamed_count,
+                logical_call_count = trunked_identity_summary.logical_call_count + excluded.logical_call_count,
+                source_logical_call_count = trunked_identity_summary.source_logical_call_count +
+                    excluded.source_logical_call_count,
+                target_logical_call_count = trunked_identity_summary.target_logical_call_count +
+                    excluded.target_logical_call_count,
+                encrypted_logical_call_count = trunked_identity_summary.encrypted_logical_call_count +
+                    excluded.encrypted_logical_call_count,
+                recorded_output_count = trunked_identity_summary.recorded_output_count +
+                    excluded.recorded_output_count,
+                streamed_output_count = trunked_identity_summary.streamed_output_count +
+                    excluded.streamed_output_count,
                 last_counterpart_kind_code = CASE
                     WHEN excluded.last_counterpart_id IS NOT NULL
                          AND excluded.last_seen_ms >= trunked_identity_summary.last_seen_ms
@@ -1488,6 +1680,7 @@ final class TrunkedIdentitySchema
             statement.setLong(index++, observedAt);
             statement.setLong(index++, observedAt);
             index = setActionCounts(statement, index, action, countedCall);
+            statement.setInt(index++, countedCall ? 1 : 0);
             statement.setInt(index++, sourceCall && countedCall ? 1 : 0);
             statement.setInt(index++, targetCall && countedCall ? 1 : 0);
             statement.setInt(index++, encrypted);
@@ -1523,16 +1716,20 @@ final class TrunkedIdentitySchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_radio_talkgroup_summary (
                 scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, %s,
-                encrypted_count, recorded_count, streamed_count,
+                logical_call_count, encrypted_logical_call_count, recorded_output_count, streamed_output_count,
                 last_encryption_algorithm_id, last_encryption_key_id
-            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope_id, radio_id, talkgroup_id, target_kind_code) DO UPDATE SET
                 first_seen_ms = min(trunked_radio_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(trunked_radio_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
-                encrypted_count = trunked_radio_talkgroup_summary.encrypted_count + excluded.encrypted_count,
-                recorded_count = trunked_radio_talkgroup_summary.recorded_count + excluded.recorded_count,
-                streamed_count = trunked_radio_talkgroup_summary.streamed_count + excluded.streamed_count,
+                logical_call_count = trunked_radio_talkgroup_summary.logical_call_count + excluded.logical_call_count,
+                encrypted_logical_call_count = trunked_radio_talkgroup_summary.encrypted_logical_call_count +
+                    excluded.encrypted_logical_call_count,
+                recorded_output_count = trunked_radio_talkgroup_summary.recorded_output_count +
+                    excluded.recorded_output_count,
+                streamed_output_count = trunked_radio_talkgroup_summary.streamed_output_count +
+                    excluded.streamed_output_count,
                 last_encryption_algorithm_id = CASE
                     WHEN excluded.last_encryption_algorithm_id IS NOT NULL
                          AND excluded.last_seen_ms >= trunked_radio_talkgroup_summary.last_seen_ms
@@ -1556,6 +1753,7 @@ final class TrunkedIdentitySchema
             statement.setLong(index++, observedAt);
             statement.setLong(index++, observedAt);
             index = setActionCounts(statement, index, action, countedCall);
+            statement.setInt(index++, countedCall ? 1 : 0);
             statement.setInt(index++, encrypted);
             statement.setInt(index++, recorded);
             statement.setInt(index++, streamed);
@@ -1705,7 +1903,7 @@ final class TrunkedIdentitySchema
     private static Context context(Connection connection, int contextId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT context.id, context.guid, context.protocol_code, context.system_key,
+            SELECT context.id, context.guid, context.protocol_code, context.alias_list_id, context.system_key,
                    system.wacn, system.system_id
             FROM receiver_context context
             LEFT JOIN p25_system system ON system.system_key = context.system_key
@@ -1722,7 +1920,8 @@ final class TrunkedIdentitySchema
                 }
 
                 return new Context(resultSet.getInt("id"), resultSet.getString("guid"),
-                    nullableInteger(resultSet, "protocol_code"), nullableInteger(resultSet, "system_key"),
+                    nullableInteger(resultSet, "protocol_code"), nullableLong(resultSet, "alias_list_id"),
+                    nullableInteger(resultSet, "system_key"),
                     nullableInteger(resultSet, "wacn"), nullableInteger(resultSet, "system_id"));
             }
         }
@@ -1895,7 +2094,8 @@ final class TrunkedIdentitySchema
         {
             statement.executeUpdate("""
                 DELETE FROM trunked_identity_scope
-                WHERE NOT EXISTS (
+                WHERE scope_kind_code = 2
+                  AND NOT EXISTS (
                       SELECT 1 FROM trunked_identity_scope_context mapping
                       WHERE mapping.scope_id = trunked_identity_scope.scope_id
                   )
@@ -1995,6 +2195,12 @@ final class TrunkedIdentitySchema
         return resultSet.wasNull() ? null : value;
     }
 
+    private static Long nullableLong(ResultSet resultSet, String column) throws SQLException
+    {
+        long value = resultSet.getLong(column);
+        return resultSet.wasNull() ? null : value;
+    }
+
     private static Integer positive(String value)
     {
         if(value == null)
@@ -2068,8 +2274,8 @@ final class TrunkedIdentitySchema
     {
     }
 
-    private record Context(int contextId, String guid, Integer protocolCode, Integer systemKey, Integer wacn,
-                           Integer systemId)
+    private record Context(int contextId, String guid, Integer protocolCode, Long aliasListId, Integer systemKey,
+                           Integer wacn, Integer systemId)
     {
     }
 

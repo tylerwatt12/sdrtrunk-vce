@@ -20,9 +20,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -39,8 +43,121 @@ import org.slf4j.LoggerFactory;
 
 class P25ActivityLogWriterTest
 {
+    private static final long LOGICAL_CALL_START = 1_700_000_000_000L;
+
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void writesDetailedSignalingWithoutCreatingLogicalCallCounters() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("signaling.sqlite");
+        createTestDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1, 0);
+        writer.start();
+        writer.enqueue(signaling(P25ActivityLogRecords.Action.GRANT));
+        writer.close();
+
+        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertEquals(1, writer.getWrittenRecords());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1L, scalarLong(connection, "SELECT COUNT(*) FROM p25_activity_event"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT grant_count FROM trunked_signaling_activity_bucket"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
+        }
+    }
+
+    @Test
+    void writesResolvedLogicalCallThenItsOutputsExactlyOnce() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("resolved-output.sqlite");
+        createTestDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 3, 0);
+        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(1);
+        writer.start();
+        writer.enqueue(call);
+        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
+            P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
+            P25ActivityLogRecords.CallOutput.STREAMED));
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT recorded_output_count FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT streamed_output_count FROM trunked_logical_call_bucket"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_site_call_bucket"));
+        }
+    }
+
+    @Test
+    void rejectsOutputThatArrivesBeforeItsResolvedCall() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("output-order.sqlite");
+        createTestDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 2, 0);
+        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(2);
+        writer.start();
+        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
+            P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(call);
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_logical_call_bucket"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT recorded_output_count FROM trunked_logical_call_bucket"));
+        }
+    }
+
+    @Test
+    void duplicateResolvedNotificationDoesNotIncrementAgainWithinWriterLifetime() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("resolved-idempotency.sqlite");
+        createTestDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 2, 0);
+        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(3);
+        writer.start();
+        writer.enqueue(call);
+        writer.enqueue(call);
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_logical_call_bucket"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(observed_call_count) FROM p25_site_call_bucket"));
+        }
+    }
+
+    @Test
+    void closeDrainsAcceptedSignalingPartialBatch() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("close-drain-signaling.sqlite");
+        createTestDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 100,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(signaling(P25ActivityLogRecords.Action.DENIAL));
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1L, scalarLong(connection,
+                "SELECT denial_count FROM trunked_signaling_activity_bucket"));
+        }
+    }
 
     @Test
     void boundsPatchMembersBeforeTheyReachTheWriterQueue()
@@ -60,7 +177,7 @@ class P25ActivityLogWriterTest
     void writesActivityEvent() throws Exception
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
@@ -107,7 +224,7 @@ class P25ActivityLogWriterTest
     void closeDrainsACollectingPartialBatch() throws Exception
     {
         Path database = mTemporaryFolder.resolve("close-drains.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         writer.start();
         writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
@@ -127,7 +244,7 @@ class P25ActivityLogWriterTest
     void closeRetriesLockedWriteWithinGraceAndPersistsAcceptedRecord() throws Exception
     {
         Path database = mTemporaryFolder.resolve("close-locked-within-grace.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1,
             TimeUnit.SECONDS.toMillis(10), 25, 750);
         writer.start();
@@ -172,7 +289,7 @@ class P25ActivityLogWriterTest
 
         assertEquals(1, writer.getWrittenRecords());
         assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
-        assertTrue(writer.isWorkerTerminatedForTest());
+        assertTrue(writer.isWorkerTerminated());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -184,7 +301,7 @@ class P25ActivityLogWriterTest
     void closeReportsFailureAndTerminatesWhenWriteLockOutlivesGrace() throws Exception
     {
         Path database = mTemporaryFolder.resolve("close-locked-past-grace.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1,
             TimeUnit.SECONDS.toMillis(10), 25, 300);
         writer.start();
@@ -204,7 +321,7 @@ class P25ActivityLogWriterTest
             assertTrue(closeElapsed < TimeUnit.SECONDS.toNanos(2));
             assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
             assertTrue(writer.getStatus().lastError() != null && !writer.getStatus().lastError().isBlank());
-            assertTrue(writer.isWorkerTerminatedForTest());
+            assertTrue(writer.isWorkerTerminated());
             assertEquals(0, writer.getWrittenRecords());
             assertCount(blocker, "p25_activity_event", 0);
             statement.execute("ROLLBACK");
@@ -215,7 +332,7 @@ class P25ActivityLogWriterTest
     void closeDrainsAcceptedRecordsAcrossMultipleBatches() throws Exception
     {
         Path database = mTemporaryFolder.resolve("close-multiple-batches.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 2,
             TimeUnit.SECONDS.toMillis(10), 25, 1000);
         writer.start();
@@ -229,7 +346,7 @@ class P25ActivityLogWriterTest
 
         assertEquals(5, writer.getWrittenRecords());
         assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
-        assertTrue(writer.isWorkerTerminatedForTest());
+        assertTrue(writer.isWorkerTerminated());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -241,7 +358,7 @@ class P25ActivityLogWriterTest
     void collectsUntilConfiguredBatchDeadline() throws Exception
     {
         Path database = mTemporaryFolder.resolve("batch-deadline.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 10, 300);
         writer.start();
         writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
@@ -263,7 +380,7 @@ class P25ActivityLogWriterTest
     void configuredBatchCapFlushesBeforeDeadline() throws Exception
     {
         Path database = mTemporaryFolder.resolve("batch-cap.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 3,
             TimeUnit.SECONDS.toMillis(10));
         writer.start();
@@ -285,7 +402,7 @@ class P25ActivityLogWriterTest
     void sparseMaintenanceRequestFlushesCollectingBatch() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sparse-maintenance-batch.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1250,
             TimeUnit.SECONDS.toMillis(10));
         writer.start();
@@ -309,7 +426,7 @@ class P25ActivityLogWriterTest
     void writesEachCompletedDmrConventionalCallExactlyOnce() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
             1_000L, 2_000L, "GUID:dmr-writer", "dmr-writer", "DMR Repeater",
@@ -352,7 +469,7 @@ class P25ActivityLogWriterTest
     void persistsDetailedDmrConventionalActivity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional-detailed.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
@@ -409,13 +526,13 @@ class P25ActivityLogWriterTest
     void persistsDetailedNxdnConventionalActivity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("nxdn-conventional-detailed.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
             1_000L, 2_000L, "GUID:nxdn-detailed", "nxdn-detailed", "NXDN Repeater",
             "County NXDN", 461_125_000L, P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, true));
-        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(
+        writer.enqueue(new P25ActivityLogRecords.ConventionalCallOutput(
             1_000L, "GUID:nxdn-detailed", "nxdn-detailed", 461_125_000L, null, 91, "TALKGROUP",
             List.of(), 101, P25ActivityLogRecords.CallOutput.RECORDED));
 
@@ -459,9 +576,9 @@ class P25ActivityLogWriterTest
             assertEquals(1L, scalarLong(connection,
                 "SELECT recorded_count FROM conventional_activity_summary"));
             assertEquals(2L, scalarLong(connection,
-                "SELECT COUNT(*) FROM call_identity_bucket"));
+                "SELECT COUNT(*) FROM conventional_call_identity_bucket"));
             assertEquals(2L, scalarLong(connection,
-                "SELECT SUM(recorded_count) FROM call_identity_bucket"));
+                "SELECT SUM(recorded_count) FROM conventional_call_identity_bucket"));
             assertEquals("CONVENTIONAL_NXDN", scalarString(connection,
                 "SELECT channel_kind FROM p25_activity_event_resolved"));
             assertEquals("NXDN", scalarString(connection,
@@ -475,7 +592,7 @@ class P25ActivityLogWriterTest
     void bucketsDmrPrivateCallAndOutputsByCallStartForBothIdentities() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-private-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "dmr-private";
         String contextKey = "GUID:" + guid;
 
@@ -485,16 +602,16 @@ class P25ActivityLogWriterTest
                 3_599_900L, 3_600_100L, contextKey, guid, "DMR Private", "County DMR",
                 461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.PRIVATE, null, 101, 202, true);
             P25ActivityLogSchema.recordDmrConventionalCall(connection, call);
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(3_599_900L, contextKey, guid,
+            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
+                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, guid,
                     461_125_000L, 2, 202, "RADIO", List.of(), 101,
                     P25ActivityLogRecords.CallOutput.RECORDED)));
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(3_599_900L, contextKey, guid,
+            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
+                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, guid,
                     461_125_000L, 2, 202, "RADIO", List.of(), 101,
                     P25ActivityLogRecords.CallOutput.STREAMED)));
 
-            assertEquals(2, count(connection, "call_identity_bucket"));
+            assertEquals(2, count(connection, "conventional_call_identity_bucket"));
             assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
                 P25ActivityLogSchema.IDENTITY_KIND_RADIO, 202, 1, 1, 1, 1);
             assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
@@ -510,7 +627,7 @@ class P25ActivityLogWriterTest
     void failsAndRollsBackBatchContainingInvalidDmrIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("invalid-dmr.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
@@ -543,7 +660,7 @@ class P25ActivityLogWriterTest
     void failsAndRollsBackBatchContainingInvalidNxdnIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("invalid-nxdn.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
@@ -597,7 +714,7 @@ class P25ActivityLogWriterTest
     void learnsVoiceChannelsFromControlChannelGrants() throws Exception
     {
         Path database = mTemporaryFolder.resolve("voice-channel.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -624,7 +741,7 @@ class P25ActivityLogWriterTest
     void accumulatesVoiceAndDataEvidenceWithoutChangingEncryptedDataStatus() throws Exception
     {
         Path database = mTemporaryFolder.resolve("mixed-service-channel.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -669,7 +786,7 @@ class P25ActivityLogWriterTest
     void persistsDetailedActivity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("committed.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
@@ -696,14 +813,16 @@ class P25ActivityLogWriterTest
     void appliesRetentionCleanup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retention.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
             P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.CALL), true);
             recordConfirmedActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT), true);
-            assertCount(connection, "call_identity_bucket", 2);
+            assertCount(connection, "p25_activity_event", 2);
+            assertCount(connection, "trunked_signaling_activity_bucket", 1);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
             P25ActivityLogSchema.deleteOlderThan(connection, 50000L);
 
             try(Statement statement = connection.createStatement();
@@ -714,7 +833,8 @@ class P25ActivityLogWriterTest
             }
 
             assertCount(connection, "p25_site_channel_tag", 0);
-            assertCount(connection, "call_identity_bucket", 0);
+            assertCount(connection, "trunked_signaling_activity_bucket", 1);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("SELECT tag FROM p25_site_channel_tag_summary"))
@@ -730,7 +850,7 @@ class P25ActivityLogWriterTest
     void storesBucketsAndDeletesExpiredControlChannelQuality() throws Exception
     {
         Path database = mTemporaryFolder.resolve("quality-retention.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -759,7 +879,7 @@ class P25ActivityLogWriterTest
     void qualityRetentionDrainsMoreThanOneBoundedBatch() throws Exception
     {
         Path database = mTemporaryFolder.resolve("quality-retention-batches.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -791,7 +911,7 @@ class P25ActivityLogWriterTest
     void representativeVolumeQualityRetentionSelectionUsesCoveringTimeIndex() throws Exception
     {
         Path database = mTemporaryFolder.resolve("quality-retention-query-plan.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -841,7 +961,7 @@ class P25ActivityLogWriterTest
     void representativeVolumeIdentityRankingUsesTimeLeadingIndex() throws Exception
     {
         Path database = mTemporaryFolder.resolve("identity-ranking-query-plan.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -859,20 +979,20 @@ class P25ActivityLogWriterTest
                 WITH RECURSIVE buckets(value) AS (
                     VALUES(0) UNION ALL SELECT value + 1 FROM buckets WHERE value < 511
                 )
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
                 )
                 SELECT context.id, buckets.value * 3600000, 1, 1, 1000 + context.id, 1
                 FROM receiver_context context CROSS JOIN buckets
                 """);
 
-            assertEquals(16_384, count(connection, "call_identity_bucket"));
+            assertEquals(16_384, count(connection, "conventional_call_identity_bucket"));
             StringBuilder plan = new StringBuilder();
 
             try(ResultSet resultSet = statement.executeQuery("""
                 EXPLAIN QUERY PLAN
                 SELECT identity_id, SUM(call_count)
-                FROM call_identity_bucket INDEXED BY idx_call_identity_bucket_dashboard_time
+                FROM conventional_call_identity_bucket INDEXED BY idx_conventional_call_identity_dashboard_time
                 WHERE bucket_start_ms >= 1756800000
                   AND identity_role_code = 1
                   AND identity_kind_code = 1
@@ -888,8 +1008,8 @@ class P25ActivityLogWriterTest
             }
 
             assertTrue(plan.toString().contains(
-                "USING INDEX idx_call_identity_bucket_dashboard_time (bucket_start_ms>?)"), plan.toString());
-            assertFalse(plan.toString().contains("SCAN call_identity_bucket"), plan.toString());
+                "USING INDEX idx_conventional_call_identity_dashboard_time (bucket_start_ms>?)"), plan.toString());
+            assertFalse(plan.toString().contains("SCAN conventional_call_identity_bucket"), plan.toString());
         }
     }
 
@@ -897,7 +1017,7 @@ class P25ActivityLogWriterTest
     void maintenanceDeletesExpiredRowsAndUpdatesStatus() throws Exception
     {
         Path database = mTemporaryFolder.resolve("maintenance.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         long now = System.currentTimeMillis();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -935,7 +1055,9 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertCount(connection, "p25_control_channel_quality", 1);
-            assertCount(connection, "call_identity_bucket", 0);
+            assertCount(connection, "conventional_call_identity_bucket", 0);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
             assertCount(connection, "trunked_site_snapshot", 2);
             assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_site_snapshot WHERE protocol_code=3"));
@@ -950,7 +1072,7 @@ class P25ActivityLogWriterTest
     void maintenanceCheckReportsOk() throws Exception
     {
         Path database = mTemporaryFolder.resolve("check.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         P25ActivityLogMaintenance.Result result =
             P25ActivityLogMaintenance.run(database, 30, P25ActivityLogMaintenance.Operation.CHECK);
@@ -968,7 +1090,7 @@ class P25ActivityLogWriterTest
     void clearsOnlySelectedSiteStatistics() throws Exception
     {
         Path database = mTemporaryFolder.resolve("clear-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String clearedGuid = "123e4567-e89b-12d3-a456-426614174000";
         String retainedGuid = "223e4567-e89b-12d3-a456-426614174000";
 
@@ -1006,15 +1128,9 @@ class P25ActivityLogWriterTest
             assertGuidCount(connection, "p25_site_channel_tag_summary", retainedGuid, 2);
             assertGuidCount(connection, "p25_control_channel_quality", retainedGuid, 1);
             assertCount(connection, "p25_activity_event", 1);
-            assertCount(connection, "p25_site_frequency_summary", 1);
-            assertCount(connection, "p25_site_talkgroup_bucket", 1);
-            assertCount(connection, "p25_site_activity_bucket", 1);
-            assertEquals(2L, scalarLong(connection, """
-                SELECT COUNT(*)
-                FROM call_identity_bucket identity
-                JOIN receiver_context context ON context.id=identity.context_id
-                WHERE context.guid='223e4567-e89b-12d3-a456-426614174000'
-                """));
+            assertCount(connection, "trunked_signaling_activity_bucket", 1);
+            assertCount(connection, "p25_site_call_bucket", 0);
+            assertCount(connection, "p25_site_call_identity_bucket", 0);
 
             //These summaries are shared by all receiver sites for the system and cannot be deleted site-by-site.
             assertCount(connection, "p25_system", 1);
@@ -1030,7 +1146,7 @@ class P25ActivityLogWriterTest
     void storesSchemaVersionInDatabaseMetadata() throws Exception
     {
         Path database = mTemporaryFolder.resolve("schema-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -1043,12 +1159,15 @@ class P25ActivityLogWriterTest
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
-                SELECT CAST(value AS INTEGER) FROM database_metadata
-                WHERE key='p25_call_output_metrics_started_at_ms'
+                SELECT COUNT(*) FROM database_metadata
+                WHERE key IN ('conventional_call_output_metrics_started_at_ms',
+                              'trunked_identity_metrics_started_at_ms',
+                              'trunked_logical_call_metrics_started_at_ms')
+                  AND CAST(value AS INTEGER) > 0
                 """))
             {
                 assertTrue(resultSet.next());
-                assertTrue(resultSet.getLong(1) > 0);
+                assertEquals(3, resultSet.getInt(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -1084,7 +1203,7 @@ class P25ActivityLogWriterTest
     void callIdentitySchemaEnforcesIdentityAndOwnershipContract() throws Exception
     {
         Path database = mTemporaryFolder.resolve("call-identity-schema.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -1095,7 +1214,7 @@ class P25ActivityLogWriterTest
 
             List<String> primaryKey = new ArrayList<>();
 
-            try(ResultSet resultSet = statement.executeQuery("PRAGMA table_info(call_identity_bucket)"))
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA table_info(conventional_call_identity_bucket)"))
             {
                 while(resultSet.next())
                 {
@@ -1109,7 +1228,7 @@ class P25ActivityLogWriterTest
             assertEquals(List.of("1:context_id", "2:bucket_start_ms", "3:identity_role_code",
                 "4:identity_kind_code", "5:identity_id"), primaryKey);
 
-            try(ResultSet resultSet = statement.executeQuery("PRAGMA foreign_key_list(call_identity_bucket)"))
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA foreign_key_list(conventional_call_identity_bucket)"))
             {
                 assertTrue(resultSet.next());
                 assertEquals("receiver_context", resultSet.getString("table"));
@@ -1122,7 +1241,7 @@ class P25ActivityLogWriterTest
             List<String> indexColumns = new ArrayList<>();
 
             try(ResultSet resultSet =
-                    statement.executeQuery("PRAGMA index_info(idx_call_identity_bucket_dashboard_time)"))
+                    statement.executeQuery("PRAGMA index_info(idx_conventional_call_identity_dashboard_time)"))
             {
                 while(resultSet.next())
                 {
@@ -1135,28 +1254,28 @@ class P25ActivityLogWriterTest
 
             long contextId = scalarLong(connection, "SELECT id FROM receiver_context");
             assertThrows(Exception.class, () -> statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
                 ) VALUES (%d, 3600000, 9, 1, 1)
                 """.formatted(contextId)));
             assertThrows(Exception.class, () -> statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
                 ) VALUES (%d, 3600000, 2, 0, 0)
                 """.formatted(contextId)));
             assertThrows(Exception.class, () -> statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
                 ) VALUES (%d, 3600000, 1, 1, 1, -1)
                 """.formatted(contextId)));
             assertThrows(Exception.class, () -> statement.executeUpdate("""
-                INSERT INTO call_identity_bucket (
+                INSERT INTO conventional_call_identity_bucket (
                     context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
                 ) VALUES (999999, 3600000, 1, 1, 1)
                 """));
 
             statement.executeUpdate("DELETE FROM receiver_context WHERE id=" + contextId);
-            assertCount(connection, "call_identity_bucket", 0);
+            assertCount(connection, "conventional_call_identity_bucket", 0);
         }
     }
 
@@ -1164,7 +1283,7 @@ class P25ActivityLogWriterTest
     void rejectsAStaleResolvedActivityView() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stale-resolved-view.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -1179,7 +1298,7 @@ class P25ActivityLogWriterTest
     void storesReplacesAndClearsCurrentRadioAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("affiliation.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1204,7 +1323,7 @@ class P25ActivityLogWriterTest
     void olderAffiliationCannotReplaceNewerState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("affiliation-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String siteA = "123e4567-e89b-12d3-a456-42661417400a";
         String siteB = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1228,7 +1347,7 @@ class P25ActivityLogWriterTest
     void registrationOnlyMovesSitePresenceWithoutReplacingTalkgroupAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("registration-moves-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String siteA = "123e4567-e89b-12d3-a456-42661417400a";
         String siteB = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1253,7 +1372,7 @@ class P25ActivityLogWriterTest
     void equalTimestampPresenceUsesEvidenceThenContextAndTalkgroupTieBreaks() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-equal-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String siteA = "123e4567-e89b-12d3-a456-42661417400a";
         String siteB = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1289,7 +1408,7 @@ class P25ActivityLogWriterTest
     void staleAndNewerClearsRespectConfirmedTimestamps() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-clear-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1309,7 +1428,7 @@ class P25ActivityLogWriterTest
     void clearWatermarkPreventsStaleAndEqualConfirmationsFromResurrectingState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-clear-watermark.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1353,7 +1472,7 @@ class P25ActivityLogWriterTest
     void clearingOneSiteRemovesItsPresenceButRetainsSystemAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-site-clear.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String clearedSite = "123e4567-e89b-12d3-a456-42661417400a";
         String retainedSite = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1378,7 +1497,7 @@ class P25ActivityLogWriterTest
     void ordinaryCallsNeverCreateAuthoritativeRadioState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("calls-do-not-create-presence.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1395,7 +1514,7 @@ class P25ActivityLogWriterTest
     void keepsReservedP25IdentitiesInActivityButOutOfDirectoryProjections() throws Exception
     {
         Path database = mTemporaryFolder.resolve("reserved-identities.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         int validRadio = 1_811_524;
         int validTalkgroup = 56_138;
         int[] invalidTalkgroups = {0, 0xFFFF, 0x10000};
@@ -1447,14 +1566,13 @@ class P25ActivityLogWriterTest
             assertEquals(0, count(connection, "trunked_radio_affiliation"));
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
             assertEquals(0, scalarLong(connection, """
-                SELECT COUNT(*) FROM p25_site_talkgroup_bucket
-                WHERE talkgroup_id <= 0 OR talkgroup_id >= 65535
+                SELECT COUNT(*) FROM trunked_logical_call_identity_bucket
+                WHERE identity_kind_code=1 AND (identity_id <= 0 OR identity_id >= 65535)
                 """));
-            assertEquals(1, count(connection, "call_identity_bucket"));
-            assertEquals(1, scalarLong(connection, """
-                SELECT COUNT(*) FROM call_identity_bucket
-                WHERE identity_role_code = 1 AND identity_kind_code = 0 AND identity_id = 0
-                """));
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "trunked_logical_call_identity_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
+            assertCount(connection, "p25_site_call_identity_bucket", 0);
         }
     }
 
@@ -1462,7 +1580,7 @@ class P25ActivityLogWriterTest
     void updatesAggregateSummaries() throws Exception
     {
         Path database = mTemporaryFolder.resolve("summaries.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1474,44 +1592,44 @@ class P25ActivityLogWriterTest
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
                     """
-                    SELECT call_count, grant_count, continue_count, encrypted_count
+                    SELECT logical_call_count, grant_count, continue_count, encrypted_logical_call_count
                     FROM trunked_identity_summary WHERE identity_kind_code=1
                     """))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("call_count"));
+                assertEquals(0, resultSet.getInt("logical_call_count"));
                 assertEquals(1, resultSet.getInt("grant_count"));
                 assertEquals(1, resultSet.getInt("continue_count"));
-                assertEquals(1, resultSet.getInt("encrypted_count"));
+                assertEquals(0, resultSet.getInt("encrypted_logical_call_count"));
             }
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
                     """
-                    SELECT call_count, grant_count, encrypted_count
+                    SELECT logical_call_count, grant_count, continue_count, encrypted_logical_call_count
                     FROM trunked_identity_summary WHERE identity_kind_code=2
                     """))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("call_count"));
+                assertEquals(0, resultSet.getInt("logical_call_count"));
                 assertEquals(1, resultSet.getInt("grant_count"));
-                assertEquals(1, resultSet.getInt("encrypted_count"));
+                assertEquals(1, resultSet.getInt("continue_count"));
+                assertEquals(0, resultSet.getInt("encrypted_logical_call_count"));
             }
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT call_count, grant_count, continue_count FROM p25_site_frequency_summary"))
+                    "SELECT grant_count, continue_count FROM trunked_signaling_activity_bucket"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("call_count"));
                 assertEquals(1, resultSet.getInt("grant_count"));
-                assertEquals(1, resultSet.getInt("continue_count"));
+                assertEquals(0, resultSet.getInt("continue_count"));
             }
 
             assertCount(connection, "trunked_radio_talkgroup_summary", 1);
-            assertActionCount(connection, "trunked_radio_talkgroup_summary", "call_count", 1);
-            assertActionCount(connection, "p25_site_talkgroup_bucket", "call_count", 1);
-            assertActionCount(connection, "p25_site_activity_bucket", "call_count", 1);
+            assertActionCount(connection, "trunked_radio_talkgroup_summary", "logical_call_count", 0);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
             assertCount(connection, "p25_activity_event", 2);
         }
     }
@@ -1520,7 +1638,7 @@ class P25ActivityLogWriterTest
     void lateTalkerAliasUpdateDoesNotInflateActivityCounters() throws Exception
     {
         Path database = mTemporaryFolder.resolve("talker-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1537,15 +1655,15 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT call_count, grant_count, encrypted_count, last_talker_alias,
+                    SELECT logical_call_count, grant_count, encrypted_logical_call_count, last_talker_alias,
                         last_talker_alias_seen_ms, last_seen_ms
                     FROM trunked_identity_summary WHERE identity_kind_code=2
                     """))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("call_count"));
+                assertEquals(0, resultSet.getInt("logical_call_count"));
                 assertEquals(0, resultSet.getInt("grant_count"));
-                assertEquals(0, resultSet.getInt("encrypted_count"));
+                assertEquals(0, resultSet.getInt("encrypted_logical_call_count"));
                 assertEquals("CAR 201", resultSet.getString("last_talker_alias"));
                 assertEquals(2000L, resultSet.getLong("last_talker_alias_seen_ms"));
                 assertEquals(2000L, resultSet.getLong("last_seen_ms"));
@@ -1557,7 +1675,7 @@ class P25ActivityLogWriterTest
     void onlyExplicitTalkerAliasUpdatesDurableRadioAlias() throws Exception
     {
         Path database = mTemporaryFolder.resolve("explicit-talker-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1596,7 +1714,7 @@ class P25ActivityLogWriterTest
     void activityAndTalkerAliasCannotEstablishSystemIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("untrusted-activity-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1609,7 +1727,9 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_system", 0);
             assertGroupIdentityCount(connection, 0);
             assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 0);
-            assertCount(connection, "p25_site_activity_bucket", 1);
+            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "trunked_signaling_activity_bucket", 0);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
@@ -1628,7 +1748,7 @@ class P25ActivityLogWriterTest
     void activityWithMismatchedSystemIdentityIsRejectedAfterSiteSnapshot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stable-site-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1664,7 +1784,7 @@ class P25ActivityLogWriterTest
     void conventionalCallCountersAndOptionalAnalogHistoryCountEachCall() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-hits.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1686,7 +1806,7 @@ class P25ActivityLogWriterTest
     void frequencylessConventionalActivityStillUpdatesTheCompactHourlyTotal() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-frequencyless.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1706,7 +1826,7 @@ class P25ActivityLogWriterTest
     void trunkedActivityDoesNotStoreLogicalChannelAsContextName() throws Exception
     {
         Path database = mTemporaryFolder.resolve("context-name.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1734,7 +1854,7 @@ class P25ActivityLogWriterTest
     void upsertsStableSiteEntities() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1813,7 +1933,7 @@ class P25ActivityLogWriterTest
     void persistsCurrentSiteIdentityWithoutNetworkWacnAndRetainsPartialFields() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-current-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogRecords.SiteSnapshot baseline = siteSnapshot(1_000L);
         P25ActivityLogRecords.SiteSnapshot currentSiteOnly = new P25ActivityLogRecords.SiteSnapshot(
             baseline.observedAtEpochMilliseconds(), baseline.guid(), baseline.contextKind(), baseline.snapshotHash(),
@@ -1848,6 +1968,11 @@ class P25ActivityLogWriterTest
                 assertEquals(2, resultSet.getInt("lra"));
                 assertEquals(0, resultSet.getInt("active_rfss_network_connection"));
             }
+
+            assertEquals("WPFF205", scalarString(connection,
+                "SELECT callsign FROM p25_site_channel"));
+            assertEquals("WPFF205", scalarString(connection,
+                "SELECT callsign FROM p25_site_channel_summary"));
         }
     }
 
@@ -1855,7 +1980,7 @@ class P25ActivityLogWriterTest
     void completingWacnForTheSameObservedSystemKeepsTheSiteGeneration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-system-completion.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
             null, 0x321, "current-site-only");
         P25ActivityLogRecords.SiteSnapshot completed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
@@ -1881,6 +2006,8 @@ class P25ActivityLogWriterTest
             assertEquals(0x321L, scalarLong(connection,
                 "SELECT system_id FROM p25_site_snapshot"));
             assertEquals(1L, scalarLong(connection,
+                "SELECT active_rfss_network_connection FROM p25_site_snapshot"));
+            assertEquals(1L, scalarLong(connection,
                 "SELECT COUNT(*) FROM p25_site_snapshot WHERE system_key IS NOT NULL"));
         }
     }
@@ -1889,7 +2016,7 @@ class P25ActivityLogWriterTest
     void changingCurrentSiteOnlySystemStartsANewSiteGeneration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-system-change.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
             null, 0x321, "system-a");
         P25ActivityLogRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
@@ -1921,7 +2048,7 @@ class P25ActivityLogWriterTest
     void changingFromResolvedSystemToCurrentSiteOnlySystemClearsReceiverGeneration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-resolved-to-current-only-change.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
             null, 0x654, "system-b");
 
@@ -1932,15 +2059,15 @@ class P25ActivityLogWriterTest
                 activity(1_500L, P25ActivityLogRecords.Action.CALL), true);
             assertCount(connection, "trunked_identity_scope_context", 1);
             assertCount(connection, "p25_activity_event", 1);
-            assertCount(connection, "p25_site_activity_bucket", 1);
-            assertCount(connection, "call_identity_bucket", 2);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
 
             P25ActivityLogSchema.insertSite(connection, changed);
 
             assertCount(connection, "trunked_identity_scope_context", 0);
             assertCount(connection, "p25_activity_event", 0);
-            assertCount(connection, "p25_site_activity_bucket", 0);
-            assertCount(connection, "call_identity_bucket", 0);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
             assertEquals(2_000L, scalarLong(connection, """
                 SELECT first_seen_ms FROM receiver_context WHERE guid IS NOT NULL
                 """));
@@ -1964,7 +2091,7 @@ class P25ActivityLogWriterTest
     void createsNewSystemAndSiteWithCurrentAndAlternateControlChannels() throws Exception
     {
         Path database = mTemporaryFolder.resolve("new-system-site-controls.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "323e4567-e89b-12d3-a456-426614174000";
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("primary_control", "2-1328", 770_306_250L,
@@ -2027,7 +2154,7 @@ class P25ActivityLogWriterTest
     void mergesDuplicateLogicalSiteChannelsWithoutStoppingWriter() throws Exception
     {
         Path database = mTemporaryFolder.resolve("duplicate-site-channels.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(siteSnapshotWithDuplicateChannels(1000L));
@@ -2114,7 +2241,7 @@ class P25ActivityLogWriterTest
     void warnsOnlyWhenDuplicateLogicalSiteChannelFactsConflict() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-channel-conflicts.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         Logger logger = (Logger)LoggerFactory.getLogger(P25ActivityLogSchema.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
@@ -2146,7 +2273,7 @@ class P25ActivityLogWriterTest
     void replacesCurrentSiteFactsButKeepsHistoricalObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2180,7 +2307,7 @@ class P25ActivityLogWriterTest
     void timingOnlyHeartbeatRefreshesCurrentFactsWithoutRecountingSummaries() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-timing-heartbeat.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2225,7 +2352,7 @@ class P25ActivityLogWriterTest
     void invalidSynchronizationDateClearsPersistedClockAndKeepsMicroslots() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-invalid-sync-date.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2249,7 +2376,7 @@ class P25ActivityLogWriterTest
     void olderSiteSnapshotIsRejectedBeforeItCanRegressCurrentOrRetainedFacts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-out-of-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2291,7 +2418,7 @@ class P25ActivityLogWriterTest
     void mergesSystemEntitiesAcrossSiteGuidsButKeepsSiteBucketsSeparate() throws Exception
     {
         Path database = mTemporaryFolder.resolve("multi-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2311,8 +2438,8 @@ class P25ActivityLogWriterTest
             assertGroupIdentityCount(connection, 1);
             assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 1);
             assertCount(connection, "trunked_radio_talkgroup_summary", 1);
-            assertCount(connection, "p25_site_talkgroup_bucket", 2);
-            assertCount(connection, "p25_site_activity_bucket", 2);
+            assertCount(connection, "trunked_signaling_activity_bucket", 2);
+            assertCount(connection, "p25_site_call_bucket", 0);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -2330,7 +2457,7 @@ class P25ActivityLogWriterTest
     void usesEstablishedGuidSystemWhenTrafficEventOmitsSystemIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("established-system.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2348,16 +2475,18 @@ class P25ActivityLogWriterTest
     void writesAllStatsRecordTypes() throws Exception
     {
         Path database = mTemporaryFolder.resolve("all-stats.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
+        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(10);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
         writer.enqueue(siteSnapshot(2000L));
-        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1000L,
-            "123e4567-e89b-12d3-a456-426614174000", 56138, P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(call);
+        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
+            P25ActivityLogRecords.CallOutput.RECORDED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getWrittenRecords() < 3 && System.currentTimeMillis() < deadline)
+        while(writer.getWrittenRecords() < 4 && System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
@@ -2368,37 +2497,33 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertCount(connection, "p25_site_snapshot", 1);
-            assertActionCount(connection, "p25_site_talkgroup_bucket", "recorded_count", 1);
-            assertActionCount(connection, "p25_site_activity_bucket", "recorded_count", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT recorded_output_count FROM trunked_logical_call_bucket"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(observed_call_count) FROM p25_site_call_bucket"));
             assertTrue(count(connection, "logger_status") > 0);
             assertTrue(Long.parseLong(status(connection, "last_successful_write_ms")) > 0);
         }
     }
 
     @Test
-    void fansOutEncryptedPatchCallAndOutputsWithoutInflatingPhysicalTotals() throws Exception
+    void fansOutEncryptedPatchLogicalCallAcrossGlobalAndSiteCounters() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("patch-call.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path database = mTemporaryFolder.resolve("patch-logical-call.sqlite");
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
-        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        P25ActivityLogRecords.ResolvedLogicalCall call = patchLogicalCall(20);
         writer.start();
-        writer.enqueue(siteSnapshot(500L));
         writer.enqueue(patchActivity(1_000L));
-        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, "GUID:" + guid, guid,
-            854_187_500L, 1, 56182, "PATCH_GROUP", List.of(56181, 56180, 56180, 56182), 1811524,
+        writer.enqueue(call);
+        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
             P25ActivityLogRecords.CallOutput.RECORDED));
-        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, "GUID:" + guid, guid,
-            854_187_500L, 1, 56182, "PATCH_GROUP", List.of(56180, 56181), 1811524,
+        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
             P25ActivityLogRecords.CallOutput.STREAMED));
-
-        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getWrittenRecords() < 4 && System.currentTimeMillis() < deadline)
-        {
-            Thread.sleep(25);
-        }
-
         writer.close();
+
         assertEquals(4, writer.getWrittenRecords());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -2419,89 +2544,77 @@ class P25ActivityLogWriterTest
             assertEquals(112361L, scalarLong(connection,
                 "SELECT SUM(talkgroup_id) FROM activity_event_talkgroup_member"));
 
-            assertGroupIdentityCount(connection, 3);
-            assertCount(connection, "trunked_radio_talkgroup_summary", 3);
-            assertCount(connection, "p25_site_talkgroup_bucket", 3);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_logical_call_count FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT recorded_output_count FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT streamed_output_count FROM trunked_logical_call_bucket"));
 
-            assertEquals(3L, scalarLong(connection, """
-                SELECT SUM(call_count) FROM trunked_identity_summary
-                WHERE identity_kind_code IN (1,3)
-                """));
-            assertEquals(3L, scalarLong(connection, """
-                SELECT SUM(encrypted_count) FROM trunked_identity_summary
-                WHERE identity_kind_code IN (1,3)
-                """));
+            assertCount(connection, "trunked_logical_call_identity_bucket", 4);
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(logical_call_count) FROM trunked_logical_call_identity_bucket"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(encrypted_logical_call_count) FROM trunked_logical_call_identity_bucket"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(recorded_output_count) FROM trunked_logical_call_identity_bucket"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(streamed_output_count) FROM trunked_logical_call_identity_bucket"));
             assertEquals(1L, scalarLong(connection, """
-                SELECT COUNT(*) FROM trunked_identity_summary
+                SELECT COUNT(*) FROM trunked_logical_call_identity_bucket
                 WHERE identity_id=56182 AND identity_kind_code=3
                 """));
             assertEquals(2L, scalarLong(connection, """
-                SELECT COUNT(*) FROM trunked_identity_summary
+                SELECT COUNT(*) FROM trunked_logical_call_identity_bucket
                 WHERE identity_id IN (56180,56181) AND identity_kind_code=1
                 """));
-            assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(call_count) FROM trunked_radio_talkgroup_summary"));
-            assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(encrypted_count) FROM trunked_radio_talkgroup_summary"));
             assertEquals(1L, scalarLong(connection, """
-                SELECT COUNT(*) FROM trunked_radio_talkgroup_summary
-                WHERE talkgroup_id=56182 AND target_kind_code=3
-                """));
-            assertEquals(2L, scalarLong(connection, """
-                SELECT COUNT(*) FROM trunked_radio_talkgroup_summary
-                WHERE talkgroup_id IN (56180,56181) AND target_kind_code=1
+                SELECT COUNT(*) FROM trunked_logical_call_identity_bucket
+                WHERE identity_id=1811524 AND identity_kind_code=2 AND identity_role_code=2
                 """));
 
-            assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(call_count) FROM p25_site_talkgroup_bucket"));
-            assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(encrypted_count) FROM p25_site_talkgroup_bucket"));
-            assertEquals(3L, scalarLong(connection,
-                """
-                SELECT SUM(recorded_count) FROM trunked_identity_summary
-                WHERE identity_kind_code IN (1,3)
-                """));
-            assertEquals(3L, scalarLong(connection,
-                """
-                SELECT SUM(streamed_count) FROM trunked_identity_summary
-                WHERE identity_kind_code IN (1,3)
-                """));
-            assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(recorded_count) FROM p25_site_talkgroup_bucket"));
-            assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(streamed_count) FROM p25_site_talkgroup_bucket"));
+            assertCount(connection, "p25_site_call_bucket", 2);
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(observed_call_count) FROM p25_site_call_bucket"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(encrypted_observed_call_count) FROM p25_site_call_bucket"));
+            assertCount(connection, "p25_site_call_identity_bucket", 8);
+            assertEquals(8L, scalarLong(connection,
+                "SELECT SUM(observed_call_count) FROM p25_site_call_identity_bucket"));
+            assertEquals(8L, scalarLong(connection,
+                "SELECT SUM(encrypted_observed_call_count) FROM p25_site_call_identity_bucket"));
 
-            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 1);
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM trunked_identity_summary WHERE identity_kind_code=2"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM trunked_identity_summary WHERE identity_kind_code=2"));
-            assertCount(connection, "p25_site_frequency_summary", 1);
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_frequency_summary"));
-            assertCount(connection, "p25_site_activity_bucket", 1);
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT recorded_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT streamed_count FROM p25_site_activity_bucket"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(logical_call_count) FROM trunked_identity_summary"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(encrypted_logical_call_count) FROM trunked_identity_summary"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(recorded_output_count) FROM trunked_identity_summary"));
+            assertEquals(4L, scalarLong(connection,
+                "SELECT SUM(streamed_output_count) FROM trunked_identity_summary"));
+            assertCount(connection, "trunked_radio_talkgroup_summary", 3);
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(logical_call_count) FROM trunked_radio_talkgroup_summary"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(encrypted_logical_call_count) FROM trunked_radio_talkgroup_summary"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(recorded_output_count) FROM trunked_radio_talkgroup_summary"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(streamed_output_count) FROM trunked_radio_talkgroup_summary"));
 
-            assertCount(connection, "call_identity_bucket", 4);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
-                P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP, 56182, 1, 1, 1, 1);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
-                P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56180, 1, 1, 1, 1);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
-                P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56181, 1, 1, 1, 1);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
-                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 1, 1);
-
-            P25ActivityLogSchema.deleteOlderThan(connection, 2_000L);
+            P25ActivityLogSchema.deleteOlderThan(connection, LOGICAL_CALL_START + 100);
             assertCount(connection, "p25_activity_event", 0);
             assertCount(connection, "activity_event_talkgroup_member", 0);
+            assertCount(connection, "trunked_logical_call_bucket", 1);
+            assertCount(connection, "p25_site_call_bucket", 2);
+
+            long nextHour = LOGICAL_CALL_START -
+                Math.floorMod(LOGICAL_CALL_START, TimeUnit.HOURS.toMillis(1)) + TimeUnit.HOURS.toMillis(1);
+            P25ActivityLogSchema.deleteOlderThan(connection, nextHour);
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
         }
     }
 
@@ -2509,7 +2622,7 @@ class P25ActivityLogWriterTest
     void attributesLateP25IdentityAndEncryptionAcrossLegacySummariesWithoutAnotherPhysicalCall() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-attribution.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
             1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -2536,52 +2649,26 @@ class P25ActivityLogWriterTest
                 "SELECT target_kind_code FROM p25_activity_event"));
             assertEquals(1L, scalarLong(connection,
                 "SELECT encrypted FROM p25_activity_event"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_frequency_summary"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_site_frequency_summary"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_talkgroup_bucket WHERE talkgroup_id=56138"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_site_talkgroup_bucket WHERE talkgroup_id=56138"));
-            assertEquals(1L, scalarLong(connection,
-                """
-                SELECT call_count FROM trunked_identity_summary
-                WHERE identity_kind_code=1 AND identity_id=56138
-                """));
-            assertEquals(1L, scalarLong(connection,
-                """
-                SELECT encrypted_count FROM trunked_identity_summary
-                WHERE identity_kind_code=1 AND identity_id=56138
-                """));
-            assertEquals(1L, scalarLong(connection,
-                """
-                SELECT call_count FROM trunked_identity_summary
-                WHERE identity_kind_code=2 AND identity_id=1811524
-                """));
-            assertEquals(1L, scalarLong(connection,
-                """
-                SELECT encrypted_count FROM trunked_identity_summary
-                WHERE identity_kind_code=2 AND identity_id=1811524
-                """));
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "trunked_logical_call_identity_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
+            assertCount(connection, "p25_site_call_identity_bucket", 0);
+            assertEquals(2L, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_identity_summary"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT SUM(logical_call_count) FROM trunked_identity_summary"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT SUM(encrypted_logical_call_count) FROM trunked_identity_summary"));
             assertEquals(56138L, scalarLong(connection,
                 """
                 SELECT last_counterpart_id FROM trunked_identity_summary
                 WHERE identity_kind_code=2 AND identity_id=1811524
                 """));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM trunked_radio_talkgroup_summary"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM trunked_radio_talkgroup_summary"));
-            assertCount(connection, "call_identity_bucket", 2);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
-                P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56138, 1, 1, 0, 0);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
-                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 0, 0);
+            assertCount(connection, "trunked_radio_talkgroup_summary", 1);
+            assertEquals(0L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_radio_talkgroup_summary"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT encrypted_logical_call_count FROM trunked_radio_talkgroup_summary"));
         }
     }
 
@@ -2589,7 +2676,7 @@ class P25ActivityLogWriterTest
     void fillsLateEncryptionDetailsWithoutIncreasingCallOrEncryptionCounts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-encryption-details.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         P25ActivityLogRecords.ActivityEvent encryptedCall = new P25ActivityLogRecords.ActivityEvent(
             1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -2611,10 +2698,6 @@ class P25ActivityLogWriterTest
                 "SELECT encryption_algorithm_id FROM p25_activity_event"));
             assertEquals(101L, scalarLong(connection,
                 "SELECT encryption_key_id FROM p25_activity_event"));
-            assertEquals(0x84L, scalarLong(connection,
-                "SELECT last_encryption_algorithm_id FROM p25_site_frequency_summary"));
-            assertEquals(101L, scalarLong(connection,
-                "SELECT last_encryption_key_id FROM p25_site_frequency_summary"));
             assertEquals(2L, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_identity_summary WHERE last_encryption_algorithm_id = 132"));
             assertEquals(2L, scalarLong(connection,
@@ -2624,22 +2707,18 @@ class P25ActivityLogWriterTest
             assertEquals(101L, scalarLong(connection,
                 "SELECT last_encryption_key_id FROM trunked_radio_talkgroup_summary"));
 
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_site_activity_bucket"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_frequency_summary"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_site_frequency_summary"));
-            assertEquals(2L, scalarLong(connection,
-                "SELECT SUM(call_count) FROM trunked_identity_summary"));
-            assertEquals(2L, scalarLong(connection,
-                "SELECT SUM(encrypted_count) FROM trunked_identity_summary"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM trunked_radio_talkgroup_summary"));
-            assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM trunked_radio_talkgroup_summary"));
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "trunked_logical_call_identity_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
+            assertCount(connection, "p25_site_call_identity_bucket", 0);
+            assertEquals(0L, scalarLong(connection,
+                "SELECT SUM(logical_call_count) FROM trunked_identity_summary"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT SUM(encrypted_logical_call_count) FROM trunked_identity_summary"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_radio_talkgroup_summary"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT encrypted_logical_call_count FROM trunked_radio_talkgroup_summary"));
         }
     }
 
@@ -2647,7 +2726,7 @@ class P25ActivityLogWriterTest
     void lateP25PatchAttributionLinksRetainedActivityToEachValidMemberTalkgroup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-patch-attribution.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
             1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -2684,7 +2763,7 @@ class P25ActivityLogWriterTest
     void lateAttributionUpdatesOnlyTheMatchingDmrTimeslot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-late-attribution-slot.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174001";
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -2708,62 +2787,64 @@ class P25ActivityLogWriterTest
                 "SELECT target_id FROM p25_activity_event WHERE timeslot = 1"));
             assertEquals(-1L, scalarLong(connection,
                 "SELECT coalesce(target_id, -1) FROM p25_activity_event WHERE timeslot = 2"));
-            assertEquals(2L, scalarLong(connection,
-                "SELECT call_count FROM p25_site_activity_bucket"));
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
         }
     }
 
     @Test
-    void aggregatesSuccessfulCallOutputsWithoutChangingTrackedCalls() throws Exception
+    void aggregatesSuccessfulLogicalCallOutputsWithoutChangingTrackedCalls() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("call-outputs.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path database = mTemporaryFolder.resolve("logical-call-outputs.sqlite");
+        createTestDatabase(database);
+        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(30);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1_000L, P25ActivityLogRecords.Action.CALL), false);
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(1_000L,
-                    "123e4567-e89b-12d3-a456-426614174000", 56138,
-                    P25ActivityLogRecords.CallOutput.RECORDED)));
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(1_000L,
-                    "123e4567-e89b-12d3-a456-426614174000", 56138,
-                    P25ActivityLogRecords.CallOutput.STREAMED)));
+            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection, call));
+            assertTrue(P25ActivityLogSchema.applyLogicalCallOutput(connection,
+                new P25ActivityLogRecords.LogicalCallOutput(call, P25ActivityLogRecords.CallOutput.RECORDED)));
+            assertTrue(P25ActivityLogSchema.applyLogicalCallOutput(connection,
+                new P25ActivityLogRecords.LogicalCallOutput(call, P25ActivityLogRecords.CallOutput.STREAMED)));
 
-            for(String table: List.of("p25_site_talkgroup_bucket", "p25_site_activity_bucket"))
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT logical_call_count, recorded_output_count, streamed_output_count
+                    FROM trunked_logical_call_bucket
+                    """))
             {
-                try(Statement statement = connection.createStatement();
-                    ResultSet resultSet = statement.executeQuery(
-                        "SELECT call_count, recorded_count, streamed_count FROM " + table))
-                {
-                    assertTrue(resultSet.next());
-                    assertEquals(1, resultSet.getInt("call_count"));
-                    assertEquals(1, resultSet.getInt("recorded_count"));
-                    assertEquals(1, resultSet.getInt("streamed_count"));
-                }
+                assertTrue(resultSet.next());
+                assertEquals(1, resultSet.getInt("logical_call_count"));
+                assertEquals(1, resultSet.getInt("recorded_output_count"));
+                assertEquals(1, resultSet.getInt("streamed_output_count"));
+                assertFalse(resultSet.next());
             }
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT summary.call_count, summary.recorded_count, summary.streamed_count
-                    FROM trunked_identity_summary summary
-                    JOIN trunked_identity_scope scope ON scope.scope_id=summary.scope_id
-                    WHERE scope.p25_system_key=1
-                      AND summary.identity_kind_code=1 AND summary.identity_id=56138
+                    SELECT logical_call_count, recorded_output_count, streamed_output_count
+                    FROM trunked_identity_summary
+                    WHERE identity_kind_code=1 AND identity_id=1201
                     """))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("call_count"));
-                assertEquals(1, resultSet.getInt("recorded_count"));
-                assertEquals(1, resultSet.getInt("streamed_count"));
+                assertEquals(1, resultSet.getInt("logical_call_count"));
+                assertEquals(1, resultSet.getInt("recorded_output_count"));
+                assertEquals(1, resultSet.getInt("streamed_output_count"));
+                assertFalse(resultSet.next());
             }
 
-            assertFalse(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(1_000L, "missing-guid", 56138,
-                    P25ActivityLogRecords.CallOutput.RECORDED)));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(observed_call_count) FROM p25_site_call_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT logical_call_count FROM trunked_logical_call_identity_bucket " +
+                    "WHERE identity_kind_code=1 AND identity_id=1201"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT recorded_output_count FROM trunked_logical_call_identity_bucket " +
+                    "WHERE identity_kind_code=1 AND identity_id=1201"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT streamed_output_count FROM trunked_logical_call_identity_bucket " +
+                    "WHERE identity_kind_code=1 AND identity_id=1201"));
         }
     }
 
@@ -2771,19 +2852,19 @@ class P25ActivityLogWriterTest
     void aggregatesConventionalOutputsIntoTheTrackedCallHour() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-call-outputs.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.recordActivity(connection,
                 conventionalActivity(3_600_123L, P25ActivityLogRecords.Action.CALL), false);
             String contextKey = "CONVENTIONAL_ANALOG:NBFM:154310000";
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(3_600_123L, contextKey, null,
+            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
+                new P25ActivityLogRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
                     154_310_000L, null, 0, null, List.of(),
                     P25ActivityLogRecords.CallOutput.RECORDED)));
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(3_600_123L, contextKey, null,
+            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
+                new P25ActivityLogRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
                     154_310_000L, null, 0, null, List.of(),
                     P25ActivityLogRecords.CallOutput.STREAMED)));
 
@@ -2800,40 +2881,9 @@ class P25ActivityLogWriterTest
                 }
             }
 
-            assertCount(connection, "call_identity_bucket", 1);
+            assertCount(connection, "conventional_call_identity_bucket", 1);
             assertIdentityBucket(connection, 3_600_000L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
                 P25ActivityLogSchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN, 0, 1, 0, 1, 1);
-        }
-    }
-
-    @Test
-    void createsCompactSummaryForOutputOnlyTalkgroup() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("output-only-talkgroup.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-        {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L));
-            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
-                new P25ActivityLogRecords.CompletedCallOutput(2_000L,
-                    "123e4567-e89b-12d3-a456-426614174000", 60000,
-                    P25ActivityLogRecords.CallOutput.RECORDED)));
-
-            try(Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery("""
-                    SELECT summary.call_count, summary.recorded_count, summary.streamed_count
-                    FROM trunked_identity_summary summary
-                    JOIN trunked_identity_scope scope ON scope.scope_id=summary.scope_id
-                    WHERE scope.p25_system_key=1
-                      AND summary.identity_kind_code=1 AND summary.identity_id=60000
-                    """))
-            {
-                assertTrue(resultSet.next());
-                assertEquals(0, resultSet.getInt("call_count"));
-                assertEquals(1, resultSet.getInt("recorded_count"));
-                assertEquals(0, resultSet.getInt("streamed_count"));
-            }
         }
     }
 
@@ -2841,7 +2891,7 @@ class P25ActivityLogWriterTest
     void dropsOldestWhenQueueIsFull() throws Exception
     {
         Path database = mTemporaryFolder.resolve("overflow.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1, 250, 25);
         writer.start();
 
@@ -2864,7 +2914,7 @@ class P25ActivityLogWriterTest
     void siteSnapshotsAuthoritativelyRemoveAliasListsAndP25ContextFields() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-alias-removal.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174099";
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -2912,7 +2962,7 @@ class P25ActivityLogWriterTest
     void persistsConfiguredMetadataForP25AndAnalogConventionalContexts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("configured-conventional-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2994,7 +3044,7 @@ class P25ActivityLogWriterTest
     void persistsConfiguredMetadataForDmrAndNxdnTrunkedSites() throws Exception
     {
         Path database = mTemporaryFolder.resolve("configured-trunked-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String dmrGuid = "123e4567-e89b-12d3-a456-426614174092";
         String nxdnGuid = "123e4567-e89b-12d3-a456-426614174093";
 
@@ -3053,7 +3103,7 @@ class P25ActivityLogWriterTest
     void clearSiteWaitsForEarlierObservationsAndPrecedesLaterObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer-clear-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         String retainedGuid = "223e4567-e89b-12d3-a456-426614174000";
         long now = System.currentTimeMillis();
@@ -3112,7 +3162,7 @@ class P25ActivityLogWriterTest
     void resetStatsWaitsForEarlierObservationsAndPrecedesLaterObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer-reset-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         long now = System.currentTimeMillis();
         String dmrGuid = "123e4567-e89b-12d3-a456-426614174000";
         String nxdnGuid = "223e4567-e89b-12d3-a456-426614174000";
@@ -3157,9 +3207,8 @@ class P25ActivityLogWriterTest
             }
 
             assertCount(connection, "trunked_site_snapshot", 2);
-            assertCount(connection, "call_identity_bucket", 2);
-            assertEquals(2L, scalarLong(connection,
-                "SELECT SUM(call_count) FROM call_identity_bucket"));
+            assertCount(connection, "trunked_logical_call_bucket", 0);
+            assertCount(connection, "p25_site_call_bucket", 0);
             assertCount(connection, "trunked_site_channel_summary", 2);
             assertCount(connection, "trunked_site_neighbor_summary", 2);
             assertEquals(2, scalarLong(connection,
@@ -3180,7 +3229,7 @@ class P25ActivityLogWriterTest
     void loweringRetentionRequestsPromptCleanupOnWriter() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer-retention-reduction.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createTestDatabase(database);
         long now = System.currentTimeMillis();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -3242,6 +3291,40 @@ class P25ActivityLogWriterTest
         writer.submitMaintenance(request);
 
         assertTrue(request.result().isCompletedExceptionally());
+    }
+
+    private static P25ActivityLogRecords.ResolvedLogicalCall logicalCall(long sequence)
+    {
+        return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(77, sequence),
+            LOGICAL_CALL_START + sequence, "GUID:winner", "winner", Protocol.APCO25.name(),
+            P25ActivityLogRecords.IdentityDomain.STANDARD, 0x924, 0x649, 17, 1201,
+            Form.TALKGROUP.name(), List.of(), 700001, true, 0x84, 1,
+            P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(),
+            List.of(new P25SiteIdentity(0x924, 0x649, 1, 1),
+                new P25SiteIdentity(0x924, 0x649, 2, 2)));
+    }
+
+    private static P25ActivityLogRecords.ResolvedLogicalCall patchLogicalCall(long sequence)
+    {
+        return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(78, sequence),
+            LOGICAL_CALL_START + sequence, "GUID:123e4567-e89b-12d3-a456-426614174000",
+            "123e4567-e89b-12d3-a456-426614174000", Protocol.APCO25.name(),
+            P25ActivityLogRecords.IdentityDomain.STANDARD, 0xBEE00, 0x348, 18, 56182,
+            "PATCH_GROUP", List.of(56181, 56180, 56180, 56182), 1811524, true, 0x84, 101,
+            P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(),
+            List.of(new P25SiteIdentity(0xBEE00, 0x348, 2, 1),
+                new P25SiteIdentity(0xBEE00, 0x348, 3, 2)));
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent signaling(P25ActivityLogRecords.Action action)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(LOGICAL_CALL_START, "GUID:signaling", "signaling",
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, Protocol.DMR.name(), action,
+            action == P25ActivityLogRecords.Action.DENIAL ? "DENIAL" : "CALL_GROUP",
+            "101", "91", Form.TALKGROUP.name(), List.of(), 451_012_500L, "12", 1, false,
+            null, null, null, null, null, null, null, "DMR Site", "DMR", null, false,
+            null, null, P25ActivityLogRecords.IdentityDomain.STANDARD,
+            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(), "DMR", true);
     }
 
     private static void waitForState(P25ActivityLogWriter writer, P25ActivityLogStatus.State expected)
@@ -3334,6 +3417,26 @@ class P25ActivityLogWriterTest
                 INSERT INTO application_settings (key, settings_json, updated_at_ms)
                 VALUES ('administrator-setting', '{}', 1)
                 """);
+        }
+    }
+
+    /**
+     * Creates a representative configured database. P25 system-wide identity aggregation is intentionally scoped by
+     * the configured Alias List, so tests that use the standard Example System snapshot need the matching durable
+     * Alias List identity instead of relying on its display name alone.
+     */
+    private static void createTestDatabase(Path database) throws Exception
+    {
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            java.sql.PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list(name, family) VALUES (?, ?)
+                """))
+        {
+            statement.setString(1, "Example System");
+            statement.setString(2, "P25");
+            statement.executeUpdate();
         }
     }
 
@@ -3450,7 +3553,7 @@ class P25ActivityLogWriterTest
     {
         try(java.sql.PreparedStatement statement = connection.prepareStatement("""
             SELECT call_count, encrypted_count, recorded_count, streamed_count
-            FROM call_identity_bucket
+            FROM conventional_call_identity_bucket
             WHERE bucket_start_ms = ? AND identity_role_code = ? AND identity_kind_code = ? AND identity_id = ?
             """))
         {

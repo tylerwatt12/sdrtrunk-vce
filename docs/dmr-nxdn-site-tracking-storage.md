@@ -434,6 +434,10 @@ presence and clear watermarks empty because the source layout cannot prove a sit
 activity and supported administrator-owned configuration are preserved. Later recognized development and nightly
 formats enter at their own registered version and continue through the same chain.
 
+P25 activity schema v28 adds resolved-call accounting with separate system-level logical-call and P25
+site-observation buckets at a new positive collection boundary. It does not backfill logical calls from older
+per-site, signaling, or output counters.
+
 ## Retention
 
 These are mutable summaries, not time-series events, and they use the existing Statistics retention setting:

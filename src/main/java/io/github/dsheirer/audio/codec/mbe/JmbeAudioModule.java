@@ -22,6 +22,7 @@ package io.github.dsheirer.audio.codec.mbe;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.AbstractAudioModule;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -51,7 +52,13 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
 
     protected JmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
     {
-        super(aliasList, timeslot, DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH);
+        this(userPreferences, aliasList, timeslot, CallLegSource.UNKNOWN);
+    }
+
+    protected JmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot,
+                              CallLegSource callLegSource)
+    {
+        super(aliasList, timeslot, DEFAULT_SEGMENT_AUDIO_LENGTH_MILLISECONDS, callLegSource);
         mUserPreferences = userPreferences;
         MyEventBus.getGlobalEventBus().register(this);
         loadConverter();
@@ -60,7 +67,13 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     @Override
     protected void closeAudioSegment()
     {
-        super.closeAudioSegment();
+        closeAudioSegment(System.currentTimeMillis());
+    }
+
+    @Override
+    protected void closeAudioSegment(long timestamp)
+    {
+        super.closeAudioSegment(timestamp);
 
         //Reset the audio codec to clear any leftover frame data from the previous call.
         IAudioCodec audioCodec = mAudioCodec;

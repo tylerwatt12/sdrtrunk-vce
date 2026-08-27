@@ -46,6 +46,31 @@ public final class Format1TestDatabase
         status_count INTEGER NOT NULL DEFAULT 0 CHECK(status_count >= 0),
         unknown_count INTEGER NOT NULL DEFAULT 0 CHECK(unknown_count >= 0)
         """;
+    private static final String PREDECESSOR_METRIC_ACTION_COUNTS = """
+        acknowledge_count INTEGER NOT NULL DEFAULT 0,
+        active_count INTEGER NOT NULL DEFAULT 0,
+        busy_count INTEGER NOT NULL DEFAULT 0,
+        call_count INTEGER NOT NULL DEFAULT 0,
+        check_count INTEGER NOT NULL DEFAULT 0,
+        check_ack_count INTEGER NOT NULL DEFAULT 0,
+        continue_count INTEGER NOT NULL DEFAULT 0,
+        data_count INTEGER NOT NULL DEFAULT 0,
+        denial_count INTEGER NOT NULL DEFAULT 0,
+        emergency_count INTEGER NOT NULL DEFAULT 0,
+        gps_count INTEGER NOT NULL DEFAULT 0,
+        grant_count INTEGER NOT NULL DEFAULT 0,
+        join_count INTEGER NOT NULL DEFAULT 0,
+        logout_count INTEGER NOT NULL DEFAULT 0,
+        page_count INTEGER NOT NULL DEFAULT 0,
+        patch_count INTEGER NOT NULL DEFAULT 0,
+        patch_cancel_count INTEGER NOT NULL DEFAULT 0,
+        patch_create_count INTEGER NOT NULL DEFAULT 0,
+        queued_count INTEGER NOT NULL DEFAULT 0,
+        register_count INTEGER NOT NULL DEFAULT 0,
+        request_count INTEGER NOT NULL DEFAULT 0,
+        status_count INTEGER NOT NULL DEFAULT 0,
+        unknown_count INTEGER NOT NULL DEFAULT 0
+        """;
 
     private Format1TestDatabase()
     {
@@ -64,8 +89,10 @@ public final class Format1TestDatabase
             try
             {
                 replaceAliasSchema(statement);
+                replaceLogicalCallStatisticsSchema(statement);
                 replaceTrunkedIdentitySchema(statement);
                 replaceP25SiteProjectionSchema(statement);
+                replaceLogicalCallStatisticsMetadata(statement);
                 statement.executeUpdate("UPDATE database_metadata SET value='4' WHERE key='alias_schema_version'");
                 statement.executeUpdate(
                     "UPDATE database_metadata SET value='24' WHERE key='p25_activity_schema_version'");
@@ -96,6 +123,121 @@ public final class Format1TestDatabase
         }
 
         return database;
+    }
+
+    /**
+     * Reverses the unreleased logical-call statistics rewrite so this fixture remains the exact public-release
+     * source, rather than a hybrid of the source metadata and current-main tables.
+     */
+    static void replaceLogicalCallStatisticsSchema(Statement statement) throws Exception
+    {
+        statement.executeUpdate("DROP TABLE p25_site_call_identity_bucket");
+        statement.executeUpdate("DROP TABLE p25_site_call_bucket");
+        statement.executeUpdate("DROP TABLE trunked_logical_call_identity_bucket");
+        statement.executeUpdate("DROP TABLE trunked_logical_call_bucket");
+        statement.executeUpdate("DROP TABLE trunked_signaling_activity_bucket");
+        statement.executeUpdate("DROP TABLE conventional_call_identity_bucket");
+        statement.executeUpdate("DROP TABLE p25_learned_site");
+        statement.executeUpdate("ALTER TABLE receiver_context DROP COLUMN alias_list_id");
+        statement.executeUpdate("""
+            CREATE TABLE p25_site_frequency_summary (
+                context_id INTEGER NOT NULL,
+                frequency_hz INTEGER NOT NULL,
+                timeslot INTEGER NOT NULL DEFAULT -1,
+                lcn_band INTEGER,
+                lcn_number INTEGER,
+                first_seen_ms INTEGER NOT NULL,
+                last_seen_ms INTEGER NOT NULL,
+                %s,
+                encrypted_count INTEGER NOT NULL DEFAULT 0,
+                last_source_radio_id INTEGER,
+                last_target_id INTEGER,
+                last_encryption_algorithm_id INTEGER,
+                last_encryption_key_id INTEGER,
+                PRIMARY KEY(context_id, frequency_hz, timeslot)
+            )
+            """.formatted(PREDECESSOR_METRIC_ACTION_COUNTS));
+        statement.executeUpdate("""
+            CREATE TABLE p25_site_talkgroup_bucket (
+                context_id INTEGER NOT NULL,
+                talkgroup_id INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL,
+                %s,
+                encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(context_id, talkgroup_id, bucket_start_ms)
+            )
+            """.formatted(PREDECESSOR_METRIC_ACTION_COUNTS));
+        statement.executeUpdate("""
+            CREATE TABLE p25_site_activity_bucket (
+                context_id INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL,
+                %s,
+                encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(context_id, bucket_start_ms)
+            )
+            """.formatted(PREDECESSOR_METRIC_ACTION_COUNTS));
+        statement.executeUpdate("""
+            CREATE TABLE call_identity_bucket (
+                context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
+                bucket_start_ms INTEGER NOT NULL,
+                identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
+                identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
+                identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
+                call_count INTEGER NOT NULL DEFAULT 0 CHECK(call_count >= 0),
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                PRIMARY KEY (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
+                ),
+                CHECK (
+                    (identity_kind_code = 0 AND identity_id = 0)
+                    OR (identity_kind_code IN (1, 2, 3) AND identity_id > 0)
+                ),
+                CHECK (
+                    identity_role_code = 1
+                    OR (identity_role_code = 2 AND identity_kind_code = 2 AND identity_id > 0)
+                )
+            ) WITHOUT ROWID
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX idx_p25_site_talkgroup_bucket_time
+            ON p25_site_talkgroup_bucket(context_id, bucket_start_ms)
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX idx_p25_site_talkgroup_bucket_talkgroup_time
+            ON p25_site_talkgroup_bucket(talkgroup_id, bucket_start_ms)
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX idx_p25_site_activity_bucket_time
+            ON p25_site_activity_bucket(bucket_start_ms)
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX idx_call_identity_bucket_dashboard_time
+            ON call_identity_bucket(
+                bucket_start_ms, identity_role_code, identity_kind_code, context_id, identity_id
+            )
+            """);
+    }
+
+    static void replaceLogicalCallStatisticsMetadata(Statement statement) throws Exception
+    {
+        statement.executeUpdate("""
+            DELETE FROM database_metadata
+            WHERE key IN (
+                'conventional_call_output_metrics_started_at_ms',
+                'trunked_logical_call_metrics_started_at_ms'
+            )
+            """);
+        statement.executeUpdate("""
+            INSERT OR REPLACE INTO database_metadata(key, value, updated_at_ms)
+            VALUES ('p25_call_output_metrics_started_at_ms', '1', 1),
+                   ('all_mode_call_output_metrics_started_at_ms', '1', 1)
+            """);
     }
 
     private static void replaceAliasSchema(Statement statement) throws Exception

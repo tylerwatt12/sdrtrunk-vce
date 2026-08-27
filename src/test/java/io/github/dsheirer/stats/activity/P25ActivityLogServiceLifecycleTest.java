@@ -16,8 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -36,6 +41,7 @@ import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSna
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -58,6 +64,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -66,6 +73,45 @@ class P25ActivityLogServiceLifecycleTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void shutdownBarrierPersistsImmediatelyAcceptedLogicalCallAndOutputsOnce() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        CompletedAudioCall call = learnedP25TrafficCall(8_001L, System.currentTimeMillis());
+
+        try
+        {
+            service.receiveResolvedCall(call);
+            service.receiveResolvedCall(call);
+            service.receiveRecordedCall(call);
+            service.receiveStreamedCall(call);
+            service.receiveRecordedCall(call);
+            service.receiveStreamedCall(call);
+
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS),
+                "the shutdown barrier must follow all accepted logical-call notifications");
+            disposeAndAwait(service);
+
+            assertEquals(1L, scalar(database,
+                "SELECT COALESCE(SUM(logical_call_count), 0) FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalar(database,
+                "SELECT COALESCE(SUM(recorded_output_count), 0) FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalar(database,
+                "SELECT COALESCE(SUM(streamed_output_count), 0) FROM trunked_logical_call_bucket"));
+            assertEquals(1L, scalar(database,
+                "SELECT COALESCE(SUM(observed_call_count), 0) FROM p25_site_call_bucket"));
+        }
+        finally
+        {
+            disposeAndAwait(service);
+        }
+    }
 
     @Test
     void preferenceNotificationAfterDisposeCannotRestartTheWriter() throws Exception
@@ -145,6 +191,266 @@ class P25ActivityLogServiceLifecycleTest
     }
 
     @Test
+    void observationDrainBarrierHonorsTotalTimeoutWhenHandoffIsFull() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("Drain barrier saturation", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = blockingDecodeEvent(System.currentTimeMillis(), projectionEntered, releaseProjection);
+        DecodeEvent filler = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis() + 1).build();
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+
+            for(int index = 0; index < P25ActivityLogService.OBSERVATION_QUEUE_SIZE; index++)
+            {
+                service.getDecodeEventListener().accept(channel, filler);
+            }
+
+            assertEquals(P25ActivityLogService.OBSERVATION_QUEUE_SIZE, service.getPendingObservationCount());
+            long startedNanos = System.nanoTime();
+            assertFalse(service.awaitObservationDrain(25, TimeUnit.MILLISECONDS),
+                "a full handoff must time out instead of accepting an unsequenced barrier");
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+            assertTrue(elapsedMillis < 1_000,
+                "the 25 ms drain timeout took " + elapsedMillis + " ms while the handoff stayed full");
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void interruptedObservationDrainPreservesCallerInterruptFlag() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("Interrupted drain barrier", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = blockingDecodeEvent(System.currentTimeMillis(), projectionEntered, releaseProjection);
+        AtomicReference<Boolean> drainResult = new AtomicReference<>();
+        AtomicBoolean interruptPreserved = new AtomicBoolean();
+        CountDownLatch drainReturned = new CountDownLatch(1);
+        Thread drainCaller = new Thread(() -> {
+            drainResult.set(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            interruptPreserved.set(Thread.currentThread().isInterrupted());
+            drainReturned.countDown();
+        }, "interrupted statistics drain caller");
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            drainCaller.start();
+            awaitPendingObservationCount(service, 1);
+
+            drainCaller.interrupt();
+            assertTrue(drainReturned.await(1, TimeUnit.SECONDS),
+                "the interrupted drain caller did not return promptly");
+            assertEquals(Boolean.FALSE, drainResult.get());
+            assertTrue(interruptPreserved.get(), "awaitObservationDrain must restore the interrupt flag");
+        }
+        finally
+        {
+            drainCaller.interrupt();
+            releaseProjection.countDown();
+            drainCaller.join(TimeUnit.SECONDS.toMillis(2));
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void observationEpochChangeCannotFalselyCompleteRetiredDrainBarrier() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("Retired drain epoch", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = blockingDecodeEvent(System.currentTimeMillis(), projectionEntered, releaseProjection);
+        AtomicReference<Boolean> drainResult = new AtomicReference<>();
+        CountDownLatch drainReturned = new CountDownLatch(1);
+        Thread drainCaller = new Thread(() -> {
+            drainResult.set(service.awaitObservationDrain(500, TimeUnit.MILLISECONDS));
+            drainReturned.countDown();
+        }, "retired statistics drain caller");
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            var retiredIngress = service.getObservationIngressForTest();
+            drainCaller.start();
+            awaitPendingObservationCount(service, 1);
+
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            applicationPreference.setCollectionEnabled(true);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            assertFalse(retiredIngress == service.getObservationIngressForTest(),
+                "disable/re-enable must publish a distinct observation epoch");
+            releaseProjection.countDown();
+
+            assertTrue(drainReturned.await(2, TimeUnit.SECONDS), "the retired drain barrier did not time out");
+            assertEquals(Boolean.FALSE, drainResult.get(),
+                "a barrier from a retired collection epoch must never report a successful drain");
+        }
+        finally
+        {
+            drainCaller.interrupt();
+            releaseProjection.countDown();
+            drainCaller.join(TimeUnit.SECONDS.toMillis(2));
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void disposalTimeoutDoesNotWaitForServiceMonitorHeldDuringWriterClose() throws Exception
+    {
+        Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        Path secondRoot = mTemporaryFolder.resolve("monitor-held-writer-close");
+        Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
+        TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
+        MonitorHeldCloseWriter initialWriter = new MonitorHeldCloseWriter(firstDatabase, 30, true);
+        AtomicInteger writerCount = new AtomicInteger();
+        P25ActivityLogService.WriterFactory writerFactory = (databasePath, retentionDays, detailedHistory) ->
+            writerCount.getAndIncrement() == 0 ? initialWriter :
+                new P25ActivityLogWriter(databasePath, retentionDays, detailedHistory);
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            null, null, writerFactory);
+        AtomicReference<Boolean> disposeResult = new AtomicReference<>();
+        AtomicLong disposeElapsedMillis = new AtomicLong(Long.MAX_VALUE);
+        CountDownLatch disposeStarted = new CountDownLatch(1);
+        CountDownLatch disposeReturned = new CountDownLatch(1);
+        Thread disposeCaller = new Thread(() -> {
+            disposeStarted.countDown();
+            long startedNanos = System.nanoTime();
+            disposeResult.set(service.disposeAndAwait(25, TimeUnit.MILLISECONDS));
+            disposeElapsedMillis.set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
+            disposeReturned.countDown();
+        }, "monitor-independent statistics disposer");
+
+        try
+        {
+            directoryPreference.setRoot(secondRoot);
+            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            assertTrue(initialWriter.awaitCloseEntered(2, TimeUnit.SECONDS),
+                "writer transition did not enter the monitor-held close");
+
+            disposeCaller.start();
+            assertTrue(disposeStarted.await(1, TimeUnit.SECONDS), "disposal caller did not start");
+            boolean returnedWithinBound = disposeReturned.await(750, TimeUnit.MILLISECONDS);
+            initialWriter.releaseClose();
+            disposeCaller.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertTrue(returnedWithinBound,
+                "disposeAndAwait blocked on the service monitor instead of honoring its total timeout");
+            assertFalse(disposeCaller.isAlive());
+            assertEquals(Boolean.FALSE, disposeResult.get());
+            assertTrue(disposeElapsedMillis.get() < 750,
+                "the 25 ms disposal timeout took " + disposeElapsedMillis.get() + " ms");
+            assertTrue(service.disposeAndAwait(2, TimeUnit.SECONDS),
+                "disposal must finish after the monitor-held writer close is released");
+        }
+        finally
+        {
+            initialWriter.releaseClose();
+            disposeCaller.join(TimeUnit.SECONDS.toMillis(2));
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void outputAfterDroppedResolvedNotificationCannotCreateOrphanTotals() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel blockerChannel = new Channel("Logical output saturation", Channel.ChannelType.STANDARD);
+        blockerChannel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                projectionEntered.countDown();
+                try
+                {
+                    releaseProjection.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return super.getEventType();
+            }
+        };
+        DecodeEvent filler = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis()).build();
+        CompletedAudioCall call = uncertainP25TrafficCall(9001, System.currentTimeMillis());
+
+        try
+        {
+            service.getDecodeEventListener().accept(blockerChannel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            for(int index = 0; index < P25ActivityLogService.OBSERVATION_QUEUE_SIZE; index++)
+            {
+                service.getDecodeEventListener().accept(blockerChannel, filler);
+            }
+            long dropsBefore = service.getObservationDropCount();
+            service.receiveResolvedCall(call);
+            assertTrue(service.getObservationDropCount() > dropsBefore,
+                "the full observer queue must drop the resolved notification");
+
+            releaseProjection.countDown();
+            awaitObservationQueueEmpty(service);
+            service.receiveRecordedCall(call);
+            awaitObservationQueueEmpty(service);
+            disposeAndAwait(service);
+
+            assertEquals(0, scalar(database,
+                "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
+            assertEquals(0, scalar(database,
+                "SELECT COALESCE(SUM(recorded_output_count), 0) FROM trunked_logical_call_bucket"));
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
     void blockedProjectionDisposeLeavesQueuedCleanupToWorker() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
@@ -192,7 +498,8 @@ class P25ActivityLogServiceLifecycleTest
                 "dispose must abandon the old epoch instead of consuming it on the caller thread");
 
             releaseProjection.countDown();
-            awaitWorkerTermination(service);
+            assertTrue(service.disposeAndAwait(8, TimeUnit.SECONDS),
+                "a repeated bounded disposal wait must include the owned SQLite writer");
             assertEquals(0, service.getPendingObservationCount());
             service.getDecodeEventListener().accept(channel, queued);
             assertEquals(0, service.getPendingObservationCount());
@@ -371,7 +678,7 @@ class P25ActivityLogServiceLifecycleTest
         {
             service.getDecodeEventListener().accept(channel, context);
             awaitCount(database, "p25_activity_event", 1);
-            assertEquals(new P25ActivityLogMapper().mapCompletedCallOutput(current.snapshot(),
+            assertEquals(new P25ActivityLogMapper().mapConventionalCallOutput(current.snapshot(),
                     P25ActivityLogRecords.CallOutput.RECORDED).contextKey(),
                 scalarText(database, "SELECT context_key FROM receiver_context LIMIT 1"));
 
@@ -390,9 +697,9 @@ class P25ActivityLogServiceLifecycleTest
             assertFalse(staleProducer.isAlive());
             assertEquals(null, producerFailure.get());
             var retiredOutput = retiredIngress.poll();
-            assertTrue(retiredOutput != null && retiredOutput.first() instanceof AudioCallSnapshot,
-                "the bounded statistics queue must retain only compact call metadata");
-            assertFalse(retiredOutput.first() instanceof CompletedAudioCall,
+            assertTrue(retiredOutput != null && retiredOutput.first() instanceof CompletedAudioCall,
+                "the bounded statistics queue must retain the resolved logical-call metadata");
+            assertFalse(((CompletedAudioCall)retiredOutput.first()).hasAudio(),
                 "completed-call audio buffers must never be retained by statistics ingress");
 
             service.receiveRecordedCall(current);
@@ -511,12 +818,110 @@ class P25ActivityLogServiceLifecycleTest
         }
     }
 
+    @Test
+    void disposalTracksUninstalledReplacementWriterAfterItsInitialCloseFails() throws Exception
+    {
+        Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        Path secondRoot = mTemporaryFolder.resolve("replacement-close-failure");
+        Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
+        TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
+        DelayedTerminationWriter replacementWriter = new DelayedTerminationWriter(secondDatabase, 30, true);
+        AtomicInteger writerCount = new AtomicInteger();
+        P25ActivityLogService.WriterFactory writerFactory = (databasePath, retentionDays, detailedHistory) -> {
+            int index = writerCount.getAndIncrement();
+
+            if(index == 0)
+            {
+                return new P25ActivityLogWriter(databasePath, retentionDays, detailedHistory);
+            }
+
+            if(index == 1)
+            {
+                return replacementWriter;
+            }
+
+            throw new AssertionError("unexpected statistics writer creation " + index);
+        };
+        CountDownLatch allowActivationCheck = new CountDownLatch(1);
+        Runnable pauseBeforeActivation = () -> {
+            try
+            {
+                allowActivationCheck.await();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            null, pauseBeforeActivation, writerFactory);
+
+        try
+        {
+            directoryPreference.setRoot(secondRoot);
+            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            assertTrue(replacementWriter.awaitStarted(8, TimeUnit.SECONDS),
+                "replacement candidate did not start");
+            assertEquals(1, service.getStartedWriterCountForTest(),
+                "the retired initial writer should be gone while the replacement candidate remains tracked");
+
+            assertFalse(service.disposeAndAwait(25, TimeUnit.MILLISECONDS),
+                "disposal cannot finish while the candidate is paused before installation");
+            allowActivationCheck.countDown();
+            assertTrue(replacementWriter.awaitCloseAttempt(2, TimeUnit.SECONDS),
+                "the losing candidate was not closed");
+            awaitObservationWorkerTermination(service);
+
+            assertFalse(service.disposeAndAwait(25, TimeUnit.MILLISECONDS),
+                "observer termination must not hide the candidate whose close attempt failed");
+            assertEquals(1, service.getStartedWriterCountForTest());
+
+            replacementWriter.finishTermination();
+            assertTrue(service.disposeAndAwait(2, TimeUnit.SECONDS),
+                "disposal must finish after the losing candidate actually terminates");
+            assertEquals(0, service.getStartedWriterCountForTest());
+        }
+        finally
+        {
+            allowActivationCheck.countDown();
+            replacementWriter.finishTermination();
+            disposeAndAwait(service);
+        }
+    }
+
     private static DecodeEvent conventionalEvent(long timestamp)
     {
         return DecodeEvent.builder(DecodeEventType.CALL, timestamp)
             .channel(new StandardChannel(154_310_000L))
             .identifiers(new IdentifierCollection())
             .build();
+    }
+
+    private static DecodeEvent blockingDecodeEvent(long timestamp, CountDownLatch entered, CountDownLatch release)
+    {
+        return new DecodeEvent(DecodeEventType.CALL, timestamp)
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                entered.countDown();
+
+                try
+                {
+                    release.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getEventType();
+            }
+        };
     }
 
     private static CompletedAudioCall conventionalCompletedCall(long sequence, String configurationId, String guid,
@@ -527,10 +932,68 @@ class P25ActivityLogServiceLifecycleTest
         identifiers.update(SiteGuidConfigurationIdentifier.create(guid));
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(sequence, sequence + 1, 0), null, null,
+        AudioCallId callId = new AudioCallId(sequence, sequence + 1, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), timestamp, timestamp + 100L, 1, 1, timestamp, timestamp + 100L,
-            false, true, false, true, false);
+            false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
+    }
+
+    private static CompletedAudioCall uncertainP25TrafficCall(long sequence, long timestamp)
+    {
+        AudioCallId callId = new AudioCallId(99, sequence, 1);
+        CallLegId callLegId = CallLegId.from(callId);
+        IdentifierCollection identifiers = new IdentifierCollection();
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "uncertain-config",
+            "Uncertain Site", "uncertain-guid", 0, null, true);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
+            timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
+            CallEncryptionState.UNKNOWN, true,
+            AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers), VoiceCallQuality.EMPTY,
+            callLegId, source, null);
+        return new CompletedAudioCall(snapshot, List.of(new float[800]));
+    }
+
+    private static CompletedAudioCall learnedP25TrafficCall(long sequence, long timestamp)
+    {
+        AudioCallId callId = new AudioCallId(100, sequence, 1);
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Talkgroup.create(9_001));
+        identifiers.update(APCO25RadioIdentifier.createFrom(1_234_567));
+        P25SiteIdentity learnedSite = new P25SiteIdentity(0xBEE00, 0x348, 2, 1);
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "learned-config",
+            "Learned Site", "learned-guid", 77L, learnedSite, true);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
+            timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
+            CallEncryptionState.CLEAR, true,
+            AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers), VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), source, null);
+        return new CompletedAudioCall(snapshot, List.of(new float[800]));
+    }
+
+    private static void awaitObservationQueueEmpty(P25ActivityLogService service) throws Exception
+    {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
+        while(service.getPendingObservationCount() > 0 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(10);
+        }
+        assertEquals(0, service.getPendingObservationCount());
+    }
+
+    private static void awaitPendingObservationCount(P25ActivityLogService service, int expected)
+        throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+
+        while(service.getPendingObservationCount() != expected && System.nanoTime() < deadline)
+        {
+            Thread.sleep(1);
+        }
+
+        assertEquals(expected, service.getPendingObservationCount(),
+            "statistics observation queue did not reach the expected size");
     }
 
     private static Thread observationProducer(P25ActivityLogService service, Channel channel, DecodeEvent event,
@@ -563,9 +1026,9 @@ class P25ActivityLogServiceLifecycleTest
         assertEquals(expectedPath, service.getCurrentDatabasePathForTest());
     }
 
-    private static void awaitWorkerTermination(P25ActivityLogService service) throws InterruptedException
+    private static void awaitObservationWorkerTermination(P25ActivityLogService service) throws InterruptedException
     {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
 
         while(!service.isObservationWorkerTerminated() && System.nanoTime() < deadline)
         {
@@ -577,8 +1040,125 @@ class P25ActivityLogServiceLifecycleTest
 
     private static void disposeAndAwait(P25ActivityLogService service) throws InterruptedException
     {
-        service.dispose();
-        awaitWorkerTermination(service);
+        assertTrue(service.disposeAndAwait(8, TimeUnit.SECONDS),
+            "statistics observer and owned SQLite writer did not terminate");
+        assertTrue(service.isObservationWorkerTerminated(), "statistics observer did not terminate");
+    }
+
+    private static final class DelayedTerminationWriter extends P25ActivityLogWriter
+    {
+        private final CountDownLatch mStarted = new CountDownLatch(1);
+        private final CountDownLatch mCloseAttempted = new CountDownLatch(1);
+        private final CountDownLatch mTerminated = new CountDownLatch(1);
+        private final AtomicBoolean mFirstClose = new AtomicBoolean(true);
+
+        private DelayedTerminationWriter(Path databasePath, int retentionDays, boolean detailedHistory)
+        {
+            super(databasePath, retentionDays, detailedHistory);
+        }
+
+        @Override
+        void start()
+        {
+            mStarted.countDown();
+        }
+
+        @Override
+        public void close()
+        {
+            mCloseAttempted.countDown();
+
+            if(mFirstClose.compareAndSet(true, false))
+            {
+                throw new IllegalStateException("simulated writer close timeout");
+            }
+        }
+
+        @Override
+        boolean isWorkerTerminated()
+        {
+            return mTerminated.getCount() == 0;
+        }
+
+        @Override
+        boolean awaitWorkerTermination(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return mTerminated.await(timeout, unit);
+        }
+
+        private boolean awaitStarted(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return mStarted.await(timeout, unit);
+        }
+
+        private boolean awaitCloseAttempt(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return mCloseAttempted.await(timeout, unit);
+        }
+
+        private void finishTermination()
+        {
+            mTerminated.countDown();
+        }
+    }
+
+    private static final class MonitorHeldCloseWriter extends P25ActivityLogWriter
+    {
+        private final CountDownLatch mCloseEntered = new CountDownLatch(1);
+        private final CountDownLatch mReleaseClose = new CountDownLatch(1);
+        private final CountDownLatch mTerminated = new CountDownLatch(1);
+
+        private MonitorHeldCloseWriter(Path databasePath, int retentionDays, boolean detailedHistory)
+        {
+            super(databasePath, retentionDays, detailedHistory);
+        }
+
+        @Override
+        void start()
+        {
+            //No worker is needed for this deterministic lifecycle seam.
+        }
+
+        @Override
+        public void close()
+        {
+            mCloseEntered.countDown();
+
+            try
+            {
+                mReleaseClose.await();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            finally
+            {
+                mTerminated.countDown();
+            }
+        }
+
+        @Override
+        boolean isWorkerTerminated()
+        {
+            return mTerminated.getCount() == 0;
+        }
+
+        @Override
+        boolean awaitWorkerTermination(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return mTerminated.await(timeout, unit);
+        }
+
+        private boolean awaitCloseEntered(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return mCloseEntered.await(timeout, unit);
+        }
+
+        private void releaseClose()
+        {
+            mReleaseClose.countDown();
+        }
     }
 
     @Test

@@ -23,6 +23,7 @@
 package io.github.dsheirer.audio.codec.mbe;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
@@ -36,7 +37,13 @@ public abstract class AmbeAudioModule extends JmbeAudioModule
 
     protected AmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
     {
-        super(userPreferences, aliasList, timeslot);
+        this(userPreferences, aliasList, timeslot, CallLegSource.UNKNOWN);
+    }
+
+    protected AmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot,
+                              CallLegSource callLegSource)
+    {
+        super(userPreferences, aliasList, timeslot, callLegSource);
 
         if(sLibraryStatusLogged.compareAndSet(false, true))
         {

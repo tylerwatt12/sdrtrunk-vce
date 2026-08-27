@@ -21,7 +21,10 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -217,9 +220,11 @@ class ScanListAdminDeliveryWorkflowTest
         long startedAt = 1_000L * sequence;
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             SystemConfigurationIdentifier.create("Test System"), APCO25Talkgroup.create(talkgroup)));
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(77, sequence, 0), null, aliasList,
+        AudioCallId callId = new AudioCallId(77, sequence, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, aliasList,
             identifiers, Set.of(), startedAt, startedAt + 100L, 1, sequence, startedAt, startedAt + 100L,
-            false, true, false, false, false);
+            false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 

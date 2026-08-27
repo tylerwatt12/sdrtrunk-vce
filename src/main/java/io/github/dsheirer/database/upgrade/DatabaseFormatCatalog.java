@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 3;
+    public static final int CURRENT_VERSION = 4;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -39,6 +39,8 @@ public final class DatabaseFormatCatalog
         "38294d5173dbaa550b7818006f09b9d2b83fe3c2bae1ba15b6c56416d8fd69dc";
     private static final String FORMAT_3_FINGERPRINT =
         "d1a300bf3cfc32870a36c6c4d009d5eb3ae0fea794782357ed2ea3c2948d270d";
+    private static final String FORMAT_4_FINGERPRINT =
+        "d4b539e9486d81c0d21ec7816a8a1a0c07d7274dd45f659e44155beef404c3f1";
 
     private static final Map<String,String> BASE_METADATA = Map.of(
         "configuration_schema_version", "2",
@@ -68,17 +70,27 @@ public final class DatabaseFormatCatalog
             "Create missing factory Alias Lists and Default routing only where canonical names are unambiguous",
             "Preserve same-family canonical list spelling and routing; refuse wrong-family collisions"));
     private static final FormatDescriptor FORMAT_3 = descriptor(3, "p25-site-projection-v27",
-        "Current P25 site-projection database format", FORMAT_3_FINGERPRINT, 6, 27,
+        "P25 site-projection database format", FORMAT_3_FINGERPRINT, 6, 27,
         List.of("64b3cb552", "b10be0ab7"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format3TestDatabase.java",
+        List.of(
+            "Preserve administrator-owned configuration",
+            "Preserve structurally compatible P25, DMR, NXDN, site, quality, event, and conventional history",
+            "Reset only physical receiver-leg call projections and trunked identity evidence whose semantics change",
+            "Create logical-call and site-observation summaries with fresh boundaries"));
+    private static final FormatDescriptor FORMAT_4 = descriptor(4, "logical-call-site-observation-v28",
+        "Logical-call and P25 site-observation database format", FORMAT_4_FINGERPRINT, 6, 28,
+        List.of("codex/integrate-multisite-stats pre-publication candidate"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format4TestDatabase.java",
         List.of("Current format; no schema migration required"));
 
-    private static final List<FormatDescriptor> FORMATS = List.of(FORMAT_1, FORMAT_2, FORMAT_3);
+    private static final List<FormatDescriptor> FORMATS = List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = Map.of(
         FORMAT_1.version(), FORMAT_1,
         FORMAT_2.version(), FORMAT_2,
-        FORMAT_3.version(), FORMAT_3);
+        FORMAT_3.version(), FORMAT_3,
+        FORMAT_4.version(), FORMAT_4);
     /* Several marker-bearing semantic formats may intentionally share one DDL fingerprint. */
     private static final Map<String,List<FormatDescriptor>> BY_FINGERPRINT = formatsByFingerprint();
 
@@ -93,7 +105,11 @@ public final class DatabaseFormatCatalog
         "4413598b7db3a7c4de9514fbf8ed016f45eb966d8f44b45a56477e74ef1ff578",
             "unreleased development schema at 342e8116",
         "da64bc56c921d22498b92a742151a6816979329059ccaf1893dbf7699a5f0b0e",
-            "investigated pre-format-2 Alias v5/P25 v26 schema at 6c0d291b");
+            "investigated pre-format-2 Alias v5/P25 v26 schema at 6c0d291b",
+        "a5d19fbc8d061a457ddbae805bf3c6c97e58c87f79860baf031715a47d50da1e",
+            "unpublished logical-call developer schema at 4bcc1795a",
+        "391c6787c5754e92c0efc6983c759c56b5279c6ace9c86d3e01ba163ba2ee0ad",
+            "unpublished logical-call developer schema at 3fffc459");
 
     private DatabaseFormatCatalog()
     {
@@ -187,7 +203,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_3;
+        return FORMAT_4;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -317,8 +333,17 @@ public final class DatabaseFormatCatalog
 
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor) throws SQLException
     {
-        requirePositiveMetadata(connection, "p25_call_output_metrics_started_at_ms", descriptor);
-        requirePositiveMetadata(connection, "all_mode_call_output_metrics_started_at_ms", descriptor);
+        if(descriptor.version() <= 3)
+        {
+            requirePositiveMetadata(connection, "p25_call_output_metrics_started_at_ms", descriptor);
+            requirePositiveMetadata(connection, "all_mode_call_output_metrics_started_at_ms", descriptor);
+        }
+        else
+        {
+            requirePositiveMetadata(connection, "conventional_call_output_metrics_started_at_ms", descriptor);
+            requirePositiveMetadata(connection, "trunked_logical_call_metrics_started_at_ms", descriptor);
+        }
+
         requirePositiveMetadata(connection, "trunked_identity_metrics_started_at_ms", descriptor);
 
         if(descriptor.version() >= 2)

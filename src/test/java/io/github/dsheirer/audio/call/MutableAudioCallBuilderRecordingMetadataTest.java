@@ -114,4 +114,24 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals("exact:APCO-25:99", decision.matcherIdentity());
         assertTrue(decision.recordEnabled());
     }
+
+    @Test
+    void usesCarrierTimestampsAndDoesNotRegressOnDelayedFrames()
+    {
+        MutableAudioCallBuilder builder = new MutableAudioCallBuilder(AliasList.empty("test"), 0);
+
+        builder.begin(1_000);
+        builder.beginBurst(1_010);
+        builder.touch(1_200);
+        builder.touch(1_100);
+        builder.addAudio(new float[160], 1_300);
+        builder.endBurst(1_400);
+        builder.complete(1_500);
+
+        assertEquals(1_000, builder.getStartTimestamp());
+        assertEquals(1_400, builder.getLastActivityTimestamp());
+        assertEquals(1_010, builder.getLastBurstStartTimestamp());
+        assertEquals(1_400, builder.getLastBurstEndTimestamp());
+        assertTrue(builder.isComplete());
+    }
 }

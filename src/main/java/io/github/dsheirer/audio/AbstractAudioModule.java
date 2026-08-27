@@ -19,20 +19,27 @@
 
 package io.github.dsheirer.audio;
 
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionEvidence;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.IAudioCallProvider;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
@@ -47,13 +54,14 @@ import java.util.concurrent.atomic.AtomicLong;
 public abstract class AbstractAudioModule extends Module implements IAudioCallProvider,
     IdentifierUpdateListener
 {
-    public static final long DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH = 60L * 8000; // 1 minute @ 8kHz
+    public static final long DEFAULT_SEGMENT_AUDIO_LENGTH_MILLISECONDS = 60_000L;
     public static final int DEFAULT_TIMESLOT = 0;
     private static final int AUDIO_FRAME_SNAPSHOT_INTERVAL = 50;
     private static final AtomicLong NEXT_PRODUCER_ID =
         new AtomicLong(ThreadLocalRandom.current().nextLong());
     private final int mMaxSegmentAudioSampleLength;
-    private Listener<AudioCallEvent> mAudioCallEventListener;
+    private volatile CallLegSource mCallLegSource;
+    private volatile Listener<AudioCallEvent> mAudioCallEventListener;
     protected MutableIdentifierCollection mIdentifierCollection;
     private Broadcaster<IdentifierUpdateNotification> mIdentifierUpdateNotificationBroadcaster = new Broadcaster<>();
     private AliasList mAliasList;
@@ -65,6 +73,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private AudioCallId mCurrentAudioCallId;
     private AudioCallId mCurrentLinkedAudioCallId;
     private AudioCallId mPreviousAudioCallId;
+    private CallLegId mCurrentCallLegId;
+    private CallLegId mPreviousCallLegId;
     private boolean mLinkNextAudioCallToPrevious;
     private MutableAudioCallBuilder mCurrentAudioCall;
     private AudioCallSnapshot mLastPublishedAudioCallSnapshot;
@@ -77,8 +87,18 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected AbstractAudioModule(AliasList aliasList, int timeslot, long maxSegmentAudioSampleLength)
     {
+        this(aliasList, timeslot, maxSegmentAudioSampleLength, CallLegSource.UNKNOWN);
+    }
+
+    /**
+     * Constructs an abstract audio module with immutable source evidence for every call leg it emits.
+     */
+    protected AbstractAudioModule(AliasList aliasList, int timeslot, long maxSegmentAudioSampleLength,
+                                  CallLegSource callLegSource)
+    {
         mAliasList = aliasList;
         mMaxSegmentAudioSampleLength = (int)(maxSegmentAudioSampleLength * 8); //Convert milliseconds to samples
+        mCallLegSource = callLegSource != null ? callLegSource : CallLegSource.UNKNOWN;
         mTimeslot = timeslot;
         mIdentifierCollection = new MutableIdentifierCollection(getTimeslot());
         mIdentifierUpdateNotificationBroadcaster.addListener(mIdentifierCollection);
@@ -100,7 +120,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected AbstractAudioModule(AliasList aliasList)
     {
-        this(aliasList, DEFAULT_TIMESLOT, DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH);
+        this(aliasList, DEFAULT_TIMESLOT, DEFAULT_SEGMENT_AUDIO_LENGTH_MILLISECONDS);
     }
 
     /**
@@ -112,21 +132,46 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     }
 
     /**
+     * Applies a committed processing-chain role change.  Capacity Plus reuses the existing audio modules when its
+     * rest channel becomes a traffic channel, so future snapshots must identify calls from that chain as trunked.
+     * This notification is posted by the lifecycle worker after the traffic-channel map entry is authoritative.
+     */
+    @Subscribe
+    public void channelConfigurationChanged(ChannelConfigurationChangeNotification notification)
+    {
+        if(notification != null && notification.getChannel() != null &&
+            notification.getChannel().isTrafficChannel())
+        {
+            mCallLegSource = mCallLegSource.asTrafficChannel();
+        }
+    }
+
+    /**
      * Closes the current audio segment
      */
     protected void closeAudioSegment()
+    {
+        closeAudioSegment(System.currentTimeMillis());
+    }
+
+    /**
+     * Closes the current audio segment at the supplied decoder-message timestamp.
+     */
+    protected void closeAudioSegment(long timestamp)
     {
         synchronized(this)
         {
             if(mCurrentAudioCall != null)
             {
-                mCurrentAudioCall.complete();
+                mCurrentAudioCall.complete(timestamp);
                 emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null, mLinkNextAudioCallToPrevious);
                 mCurrentAudioCall = null;
                 mLastPublishedAudioCallSnapshot = null;
                 mPreviousAudioCallId = mCurrentAudioCallId;
+                mPreviousCallLegId = mCurrentCallLegId;
                 mCurrentAudioCallId = null;
                 mCurrentLinkedAudioCallId = null;
+                mCurrentCallLegId = null;
             }
         }
     }
@@ -149,7 +194,10 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mCurrentAudioCall = new MutableAudioCallBuilder(mAliasList, getTimeslot());
                 mLastPublishedAudioCallSnapshot = null;
                 mCurrentAudioCallId = new AudioCallId(mProducerId, mNextAudioCallSequence++, getTimeslot());
-                mCurrentLinkedAudioCallId = mLinkNextAudioCallToPrevious ? mPreviousAudioCallId : null;
+                boolean linkedContinuation = mLinkNextAudioCallToPrevious;
+                mCurrentLinkedAudioCallId = linkedContinuation ? mPreviousAudioCallId : null;
+                mCurrentCallLegId = linkedContinuation && mPreviousCallLegId != null ? mPreviousCallLegId :
+                    new CallLegId(mProducerId, mCurrentAudioCallId.sequence(), getTimeslot());
                 mLinkNextAudioCallToPrevious = false;
                 mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
                 if(mRecordAudioOverride)
@@ -181,11 +229,19 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected void touchCurrentAudioSegment()
     {
+        touchCurrentAudioSegment(System.currentTimeMillis());
+    }
+
+    /**
+     * Marks the current segment active at the supplied decoder-message timestamp.
+     */
+    protected void touchCurrentAudioSegment(long timestamp)
+    {
         synchronized(this)
         {
             if(mCurrentAudioCall != null)
             {
-                mCurrentAudioCall.touch();
+                mCurrentAudioCall.touch(timestamp);
                 emitAudioCallEvent(AudioCallEventType.ACTIVITY, null);
             }
         }
@@ -197,10 +253,18 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected MutableAudioCallBuilder beginCurrentAudioSegment()
     {
+        return beginCurrentAudioSegment(System.currentTimeMillis());
+    }
+
+    /**
+     * Begins the current segment at the supplied decoder-message timestamp.
+     */
+    protected MutableAudioCallBuilder beginCurrentAudioSegment(long timestamp)
+    {
         synchronized(this)
         {
             MutableAudioCallBuilder audioCall = getAudioCall();
-            audioCall.begin();
+            audioCall.begin(timestamp);
             mLastPublishedAudioCallSnapshot = null;
             emitAudioCallEvent(AudioCallEventType.ACTIVITY, null);
             return audioCall;
@@ -212,10 +276,18 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected MutableAudioCallBuilder beginCurrentAudioBurst()
     {
+        return beginCurrentAudioBurst(System.currentTimeMillis());
+    }
+
+    /**
+     * Begins the current talk burst at the supplied decoder-message timestamp.
+     */
+    protected MutableAudioCallBuilder beginCurrentAudioBurst(long timestamp)
+    {
         synchronized(this)
         {
             MutableAudioCallBuilder audioCall = getAudioCall();
-            audioCall.beginBurst();
+            audioCall.beginBurst(timestamp);
             emitAudioCallEvent(AudioCallEventType.BURST_STARTED, null);
             return audioCall;
         }
@@ -226,23 +298,122 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected void endCurrentAudioBurst()
     {
+        endCurrentAudioBurst(System.currentTimeMillis());
+    }
+
+    /**
+     * Ends the current talk burst at the supplied decoder-message timestamp.
+     */
+    protected void endCurrentAudioBurst(long timestamp)
+    {
         synchronized(this)
         {
             if(mCurrentAudioCall != null)
             {
-                mCurrentAudioCall.endBurst();
+                mCurrentAudioCall.endBurst(timestamp);
                 emitAudioCallEvent(AudioCallEventType.BURST_ENDED, null);
             }
         }
     }
 
+    /**
+     * Adds bounded encrypted-call evidence to the current leg and publishes it as immutable metadata.  This method
+     * performs no I/O and retains no raw message indicator.
+     */
+    protected void setCurrentCallEncryptionEvidence(CallEncryptionEvidence evidence,
+                                                    EncryptionKeyIdentifier encryptionKey, long timestamp)
+    {
+        if(evidence == null)
+        {
+            return;
+        }
+
+        synchronized(this)
+        {
+            MutableAudioCallBuilder audioCall = getAudioCall();
+            boolean changed = false;
+
+            if(encryptionKey != null)
+            {
+                Identifier<?> existing = audioCall.getIdentifierCollection().getIdentifier(
+                    encryptionKey.getIdentifierClass(), encryptionKey.getForm(), encryptionKey.getRole());
+
+                if(!encryptionKey.equals(existing))
+                {
+                    audioCall.addIdentifier(encryptionKey);
+                    changed = true;
+                }
+            }
+
+            changed |= audioCall.setCallEncryptionEvidence(evidence);
+            audioCall.touch(timestamp);
+
+            if(changed)
+            {
+                mLastPublishedAudioCallSnapshot = null;
+                emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
+            }
+        }
+    }
+
+    /**
+     * Applies an authoritative encryption state to the current call.  This is a fixed-cost in-memory update and
+     * never performs decryption or observer I/O.
+     */
+    protected void setCurrentCallEncryptionState(CallEncryptionState encryptionState, long timestamp)
+    {
+        synchronized(this)
+        {
+            MutableAudioCallBuilder audioCall = getAudioCall();
+            boolean changed = audioCall.observeEncryptionState(encryptionState);
+            audioCall.touch(timestamp);
+
+            if(changed)
+            {
+                mLastPublishedAudioCallSnapshot = null;
+                emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
+            }
+        }
+    }
+
+    /**
+     * Marks the current call encrypted when non-P25 protocol signaling exposes only a privacy flag.
+     */
+    protected void markCurrentCallEncrypted(long timestamp)
+    {
+        setCurrentCallEncryptionState(CallEncryptionState.ENCRYPTED, timestamp);
+    }
+
     public void addAudio(float[] audioBuffer)
     {
-        addAudio(audioBuffer, null);
+        addAudio(audioBuffer, null, System.currentTimeMillis(), 0);
     }
 
     public void addAudio(float[] audioBuffer, VoiceFrameQualityObservation qualityObservation)
     {
+        addAudio(audioBuffer, qualityObservation, System.currentTimeMillis(), 0);
+    }
+
+    public void addAudio(float[] audioBuffer, long timestamp)
+    {
+        addAudio(audioBuffer, null, timestamp, 0);
+    }
+
+    /**
+     * Adds decoded audio associated with the supplied decoder-message timestamp.
+     */
+    public void addAudio(float[] audioBuffer, VoiceFrameQualityObservation qualityObservation, long timestamp)
+    {
+        addAudio(audioBuffer, qualityObservation, timestamp, 0);
+    }
+
+    /**
+     * Adds decoded audio with carrier time and a fingerprint of its received or successfully decrypted vocoder frame.
+     */
+    public void addAudio(float[] audioBuffer, VoiceFrameQualityObservation qualityObservation, long timestamp,
+                         long voiceFrameFingerprint)
+    {
+        long carrierTimestamp = timestamp > 0L ? timestamp : System.currentTimeMillis();
         MutableAudioCallBuilder audioCall = getAudioCall();
 
         //If the current segment exceeds the max samples length, close it so that a new segment gets generated
@@ -250,20 +421,20 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         if(mAudioSampleCount >= mMaxSegmentAudioSampleLength)
         {
             mLinkNextAudioCallToPrevious = true;
-            closeAudioSegment();
+            closeAudioSegment(carrierTimestamp);
             audioCall = getAudioCall();
         }
 
         try
         {
-            audioCall.addAudio(audioBuffer);
+            audioCall.addAudio(audioBuffer, carrierTimestamp);
             audioCall.addVoiceFrameQuality(qualityObservation);
             mAudioSampleCount += audioBuffer.length;
-            emitAudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioBuffer);
+            emitAudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioBuffer, voiceFrameFingerprint, carrierTimestamp);
         }
         catch(Exception _)
         {
-            closeAudioSegment();
+            closeAudioSegment(carrierTimestamp);
         }
     }
 
@@ -334,8 +505,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         boolean refresh = switch(eventType)
         {
-            case CALL_CREATED, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, DUPLICATE_UPDATED,
-                CALL_COMPLETED -> true;
+            case CALL_CREATED, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, CALL_COMPLETED -> true;
             case AUDIO_FRAME -> mCurrentAudioCall != null &&
                 (mCurrentAudioCall.getAudioBufferCount() == 1 ||
                     mCurrentAudioCall.getAudioBufferCount() % AUDIO_FRAME_SNAPSHOT_INTERVAL == 0);
@@ -365,9 +535,10 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         return new AudioCallSnapshot(callId, linkedCallId, mAliasList, identifierCollection, broadcastChannels,
             audioCall.getStartTimestamp(), audioCall.getLastActivityTimestamp(), audioCall.getBurstCount(),
             audioCall.getBurstGeneration(), audioCall.getLastBurstStartTimestamp(),
-            audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(), audioCall.isEncrypted(),
-            audioCall.isRecordAudio(), audioCall.isDuplicate(),
-            audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality());
+            audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(),
+            audioCall.getEncryptionState(),
+            audioCall.isRecordAudio(), audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality(),
+            mCurrentCallLegId, mCallLegSource, audioCall.getCallEncryptionEvidence());
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame)
@@ -375,9 +546,23 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         emitAudioCallEvent(eventType, audioFrame, false);
     }
 
+    private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, long voiceFrameFingerprint,
+                                    long voiceFrameTimestamp)
+    {
+        emitAudioCallEvent(eventType, audioFrame, false, voiceFrameFingerprint, voiceFrameTimestamp);
+    }
+
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, boolean continuationExpected)
     {
-        if(mAudioCallEventListener == null)
+        emitAudioCallEvent(eventType, audioFrame, continuationExpected, 0, 0);
+    }
+
+    private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, boolean continuationExpected,
+                                    long voiceFrameFingerprint, long voiceFrameTimestamp)
+    {
+        Listener<AudioCallEvent> listener = mAudioCallEventListener;
+
+        if(listener == null)
         {
             return;
         }
@@ -386,8 +571,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 
         if(snapshot != null)
         {
-            mAudioCallEventListener.receive(new AudioCallEvent(eventType, snapshot, audioFrame,
-                continuationExpected));
+            listener.receive(new AudioCallEvent(eventType, snapshot, audioFrame,
+                continuationExpected, voiceFrameFingerprint, voiceFrameTimestamp));
         }
     }
 

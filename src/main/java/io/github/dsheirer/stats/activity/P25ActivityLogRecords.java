@@ -11,7 +11,9 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.util.List;
@@ -68,6 +70,68 @@ final class P25ActivityLogRecords
     {
         RECORDED,
         STREAMED
+    }
+
+    /**
+     * One globally resolved trunked call.  The coordinator supplies this only after all eligible receiver legs have
+     * been grouped and one winner has been selected.  The process-local logical call id is used only for bounded
+     * output idempotency and is never stored in SQLite.
+     */
+    record ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String contextKey,
+                               String guid, String protocol, IdentityDomain identityDomain, Integer wacn, Integer systemId,
+                               long aliasListId, int destinationId, String destinationKind,
+                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, boolean encrypted,
+                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                               P25TargetIdentity p25TargetIdentity,
+                               List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                               List<P25SiteIdentity> learnedP25Sites)
+        implements P25ActivityLogRecord
+    {
+        ResolvedLogicalCall
+        {
+            if(logicalCallId == null || callStartEpochMilliseconds <= 0)
+            {
+                throw new IllegalArgumentException("Resolved logical call requires an id and start timestamp");
+            }
+
+            identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
+            patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
+            p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity : P25TargetIdentity.UNKNOWN;
+            p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
+                patchMemberTalkgroupIds);
+            learnedP25Sites = learnedP25Sites == null ? List.of() : learnedP25Sites.stream()
+                .filter(java.util.Objects::nonNull).distinct().sorted(java.util.Comparator
+                    .comparingInt(P25SiteIdentity::wacn).thenComparingInt(P25SiteIdentity::system)
+                    .thenComparingInt(P25SiteIdentity::rfss).thenComparingInt(P25SiteIdentity::site))
+                .toList();
+        }
+
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return callStartEpochMilliseconds;
+        }
+    }
+
+    /**
+     * One successful local output for a previously resolved logical call.  This queue message contains the resolved
+     * projection so the database can update compact aggregates without persisting a per-call row or identifier.
+     */
+    record LogicalCallOutput(ResolvedLogicalCall call, CallOutput output) implements P25ActivityLogRecord
+    {
+        LogicalCallOutput
+        {
+            if(call == null || output == null)
+            {
+                throw new IllegalArgumentException("Logical call output requires a resolved call and output kind");
+            }
+        }
+
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return call.callStartEpochMilliseconds();
+        }
     }
 
     /**
@@ -458,14 +522,14 @@ final class P25ActivityLogRecords
      * {@code talkgroupId} component carries the numeric destination for radio/private calls too; targetKind controls
      * how that value is interpreted and keeps talkgroup-specific projections gated.
      */
-    record CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+    record ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
                                Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                                IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities)
         implements P25ActivityLogRecord
     {
-        CompletedCallOutput
+        ConventionalCallOutput
         {
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, talkgroupId);
             identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
@@ -474,7 +538,7 @@ final class P25ActivityLogRecords
                 patchMemberTalkgroupIds);
         }
 
-        CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
                             Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
                             List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                             IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity)
@@ -483,7 +547,7 @@ final class P25ActivityLogRecords
                 patchMemberTalkgroupIds, sourceRadioId, output, identityDomain, p25TargetIdentity, List.of());
         }
 
-        CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
                             Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
                             List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                             IdentityDomain identityDomain)
@@ -492,7 +556,7 @@ final class P25ActivityLogRecords
                 patchMemberTalkgroupIds, sourceRadioId, output, identityDomain, P25TargetIdentity.UNKNOWN);
         }
 
-        CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
                             Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
                             List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output)
         {
@@ -500,7 +564,7 @@ final class P25ActivityLogRecords
                 patchMemberTalkgroupIds, sourceRadioId, output, IdentityDomain.STANDARD);
         }
 
-        CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
                             Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
                             List<Integer> patchMemberTalkgroupIds, CallOutput output)
         {
@@ -508,7 +572,7 @@ final class P25ActivityLogRecords
                 patchMemberTalkgroupIds, null, output, IdentityDomain.STANDARD);
         }
 
-        CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
+        ConventionalCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
                             List<Integer> patchMemberTalkgroupIds, CallOutput output)
         {
             this(callStartEpochMilliseconds, guid != null && !guid.isBlank() ? "GUID:" + guid : null, guid,
@@ -516,7 +580,7 @@ final class P25ActivityLogRecords
                 IdentityDomain.STANDARD);
         }
 
-        CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
+        ConventionalCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
         {
             this(callStartEpochMilliseconds, guid, talkgroupId, "TALKGROUP", List.of(), output);
         }

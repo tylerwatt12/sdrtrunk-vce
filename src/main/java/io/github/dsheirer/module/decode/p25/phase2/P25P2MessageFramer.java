@@ -96,6 +96,14 @@ public class P25P2MessageFramer implements Listener<Dibit>
     }
 
     /**
+     * Sets the timestamp at the start of the next incoming sample buffer.
+     */
+    public void setTimestamp(long timestamp)
+    {
+        mSuperFrameDetector.setTimestamp(timestamp);
+    }
+
+    /**
      * Clears acquisition buffers so no partial superframe can cross an RF source boundary.
      */
     public void resetForSourceFrequencyChange()

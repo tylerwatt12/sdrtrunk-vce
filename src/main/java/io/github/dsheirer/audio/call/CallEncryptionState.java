@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2026 Dennis Sheirer
+ * Copyright (C) 2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,18 +17,18 @@
  * ****************************************************************************
  */
 
-package io.github.dsheirer.module.decode.p25.audio;
+package io.github.dsheirer.audio.call;
 
 /**
- * Encryption status for an in-progress P25 call before audio handling is fully established.
+ * Authoritative encryption state for one physical call leg.
  */
-public enum P25AudioEncryptionState
+public enum CallEncryptionState
 {
     UNKNOWN,
     CLEAR,
     ENCRYPTED;
 
-    public boolean isEstablished()
+    public boolean isKnown()
     {
         return this != UNKNOWN;
     }
@@ -43,7 +43,7 @@ public enum P25AudioEncryptionState
         return this == ENCRYPTED;
     }
 
-    public static P25AudioEncryptionState fromEncrypted(boolean encrypted)
+    public static CallEncryptionState fromEncrypted(boolean encrypted)
     {
         return encrypted ? ENCRYPTED : CLEAR;
     }

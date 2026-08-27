@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -24,10 +26,11 @@ class AudioCallRecorderTest
     @Test
     void appendsVoiceQualityToRecordingComments()
     {
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 0), null, null,
+        AudioCallId callId = new AudioCallId(1, 1, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             new IdentifierCollection(), Set.of(), 1_000L, 2_000L, 1, 1, 1_000L, 2_000L,
-            false, true, false, true, false, null,
-            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850));
+            false, true, CallEncryptionState.CLEAR, true, null,
+            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850), CallLegId.from(callId), null, null);
         CompletedAudioCall call = new CompletedAudioCall(snapshot, List.of(new float[160]));
         Map<AudioMetadata,String> metadata = new EnumMap<>(AudioMetadata.class);
         metadata.put(AudioMetadata.COMMENTS, "System:Test;");

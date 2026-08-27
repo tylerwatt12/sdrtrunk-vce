@@ -20,7 +20,11 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.CallEncryptionEvidence;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
+import io.github.dsheirer.audio.call.VoiceFrameFingerprint;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
 import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
@@ -65,20 +69,35 @@ import org.slf4j.LoggerFactory;
 public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P2AudioModule.class);
+    /** Half-rate vocoder frames are spaced 20 ms apart (TIA-102.BABA-1, clauses 3 and 4). */
+    private static final long VOICE_FRAME_DURATION_MILLISECONDS = 20L;
+    static final int MAX_PENDING_VOICE_TIMESLOTS = 32;
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateNotificationListener;
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private ToneMetadataProcessor mToneMetadataProcessor = new ToneMetadataProcessor();
-    private Queue<AbstractVoiceTimeslot> mQueuedAudioTimeslots = new ArrayDeque<>();
-    private P25AudioEncryptionState mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+    private Queue<AbstractVoiceTimeslot> mQueuedAudioTimeslots =
+        new ArrayDeque<>(MAX_PENDING_VOICE_TIMESLOTS);
+    private CallEncryptionState mEncryptionState = CallEncryptionState.UNKNOWN;
     private IEncryptionSyncParameters mEncryptionSyncParameters;
     private VoiceEncryptionKeyResolver mEncryptionKeyResolver;
     private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
     private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private Listener<IMessage> mMessageListener;
 
+    private record DecodedVoiceFrame(IAudioWithMetadata audioWithMetadata, long carrierTimestamp,
+                                     long voiceFrameFingerprint)
+    {
+    }
+
     public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList)
     {
-        super(userPreferences, aliasList, timeslot);
+        this(userPreferences, timeslot, aliasList, CallLegSource.UNKNOWN);
+    }
+
+    public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList,
+                            CallLegSource callLegSource)
+    {
+        super(userPreferences, aliasList, timeslot, callLegSource);
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
             .getVoiceDecryptionModulePreference().getModuleManager());
@@ -103,7 +122,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         {
             mLog.warn("TS{} reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
                 getTimeslot(), formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                currentAudioCall.isComplete(), mEncryptionState.isKnown(), mEncryptionState.isEncrypted(),
                 mQueuedAudioTimeslots.size());
         }
 
@@ -144,12 +163,12 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         {
             if(getCurrentAudioCall() != null && shouldTouchSegment(message))
             {
-                touchCurrentAudioSegment();
+                touchCurrentAudioSegment(message.getTimestamp());
             }
 
             if(message instanceof AbstractVoiceTimeslot abstractVoiceTimeslot)
             {
-                if(mEncryptionState.isEstablished())
+                if(mEncryptionState.isKnown())
                 {
                     if(mEncryptionState.isClear())
                     {
@@ -163,6 +182,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 else
                 {
                     //Queue audio timeslots until we can determine if the audio is encrypted or not
+                    if(mQueuedAudioTimeslots.size() >= MAX_PENDING_VOICE_TIMESLOTS)
+                    {
+                        mQueuedAudioTimeslots.poll();
+                    }
+
                     mQueuedAudioTimeslots.offer(abstractVoiceTimeslot);
                 }
             }
@@ -172,26 +196,50 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 if(macStructure instanceof PushToTalk pushToTalk)
                 {
-                    mEncryptionState = P25AudioEncryptionState.fromEncrypted(pushToTalk.isEncrypted());
+                    //A valid PTT is a strong new-call boundary.  Complete an old segment whose End PTT was missed
+                    //before applying the new call's encryption state and evidence.
+                    if(getCurrentAudioCall() != null)
+                    {
+                        closeCurrentAudioSegment(message.getTimestamp());
+                    }
+
+                    mToneMetadataProcessor.reset();
+                    clearPendingVoiceTimeslots();
+                    resetEncryptionTracking();
+                    mEncryptionState = CallEncryptionState.fromEncrypted(pushToTalk.isEncrypted());
                     mEncryptionSyncParameters = mEncryptionState.isEncrypted() ?
                         pushToTalk.getEncryptionSyncParameters() : null;
                     mVoiceFrameDecryptor = null;
+                    beginCurrentAudioSegment(message.getTimestamp());
+                    beginCurrentAudioBurst(message.getTimestamp());
 
-                    if(mEncryptionState.isClear())
+                    if(mEncryptionState.isEncrypted())
                     {
-                        beginCurrentAudioSegment();
-                        beginCurrentAudioBurst();
-                    }
+                        CallEncryptionEvidence evidence =
+                            CallEncryptionEvidence.capture(mEncryptionSyncParameters);
 
-                    //There should not be any pending voice timeslots to process since the PTT message is the first in
-                    //the audio call sequence.
-                    clearPendingVoiceTimeslots();
+                        if(evidence != null)
+                        {
+                            setCurrentCallEncryptionEvidence(evidence,
+                                mEncryptionSyncParameters != null ? mEncryptionSyncParameters.getEncryptionKey() : null,
+                                message.getTimestamp());
+                        }
+                        else
+                        {
+                            //The PTT encryption flag is authoritative even when its key/MI fields are malformed.
+                            setCurrentCallEncryptionState(CallEncryptionState.ENCRYPTED, message.getTimestamp());
+                        }
+                    }
+                    else
+                    {
+                        setCurrentCallEncryptionState(CallEncryptionState.CLEAR, message.getTimestamp());
+                    }
                 }
                 else if(macMessage.getMacPduType() == MacPduType.MAC_2_END_PTT ||
                     macMessage.getMacPduType() == MacPduType.MAC_6_HANGTIME)
                 {
                     //End PTT is the normal per-speaker boundary. Hangtime closes the call when End PTT was missed.
-                    closeCurrentAudioSegment();
+                    closeCurrentAudioSegment(message.getTimestamp());
                     mToneMetadataProcessor.reset();
                     clearPendingVoiceTimeslots();
                     resetEncryptionTracking();
@@ -199,20 +247,39 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             }
             else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())
             {
-                mEncryptionState = P25AudioEncryptionState.fromEncrypted(encryptionSynchronizationSequence.isEncrypted());
+                mEncryptionState = CallEncryptionState.fromEncrypted(encryptionSynchronizationSequence.isEncrypted());
                 mEncryptionSyncParameters = mEncryptionState.isEncrypted() ?
                     encryptionSynchronizationSequence : null;
                 mVoiceFrameDecryptor = null;
 
                 if(mEncryptionState.isClear())
                 {
-                    beginCurrentAudioSegment();
-                    beginCurrentAudioBurst();
+                    long startTimestamp = getPendingVoiceStartTimestamp(message.getTimestamp());
+                    beginCurrentAudioSegment(startTimestamp);
+                    beginCurrentAudioBurst(startTimestamp);
+                    setCurrentCallEncryptionState(CallEncryptionState.CLEAR, message.getTimestamp());
                     processPendingVoiceTimeslots();
                 }
                 else
                 {
                     //ESS-A completes after the 2V voice frames and seeds the following TDMA superframe.
+                    long startTimestamp = getPendingVoiceStartTimestamp(message.getTimestamp());
+                    beginCurrentAudioSegment(startTimestamp);
+                    beginCurrentAudioBurst(startTimestamp);
+                    CallEncryptionEvidence evidence =
+                        CallEncryptionEvidence.capture(encryptionSynchronizationSequence);
+
+                    if(evidence != null)
+                    {
+                        setCurrentCallEncryptionEvidence(evidence,
+                            encryptionSynchronizationSequence.getEncryptionKey(), message.getTimestamp());
+                    }
+                    else
+                    {
+                        //Preserve the encrypted state even if a damaged ESS cannot yield bounded evidence.
+                        setCurrentCallEncryptionState(CallEncryptionState.ENCRYPTED, message.getTimestamp());
+                    }
+
                     clearPendingVoiceTimeslots();
                 }
             }
@@ -253,16 +320,27 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mQueuedAudioTimeslots.clear();
     }
 
+    private long getPendingVoiceStartTimestamp(long fallbackTimestamp)
+    {
+        AbstractVoiceTimeslot first = mQueuedAudioTimeslots.peek();
+        return first != null && first.getTimestamp() > 0 ? first.getTimestamp() : fallbackTimestamp;
+    }
+
     private void closeCurrentAudioSegment()
     {
-        endCurrentAudioBurst();
-        super.closeAudioSegment();
+        closeCurrentAudioSegment(System.currentTimeMillis());
+    }
+
+    private void closeCurrentAudioSegment(long timestamp)
+    {
+        endCurrentAudioBurst(timestamp);
+        super.closeAudioSegment(timestamp);
     }
 
     private void resetEncryptionTracking()
     {
         //Reset encrypted call handling flags
-        mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+        mEncryptionState = CallEncryptionState.UNKNOWN;
         mEncryptionSyncParameters = null;
         mVoiceFrameDecryptor = null;
     }
@@ -288,6 +366,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         if(hasAudioCodec())
         {
             boolean audioCommitted = false;
+            long voiceFrameTimestamp = firstVoiceFrameTimestamp(timestamp, voiceFrames.size());
 
             for(BinaryMessage voiceFrame: voiceFrames)
             {
@@ -295,13 +374,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 try
                 {
+                    long voiceFrameFingerprint = VoiceFrameFingerprint.compute(voiceFrameBytes);
                     IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(voiceFrameBytes);
                     // Route audio through the tone processor so it can hold artifact frames during
                     // the holdoff window and discard them if the tone never reaches threshold.
                     // Returns a list of committed buffers — empty while in holdoff or if artifact
                     // was discarded; may contain previously held frames when threshold is first crossed.
-                    List<IAudioWithMetadata> committed = mToneMetadataProcessor.processAudio(audioWithMetadata,
-                        timestamp);
+                    List<DecodedVoiceFrame> committed = mToneMetadataProcessor.processAudio(audioWithMetadata,
+                        voiceFrameTimestamp, voiceFrameFingerprint);
 
                     if(!committed.isEmpty())
                     {
@@ -313,14 +393,16 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                             if(!currentAudioCall.isBurstActive())
                             {
-                                beginCurrentAudioBurst();
+                                beginCurrentAudioBurst(committed.getFirst().carrierTimestamp());
                             }
                             audioCommitted = true;
                         }
 
-                        for(IAudioWithMetadata audio : committed)
+                        for(DecodedVoiceFrame decodedVoiceFrame : committed)
                         {
-                            addAudio(audio.getAudio(), getVoiceFrameQuality(audio));
+                            IAudioWithMetadata audio = decodedVoiceFrame.audioWithMetadata();
+                            addAudio(audio.getAudio(), getVoiceFrameQuality(audio),
+                                decodedVoiceFrame.carrierTimestamp(), decodedVoiceFrame.voiceFrameFingerprint());
                         }
                     }
                 }
@@ -328,8 +410,17 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 {
                     mLog.error("Error synthesizing AMBE audio - continuing [{}]", e.getLocalizedMessage());
                 }
+
+                voiceFrameTimestamp += VOICE_FRAME_DURATION_MILLISECONDS;
             }
         }
+    }
+
+    /** Anchors the final vocoder frame at the containing radio-slot timestamp. */
+    private static long firstVoiceFrameTimestamp(long timeslotTimestamp, int frameCount)
+    {
+        long offset = Math.max(0, frameCount - 1) * VOICE_FRAME_DURATION_MILLISECONDS;
+        return Math.max(1L, timeslotTimestamp - offset);
     }
 
     private void processEncryptedAudio(AbstractVoiceTimeslot timeslot)
@@ -350,7 +441,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             catch(VoiceFrameDecryptionException e)
             {
                 mLog.debug("Error decrypting P25 Phase 2 AMBE audio", e);
-                closeCurrentAudioSegment();
+                closeCurrentAudioSegment(timeslot.getTimestamp());
                 resetEncryptionTracking();
                 return;
             }
@@ -430,11 +521,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         // so the audible artifact is suppressed, not just the metadata identifier.
         private static final int MINIMUM_TONE_FRAME_COUNT = 3;
 
-        private static final List<IAudioWithMetadata> EMPTY = Collections.emptyList();
+        private static final List<DecodedVoiceFrame> EMPTY = Collections.emptyList();
 
         private List<Tone> mTones = new ArrayList<>();
         private Tone mCurrentTone;
-        private List<IAudioWithMetadata> mHeldAudio = new ArrayList<>();
+        private List<DecodedVoiceFrame> mHeldAudio = new ArrayList<>();
 
         /**
          * Resets or clears any accumulated call tone sequences to prepare for the next call.
@@ -456,11 +547,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
          *
          * @param audioWithMetadata decoded AMBE frame with optional tone metadata
          * @param timestamp of the carrier message
-         * @return list of float[] audio buffers to commit; never null, may be empty
+         * @return decoded frames with their original carrier timestamps and fingerprints; never null, may be empty
          */
-        public List<IAudioWithMetadata> processAudio(IAudioWithMetadata audioWithMetadata, long timestamp)
+        private List<DecodedVoiceFrame> processAudio(IAudioWithMetadata audioWithMetadata, long timestamp,
+                                                     long voiceFrameFingerprint)
         {
             float[] audio = audioWithMetadata.getAudio();
+            DecodedVoiceFrame decodedVoiceFrame = new DecodedVoiceFrame(audioWithMetadata, timestamp,
+                voiceFrameFingerprint);
             boolean hasToneMetadata = audioWithMetadata.getMetadata().entrySet().stream()
                 .anyMatch(entry -> !isVoiceFrameQualityMetadata(entry.getKey()) &&
                     AmbeTone.fromValues(entry.getKey(), entry.getValue()) != AmbeTone.INVALID);
@@ -476,7 +570,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 if(audio != null)
                 {
-                    return List.of(audioWithMetadata);
+                    return List.of(decodedVoiceFrame);
                 }
                 return EMPTY;
             }
@@ -515,7 +609,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     // Still in holdoff — buffer audio, suppress output
                     if(audio != null)
                     {
-                        mHeldAudio.add(audioWithMetadata);
+                        mHeldAudio.add(decodedVoiceFrame);
                     }
                     return EMPTY;
                 }
@@ -537,18 +631,18 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             // Threshold met — flush any held frames plus the current frame
             if(!mHeldAudio.isEmpty())
             {
-                List<IAudioWithMetadata> toCommit = new ArrayList<>(mHeldAudio);
+                List<DecodedVoiceFrame> toCommit = new ArrayList<>(mHeldAudio);
                 mHeldAudio.clear();
                 if(audio != null)
                 {
-                    toCommit.add(audioWithMetadata);
+                    toCommit.add(decodedVoiceFrame);
                 }
                 return toCommit;
             }
 
             if(audio != null)
             {
-                return List.of(audioWithMetadata);
+                return List.of(decodedVoiceFrame);
             }
             return EMPTY;
         }

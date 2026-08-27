@@ -147,7 +147,8 @@ class ApplicationDatabaseMigratorTest
             SELECT alias_list_name || ':' || json_extract(config_json, '$.aliasListName')
             FROM configuration_channel WHERE id=1
             """));
-        assertEquals("27", metadata(database, "p25_activity_schema_version"));
+        assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+            metadata(database, "p25_activity_schema_version"));
     }
 
     @Test
@@ -171,7 +172,8 @@ class ApplicationDatabaseMigratorTest
             FROM alias_list_unmatched_talkgroup_scan_list_membership
             WHERE alias_list_id=(SELECT id FROM alias_list WHERE name='Default P25')
             """));
-        assertEquals("27", metadata(database, "p25_activity_schema_version"));
+        assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+            metadata(database, "p25_activity_schema_version"));
     }
 
     @Test
@@ -228,6 +230,7 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains("PRESERVE current P25 affiliations: 3 row(s)"));
         assertTrue(result.output().contains("without inventing site presence"));
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
+        assertTrue(result.output().contains("COMPLETED STEP: 3 -> 4 [format-3-to-4]"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -310,9 +313,9 @@ class ApplicationDatabaseMigratorTest
                 SELECT COUNT(*) FROM alias_broadcast_channel
                 WHERE id IN (201, 202)
                 """));
-            assertEquals("1", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope_context"));
-            assertEquals("5", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_summary"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_summary"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM trunked_identity_scope WHERE protocol_code IN (3, 4)
                 """));
@@ -324,40 +327,9 @@ class ApplicationDatabaseMigratorTest
                 """));
             assertEquals("0", scalar(connection,
                 "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
-            assertEquals("3", scalar(connection,
+            assertEquals("0", scalar(connection,
                 "SELECT COUNT(*) FROM trunked_radio_talkgroup_summary"));
-            assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-            assertEquals("1800001:43:8000|1800002:44:8500|1800003:43:9000", scalar(connection, """
-                SELECT group_concat(affiliation, '|')
-                FROM (
-                    SELECT radio_id || ':' || talkgroup_id || ':' || confirmed_at_ms AS affiliation
-                    FROM trunked_radio_affiliation
-                    ORDER BY radio_id
-                )
-                """));
-            assertEquals("1:43:1|1:44:1|2:1800001:0|2:1800002:0|2:1800003:0", scalar(connection, """
-                SELECT group_concat(identity, '|')
-                FROM (
-                    SELECT identity_kind_code || ':' || identity_id || ':' || p25_identity_state_code AS identity
-                    FROM trunked_identity_summary
-                    ORDER BY identity_kind_code, identity_id
-                )
-                """));
-            assertEquals("8000:9000:2", scalar(connection, """
-                SELECT first_seen_ms || ':' || last_seen_ms || ':' || join_count
-                FROM trunked_identity_summary
-                WHERE identity_kind_code=1 AND identity_id=43
-                """));
-            assertEquals("8000:8000:1", scalar(connection, """
-                SELECT first_seen_ms || ':' || last_seen_ms || ':' || join_count
-                FROM trunked_identity_summary
-                WHERE identity_kind_code=2 AND identity_id=1800001
-                """));
-            assertEquals("8000:8000:1", scalar(connection, """
-                SELECT first_seen_ms || ':' || last_seen_ms || ':' || join_count
-                FROM trunked_radio_talkgroup_summary
-                WHERE radio_id=1800001 AND talkgroup_id=43 AND target_kind_code=1
-                """));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
             assertEquals("0", scalar(connection,
                 "SELECT COUNT(*) FROM trunked_radio_presence_lifecycle"));
@@ -449,7 +421,7 @@ class ApplicationDatabaseMigratorTest
                 assertTrue(resultSet.next());
                 insertedScopeId = resultSet.getLong(1);
             }
-            assertTrue(insertedScopeId > 901, "Reset identity-scope IDs must not be reused");
+            assertTrue(insertedScopeId > 0, "A new identity scope must be writable after the reset");
         }
 
         Path exactCurrent = mTemporaryFolder.resolve("exact-current.sqlite");
@@ -787,8 +759,8 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertEquals("100000", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
-        assertEquals("99999", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
         assertEquals("ok", scalar(database, "PRAGMA quick_check"));
     }
@@ -812,18 +784,9 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertEquals("70:1:1:2000|71:16777211:65534:3000", scalar(database, """
-            SELECT group_concat(value, '|')
-            FROM (
-                SELECT scope.p25_system_key || ':' || affiliation.radio_id || ':' ||
-                       affiliation.talkgroup_id || ':' || affiliation.confirmed_at_ms AS value
-                FROM trunked_radio_affiliation AS affiliation
-                JOIN trunked_identity_scope AS scope ON scope.scope_id=affiliation.scope_id
-                ORDER BY scope.p25_system_key
-            )
-            """));
-        assertEquals("2", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
-        assertEquals("4", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
     }
 

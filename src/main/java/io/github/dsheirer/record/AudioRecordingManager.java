@@ -171,16 +171,12 @@ public class AudioRecordingManager
 
                 try
                 {
-                    if(!(completedAudioCall.snapshot().duplicate() &&
-                        mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
-                    {
-                        path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
-                        mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
+                    path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
+                    mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
 
-                        if(Files.isRegularFile(path) && Files.size(path) > 0)
-                        {
-                            notifyRecorded(completedAudioCall);
-                        }
+                    if(Files.isRegularFile(path) && Files.size(path) > 0)
+                    {
+                        notifyRecorded(completedAudioCall);
                     }
                 }
                 catch(IOException | RuntimeException exception)
@@ -204,7 +200,7 @@ public class AudioRecordingManager
 
     public void receive(CompletedAudioCall completedAudioCall)
     {
-        if(completedAudioCall != null && completedAudioCall.snapshot() != null &&
+        if(completedAudioCall != null && completedAudioCall.hasAudio() && completedAudioCall.snapshot() != null &&
             completedAudioCall.snapshot().recordAudio())
         {
             long sourceBytes = sourceBytes(completedAudioCall);

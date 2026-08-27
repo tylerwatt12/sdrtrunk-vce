@@ -103,7 +103,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format3TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -113,6 +113,23 @@ class DatabaseFormatCatalogTest
             assertTrue(detected.markerPresent());
             assertFalse(detected.requiresMigration());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+                SqliteSchemaValidator.fingerprint(connection));
+        }
+    }
+
+    @Test
+    void exactPopulatedFormat3FixtureIsRecognizedAndRequiresMigration() throws Exception
+    {
+        Path database = Format3TestDatabase.create(mTemporaryFolder.resolve("format-3.sqlite"));
+
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(3, detected.version());
+            assertEquals("p25-site-projection-v27", detected.id());
+            assertTrue(detected.markerPresent());
+            assertTrue(detected.requiresMigration());
+            assertEquals(DatabaseFormatCatalog.requireVersion(3).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
     }

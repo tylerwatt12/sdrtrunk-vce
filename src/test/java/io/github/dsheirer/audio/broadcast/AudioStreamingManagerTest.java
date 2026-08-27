@@ -27,8 +27,11 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.dsp.oscillator.ScalarRealOscillator;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -284,7 +287,7 @@ public class AudioStreamingManagerTest
     }
 
     @Test
-    void onlyInvalidCallsEligibleForStreamingAreCountedAsDropped()
+    void emptyAudioCallsNeverEnterStreamingQueue()
     {
         UserPreferences preferences = new UserPreferences();
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
@@ -296,8 +299,9 @@ public class AudioStreamingManagerTest
             snapshot.aliasList(), snapshot.identifierCollection(), Set.of(), snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
-            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
-            snapshot.recordingMetadata(), snapshot.voiceCallQuality());
+            snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality(), snapshot.callLegId(),
+            snapshot.callLegSource(), snapshot.callEncryptionEvidence());
 
         try
         {
@@ -305,7 +309,8 @@ public class AudioStreamingManagerTest
             assertEquals(0, manager.getQueueStatus().droppedCalls());
 
             manager.receive(withAudioBuffers(List.of()));
-            assertEquals(1, manager.getQueueStatus().droppedCalls());
+            assertEquals(0, manager.getQueueStatus().droppedCalls());
+            assertEquals(0, manager.getQueueStatus().retainedCalls());
         }
         finally
         {
@@ -583,8 +588,9 @@ public class AudioStreamingManagerTest
         broadcastChannels.add(new BroadcastChannel("Stream C"));
 
         long now = System.currentTimeMillis();
+        AudioCallId callId = new AudioCallId(1L, 1L, TimeslotMessage.TIMESLOT_0);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(
-            new AudioCallId(1L, 1L, TimeslotMessage.TIMESLOT_0),
+            callId,
             null,
             aliasList,
             identifierCollection,
@@ -597,9 +603,13 @@ public class AudioStreamingManagerTest
             now,
             false,
             true,
+            CallEncryptionState.CLEAR,
             false,
-            false,
-            false);
+            null,
+            VoiceCallQuality.EMPTY,
+            CallLegId.from(callId),
+            null,
+            null);
         return new CompletedAudioCall(snapshot, audioBuffers);
     }
 
@@ -636,9 +646,11 @@ public class AudioStreamingManagerTest
         }
 
         long now = System.currentTimeMillis();
+        AudioCallId callId = new AudioCallId(2L, 1L, TimeslotMessage.TIMESLOT_0);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(
-            new AudioCallId(2L, 1L, TimeslotMessage.TIMESLOT_0), null, aliasList, identifierCollection,
-            frozenRoutes, now, now, 1, 1, now, now, false, true, false, false, false);
+            callId, null, aliasList, identifierCollection,
+            frozenRoutes, now, now, 1, 1, now, now, false, true, CallEncryptionState.CLEAR, false,
+            null, VoiceCallQuality.EMPTY, CallLegId.from(callId), null, null);
         return new RoutingFixture(new CompletedAudioCall(snapshot, audioBuffers), firstPatchedAlias);
     }
 

@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
@@ -39,6 +40,7 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
@@ -230,13 +232,115 @@ class P25ActivityLogMapper
             P25ActivityLogRecords.Action.CONTINUE : P25ActivityLogRecords.Action.GRANT);
     }
 
-    P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(CompletedAudioCall call,
+    P25ActivityLogRecords.ConventionalCallOutput mapConventionalCallOutput(CompletedAudioCall call,
                                                                      P25ActivityLogRecords.CallOutput output)
     {
-        return mapCompletedCallOutput(call != null ? call.snapshot() : null, output);
+        return mapConventionalCallOutput(call != null ? call.snapshot() : null, output);
     }
 
-    P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(AudioCallSnapshot snapshot,
+    /** Maps the global winner plus its compact receiver-leg summaries into the statistics projection. */
+    P25ActivityLogRecords.ResolvedLogicalCall mapResolvedLogicalCall(CompletedAudioCall call)
+    {
+        if(call == null || call.snapshot() == null || call.snapshot().identifierCollection() == null)
+        {
+            return null;
+        }
+
+        CallLegSource winnerSource = call.callLegSummaries().stream().filter(summary -> summary.winner())
+            .map(summary -> summary.source()).findFirst().orElse(CallLegSource.UNKNOWN);
+        DecoderType decoderType = winnerSource.decoderType();
+        boolean p25 = decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2;
+        boolean dmr = decoderType == DecoderType.DMR;
+        boolean nxdn = decoderType == DecoderType.NXDN;
+
+        if(!winnerSource.trafficChannel() || (!p25 && !dmr && !nxdn))
+        {
+            return null;
+        }
+
+        String protocol = p25 ? Protocol.APCO25.name() : dmr ? Protocol.DMR.name() : Protocol.NXDN.name();
+        List<P25SiteIdentity> learnedSites = call.callLegSummaries().stream()
+            .map(summary -> summary.source().p25SiteIdentity())
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .sorted(java.util.Comparator.comparingInt(P25SiteIdentity::wacn)
+                .thenComparingInt(P25SiteIdentity::system).thenComparingInt(P25SiteIdentity::rfss)
+                .thenComparingInt(P25SiteIdentity::site))
+            .toList();
+        List<Long> aliasListIds = call.callLegSummaries().stream()
+            .map(summary -> summary.source().aliasListId())
+            .filter(id -> id > 0)
+            .distinct()
+            .toList();
+        P25SiteIdentity system = null;
+        long aliasListId = winnerSource.aliasListId();
+        if(p25)
+        {
+            boolean completeSourceIdentity = !call.callLegSummaries().isEmpty() &&
+                call.callLegSummaries().stream().allMatch(summary -> summary.source().trafficChannel() &&
+                    summary.source().hasLearnedP25SiteIdentity() && summary.source().hasDurableAliasListId());
+            boolean oneAliasList = aliasListIds.size() == 1;
+            boolean oneLearnedSystem = !learnedSites.isEmpty();
+            if(oneLearnedSystem)
+            {
+                P25SiteIdentity firstSystem = learnedSites.get(0);
+                oneLearnedSystem = learnedSites.stream().allMatch(site -> site.wacn() == firstSystem.wacn() &&
+                    site.system() == firstSystem.system());
+                if(completeSourceIdentity && oneAliasList && oneLearnedSystem)
+                {
+                    system = firstSystem;
+                    aliasListId = aliasListIds.get(0);
+                }
+            }
+
+            if(system == null)
+            {
+                //Missing or conflicting learned scope is deliberately fail-open: keep the call in its receiver
+                //context and do not claim any learned-site observation.
+                aliasListId = 0;
+                learnedSites = List.of();
+            }
+        }
+        else if(call.callLegSummaries().size() != 1)
+        {
+            //DMR/NXDN cross-site grouping is not defined yet; each traffic leg remains its own logical call.
+            return null;
+        }
+
+        AudioCallSnapshot snapshot = call.snapshot();
+        IdentifierCollection identifiers = snapshot.identifierCollection();
+        IdentifierFacts facts = IdentifierFacts.from(identifiers);
+        Identifier target = identifiers.getToIdentifier();
+        Identifier source = identifiers.getFromIdentifier();
+        Integer destination = destinationId(target);
+        Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? destinationId(source) : null;
+        String guid = firstNonBlank(winnerSource.siteGuid(), facts.radresGuid());
+        String contextKey = ReceiverContextKey.configured(guid, winnerSource.channelConfigurationId());
+        if(contextKey == null)
+        {
+            contextKey = outputContextKey(guid, facts);
+        }
+        if(system == null && contextKey == null)
+        {
+            return null;
+        }
+        long timestamp = snapshot.startTimestamp() > 0 ? snapshot.startTimestamp() : snapshot.lastActivityTimestamp();
+
+        if(timestamp <= 0)
+        {
+            return null;
+        }
+
+        return new P25ActivityLogRecords.ResolvedLogicalCall(call.logicalCallId(), timestamp, contextKey, guid,
+            protocol, identityDomain(identifiers, nxdn, false), system != null ? system.wacn() : null,
+            system != null ? system.system() : null, aliasListId,
+            destination != null ? destination : 0, facts.targetForm(),
+            facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
+            facts.encryptionAlgorithmId(), facts.encryptionKeyId(), p25TargetIdentity(target, p25),
+            p25 ? facts.p25PatchMemberIdentities() : List.of(), p25 ? learnedSites : List.of());
+    }
+
+    P25ActivityLogRecords.ConventionalCallOutput mapConventionalCallOutput(AudioCallSnapshot snapshot,
                                                                      P25ActivityLogRecords.CallOutput output)
     {
         if(snapshot == null || snapshot.identifierCollection() == null || output == null)
@@ -246,6 +350,18 @@ class P25ActivityLogMapper
 
         IdentifierCollection identifiers = snapshot.identifierCollection();
         IdentifierFacts facts = IdentifierFacts.from(identifiers);
+        CallLegSource callLegSource = snapshot.callLegSource() != null ? snapshot.callLegSource() : CallLegSource.UNKNOWN;
+        DecoderType sourceDecoder = callLegSource.decoderType();
+        if(callLegSource.trafficChannel())
+        {
+            return null;
+        }
+        if(sourceDecoder == DecoderType.P25_PHASE1 || sourceDecoder == DecoderType.P25_PHASE2 ||
+            DecoderType.P25_PHASE1.toString().equals(facts.decoder()) ||
+            DecoderType.P25_PHASE2.toString().equals(facts.decoder()))
+        {
+            return null;
+        }
         Identifier targetIdentifier = identifiers.getToIdentifier();
         Integer destination = destinationId(targetIdentifier);
         Identifier sourceIdentifier = identifiers.getFromIdentifier();
@@ -269,7 +385,7 @@ class P25ActivityLogMapper
 
         Integer timeslot = snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) :
             facts.timeslot();
-        return new P25ActivityLogRecords.CompletedCallOutput(timestamp, contextKey, guid, facts.frequencyHertz(),
+        return new P25ActivityLogRecords.ConventionalCallOutput(timestamp, contextKey, guid, facts.frequencyHertz(),
             timeslot, destination != null ? destination : 0, facts.targetForm(),
             facts.patchMemberTalkgroupIds(), sourceRadio, output,
             identityDomain(identifiers, DecoderType.NXDN.toString().equals(facts.decoder()), false),

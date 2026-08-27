@@ -30,6 +30,5 @@ public enum AudioCallEventType
     BURST_STARTED,
     BURST_ENDED,
     AUDIO_FRAME,
-    DUPLICATE_UPDATED,
     CALL_COMPLETED
 }

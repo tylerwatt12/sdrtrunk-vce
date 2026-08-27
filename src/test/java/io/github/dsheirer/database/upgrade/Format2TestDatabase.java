@@ -10,7 +10,6 @@
  */
 package io.github.dsheirer.database.upgrade;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -32,7 +31,7 @@ public final class Format2TestDatabase
 
     public static Path create(Path database) throws Exception
     {
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Format3TestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())

@@ -26,11 +26,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelProcessingManagerSiteMetadataTest
@@ -129,5 +132,89 @@ public class ChannelProcessingManagerSiteMetadataTest
 
         assertTrue(received.await(5, TimeUnit.SECONDS));
         assertEquals(List.of(Protocol.DMR, Protocol.APCO25), protocols);
+    }
+
+    @Test
+    public void closeFencesAcceptedSiteMetadataAndRejectsLateCallbacks() throws Exception
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        CountDownLatch listenerEntered = new CountDownLatch(1);
+        CountDownLatch releaseListener = new CountDownLatch(1);
+        AtomicInteger callbacks = new AtomicInteger();
+        manager.addSiteMetadataListener(event -> {
+            callbacks.incrementAndGet();
+            listenerEntered.countDown();
+
+            try
+            {
+                releaseListener.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        try
+        {
+            manager.process((SiteMetadataEvent)null);
+            assertTrue(listenerEntered.await(2, TimeUnit.SECONDS));
+            manager.close();
+            assertFalse(manager.awaitSiteMetadataDrain(50, TimeUnit.MILLISECONDS),
+                "the lifecycle fence must time out while an accepted callback remains blocked");
+
+            releaseListener.countDown();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS),
+                "a repeated lifecycle fence must observe the accepted callback's completion");
+
+            manager.process((SiteMetadataEvent)null);
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+            assertEquals(1, callbacks.get(), "callbacks submitted after close must be rejected");
+        }
+        finally
+        {
+            releaseListener.countDown();
+            manager.close();
+        }
+    }
+
+    @Test
+    public void siteMetadataDrainRequiresCloseAndPreservesInterruption() throws Exception
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        CountDownLatch listenerEntered = new CountDownLatch(1);
+        CountDownLatch releaseListener = new CountDownLatch(1);
+        manager.addSiteMetadataListener(event -> {
+            listenerEntered.countDown();
+
+            try
+            {
+                releaseListener.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        try
+        {
+            assertThrows(IllegalStateException.class,
+                () -> manager.awaitSiteMetadataDrain(1, TimeUnit.MILLISECONDS));
+            manager.process((SiteMetadataEvent)null);
+            assertTrue(listenerEntered.await(2, TimeUnit.SECONDS));
+            manager.close();
+            Thread.currentThread().interrupt();
+            assertFalse(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+            assertTrue(Thread.currentThread().isInterrupted(),
+                "the lifecycle fence must restore the caller's interrupt status");
+        }
+        finally
+        {
+            Thread.interrupted();
+            releaseListener.countDown();
+            manager.close();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+        }
     }
 }

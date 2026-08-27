@@ -36,6 +36,7 @@ import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -53,6 +54,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25TrafficChannelManagerTest
 {
+    @Test
+    void copiesLateLearnedSiteIdentityToTrafficChannel() throws Exception
+    {
+        Channel parent = new Channel("Control");
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        P25SiteIdentity learnedIdentity = new P25SiteIdentity(0xBEE00, 0x348, 2, 19);
+        parent.setP25SiteIdentity(learnedIdentity);
+        Channel traffic = new Channel("Traffic", Channel.ChannelType.TRAFFIC);
+        Method sync = P25TrafficChannelManager.class.getDeclaredMethod("syncTrafficChannelIdentity", Channel.class);
+        sync.setAccessible(true);
+
+        sync.invoke(manager, traffic);
+
+        assertEquals(learnedIdentity, traffic.getP25SiteIdentity());
+    }
+
     @Test
     void displaysEncryptionKeyIdAsHexadecimalInEventDetails() throws Exception
     {

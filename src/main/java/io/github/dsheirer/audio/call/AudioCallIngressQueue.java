@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * Preallocated bounded multi-producer/single-consumer queue for audio-call coordinator commands.
  *
  * <p>The decoder-side offer path allocates nothing, never locks or waits, and makes a fixed number of attempts.
- * Ordinary frame and metadata commands cannot consume the slots reserved for creation, completion, abort, and
- * watchdog commands.</p>
+ * Ordinary frame and metadata commands cannot consume the slots reserved for lifecycle, abort, and deadline
+ * commands.</p>
  */
 final class AudioCallIngressQueue
 {
@@ -22,7 +22,7 @@ final class AudioCallIngressQueue
     private final int mRegularLimit;
     private final AtomicLong mProducerSequence = new AtomicLong();
     private final AtomicLong mRegularCount = new AtomicLong();
-    private long mConsumerSequence;
+    private volatile long mConsumerSequence;
 
     AudioCallIngressQueue(int capacity, int lifecycleReserve)
     {
@@ -46,7 +46,7 @@ final class AudioCallIngressQueue
         }
     }
 
-    boolean offer(int operation, boolean lifecycle, Object payload, long value, long generation)
+    boolean offer(int operation, boolean lifecycle, Object payload, long value)
     {
         if(!lifecycle && !reserveRegularSlot())
         {
@@ -68,7 +68,6 @@ final class AudioCallIngressQueue
                     cell.mLifecycle = lifecycle;
                     cell.mPayload = payload;
                     cell.mValue = value;
-                    cell.mGeneration = generation;
                     cell.mSequence.lazySet(sequence + 1);
                     return true;
                 }
@@ -126,8 +125,7 @@ final class AudioCallIngressQueue
             return null;
         }
 
-        Entry entry = new Entry(cell.mOperation, cell.mLifecycle, cell.mPayload, cell.mValue,
-            cell.mGeneration);
+        Entry entry = new Entry(cell.mOperation, cell.mLifecycle, cell.mPayload, cell.mValue);
         cell.mPayload = null;
 
         if(!cell.mLifecycle)
@@ -164,7 +162,7 @@ final class AudioCallIngressQueue
         }
     }
 
-    record Entry(int operation, boolean lifecycle, Object payload, long value, long generation)
+    record Entry(int operation, boolean lifecycle, Object payload, long value)
     {
     }
 
@@ -175,7 +173,6 @@ final class AudioCallIngressQueue
         private boolean mLifecycle;
         private Object mPayload;
         private long mValue;
-        private long mGeneration;
 
         private Cell(long sequence)
         {

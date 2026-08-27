@@ -86,6 +86,14 @@ fixed `site_preview_limit_per_system`. The preview is normally ordered by most r
 When `q` matches a site, matching sites are placed first so that the bounded preview includes the result. Use the
 independently paged `/api/v1/systems/{scope}/sites` resource for the complete collection.
 
+Migration effects are specific to each registered database-format step. The format 3 to 4 step preserves supported
+configuration, detailed P25 activity and site telemetry, conventional and DMR summaries, and trunked-site summaries.
+It also carries conventional call-identity rows and non-call trunked signaling counters into their format-4 tables.
+Legacy physical receiver-leg call, frequency, and talkgroup measures cannot be translated reliably into logical
+calls, and the old trunked identity scopes cannot be split unambiguously by Alias List, so those projections restart
+at an explicit collection boundary. Logical-call and P25 site-observation API totals therefore include only calls
+resolved after migration, while the compatible activity and summary history remains available.
+
 The two activity-analysis resources use `range=1h|6h|24h|7d|30d` without the former `group_by` compatibility mode.
 `GET /api/v1/activity/actions` accepts only `range`. Its collection metadata is `range`, `from_ms`, `to_ms`, and
 `total`; its `data` array contains the available action totals and omits `CONTINUE`. `total` is the sum of those
