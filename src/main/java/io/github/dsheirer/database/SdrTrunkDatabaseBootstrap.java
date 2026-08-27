@@ -14,6 +14,7 @@ package io.github.dsheirer.database;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
 import io.github.dsheirer.portable.PortableApplicationPaths;
@@ -122,10 +123,8 @@ public final class SdrTrunkDatabaseBootstrap
                         throw new IOException("Database migration failed: " + message(e), e);
                     }
 
-                    JOptionPane.showMessageDialog(null,
-                        "Your database was migrated successfully.\n\n" + result.helperOutput() +
-                            "\n\nSafety backup:\n" + result.safetyBackup(),
-                        MIGRATOR_TITLE, JOptionPane.INFORMATION_MESSAGE);
+                    ApplicationMigrationSuccessDialog.show(null, MIGRATOR_TITLE,
+                        ApplicationMigrationSuccessDialog.currentDatabaseReport(result));
                 }
             }
 
@@ -577,13 +576,8 @@ public final class SdrTrunkDatabaseBootstrap
         ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(null,
             MIGRATOR_TITLE,
             progress -> service.importPrevious(source, target, migrationPlan, progress));
-        JOptionPane.showMessageDialog(null,
-            portableProfile ?
-                "Migration complete. The portable profile was copied and its stored paths were remapped. Your " +
-                    "previous installation and its data were left unchanged.\n\n" + migration.helperOutput() :
-                "Migration complete. Only the selected SQLite database was imported. The source database and its " +
-                    "neighboring files were left unchanged.\n\n" + migration.helperOutput(), MIGRATOR_TITLE,
-            JOptionPane.INFORMATION_MESSAGE);
+        ApplicationMigrationSuccessDialog.show(null, MIGRATOR_TITLE,
+            ApplicationMigrationSuccessDialog.previousImportReport(migration));
         return true;
     }
 

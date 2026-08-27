@@ -149,12 +149,28 @@ not promoted. After the atomic promotion point, the already validated result may
 validation restores the retained backup on failure. Normal application startup after setup is exact-schema
 validation-only and never creates, repairs, or migrates an existing schema.
 
+After setup, **File > Import SQLite Database** provides an explicit database-only replacement workflow. It preflights
+the selected source before confirmation, displays a bold red replacement warning, closes all database-owning runtime
+services while retaining the portable-data lock, backs up the current active database, migrates a staged copy of the
+selected source, validates it, promotes it atomically, and starts a new application process. The selected source is
+never changed. Window close, Exit, and operating-system quit requests are refused while replacement is in progress.
+The completion report has a Copy Message action and a visible countdown that continues automatically without waiting
+for the operator to dismiss it. A failed replacement does not automatically relaunch the application when the final
+active-database state cannot be proven; the retained backup and error are left for explicit recovery.
+
 ## Input Scope
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
 as the vault, JMBE library, optional modules, and paths that need remapping. Selecting only
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. The plan and completion report must clearly say when
 external artifacts were unavailable; file-only migration must never imply that they were copied.
+
+The after-setup SQLite menu import also has database-only scope. It replaces the active SQLite contents rather than
+merging rows, leaves the selected source and its neighboring files unchanged, and leaves the active data folder's
+existing non-database files in place. Its confirmation must identify both the selected source and active target and
+state these boundaries before shutdown. Stored portable paths are not remapped for this database-only workflow. A
+markerless imported database is initialized as a newly imported profile: an existing primary administrator satisfies
+setup, otherwise startup requires the operator to create one.
 
 All graphical and headless entry points use the same inspector, registry, chain runner, validator, and report model.
 Do not add schema-specific launchers or separately maintained migration utilities.

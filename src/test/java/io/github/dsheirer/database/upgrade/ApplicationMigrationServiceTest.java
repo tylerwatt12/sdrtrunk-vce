@@ -25,6 +25,7 @@ import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -196,6 +197,185 @@ class ApplicationMigrationServiceTest
         int copyIndex = progress.indexOf("Copying selected database");
         assertTrue(scopeIndex >= 0 && scopeIndex < copyIndex);
         assertTrue(progress.get(scopeIndex).contains("SQLite database only"));
+    }
+
+    @Test
+    void selectedDatabaseReplacesActiveProfileAfterBackupAndStagedMigration() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("active-replacement-data");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        insertAlias(activeDatabase, "Previous Active Alias");
+        Path retainedJmbe = Files.createDirectories(activeRoot.resolve("jmbe")).resolve("retained.jar");
+        Files.writeString(retainedJmbe, "keep current external file");
+
+        Path sourceRoot = mTemporaryFolder.resolve("selected-old-database");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        Format1TestDatabase.create(sourceDatabase);
+        insertAlias(sourceDatabase, "Imported Old Alias");
+        Files.createDirectories(sourceRoot.resolve("jmbe"));
+        Files.writeString(sourceRoot.resolve("jmbe/not-imported.jar"), "source neighbor");
+        byte[] sourceHash = sha256(sourceDatabase);
+        DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(sourceDatabase);
+        List<String> progress = new ArrayList<>();
+
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+            .replaceCurrentDatabase(sourceDatabase, activeRoot, plan, progress::add);
+
+        assertFalse(result.importedPreviousProfile());
+        assertEquals(PreviousBuildLocator.InputScope.DATABASE_FILE, result.inputScope());
+        assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
+        assertTrue(result.helperOutput().contains("Migrated database format 1 [alpha8-shared]"));
+        assertNotNull(result.safetyBackup());
+        assertEquals("Previous Active Alias", scalar(result.safetyBackup(),
+            "SELECT name FROM alias WHERE id=1"));
+        assertCurrentFormat(activeDatabase);
+        assertEquals("Imported Old Alias", scalar(activeDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertEquals("required", scalar(activeDatabase, """
+            SELECT value FROM database_metadata WHERE key='initial_admin_setup'
+            """));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertEquals("keep current external file", Files.readString(retainedJmbe));
+        assertFalse(Files.exists(activeRoot.resolve("jmbe/not-imported.jar")));
+        assertTrue(progress.stream().anyMatch(step -> step.contains("SQLite database only")));
+        assertTrue(progress.indexOf("Creating current database safety backup") <
+            progress.indexOf("Replacing active database"));
+        assertEquals("wal", journalMode(activeDatabase));
+    }
+
+    @Test
+    void selectedDatabaseReplacementBindsTheApprovedPlanBeforeBackup() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("active-plan-binding-data");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        insertAlias(activeDatabase, "Keep Active");
+        byte[] activeHash = sha256(activeDatabase);
+
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
+            mTemporaryFolder.resolve("selected-plan-binding-source"));
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        DatabaseMigrationChain.PreflightReport approved =
+            ApplicationMigrationService.readMigrationPlan(sourceDatabase);
+        try(Connection connection = open(sourceDatabase); var statement = connection.prepareStatement(
+            "DELETE FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        IOException exception = assertThrows(IOException.class,
+            () -> new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, approved,
+                null));
+
+        assertTrue(exception.getMessage().contains("SQLite database selected after confirmation"));
+        assertArrayEquals(activeHash, sha256(activeDatabase));
+        assertEquals("Keep Active", scalar(activeDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertFalse(Files.exists(activeDatabase.getParent().resolve("backups")));
+    }
+
+    @Test
+    void selectedMarkerlessDatabaseWithAdministratorPreservesCredentialsAndCompletesSetup() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("active-admin-replacement-data");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
+            mTemporaryFolder.resolve("selected-admin-source"));
+        Format1TestDatabase.create(sourceDatabase);
+        char[] password = "retained alpha administrator".toCharArray();
+        new WebAccessService(sourceDatabase).provisionOrResetPrimaryAdmin(password);
+
+        new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
+
+        assertEquals("complete", scalar(activeDatabase, """
+            SELECT value FROM database_metadata WHERE key='initial_admin_setup'
+            """));
+        assertTrue(new WebAccessService(activeDatabase).authenticate("admin", password).isPresent());
+    }
+
+    @Test
+    void selectedDatabaseHelperFailureLeavesActiveAndSourceUntouchedAndCleansStage() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("active-helper-failure-data");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        insertAlias(activeDatabase, "Still Active");
+        byte[] activeHash = sha256(activeDatabase);
+
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
+            mTemporaryFolder.resolve("selected-helper-failure-source"));
+        Format1TestDatabase.create(sourceDatabase);
+        insertAlias(sourceDatabase, "Never Installed");
+        byte[] sourceHash = sha256(sourceDatabase);
+        AtomicReference<Path> stagedDatabase = new AtomicReference<>();
+        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            (staged, source, target) ->
+            {
+                stagedDatabase.set(staged);
+                Files.writeString(Path.of(staged + "-journal"), "forced journal");
+                Files.writeString(Path.of(staged + "-wal"), "forced wal");
+                Files.writeString(Path.of(staged + "-shm"), "forced shared memory");
+                throw new IOException("forced replacement helper failure");
+            });
+
+        IOException exception = assertThrows(IOException.class,
+            () -> service.replaceCurrentDatabase(sourceDatabase, activeRoot, null));
+
+        assertTrue(exception.getMessage().contains("forced replacement helper failure"));
+        assertArrayEquals(activeHash, sha256(activeDatabase));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertEquals("Still Active", scalar(activeDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertNotNull(stagedDatabase.get());
+        for(String suffix: List.of("", "-journal", "-wal", "-shm"))
+        {
+            assertFalse(Files.exists(suffix.isEmpty() ? stagedDatabase.get() :
+                Path.of(stagedDatabase.get() + suffix)));
+        }
+        try(var backups = Files.list(activeDatabase.getParent().resolve("backups")))
+        {
+            List<Path> retained = backups.toList();
+            assertEquals(1, retained.size());
+            assertEquals("Still Active", scalar(retained.getFirst(), "SELECT name FROM alias WHERE id=1"));
+        }
+    }
+
+    @Test
+    void activeDatabaseCannotBeSelectedAsItsOwnReplacement() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("same-replacement-data");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+
+        IOException exception = assertThrows(IOException.class,
+            () -> new ApplicationMigrationService().replaceCurrentDatabase(activeDatabase, activeRoot, null));
+
+        assertTrue(exception.getMessage().contains("paths are the same"));
+        assertFalse(Files.exists(activeDatabase.getParent().resolve("backups")));
+    }
+
+    @Test
+    void activeDatabaseHardLinkCannotBeSelectedAsItsReplacement() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("hard-link-replacement-data");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        Path hardLink = mTemporaryFolder.resolve("active-database-hard-link.sqlite");
+        try
+        {
+            Files.createLink(hardLink, activeDatabase);
+        }
+        catch(IOException | UnsupportedOperationException e)
+        {
+            Assumptions.assumeTrue(false, "Hard links are unavailable: " + e.getMessage());
+        }
+
+        IOException exception = assertThrows(IOException.class,
+            () -> new ApplicationMigrationService().replaceCurrentDatabase(hardLink, activeRoot, null));
+
+        assertTrue(exception.getMessage().contains("same physical file"));
+        assertFalse(Files.exists(activeDatabase.getParent().resolve("backups")));
     }
 
     @Test

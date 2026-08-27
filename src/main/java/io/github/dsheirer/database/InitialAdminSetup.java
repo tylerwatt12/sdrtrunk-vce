@@ -22,7 +22,7 @@ import java.sql.SQLException;
  * apparently complete one.
  * </p>
  */
-final class InitialAdminSetup
+public final class InitialAdminSetup
 {
     static final String METADATA_KEY = "initial_admin_setup";
     private static final String REQUIRED = "required";
@@ -44,7 +44,7 @@ final class InitialAdminSetup
      * Marks a copied/imported profile as a new installation.  An existing administrator is preserved and satisfies
      * the requirement; otherwise setup remains pending.
      */
-    static void initializeNewProfile(Path databasePath) throws IOException, SQLException
+    public static void initializeNewProfile(Path databasePath) throws IOException, SQLException
     {
         if(readState(databasePath) == null)
         {

@@ -84,6 +84,15 @@ After setup, **File > Import Legacy Playlist XML** can merge another supported p
 Existing configuration is retained, imported name conflicts are renamed, and a validated timestamped database backup
 is created before the configuration snapshot is committed. The source XML remains read only.
 
+**File > Import SQLite Database** can instead replace the complete active database from a supported Alpha 8-or-newer
+SQLite file. This is a replacement, not a merge. A bold red warning and migration plan are shown before confirmation.
+SDRTrunk then stops its services, preserves the current database as a timestamped safety backup, migrates and validates
+a staged copy of the selected file, installs it atomically, and restarts. Only SQLite contents are imported; files
+beside the source database are not copied, current non-database portable files remain in place, and the selected source
+is never changed. Stored portable paths are not remapped. If the imported database has no administrator, setup asks
+for a new administrator password after restart. The success report can be copied and continues automatically after
+its visible countdown; an unconfirmed failed replacement does not restart automatically.
+
 Headless launches require one explicit option when the database is absent:
 
 ```text
