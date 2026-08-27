@@ -143,6 +143,12 @@ later, use **File > Import Legacy Playlist XML**. VCE previews the supported con
 renames imported name conflicts, and creates a timestamped database backup before applying the import. Your original
 XML remains unchanged and regular SDRTrunk can continue using it.
 
+To replace the active profile from a supported older database after setup, use **File > Import SQLite Database**.
+VCE shows the migration plan and an explicit replacement warning, retains the current database as a safety backup,
+migrates only a staged copy of the selected file, validates it, and restarts. This imports only SQLite contents; it
+does not copy files beside the selected database or remap stored portable paths. A failed replacement does not
+restart automatically when the final active-database state cannot be confirmed.
+
 After importing:
 
 - Check that P25 and DMR channels have the correct Conventional or Trunked type.

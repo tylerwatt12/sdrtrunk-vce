@@ -232,6 +232,165 @@ public final class ApplicationMigrationService
     }
 
     /**
+     * Replaces the active database with a separately selected, supported SQLite database. The selected source is
+     * copied into a private stage and never changed. The current active database is retained as a validated safety
+     * backup before the staged source can be promoted.
+     *
+     * <p>This operation requires a stopped application runtime: all database services must be closed before the
+     * final atomic replacement.</p>
+     */
+    public MigrationResult replaceCurrentDatabase(Path sourceDatabase, Path targetDataRoot,
+                                                  ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        return replaceCurrentDatabase(sourceDatabase, targetDataRoot, null, progress);
+    }
+
+    /** Replaces the active database only if the selected source still matches the operator-approved plan. */
+    public MigrationResult replaceCurrentDatabase(Path sourceDatabase, Path targetDataRoot,
+                                                  DatabaseMigrationChain.PreflightReport approvedPlan,
+                                                  ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        ProgressListener listener = progress == null ? ignored -> { } : progress;
+        Objects.requireNonNull(sourceDatabase, "Selected SQLite database cannot be null");
+        Objects.requireNonNull(targetDataRoot, "Current portable data root cannot be null");
+        Path source = sourceDatabase.toAbsolutePath().normalize();
+        Path targetRoot = targetDataRoot.toAbsolutePath().normalize();
+        Path target = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
+        requireSeparatePhysicalDatabases(source, target);
+        SqliteDatabaseSnapshot.requireSourceUsable(source);
+        SqliteDatabaseSnapshot.requireSourceUsable(target);
+        FileAccessAttributeSnapshot targetAttributes = FileAccessAttributeSnapshot.capture(target);
+
+        listener.update("Checking selected SQLite database");
+        DatabaseMigrationChain.PreflightReport sourcePlan = readMigrationPlan(source);
+        if(approvedPlan != null)
+        {
+            requireMatchingPlan(approvedPlan, sourcePlan, "SQLite database selected after confirmation");
+        }
+        listener.update("Migration plan: " + describePlan(sourcePlan));
+        listener.update("Migration scope: SQLite database only; neighboring source files are not copied and the " +
+            "current portable files outside the database remain in place.");
+
+        listener.update("Checking current database");
+        DatabaseMigrationChain.PreflightReport currentPlan = readMigrationPlan(target);
+        Path databaseDirectory = target.getParent();
+        long sourceCopies = safeMultiply(sqliteFootprint(source), 2);
+        long requiredSpace = safeAdd(sqliteFootprint(target), sourceCopies);
+        ensureFreeSpace(databaseDirectory, safeAdd(requiredSpace, FREE_SPACE_MARGIN_BYTES));
+        Path backupDirectory = databaseDirectory.resolve("backups");
+        Files.createDirectories(backupDirectory);
+        String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
+            UUID.randomUUID().toString().substring(0, 8);
+        Path backup = backupDirectory.resolve("sdrtrunk-before-sqlite-import-" + identity + ".sqlite");
+        Path stagedBackup = backupDirectory.resolve("." + backup.getFileName() + ".incomplete-" + UUID.randomUUID());
+        Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".migration-" +
+            UUID.randomUUID());
+
+        Throwable primaryFailure = null;
+        try
+        {
+            listener.update("Creating current database safety backup");
+            mSnapshotter.create(target, stagedBackup);
+            targetAttributes.applyTo(stagedBackup);
+            requireMatchingPlan(currentPlan, readMigrationPlan(stagedBackup), "current database safety backup");
+            finalizeStandaloneSnapshot(stagedBackup);
+            requireNoSidecars(stagedBackup,
+                "The current database safety backup still has SQLite sidecar files and cannot be published safely.");
+            targetAttributes.applyTo(stagedBackup);
+            moveAtomically(stagedBackup, backup);
+
+            listener.update("Copying selected SQLite database");
+            mSnapshotter.create(source, staged);
+            requireMatchingPlan(sourcePlan, readMigrationPlan(staged), "staged SQLite database import snapshot");
+
+            listener.update("Updating selected database copy");
+            String helperOutput = mMigrationRunner.run(staged, null, null);
+
+            listener.update("Checking updated database");
+            validateGlobalDatabase(staged);
+            requireNoSidecars(staged,
+                "The staged SQLite database still has sidecar files and cannot replace the active database safely.");
+            targetAttributes.applyTo(staged);
+
+            listener.update("Replacing active database");
+            prepareLiveDatabaseForReplacement(target);
+            moveAtomicallyReplacing(staged, target);
+
+            try
+            {
+                validateGlobalDatabase(target);
+                targetAttributes.applyTo(target);
+            }
+            catch(IOException | SQLException | RuntimeException | Error validationFailure)
+            {
+                try
+                {
+                    restoreBackup(backup, target, targetAttributes);
+                }
+                catch(IOException restoreFailure)
+                {
+                    validationFailure.addSuppressed(restoreFailure);
+                }
+
+                throw validationFailure;
+            }
+
+            return new MigrationResult(false, backup, sourcePlan, helperOutput,
+                PreviousBuildLocator.InputScope.DATABASE_FILE);
+        }
+        catch(IOException | SQLException | InterruptedException | RuntimeException e)
+        {
+            primaryFailure = e;
+            throw e;
+        }
+        catch(Error e)
+        {
+            primaryFailure = e;
+            throw e;
+        }
+        finally
+        {
+            IOException cleanupFailure = null;
+            try
+            {
+                deleteDatabaseAndSidecarsIfExists(staged);
+            }
+            catch(IOException e)
+            {
+                cleanupFailure = e;
+            }
+            try
+            {
+                deleteDatabaseAndSidecarsIfExists(stagedBackup);
+            }
+            catch(IOException e)
+            {
+                if(cleanupFailure == null)
+                {
+                    cleanupFailure = e;
+                }
+                else
+                {
+                    cleanupFailure.addSuppressed(e);
+                }
+            }
+            if(cleanupFailure != null)
+            {
+                if(primaryFailure != null)
+                {
+                    primaryFailure.addSuppressed(cleanupFailure);
+                }
+                else
+                {
+                    throw cleanupFailure;
+                }
+            }
+        }
+    }
+
+    /**
      * Migrates a supported earlier database already in the current portable data root and retains a safety backup.
      */
     public MigrationResult migrateCurrent(Path dataRoot, ProgressListener progress)
@@ -813,6 +972,12 @@ public final class ApplicationMigrationService
     private static void requireSeparatePhysicalDatabases(Path sourceDatabase, Path targetDatabase) throws IOException
     {
         Path physicalSource = sourceDatabase.toRealPath();
+
+        if(Files.exists(targetDatabase, LinkOption.NOFOLLOW_LINKS) && Files.isSameFile(physicalSource, targetDatabase))
+        {
+            throw new IOException("The previous and current SQLite database paths are the same physical file.");
+        }
+
         Path targetParent = targetDatabase.getParent();
 
         if(targetParent == null || targetDatabase.getFileName() == null)
