@@ -243,19 +243,24 @@ Initial channel snapshots are capped at 128 tables, 256 rows per table, 2,048 ro
 Unchanged subscribers share the cached encoded snapshot. Strings and tags are bounded before retention. Admission is
 capped at 32 browser documents. Metadata uses one bounded FIFO per topic, so a burst cannot evict another topic.
 Dense diagnostic topics use replaceable latest-value slots, and a persistently slow client is disconnected instead of
-accumulating data or applying receiver backpressure. Calls and channel activity retain authoritative recovery
-snapshots.
+accumulating data or applying receiver backpressure. Channel activity retains an authoritative recovery snapshot;
+call playback starts at the live edge.
 
-`decode_events` and `decode_messages` are deliberately live-only. Opening either subscription starts empty; the
-server projects each new item on a bounded observer worker, publishes it, and forgets it. It does not preload decoder
-history or retain a replay cache. A bounded queue or connection loss emits `live_gap` with the number of known dropped
-items and then continues with new data. A decoder-event subscription first emits an authoritative `filter_catalog`
-containing every event category and type, including types that have not yet been observed. Opening a decoder-message
-stream emits its initial source status as `source_change`, and later source rebinds emit the same event. A bound source
-state includes `filter_catalog`; an unbound source uses `null`. The catalog contains a deterministic `signature`, an
-ordered tree of `{key, label, children}` nodes, and the source's available `timeslots`. Message rows carry the matching
-stable `filter_key` and friendly `filter_label`. Catalog/source-state frames are coalesced authoritative state and
-clear older queued rows for the same topic, but neither event causes a history snapshot or replay.
+`calls`, `decode_events`, and `decode_messages` are deliberately live-only. None preloads historical call or decoder
+rows or retains a replay snapshot. Calls first emit `ready`; decoder-event and decoder-message subscriptions first
+emit `source_change` state. Completed-call audio may remain in the bounded shared cache long enough for an announced
+call to fetch it, but new subscriptions are not backfilled from that cache. Decoder events and messages are projected
+on a bounded observer worker, published, and forgotten. Known loss in a bounded live path emits `live_gap` with the
+number of dropped items and then continues with new data. A broken and reconnected transport has no exact loss count;
+the browser marks a possible gap and resumes at the live edge.
+
+The decoder-event `source_change` includes an authoritative `filter_catalog` containing every event category and
+type, including types that have not yet been observed. Later decoder-message source rebinds also emit
+`source_change`. A bound source state includes `filter_catalog`; an unbound source uses `null`. The catalog contains a
+deterministic `signature`, an ordered tree of `{key, label, children}` nodes, and the source's available `timeslots`.
+Message rows carry the matching stable `filter_key` and friendly `filter_label`. Catalog/source-state frames are
+coalesced authoritative state and clear older queued rows for the same topic, but neither event causes a history
+snapshot or replay.
 
 Browser filtering is local and does not change the subscription. Filter choices come from the complete source catalog,
 not from rows already received, so an unseen or rare message type can be selected while the table is empty. The browser
@@ -263,12 +268,18 @@ retains only a bounded in-memory capture for the current page and selected chann
 timeslots, validity, and text search before the display limit, renders the newest configured number of matching rows,
 and clears that capture on page, tab, or selection change.
 
+For a listener-facing explanation of this path, see
+[How Browser Listening and Scan Lists Work](browser-listening-and-scan-lists.md).
+
 The `calls` logical subscription accepts `scan_list_id` as an array of positive IDs. Duplicate IDs are folded
 together. Omitting the field selects the published default scan list; an unknown or unpublished ID is rejected. Each
 completed call is published once with all matching `scan_list_ids`, so overlapping selections never duplicate it.
-Call events also include `started_at_ms`, `order_sequence`, and `conversation_key`. If one listener's bounded server
-queue overflows, that subscription receives a `missed` event with the exact `missed_calls` count and
-`reason: "server_queue_overflow"`.
+Call events also include `started_at_ms`, `completed_at_ms`, and `conversation_key`. Known subscription loss is
+reported as `live_gap` with a positive `dropped` count; reconnecting continues at the live edge instead of backfilling
+cached calls.
+
+Opening a call subscription emits `ready` with the effective `scan_list_ids` and
+`waiting_calls_per_listener`. The event contains no call or history array.
 
 The browser orders calls inside each conversation by `started_at_ms`. It may play up to four calls from one
 conversation before choosing the oldest waiting call from another conversation, favoring coherent exchanges without
@@ -277,10 +288,20 @@ timeline.
 
 Completed call audio is fetched from `/api/v1/calls/{id}/audio`. A call is rejected before encoding if its WAV would
 exceed 16 MiB. Pending WAV work is limited to 16 MiB total. The operator can bound active audio listeners, selected
-scan lists per listener, waiting calls per listener, cached calls, and cached audio MiB. The call ID must be one strict path
-segment; encoded separator smuggling is rejected. Audio is retained only for completed calls that match at least one
-published scan list while a listener is connected. The listener limit also bounds concurrent WAV responses; excess
-audio fetches receive `429 too_many_audio_responses` and are counted on Listener Status.
+scan lists per listener, waiting calls per listener, cached calls, and cached audio MiB. Their defaults and accepted
+ranges are 32 listeners (1–64), 16 selected lists per listener (1–64), 100 waiting calls per listener (1–500), 512
+cached calls (16–4,096), and 128 MiB of cached audio (16–1,024 MiB). The fixed live-multiplex admission limit of 32
+browser documents applies separately.
+
+The playing or buffering call is separate from the waiting-call count. When a new call reaches a full browser queue,
+the browser removes the oldest waiting call and keeps the new one. The queue holds call announcements; it fetches WAV
+audio only when a call reaches playback. Shared cache entries expire after 30 minutes, and the browser abandons an
+audio fetch after 15 seconds.
+
+The call ID must be one strict path segment; encoded separator smuggling is rejected. Audio is encoded and retained
+only when at least one current listener selected one of that completed call's matching published Scan Lists. The
+listener limit also bounds concurrent WAV responses; excess audio fetches receive `429 too_many_audio_responses` and
+are counted on Listener Status.
 
 ## Authentication and administration
 

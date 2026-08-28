@@ -27,10 +27,11 @@ receiver data before installing or upgrading.
   Frequencies stay in place instead of constantly moving around.
 - **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
   an operator's saved enabled or disabled choice. View live systems, sites, channels, talkgroups, radios, activity,
-  and statistics from a browser. Subscribe to one or more administrator-defined scan lists; assign normal Aliases or
-  Alias List Defaults to them. Those defaults also initialize new talkgroup Aliases consistently across the desktop,
-  web, Discover, and RadioReference workflows. Overlapping routes are deduplicated before completed
-  calls enter the conversation-aware browser queue.
+  and statistics from a browser. Subscribe to one or more administrator-defined
+  [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them. Those
+  defaults also normally initialize new talkgroup Aliases consistently across the desktop, web, Discover, and
+  RadioReference workflows. Overlapping routes are deduplicated before completed calls enter the conversation-aware
+  browser queue.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
 - **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.
@@ -265,6 +266,7 @@ Build output is written under `build/image`.
 - [Release channels](docs/release-channels.md)
 - [Release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
 - [Portable startup and storage](docs/portable-startup-and-storage.md)
+- [How browser listening and Scan Lists work](docs/browser-listening-and-scan-lists.md)
 - [How talker aliases work](docs/talker-alias-implementation.md)
 - [Listening-delay findings](docs/sdrtrunk-latency-findings.md)
 
