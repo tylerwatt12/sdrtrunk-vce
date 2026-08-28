@@ -10,6 +10,9 @@
  */
 package io.github.dsheirer.dsp.filter.channelizer;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
@@ -21,6 +24,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -97,6 +101,8 @@ public class NativeBufferProcessorTest
             assertTrue(processor.getQueuedSampleCount() <= processor.getMaximumQueuedSampleCount(), profile.name());
             assertEquals(3, processor.getDroppedBufferCount(), profile.name());
             assertEquals(3L * profile.bufferSamples(), processor.getDroppedSampleCount(), profile.name());
+            assertEquals(Math.round(3L * profile.bufferSamples() * 1000.0 / profile.sampleRate()),
+                processor.status().droppedMilliseconds(), profile.name());
             assertTrue(processor.status().highWaterSamples() >= processor.status().queuedSamples(), profile.name());
             assertTrue(processor.status().highWaterMilliseconds() > 0, profile.name());
 
@@ -118,6 +124,59 @@ public class NativeBufferProcessorTest
             releaseFirstBuffer.countDown();
             processor.dispose();
             assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS), profile.name());
+        }
+    }
+
+    @Test
+    public void overflowUpdatesHealthCountersWithoutLoggingOnTheProducer() throws Exception
+    {
+        String processorName = "producer-thread overflow regression";
+        CountDownLatch firstBufferStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstBuffer = new CountDownLatch(1);
+        Logger logger = (Logger)LoggerFactory.getLogger(NativeBufferProcessor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        NativeBufferProcessor processor = new NativeBufferProcessor(processorName, 1_000_000,
+            MAXIMUM_QUEUE_DURATION_MILLISECONDS, buffer -> {
+                if(((TestNativeBuffer)buffer).id() == -1)
+                {
+                    firstBufferStarted.countDown();
+
+                    try
+                    {
+                        releaseFirstBuffer.await(5, TimeUnit.SECONDS);
+                    }
+                    catch(InterruptedException interruptedException)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            });
+
+        try
+        {
+            processor.start();
+            processor.receive(new TestNativeBuffer(-1, 1));
+            assertTrue(firstBufferStarted.await(2, TimeUnit.SECONDS));
+            processor.receive(new TestNativeBuffer(0, 60_000));
+            processor.receive(new TestNativeBuffer(1, 60_000));
+
+            NativeBufferProcessor.QueueStatus status = processor.status();
+            assertEquals(1, status.droppedBuffers());
+            assertEquals(60_000, status.droppedSamples());
+            assertEquals(60, status.droppedMilliseconds());
+            assertTrue(appender.list.stream().noneMatch(event ->
+                event.getFormattedMessage().contains(processorName) &&
+                    event.getFormattedMessage().contains("discarded")));
+        }
+        finally
+        {
+            releaseFirstBuffer.countDown();
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+            logger.detachAppender(appender);
+            appender.stop();
         }
     }
 

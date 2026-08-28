@@ -38,7 +38,6 @@ import org.slf4j.LoggerFactory;
 class NativeBufferProcessor implements Listener<INativeBuffer>
 {
     static final long DEFAULT_MAXIMUM_QUEUE_DURATION_MILLISECONDS = 200;
-    private static final long OVERFLOW_WARNING_INTERVAL_NANOSECONDS = TimeUnit.SECONDS.toNanos(5);
     private static final Logger mLog = LoggerFactory.getLogger(NativeBufferProcessor.class);
 
     private final String mName;
@@ -57,7 +56,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
     private volatile long mDroppedBufferCount;
     private volatile long mDroppedSampleCount;
     private volatile long mDroppedDurationNanoseconds;
-    private long mLastOverflowWarningTimestamp;
     private boolean mProcessingScheduled;
     private boolean mRunning;
     private boolean mDisposed;
@@ -172,7 +170,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
     void setSampleRate(double sampleRate)
     {
         validateSampleRate(sampleRate);
-        Overflow overflow;
 
         mLock.lock();
 
@@ -182,7 +179,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
             applyRequestedMaximumQueueDuration();
             mMaximumQueuedSampleCount = calculateMaximumQueuedSampleCount(sampleRate);
             mUnconfiguredSampleRateWarningLogged.set(false);
-            overflow = trimQueue();
+            trimQueue();
             //A sample count has a different duration after a rate change, so begin a new high-water epoch instead of
             //reinterpreting the historical sample-count peak using the new rate.
             mHighWaterQueuedSampleCount = mQueuedSampleCount;
@@ -191,8 +188,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         {
             mLock.unlock();
         }
-
-        logOverflow(overflow);
     }
 
     /**
@@ -217,8 +212,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         }
 
         boolean scheduleProcessing = false;
-        Overflow overflow;
-
         mLock.lock();
 
         try
@@ -248,7 +241,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
                 mHighWaterQueuedSampleCount = mQueuedSampleCount;
             }
 
-            overflow = trimQueue();
+            trimQueue();
 
             if(!mProcessingScheduled)
             {
@@ -260,8 +253,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         {
             mLock.unlock();
         }
-
-        logOverflow(overflow);
 
         if(scheduleProcessing)
         {
@@ -335,7 +326,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
      * Removes the oldest buffers until the queue is within its time limit.  One complete hardware buffer is always
      * retained because some receivers can produce a single buffer longer than the configured target.
      */
-    private Overflow trimQueue()
+    private void trimQueue()
     {
         long droppedBuffers = 0;
         long droppedSamples = 0;
@@ -355,20 +346,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
             mDroppedBufferCount += droppedBuffers;
             mDroppedSampleCount += droppedSamples;
             mDroppedDurationNanoseconds += droppedDurationNanoseconds;
-            long now = System.nanoTime();
-            boolean shouldLog = mLastOverflowWarningTimestamp == 0 ||
-                now - mLastOverflowWarningTimestamp >= OVERFLOW_WARNING_INTERVAL_NANOSECONDS;
-
-            if(shouldLog)
-            {
-                mLastOverflowWarningTimestamp = now;
-                return new Overflow(droppedBuffers, toMilliseconds(droppedDurationNanoseconds),
-                    toMilliseconds(mQueuedSampleCount, mSampleRate), mDroppedBufferCount,
-                    toMilliseconds(mDroppedDurationNanoseconds));
-            }
         }
-
-        return null;
     }
 
     /**
@@ -403,17 +381,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
             toMilliseconds(mQueuedSampleCount, sampleRate), mHighWaterQueuedSampleCount,
             toMilliseconds(mHighWaterQueuedSampleCount, sampleRate), mDroppedBufferCount, mDroppedSampleCount,
             toMilliseconds(mDroppedDurationNanoseconds));
-    }
-
-    private void logOverflow(Overflow overflow)
-    {
-        if(overflow != null)
-        {
-            mLog.warn("Native buffer processor [{}] discarded [{}] stale buffer(s), [{}] ms of IQ; retained [{}] " +
-                    "ms, total discarded [{}] buffer(s)/[{}] ms", mName, overflow.droppedBuffers(),
-                overflow.droppedMilliseconds(), overflow.queuedMilliseconds(), overflow.totalDroppedBuffers(),
-                overflow.totalDroppedMilliseconds());
-        }
     }
 
     private long calculateMaximumQueuedSampleCount(double sampleRate)
@@ -540,11 +507,6 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
     boolean awaitTermination(long timeout, TimeUnit timeUnit) throws InterruptedException
     {
         return mExecutorService.awaitTermination(timeout, timeUnit);
-    }
-
-    private record Overflow(long droppedBuffers, long droppedMilliseconds, long queuedMilliseconds,
-                            long totalDroppedBuffers, long totalDroppedMilliseconds)
-    {
     }
 
     record QueueStatus(long appliedDurationMilliseconds, long requestedDurationMilliseconds,
