@@ -14343,8 +14343,8 @@ async function renderAdminRadioReferenceSettings() {
     node('p', 'settings-card-description', 'Choose the region used for exact-frequency spectrum lookups.'),
     formField('Country', country), formField('State or region', state), regionMessage, regionActions);
 
-  const settingsForms = node('div', 'settings-card-grid admin-settings-form-stack');
-  settingsForms.append(accountForm, regionForm);
+  const settingsForms = settingsCardGrid(accountForm, regionForm);
+  settingsForms.classList.add('admin-settings-form-stack');
   body.append(node('p', 'admin-section-intro',
     'Connect the receiver to RadioReference’s database API, then choose the state searched when a frequency is ' +
     'clicked in Tuner Spectrum. Use your own current Premium account.'), settingsForms);
@@ -14552,7 +14552,7 @@ async function renderAdminSiteBehaviorSettings() {
       'How long inactive traffic grants remain in the shared Live state.'));
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
-  form.append(node('div', 'settings-card-grid', group), footer);
+  form.append(settingsCardGrid(group), footer);
   body.append(form);
   content.append(section('Site behavior', body));
 
@@ -15031,6 +15031,12 @@ function settingsCard(title, description, ...items) {
   return card;
 }
 
+function settingsCardGrid(...cards) {
+  const grid = node('div', 'settings-card-grid');
+  grid.append(...cards);
+  return grid;
+}
+
 async function renderSettings() {
   const renderContext = captureRenderContext();
   if (!beginPage(renderContext, pageHeader('My Settings',
@@ -15080,8 +15086,7 @@ async function renderSettings() {
   presentationFields.append(formField('Decode quality format', qualityMode,
     'Choose a compact percentage or the underlying frame and error counters.'),
   formField('Matching rows shown', rowLimit, 'Limit each matching Live detail list to 25–500 rows.'));
-  const groups = node('div', 'settings-card-grid');
-  groups.append(
+  const groups = settingsCardGrid(
     settingsCard('Page titles', 'Control the extra context shown in tabs for pages other than Scanner.',
       prependTitle.control),
     settingsCard('Live presentation', 'Choose which optional decoder details this account sees on Live pages.',

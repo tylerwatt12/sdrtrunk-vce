@@ -205,6 +205,18 @@ async function main() {
   assert.match(appCssSource, /button:not\([^\n]+:not\(\.auth-session-button\)/);
   assert.match(appCssSource, /\.settings-card-grid \{/);
   assert.match(appCssSource, /\.settings-form-footer \{/);
+  const settingsCardGrid = vm.runInNewContext(
+    `(function(...cards) ${functionBinding(appSource, 'settingsCardGrid')})`, {
+      node: (tag, className) => ({
+        tag, className, children: [], append(...items) { this.children.push(...items); }
+      })
+    });
+  const firstSettingsCard = { id: 'first' };
+  const secondSettingsCard = { id: 'second' };
+  const renderedSettingsGrid = settingsCardGrid(firstSettingsCard, secondSettingsCard);
+  assert.equal(renderedSettingsGrid.className, 'settings-card-grid');
+  assert.deepEqual(renderedSettingsGrid.children, [firstSettingsCard, secondSettingsCard],
+    'Settings cards must be appended as elements instead of converted to text');
   const playbackAccessSource = functionBinding(appSource, 'synchronizePlaybackAccess');
   assert.match(playbackAccessSource, /if \(!userPreferenceController\.snapshot\(\)\.loaded\) return/);
   const siteSettingsRequestSource = functionBinding(appSource, 'requestSiteSettings');
