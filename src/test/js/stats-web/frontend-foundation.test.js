@@ -191,12 +191,20 @@ async function main() {
   const settingsSource = functionBinding(appSource, 'renderSettings');
   assert.match(settingsSource, /const latest = userPreferenceController\.snapshot\(\)/);
   assert.match(settingsSource, /await updateUserPreferences\(\(preferences\) =>/);
-  assert.match(settingsSource,
-    /preferences\.playback\.selected_scan_list_ids\.filter\(\(id\) => !availableScanListIds\.has\(id\)\)/);
+  assert.match(settingsSource, /settingsCard\('Page titles'/);
+  assert.match(settingsSource, /settingsCard\('Live presentation'/);
+  assert.doesNotMatch(settingsSource,
+    /appearance\.theme|playback\.volume|selected_scan_list_ids|scanner\.detail_mode|preferences\.tuner|preferences\.tables/);
   assert.doesNotMatch(settingsSource, /userPreferenceController\.replace\(/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
+  assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
+  assert.match(appSource, /panel\.setAttribute\('popover', 'auto'\)/);
+  assert.match(appCssSource, /\.table-layout-menu \{[^}]*padding-top: 8px/s);
+  assert.match(appCssSource, /button:not\([^\n]+:not\(\.auth-session-button\)/);
+  assert.match(appCssSource, /\.settings-card-grid \{/);
+  assert.match(appCssSource, /\.settings-form-footer \{/);
   const playbackAccessSource = functionBinding(appSource, 'synchronizePlaybackAccess');
   assert.match(playbackAccessSource, /if \(!userPreferenceController\.snapshot\(\)\.loaded\) return/);
   const siteSettingsRequestSource = functionBinding(appSource, 'requestSiteSettings');
@@ -267,6 +275,9 @@ async function main() {
   });
   const tableCalls = functionCalls(appSource, 'table');
   assert.equal(tableCalls.length, 30, 'Every application table call must be audited');
+  assert.match(appSource,
+    /else if \(!options\.serverSort && options\.sortable !== false\)/,
+    'Server-paged tables must not offer current-page-only sorting for derived columns');
   tableCalls.forEach((call) => {
     assert.ok(call.arguments.length >= 4, `Table call at ${call.index} is missing its options argument`);
     const options = call.arguments[3];
@@ -299,14 +310,89 @@ async function main() {
     ids.forEach((id) => assert.match(id, stableId, `${name} has invalid column ID ${id}`));
     assert.equal(new Set(ids).size, ids.length, `${name} repeats a column ID`);
   });
+  const hex = (value, width) => Number.isInteger(value) ?
+    value.toString(16).toUpperCase().padStart(width, '0') : '';
+  const identifierNumber = (value) => value !== null && value !== undefined && value !== '' &&
+    Number.isFinite(Number(value)) && Number(value) >= 0 ? String(Math.trunc(Number(value))) : '';
+  const number = (value) => Number(value || 0).toLocaleString('en-US');
+  const siteDirectoryIdentity = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'siteDirectoryIdentity')})`, {
+      isP25: (row) => row.protocol === 'P25', identifierNumber, hex
+    });
+  const siteDirectoryDetails = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'siteDirectoryDetails')})`, {
+      siteDirectoryIdentity, number
+    });
   const siteDescriptors = vm.runInNewContext(`(${arrayBinding(appSource, 'siteColumns')})`, {
-    systemLink: () => '', systemLabel: () => '', siteNameSummary: () => '', siteLabel: () => '',
-    frequency: () => '', dateTime: () => '',
-    hex: (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : ''
+    siteNameSummary: () => '', siteLabel: () => '', siteDirectoryDetails,
+    frequency: () => '', dateTime: () => ''
   });
-  const siteIdColumn = siteDescriptors.find((column) => column.id === 'site');
-  assert.equal(siteIdColumn.render({ site_id: 1 }), '01');
-  assert.equal(siteIdColumn.render({ site: 1 }), '', 'Legacy site fields must not be inferred');
+  const siteDetailsColumn = siteDescriptors.find((column) => column.id === 'details');
+  assert.equal(siteDetailsColumn.render({ protocol: 'P25', rfss: 1, site_id: 1, nac: 0x293, bands: 2 }),
+    'RFSS 01 · Site 01 · NAC 293 · 2 band plans');
+  assert.equal(siteDetailsColumn.render({ protocol: 'DMR', site_id: 1, ran: 7 }), 'Site 1 · RAN 7');
+  assert.equal(siteDetailsColumn.render({ protocol: 'P25', site: 1 }), '',
+    'Legacy site fields must not be inferred');
+
+  const dashboardReceiverContext = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'dashboardReceiverContext')})`, {
+      dashboardChannelKind: (row) => String(row.channel_kind || '').toUpperCase(),
+      isP25: (row) => row.protocol === 'P25', systemLabel: (row) => row.system || '',
+      trunkedSystemLabel: (row) => row.system || '', identifierNumber, hex
+    });
+  assert.equal(dashboardReceiverContext({ protocol: 'P25', site_kind: 'trunked', system: 'BEE00-941',
+    rfss: 1, site_id: 2, nac: 0x293 }), 'BEE00-941 · RFSS 01 · Site 02 · NAC 293');
+  assert.equal(dashboardReceiverContext({ protocol: 'NXDN', site_kind: 'trunked', system: 'County',
+    site_id: 4, ran: 7 }), 'County · Site 4 · RAN 7');
+
+  const decoderLabel = vm.runInNewContext(
+    `(function(value, compact = false) ${functionBinding(appSource, 'decoderLabel')})`);
+  const conventionalMode = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'conventionalMode')})`, {
+      protocolFamily: (row) => row.protocol, decoderLabel
+    });
+  assert.equal(conventionalMode({ protocol: 'DMR', decoder: 'DMR' }), 'DMR');
+  assert.equal(conventionalMode({ protocol: 'P25', decoder: 'P25_PHASE1' }), 'P25 · P25 P1');
+
+  const timeslotLabel = vm.runInNewContext(
+    `(function(value) ${functionBinding(appSource, 'timeslotLabel')})`, { identifierNumber });
+  assert.equal(timeslotLabel(-1), '');
+  assert.equal(timeslotLabel(0), 'Slot 0');
+
+  const trunkedVariant = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'trunkedVariant')})`);
+  const identityDomainLabel = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'identityDomainLabel')})`);
+  const systemsDirectoryDetails = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'systemsDirectoryDetails')})`, {
+      siteDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
+      trunkedVariant, identityDomainLabel, identifierNumber
+    });
+  assert.equal(systemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
+    address_domain: 'nxdn_type_c', network_id: 1, system_id: 2 }),
+  'Type-C · Network 1 · System 2');
+
+  const receiverHealthSeverity = vm.runInNewContext(
+    `(function(value) ${functionBinding(appSource, 'receiverHealthSeverity')})`);
+  const receiverHealthCount = vm.runInNewContext(
+    `(function(value, fallback = 0) ${functionBinding(appSource, 'receiverHealthCount')})`);
+  const normalizeReceiverHealthSnapshot = vm.runInNewContext(
+    `(function(value) ${functionBinding(appSource, 'normalizeReceiverHealthSnapshot')})`,
+    { receiverHealthSeverity, receiverHealthCount });
+  const correctedHealth = normalizeReceiverHealthSnapshot({
+    summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
+    active: [{ severity: 'critical', code: 'receiver-iq-drop' }], resolved: [], measurements: []
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(correctedHealth.summary)), {
+    severity: 'critical', active_count: 1, warning_count: 0, critical_count: 1
+  }, 'An active critical incident must never normalize to Healthy');
+  const correctedWarningHealth = normalizeReceiverHealthSnapshot({
+    summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
+    active: [{ severity: 'warning', code: 'receiver-output-drop' }], resolved: [], measurements: []
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(correctedWarningHealth.summary)), {
+    severity: 'warning', active_count: 1, warning_count: 1, critical_count: 0
+  }, 'An active warning incident must never normalize to Healthy');
 
   const radioTableType = vm.runInNewContext(
     `(function(baseType, columns) ${functionBinding(appSource, 'radioTableType')})`, { tableLayouts });

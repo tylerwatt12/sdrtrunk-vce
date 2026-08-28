@@ -82,9 +82,17 @@ class StatsWebConventionalUiContractTest
         String source = source();
         String list = function(source, "async function renderConventional()");
         String columns = function(source, "function conventionalColumns()");
+        String mode = function(source, "function conventionalMode(row)");
+        String details = function(source, "function conventionalDetails(row)");
         String detail = function(source, "async function renderConventionalDetail()");
         String radios = function(source, "function conventionalRadioColumns()");
-        assertTrue(columns.contains("decoderDisplay(row.decoder)"));
+        assertTrue(columns.contains("label: 'Mode'"));
+        assertTrue(columns.contains("label: 'Details'"));
+        assertFalse(columns.contains("label: 'Slot'"));
+        assertFalse(columns.contains("label: 'NAC'"));
+        assertTrue(mode.contains("decoderLabel(row.decoder, true)"));
+        assertFalse(mode.contains("decoderDisplay"));
+        assertTrue(details.contains("`NAC ${hex(row.nac, 3)}`"));
         assertTrue(list.contains("createAsyncSection('Conventional Channels'"));
         assertTrue(list.contains("apiPage('/api/v1/conventional-channels', pageParameters())"));
         assertTrue(list.indexOf("beginPage(renderContext") < list.indexOf("await directory.load("));
@@ -94,6 +102,7 @@ class StatsWebConventionalUiContractTest
         assertTrue(detail.contains("label: 'Rec'"));
         assertTrue(detail.contains("label: 'Submitted'"));
         assertTrue(detail.contains("label: 'Enc'"));
+        assertTrue(detail.contains("timeslotLabel(row.timeslot)"));
         assertTrue(radios.indexOf("id: 'encrypted-logical-calls'") >
             radios.indexOf("id: 'logical-calls'"));
         assertTrue(radios.indexOf("id: 'encrypted-logical-calls'") <

@@ -43,6 +43,15 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(personal.contains("show_control_decode_quality"));
         assertTrue(personal.contains("show_voice_decode_quality"));
         assertTrue(personal.contains("live_detail_row_limit"));
+        assertTrue(personal.contains("prepend_playing_call"));
+        assertTrue(personal.contains("settingsCard('Page titles'"));
+        assertTrue(personal.contains("settingsCard('Live presentation'"));
+        assertFalse(personal.contains("appearance.theme"));
+        assertFalse(personal.contains("playback.volume"));
+        assertFalse(personal.contains("selected_scan_list_ids"));
+        assertFalse(personal.contains("scanner.detail_mode"));
+        assertFalse(personal.contains("preferences.tuner"));
+        assertFalse(personal.contains("preferences.tables"));
         assertFalse(personal.contains("retain_idle_call_details"));
         assertFalse(personal.contains("traffic_grant_age_out_milliseconds"));
 

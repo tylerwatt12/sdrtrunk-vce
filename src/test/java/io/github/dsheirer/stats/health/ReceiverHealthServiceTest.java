@@ -43,6 +43,37 @@ class ReceiverHealthServiceTest
     }
 
     @Test
+    void warningSignalPathIncidentsCannotProduceAHealthyOrEmptySummary()
+    {
+        Map<String,Object> summary = ReceiverHealthService.summarize(List.of(
+            incident("receiver-queue-pressure", "warning"),
+            incident("channelizer-queue-pressure", "warning"),
+            incident("usb-transfer-gap", "warning")));
+
+        assertEquals("warning", summary.get("severity"));
+        assertEquals(3, summary.get("active_count"));
+        assertEquals(3L, summary.get("warning_count"));
+        assertEquals(0L, summary.get("critical_count"));
+        assertFalse(summary.containsKey("diagnostic_count"));
+    }
+
+    @Test
+    void criticalSignalPathIncidentsCannotProduceAHealthyOrEmptySummary()
+    {
+        Map<String,Object> summary = ReceiverHealthService.summarize(List.of(
+            incident("receiver-iq-drop", "critical"),
+            incident("channelizer-drop", "critical"),
+            incident("channel-output-drop", "critical"),
+            incident("usb-sample-loss", "critical")));
+
+        assertEquals("critical", summary.get("severity"));
+        assertEquals(4, summary.get("active_count"));
+        assertEquals(0L, summary.get("warning_count"));
+        assertEquals(4L, summary.get("critical_count"));
+        assertFalse(summary.containsKey("diagnostic_count"));
+    }
+
+    @Test
     void publishesTheLocalIncidentSnapshotFromTheObserverSample() throws Exception
     {
         AtomicLong clock = new AtomicLong(1_000);
@@ -63,7 +94,7 @@ class ReceiverHealthServiceTest
     }
 
     @Test
-    void keepsObserverLossInformationalAndOutOfTheServiceImpactSummary()
+    void keepsObserverLossInformationalWithoutOpeningAnIncident()
     {
         AtomicLong clock = new AtomicLong(1_000);
         AtomicLong eventDrops = new AtomicLong(2);
@@ -225,7 +256,7 @@ class ReceiverHealthServiceTest
             Map<String,Object> summary = map(service.snapshot().get("summary"));
             assertEquals("healthy", summary.get("severity"));
             assertEquals(0, summary.get("active_count"));
-            assertEquals(0, summary.get("diagnostic_count"));
+            assertFalse(summary.containsKey("diagnostic_count"));
             assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", "site-table").get("detail"))
                 .contains("dropped_bits=48"));
         }
@@ -288,6 +319,11 @@ class ReceiverHealthServiceTest
             .flatMap(section -> rows(section.get("rows")).stream())
             .filter(row -> scope.equals(row.get("scope")))
             .findFirst().orElseThrow();
+    }
+
+    private static Map<String,Object> incident(String code, String severity)
+    {
+        return Map.of("code", code, "severity", severity);
     }
 
     @SuppressWarnings("unchecked")

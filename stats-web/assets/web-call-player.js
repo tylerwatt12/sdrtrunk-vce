@@ -1,5 +1,6 @@
 export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
+  static IDLE_CALL_DISPLAY_MS = 5000;
   static MAXIMUM_SCAN_LISTS = 128;
   static MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4;
   static MAXIMUM_RECENT_CALLS = 256;
@@ -18,6 +19,9 @@ export class WebCallPlayer {
     this.holdTarget = null;
     this.current = null;
     this.currentBuffer = null;
+    this.idleDisplayCall = null;
+    this.idleDisplayTimer = null;
+    this.idleDisplayDeadline = 0;
     this.source = null;
     this.analyserNode = null;
     this.waveformSamples = null;
@@ -34,6 +38,9 @@ export class WebCallPlayer {
     this.loadController = null;
     this.paused = true;
     this.volume = 1;
+    this.statusValue = this.ui.status?.textContent || '';
+    this.missedCallCount = 0;
+    this.possibleCallGap = false;
     this.preferenceWriter = null;
     this.maximumQueued = 100;
     this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SCAN_LISTS;
@@ -115,6 +122,7 @@ export class WebCallPlayer {
     this.pruneRecentCalls();
     return {
       current: this.current,
+      displayCall: this.displayCall(),
       currentReady: Boolean(this.current && this.currentBuffer),
       recentReplay: Boolean(this.recentReplay),
       paused: this.paused,
@@ -158,13 +166,30 @@ export class WebCallPlayer {
     if (typeof this.connectionFactory !== 'function' || !this.scanListCatalogReady ||
         !this.activeSelectedScanListIds().length) return null;
     const events = this.connectionFactory(this.connectionTopic, this.subscriptionParameters());
+    let reconnecting = false;
     this.events = events;
     events.addEventListener('call', (event) => this.enqueue(this.eventPayload(event)));
-    events.addEventListener('snapshot', (event) => this.consumeSnapshot(this.eventPayload(event)));
-    events.onopen = () => this.setStatus(this.paused ? (this.currentBuffer ? 'Paused' : 'Ready') :
-      (this.source ? 'Listening' : this.current ? 'Buffering' : 'Waiting'));
+    events.addEventListener('ready', (event) => {
+      this.applyLimits(this.eventPayload(event));
+      this.render();
+    });
+    events.addEventListener('live_gap', (event) => {
+      const dropped = Math.max(1, Math.trunc(Number(this.eventPayload(event)?.dropped) || 1));
+      this.recordMissedCalls(dropped);
+    });
+    events.onopen = () => {
+      if (reconnecting) this.possibleCallGap = true;
+      reconnecting = false;
+      this.setStatus(this.paused ? (this.currentBuffer ? 'Paused' : 'Ready') :
+        (this.source ? 'Listening' : this.current ? 'Buffering' : 'Waiting'));
+      this.notifyStateObservers();
+    };
     events.onerror = () => {
-      if (this.events === events) this.setStatus('Reconnecting');
+      if (this.events === events) {
+        reconnecting = true;
+        this.setStatus('Reconnecting');
+        this.notifyStateObservers();
+      }
     };
     return events;
   }
@@ -206,6 +231,8 @@ export class WebCallPlayer {
     this.recentCalls = [];
     this.recentReplay = null;
     this.holdTarget = null;
+    this.clearLossNotice();
+    this.clearIdleDisplay();
     this.stopCurrent();
     if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
     this.setStatus(status);
@@ -226,6 +253,7 @@ export class WebCallPlayer {
     this.scanLists = [];
     this.scanListById.clear();
     this.closeEvents();
+    this.clearLossNotice();
     if (this.ui.scanListStatus) this.ui.scanListStatus.textContent = message;
     this.setStatus(message);
     this.renderScanLists();
@@ -292,6 +320,7 @@ export class WebCallPlayer {
     else updated.delete(item.id);
     if ([...updated].sort().join('|') === [...this.selectedScanListIds].sort().join('|')) return;
     this.selectedScanListIds = updated;
+    this.clearLossNotice();
     this.writePreferences();
     this.updateScanListStatus();
     this.filterQueueForSelectedLists();
@@ -382,11 +411,6 @@ export class WebCallPlayer {
     this.insertQueuedCall(normalized);
     if (!this.paused && !this.current) this.playNext();
     else this.render();
-  }
-
-  consumeSnapshot(snapshot) {
-    this.applyLimits(snapshot);
-    (Array.isArray(snapshot?.calls) ? snapshot.calls : []).forEach((call) => this.enqueue(call));
   }
 
   normalizeCall(value) {
@@ -693,6 +717,7 @@ export class WebCallPlayer {
     this.loadController?.abort();
     this.loadController = null;
     this.stopSource();
+    this.clearIdleDisplay();
     this.recentReplay = {
       current: this.current,
       currentBuffer: this.currentBuffer,
@@ -747,7 +772,7 @@ export class WebCallPlayer {
     this.render();
   }
 
-  async playNext() {
+  async playNext(completedCall = null) {
     if (this.paused || this.current) return;
 
     let next = this.takeNextCall();
@@ -755,11 +780,13 @@ export class WebCallPlayer {
       next = this.takeNextCall();
     }
     if (!next) {
+      if (completedCall) this.showIdleDisplay(completedCall);
       this.setStatus('Waiting');
       this.render();
       return;
     }
 
+    this.clearIdleDisplay();
     this.current = next;
     this.currentBuffer = null;
     this.playbackOffset = 0;
@@ -856,8 +883,7 @@ export class WebCallPlayer {
       this.current = null;
       this.currentBuffer = null;
       this.playbackOffset = 0;
-      this.render();
-      this.playNext();
+      this.playNext(completed);
     };
     this.source = source;
     this.playbackStartedAt = this.audioContext.currentTime - offset;
@@ -886,7 +912,40 @@ export class WebCallPlayer {
     this.current = null;
     this.currentBuffer = null;
     this.playbackOffset = 0;
+    this.clearIdleDisplay();
     this.render();
+  }
+
+  clearIdleDisplay() {
+    if (this.idleDisplayTimer !== null) {
+      window.clearTimeout(this.idleDisplayTimer);
+      this.idleDisplayTimer = null;
+    }
+    this.idleDisplayCall = null;
+    this.idleDisplayDeadline = 0;
+  }
+
+  showIdleDisplay(call) {
+    this.clearIdleDisplay();
+    if (!call) return;
+    this.idleDisplayCall = call;
+    this.idleDisplayDeadline = Date.now() + WebCallPlayer.IDLE_CALL_DISPLAY_MS;
+    const expire = () => {
+      if (this.idleDisplayCall !== call) return;
+      const remaining = this.idleDisplayDeadline - Date.now();
+      if (remaining > 0) {
+        this.idleDisplayTimer = window.setTimeout(expire, remaining);
+        return;
+      }
+      this.clearIdleDisplay();
+      this.render();
+    };
+    this.idleDisplayTimer = window.setTimeout(expire, WebCallPlayer.IDLE_CALL_DISPLAY_MS);
+  }
+
+  displayCall() {
+    if (this.current) return this.current;
+    return this.idleDisplayCall && Date.now() < this.idleDisplayDeadline ? this.idleDisplayCall : null;
   }
 
   getPlaybackPosition() {
@@ -1058,20 +1117,45 @@ export class WebCallPlayer {
   }
 
   setStatus(value) {
-    this.ui.status.textContent = value;
+    this.statusValue = String(value || '');
+    this.renderStatus();
+  }
+
+  renderStatus() {
+    if (!this.ui.status) return;
+    const notices = [];
+    if (this.missedCallCount > 0) {
+      notices.push(`${this.missedCallCount} call${this.missedCallCount === 1 ? '' : 's'} skipped`);
+    }
+    if (this.possibleCallGap) notices.push('additional calls may have been skipped during reconnect');
+    this.ui.status.textContent = [this.statusValue, ...notices].filter(Boolean).join(' · ');
+  }
+
+  recordMissedCalls(count) {
+    const dropped = Math.max(1, Math.trunc(Number(count) || 1));
+    this.missedCallCount += dropped;
+    this.renderStatus();
+    this.notifyStateObservers();
+  }
+
+  clearLossNotice() {
+    this.missedCallCount = 0;
+    this.possibleCallGap = false;
+    this.renderStatus();
   }
 
   render() {
     this.renderVolume();
     const currentReady = Boolean(this.current && this.currentBuffer);
+    const displayedCall = this.displayCall();
     this.ui.current.replaceChildren();
-    if (this.current) {
-      const label = this.callLabel(this.current);
+    if (displayedCall) {
+      const label = this.callLabel(displayedCall);
       const primary = document.createElement('strong');
       primary.className = 'playback-current-primary';
       primary.textContent = label;
       this.ui.current.append(primary);
-      const details = this.callDetails(this.current);
+      const details = this.callDetails(displayedCall);
       if (details) {
         const secondary = document.createElement('span');
         secondary.className = 'playback-current-secondary';

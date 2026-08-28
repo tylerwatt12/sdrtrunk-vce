@@ -616,7 +616,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
         assertTrue(css.contains("color-scheme: light"));
         assertTrue(css.contains("--chart-call:"));
-        assertTrue(css.contains(":not(.auth-action):not(.table-sort-control):not(.systems-live-tab)"));
+        assertTrue(css.contains(
+            ":not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.systems-live-tab)"));
         assertFalse(css.contains("filter: invert("));
     }
 
@@ -668,18 +669,20 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void consumesCallSnapshotsIdempotentlyAndRetainsActivityAcrossPollingFailures() throws Exception
+    void startsCallPlaybackAtTheLiveEdgeAndRetainsActivityAcrossPollingFailures() throws Exception
     {
         String player = readText(WEB_CALL_PLAYER);
         String ensureConnected = function(player, "  ensureConnected()");
         String enqueue = function(player, "  enqueue(call)");
-        String snapshot = function(player, "  consumeSnapshot(snapshot)");
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
 
-        assertTrue(ensureConnected.contains("addEventListener('snapshot'"));
+        assertFalse(ensureConnected.contains("addEventListener('snapshot'"));
+        assertTrue(ensureConnected.contains("addEventListener('ready'"));
+        assertTrue(ensureConnected.contains("addEventListener('live_gap'"));
+        assertTrue(ensureConnected.contains("this.possibleCallGap = true"));
         assertTrue(enqueue.contains("this.seenCallIds.has(normalized._callId)"));
         assertTrue(enqueue.contains("this.rememberCallId(normalized._callId)"));
-        assertTrue(snapshot.contains("snapshot?.calls"));
+        assertFalse(player.contains("consumeSnapshot("));
         assertTrue(activity.contains("api('/api/v1/activity'"));
         assertTrue(activity.contains("tableController.replaceRows"));
         assertTrue(activity.contains("refreshFailed = true"));

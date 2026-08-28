@@ -54,6 +54,11 @@ class StatsWebSystemsDirectoryUiContractTest
         assertTrue(systems.contains("systemsDirectory.load(apiPage, pageParameters())"));
         assertTrue(systems.indexOf("beginPage(renderContext") < systems.indexOf("await directory.load("));
         assertTrue(presenter.contains("pager(page, 'bottom', 'Systems')"));
+        assertTrue(presenter.contains("label: 'Details'"));
+        assertTrue(presenter.contains("label: 'Inventory'"));
+        assertFalse(presenter.contains("label: 'WACN / Net'"));
+        assertFalse(presenter.contains("label: 'RFSS / RAN'"));
+        assertFalse(presenter.contains("label: 'Patches'"));
         assertFalse(systems.contains("Promise.all"));
         assertFalse(systems.contains("systemApiPath(system.scope_token, 'sites')"));
     }

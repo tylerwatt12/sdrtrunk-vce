@@ -245,6 +245,7 @@ let applicationRoutes = null;
 let userPreferenceError = null;
 const tableLayoutResetPending = new Set();
 const tableSchemaRegistry = new Map();
+let tableLayoutPanelSequence = 0;
 const pageTitleController = new PageTitleController(document);
 const userPreferenceController = new UserPreferenceController({
   defaults: preferenceSchema.defaults,
@@ -1243,6 +1244,11 @@ function identifierNumber(value) {
     '' : String(Math.trunc(numeric));
 }
 
+function timeslotLabel(value) {
+  const timeslot = identifierNumber(value);
+  return timeslot ? `Slot ${timeslot}` : '';
+}
+
 function identityNumber(row, value) {
   const numeric = Number(value);
   if (protocolFamily(row) === 'NXDN' && row?.address_domain === 'nxdn_type_d' &&
@@ -2054,7 +2060,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       const direction = currentSort === column.sort && currentDirection === 'desc' ? 'asc' : 'desc';
       header.append(anchor(column.label, currentHref({ sort: column.sort, direction, offset: null }),
         'table-sort-control'));
-    } else if (options.sortable !== false) {
+    } else if (!options.serverSort && options.sortable !== false) {
       const control = node('button', 'table-sort-control', column.label);
       control.type = 'button';
       control.addEventListener('click', () => {
@@ -2102,9 +2108,17 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       { ...options, layout: tableLayouts.persisted(layout), controller: tableController, wrapper });
   };
   if (userPreferenceController.snapshot().loaded) {
-    const chooser = node('details', 'table-layout-menu');
-    const summary = node('summary', 'button secondary', 'Columns');
+    const chooser = node('div', 'table-layout-menu');
+    const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
+    const trigger = node('button', 'button secondary', 'Columns');
+    trigger.type = 'button';
+    trigger.setAttribute('popovertarget', panelId);
+    trigger.setAttribute('aria-haspopup', 'dialog');
     const panel = node('div', 'table-layout-panel');
+    panel.id = panelId;
+    panel.setAttribute('popover', 'auto');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Table columns');
     const byId = new Map(declaredColumns.map((column) => [column.id, column]));
     layout.column_order.forEach((id) => {
       const item = node('div', 'table-layout-column');
@@ -2150,7 +2164,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         { ...options, layout: null, controller: tableController, wrapper });
     });
     panel.append(reset);
-    chooser.append(summary, panel);
+    chooser.append(trigger, panel);
     wrapper.append(chooser);
   }
   wrapper.append(element);
@@ -5438,7 +5452,7 @@ function updateSignalCurrentTile(tile, site) {
   const labels = node('div', 'signal-current-labels');
   labels.append(siteNameSummary(site));
   const system = node('div', 'signal-current-system');
-  system.append(dashboardReceiverSystemDetails(site));
+  system.append(dashboardReceiverContext(site));
   labels.append(system);
   header.append(labels, badge(state.label, `signal-state ${state.className}`));
   const power = node('div', 'signal-current-power');
@@ -5925,13 +5939,11 @@ function normalizeReceiverHealthSnapshot(value) {
     })) : [];
   const reported = value.summary && typeof value.summary === 'object' && !Array.isArray(value.summary) ?
     value.summary : {};
-  const activeCount = receiverHealthCount(reported.active_count, active.length);
-  const warningCount = receiverHealthCount(reported.warning_count,
+  const activeCount = Math.max(receiverHealthCount(reported.active_count), active.length);
+  const warningCount = Math.max(receiverHealthCount(reported.warning_count),
     active.filter((incident) => receiverHealthSeverity(incident.severity) === 'warning').length);
-  const criticalCount = receiverHealthCount(reported.critical_count,
+  const criticalCount = Math.max(receiverHealthCount(reported.critical_count),
     active.filter((incident) => receiverHealthSeverity(incident.severity) === 'critical').length);
-  const diagnosticCount = receiverHealthCount(reported.diagnostic_count,
-    Math.max(0, active.length - activeCount));
   let severity = receiverHealthSeverity(reported.severity);
   if (criticalCount > 0) severity = 'critical';
   else if (warningCount > 0 || activeCount > 0) severity = 'warning';
@@ -5939,7 +5951,7 @@ function normalizeReceiverHealthSnapshot(value) {
     started_at_ms: Number(value.started_at_ms) || 0,
     generated_at_ms: Number(value.generated_at_ms) || 0,
     summary: { severity, active_count: activeCount, warning_count: warningCount,
-      critical_count: criticalCount, diagnostic_count: diagnosticCount },
+      critical_count: criticalCount },
     active,
     resolved,
     measurements
@@ -6059,11 +6071,7 @@ class ReceiverHealthController {
     } else if (summary) {
       className = 'healthy';
       label = 'Healthy';
-      detail = 'No active service-impact alerts.';
-      if (summary.diagnostic_count > 0) {
-        detail += ` ${number(summary.diagnostic_count)} troubleshooting condition` +
-          `${summary.diagnostic_count === 1 ? '' : 's'} recorded.`;
-      }
+      detail = 'No active receiver health incidents.';
     }
     if (this.snapshot?.generated_at_ms) {
       detail += ` Last update: ${exactDateTime(this.snapshot.generated_at_ms)}.`;
@@ -7249,7 +7257,7 @@ function scannerCallRenderKey(call, state, site) {
 }
 
 function renderScannerCall(host, state, site) {
-  const call = state.current;
+  const call = state.displayCall || state.current;
   const renderKey = scannerCallRenderKey(call, state, site);
   host.dataset.scannerMode = scannerDetailMode;
   if (host.dataset.renderKey === renderKey && host.childNodes.length) {
@@ -7575,7 +7583,8 @@ function renderScanner() {
   let currentSiteGuid = '';
   let currentSite = null;
   const updateAge = () => {
-    age.textContent = latestState.current ? scannerRelativeAge(latestState.current.completed_at_ms) :
+    const displayedCall = latestState.displayCall || latestState.current;
+    age.textContent = displayedCall ? scannerRelativeAge(displayedCall.completed_at_ms) :
       'Waiting for a call';
   };
   const draw = (state) => {
@@ -7616,7 +7625,7 @@ function renderScanner() {
       scanButtons.append(button);
     });
 
-    const nextGuid = String(state.current?.site_guid || '');
+    const nextGuid = String((state.displayCall || state.current)?.site_guid || '');
     if (nextGuid !== currentSiteGuid) {
       currentSiteGuid = nextGuid;
       currentSite = null;
@@ -7810,65 +7819,61 @@ function trunkedNeighborStatus(value) {
   return badgeGroup(values);
 }
 
+function siteDirectoryIdentity(row) {
+  if (!isP25(row)) {
+    return [
+      row.site_id == null ? '' : `Site ${identifierNumber(row.site_id)}`,
+      row.ran == null ? '' : `RAN ${identifierNumber(row.ran)}`
+    ].filter(Boolean).join(' · ');
+  }
+  return [
+    row.rfss == null ? '' : `RFSS ${hex(row.rfss, 2)}`,
+    row.site_id == null ? '' : `Site ${hex(row.site_id, 2)}`,
+    row.nac == null ? '' : `NAC ${hex(row.nac, 3)}`
+  ].filter(Boolean).join(' · ');
+}
+
+function siteDirectoryDetails(row) {
+  const bands = Number(row.bands);
+  return [
+    siteDirectoryIdentity(row),
+    Number.isFinite(bands) && bands > 0 ? `${number(bands)} band plan${bands === 1 ? '' : 's'}` : ''
+  ].filter(Boolean).join(' · ');
+}
+
 const siteColumns = [
-  { id: 'system', label: 'Sys', fullLabel: 'System', render: systemLink, sort: 'system', sortValue: systemLabel },
-  { id: 'rfss', label: 'RFSS', key: 'rfss', render: (row) => hex(row.rfss, 2), className: 'numeric', sort: 'rfss' },
-  { id: 'site', label: 'Site', key: 'site_id', render: (row) => hex(row.site_id, 2),
-    className: 'numeric', sort: 'site' },
-  { id: 'name', label: 'Name / Site', render: siteNameSummary, className: 'alias-cell', sort: 'name', sortValue: siteLabel },
+  { id: 'name', label: 'Name / Site', render: siteNameSummary, className: 'alias-cell', sort: 'name',
+    sortValue: siteLabel },
+  { id: 'details', label: 'Details', render: siteDirectoryDetails, sortValue: siteDirectoryDetails },
   { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.current_control_hz), className: 'numeric', sort: 'control', sortValue: (row) => Number(row.current_control_hz || 0) },
   { id: 'channels', label: 'Ch', fullLabel: 'Channels', key: 'channels', className: 'numeric', sort: 'channels' },
   { id: 'neighbors', label: 'Nbrs', fullLabel: 'Neighbors', key: 'neighbors', className: 'numeric', sort: 'neighbors' },
-  { id: 'bands', label: 'Bands', key: 'bands', className: 'numeric', sort: 'bands' },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
-const scopedSiteColumns = siteColumns.filter((column) => column.id !== 'system');
 
-function dashboardReceiverSystem(row) {
-  if (dashboardChannelKind(row) === 'CONVENTIONAL') return '';
-  return isP25(row) ? systemLabel(row) : trunkedSystemLabel(row);
-}
-
-function dashboardReceiverRfss(row) {
-  return isP25(row) ? hex(row.rfss, 2) : '';
-}
-
-function dashboardReceiverSiteId(row) {
-  return isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id);
-}
-
-function dashboardReceiverNac(row) {
-  return isP25(row) ? hex(row.nac, 3) : '';
-}
-
-function dashboardReceiverIdentifiers(row) {
+function dashboardReceiverContext(row) {
   const values = [];
-  const rfss = dashboardReceiverRfss(row);
-  const site = dashboardReceiverSiteId(row);
-  const nac = dashboardReceiverNac(row);
-  if (rfss) values.push(`RFSS ${rfss}`);
-  if (site) values.push(`Site ID ${site}`);
-  if (nac) values.push(`NAC ${nac}`);
+  const trunked = dashboardChannelKind(row) === 'TRUNKED' ||
+    String(row.site_kind || '').trim().toUpperCase() === 'TRUNKED';
+  if (trunked) {
+    values.push(isP25(row) ? systemLabel(row) : trunkedSystemLabel(row));
+    if (isP25(row) && row.rfss != null) values.push(`RFSS ${hex(row.rfss, 2)}`);
+    if (row.site_id != null) {
+      values.push(`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`);
+    }
+    if (!isP25(row) && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
+  }
+  if (isP25(row) && row.nac != null) values.push(`NAC ${hex(row.nac, 3)}`);
   return values.join(' · ');
-}
-
-function dashboardReceiverSystemDetails(row) {
-  return [dashboardReceiverSystem(row), dashboardReceiverIdentifiers(row)].filter(Boolean).join(' · ');
 }
 
 const dashboardHealthColumns = [
   { id: 'name', label: 'Site / Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
-  { id: 'system', label: 'System', render: dashboardReceiverSystem,
-    sortValue: dashboardReceiverSystem },
   { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
     render: dashboardMode, sortValue: dashboardModeLabel },
-  { id: 'rfss', label: 'RFSS', render: dashboardReceiverRfss, className: 'numeric',
-    sortValue: (row) => Number(row.rfss ?? -1) },
-  { id: 'site-id', label: 'Site ID', render: dashboardReceiverSiteId, className: 'numeric',
-    sortValue: (row) => Number(row.site_id ?? -1) },
-  { id: 'nac', label: 'NAC', render: dashboardReceiverNac, className: 'numeric',
-    sortValue: (row) => Number(row.nac ?? -1) },
+  { id: 'context', label: 'Context', render: dashboardReceiverContext,
+    sortValue: dashboardReceiverContext },
   { id: 'frequency', label: 'MHz', fullLabel: 'Current or Primary Frequency MHz',
     render: (row) => frequency(row.current_control_hz || row.primary_frequency_hz),
     className: 'numeric', sortValue: (row) =>
@@ -8971,9 +8976,10 @@ function liveMessagesPane() {
       if (text) value.title = exactDateTime(message.timestamp_ms);
       return value;
     } },
-    { id: 'protocol', label: 'Protocol', key: 'protocol' },
-    { id: 'timeslot', label: 'Timeslot', render: (message) =>
-      message.timeslot == null ? '' : String(message.timeslot) },
+    { id: 'context', label: 'Context', render: (message) => [
+      message.protocol,
+      timeslotLabel(message.timeslot)
+    ].filter(Boolean).join(' · ') },
     { id: 'message', label: 'Message', className: 'live-message-text', render: (message) => {
       const value = node('span', '', message.text || '');
       value.title = message.text || '';
@@ -12186,8 +12192,9 @@ function liveSystemsSection(onSelectionChange) {
       sortValue: (row) => row.status || '' },
     { id: 'tags', label: 'Tags', width: 180, render: channelTagText, title: channelTagTitle,
       sortValue: channelTagText },
-    { id: 'channel-lcn', label: 'Channel / LCN', width: 130, render: (row) =>
-      channelTagSet(row.tags).has('CONVENTIONAL') ? liveConventionalChannelValue(row) : row.lcn,
+    { id: 'channel', label: 'Channel', width: 130, render: (row) =>
+      channelTagSet(row.tags).has('CONVENTIONAL') ? liveConventionalChannelValue(row) :
+        (row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`),
       title: (row) => channelTagSet(row.tags).has('CONVENTIONAL') ? row.channel_name || '' : '',
       className: channelStateClass, sortValue: (row) =>
         channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || '') },
@@ -12428,6 +12435,34 @@ async function renderTunerSpectrum() {
     'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
 }
 
+function systemsDirectoryDetails(row) {
+  if (row.directory_type === 'site') return siteDirectoryDetails(row);
+  if (isP25(row)) {
+    return [
+      row.wacn == null ? '' : `WACN ${hex(row.wacn, 5)}`,
+      row.system_id == null ? '' : `System ${hex(row.system_id, 3)}`
+    ].filter(Boolean).join(' · ');
+  }
+  const variant = trunkedVariant(row);
+  const domain = identityDomainLabel(row);
+  const variantKey = variant.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const domainKey = domain.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return [
+    variant, domain && domainKey !== variantKey ? domain : '',
+    row.network_id == null ? '' : `Network ${identifierNumber(row.network_id)}`,
+    row.system_id == null ? '' : `System ${identifierNumber(row.system_id)}`
+  ].filter(Boolean).join(' · ');
+}
+
+function systemsDirectoryInventory(row) {
+  if (row.directory_type === 'site') {
+    return `${number(row.channels)} ${Number(row.channels) === 1 ? 'channel' : 'channels'}`;
+  }
+  const values = [`${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}`];
+  if (isP25(row) && Number(row.patch_groups) > 0) values.push(`${number(row.patch_groups)} patches`);
+  return values.join(' · ');
+}
+
 function systemsDirectoryContent(data) {
   const { page, tableRows: rows, truncatedParentCount, previewLimit } = data;
   const columns = [
@@ -12446,30 +12481,12 @@ function systemsDirectoryContent(data) {
       return wrapper;
     } },
     { id: 'protocol', label: 'Protocol', render: (row) => protocolFamily(row) },
-    { id: 'variant-model', label: 'Variant / Model', render: (row) => {
-      if (row.directory_type !== 'system' || isP25(row)) return '';
-      return [...new Set([trunkedVariant(row), identityDomainLabel(row)].filter(Boolean))].join(' · ');
-    } },
-    { id: 'wacn', label: 'WACN / Net', fullLabel: 'WACN or Network', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ?
-        (isP25(row) ? hex(row.wacn, 5) : identifierNumber(row.network_id)) : '' },
-    { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) => {
-      if (row.directory_type !== 'system') return '';
-      return isP25(row) ? hex(row.system_id, 3) : identifierNumber(row.system_id);
-    } },
-    { id: 'rfss', label: 'RFSS / RAN', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? (isP25(row) ? hex(row.rfss, 2) : identifierNumber(row.ran)) : '' },
-    { id: 'site', label: 'Site', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? (isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)) : '' },
+    { id: 'details', label: 'Details', render: systemsDirectoryDetails },
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
       render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
-    { id: 'count', label: 'Sites / Ch', fullLabel: 'Sites or Channels', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? `${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}` :
-        `${number(row.channels)} ch` },
+    { id: 'inventory', label: 'Inventory', render: systemsDirectoryInventory },
     { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric',
       render: (row) => row.directory_type === 'system' ? number(row.talkgroups) : '' },
-    { id: 'patch-groups', label: 'Patches', fullLabel: 'Patch Groups', className: 'numeric',
-      render: (row) => row.directory_type === 'system' ? number(row.patch_groups) : '' },
     { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
       row.directory_type === 'system' ? number(row.radios) : '' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
@@ -12589,7 +12606,7 @@ async function renderSystem() {
 
     const sitesPage = await apiPage(systemApiPath(systemScope.scope, 'sites'), pageParameters());
     const sitesColumn = node('div', 'entity-info-column system-sites-column');
-    sitesColumn.append(pagedSection('Sites', sitesPage, scopedSiteColumns,
+    sitesColumn.append(pagedSection('Sites', sitesPage, siteColumns,
       'Search site, name, or GUID', 'sites'));
     const layout = node('div', 'entity-info-layout system-info-layout');
     layout.append(infoColumn, sitesColumn);
@@ -13279,6 +13296,14 @@ function activityTargetAlias(row) {
   return alias;
 }
 
+function activityChannel(row) {
+  return [
+    Number(row.frequency_hz) ? `${frequency(row.frequency_hz)} MHz` : '',
+    row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`,
+    timeslotLabel(row.timeslot)
+  ].filter(Boolean).join(' · ');
+}
+
 function activityColumns() {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
@@ -13294,9 +13319,8 @@ function activityColumns() {
       className: 'numeric identifier-cell', sortValue: (row) => Number(row.target_id || 0) },
     { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: activityTargetAlias,
       className: 'alias-cell', sortValue: (row) => row.target_alias_name || '' },
-    { id: 'frequency', label: 'MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'lcn', label: 'LCN', key: 'lcn' },
-    { id: 'slot', label: 'Slot', render: (row) => identifierNumber(row.timeslot), className: 'numeric' },
+    { id: 'channel', label: 'Channel', render: activityChannel, sortValue: (row) =>
+      Number(row.frequency_hz || 0) },
     { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: encryptionActivityValue,
       className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') }
   ];
@@ -13454,6 +13478,17 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   }
 }
 
+function conventionalMode(row) {
+  const family = protocolFamily(row);
+  const decoder = decoderLabel(row.decoder, true);
+  return family && decoder && family.toUpperCase() === decoder.toUpperCase() ? family :
+    [family, decoder].filter(Boolean).join(' · ');
+}
+
+function conventionalDetails(row) {
+  return isP25(row) && row.nac != null ? `NAC ${hex(row.nac, 3)}` : '';
+}
+
 function conventionalColumns() {
   return [
     { id: 'name', label: 'Name', render: (row) => {
@@ -13461,13 +13496,9 @@ function conventionalColumns() {
       const target = entityRefHref(row.entity_ref);
       return target ? anchor(label, target) : label;
     }, className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.configured_name || '' },
-    { id: 'protocol', label: 'Protocol', render: protocolFamily, sort: 'protocol', sortValue: protocolFamily },
-    { id: 'decoder', label: 'Decoder', render: (row) => decoderDisplay(row.decoder), sort: 'decoder',
-      sortValue: (row) => decoderLabel(row.decoder, true) },
+    { id: 'mode', label: 'Mode', render: conventionalMode, sort: 'decoder', sortValue: conventionalMode },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'slot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
-      render: (row) => identifierNumber(row.timeslot) },
-    { id: 'nac', label: 'NAC', render: (row) => hex(row.nac, 3), sort: 'nac', sortValue: (row) => Number(row.nac || 0) },
+    { id: 'details', label: 'Details', render: conventionalDetails, sortValue: conventionalDetails },
     { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
@@ -13642,9 +13673,10 @@ async function renderConventionalDetail() {
       ['Last Seen', dateTime(channel.last_seen_ms)]
     ])));
     content.append(section('Frequency Summaries', table(data.summaries || [], [
-      { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
-      { id: 'slot', label: 'Slot', key: 'timeslot', className: 'numeric',
-        render: (row) => identifierNumber(row.timeslot) },
+      { id: 'channel', label: 'Channel', render: (row) => [
+        Number(row.frequency_hz) ? `${frequency(row.frequency_hz)} MHz` : '',
+        timeslotLabel(row.timeslot)
+      ].filter(Boolean).join(' · '), sortValue: (row) => Number(row.frequency_hz || 0) },
       { id: 'logical-calls', label: 'Logical Calls',
         render: (row) => number(row.logical_call_count), className: 'numeric',
         sortValue: (row) => Number(row.logical_call_count || 0) },
@@ -14258,7 +14290,8 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 
 async function renderAdminRadioReferenceSettings() {
   const body = node('div', 'admin-section-body radioreference-settings');
-  const accountForm = node('form', 'admin-form admin-settings-form radioreference-account-form');
+  const accountForm = node('form',
+    'admin-form admin-settings-form settings-card settings-card-form radioreference-account-form');
   const userName = node('input');
   userName.name = 'radioreference-username';
   userName.autocomplete = 'username';
@@ -14285,11 +14318,13 @@ async function renderAdminRadioReferenceSettings() {
   const accountActions = node('div', 'admin-form-actions');
   accountActions.append(signOut, connect);
   accountForm.append(node('h3', 'admin-settings-form-title', 'Account'),
+    node('p', 'settings-card-description', 'Connect the receiver with a current RadioReference Premium account.'),
     formField('Username', userName), formField('Password', password,
     'A current Premium subscription is required. The password is never returned to the browser.'),
     rememberLabel, accountMessage, accountActions);
 
-  const regionForm = node('form', 'admin-form admin-settings-form radioreference-region-form');
+  const regionForm = node('form',
+    'admin-form admin-settings-form settings-card settings-card-form radioreference-region-form');
   const country = node('select');
   const state = node('select');
   country.disabled = true;
@@ -14305,9 +14340,10 @@ async function renderAdminRadioReferenceSettings() {
   const regionActions = node('div', 'admin-form-actions');
   regionActions.append(saveRegion);
   regionForm.append(node('h3', 'admin-settings-form-title', 'Lookup region'),
+    node('p', 'settings-card-description', 'Choose the region used for exact-frequency spectrum lookups.'),
     formField('Country', country), formField('State or region', state), regionMessage, regionActions);
 
-  const settingsForms = node('div', 'admin-settings-form-stack');
+  const settingsForms = node('div', 'settings-card-grid admin-settings-form-stack');
   settingsForms.append(accountForm, regionForm);
   body.append(node('p', 'admin-section-intro',
     'Connect the receiver to RadioReference’s database API, then choose the state searched when a frequency is ' +
@@ -14491,7 +14527,7 @@ async function requestSiteSettings(method = 'GET', settings = null, revision = n
 
 async function renderAdminSiteBehaviorSettings() {
   const body = node('div', 'admin-section-body site-settings');
-  const form = node('form', 'admin-form site-settings-form');
+  const form = node('form', 'admin-form settings-page-form site-settings-form');
   const retainIdle = preferenceCheckbox('retain-idle-details', 'Retain the last call on idle rows', false,
     'This changes the shared Live state delivered to every listener.');
   const clearVoice = preferenceCheckbox('clear-voice-quality', 'Clear voice quality when a call ends', false,
@@ -14509,14 +14545,14 @@ async function renderAdminSiteBehaviorSettings() {
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  const group = node('fieldset', 'admin-settings-group');
-  group.append(node('legend', '', 'Shared Live behavior'),
-    node('p', 'admin-settings-group-intro',
-      'These controls affect everyone using this receiver. Personal display choices are under My Settings.'),
+  const group = settingsCard('Shared Live behavior',
+    'These controls affect everyone using this receiver. Personal display choices are under My Settings.',
     retainIdle.control, clearVoice.control,
     formField('Idle grant retention (milliseconds)', grantAge,
       'How long inactive traffic grants remain in the shared Live state.'));
-  form.append(group, message, actions);
+  const footer = node('div', 'settings-form-footer');
+  footer.append(message, actions);
+  form.append(node('div', 'settings-card-grid', group), footer);
   body.append(form);
   content.append(section('Site behavior', body));
 
@@ -14622,8 +14658,11 @@ async function renderAdminWebAudio() {
   const configuration = response?.configuration || {};
   const limits = response?.limits || {};
   const status = response?.status || {};
-  const form = node('form', 'admin-form admin-audio-form');
+  const form = node('form', 'admin-form admin-audio-form settings-card settings-card-form');
   let formDirty = false;
+  form.append(node('h3', 'admin-settings-form-title', 'Listener limits'),
+    node('p', 'settings-card-description',
+      'Bound browser playback, cached audio, and per-listener queue use without restarting the receiver.'));
   const fields = [
     ['maximum_listeners', 'Simultaneous listeners', 'Admission limit for browser-audio connections.'],
     ['maximum_selected_scan_lists', 'Scan lists per listener', 'Maximum lists one listener may subscribe to.'],
@@ -14914,8 +14953,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   const status = node('div', `receiver-health-overview-state receiver-health-${stale ? 'stale' : summary.severity}`);
   status.append(node('span', '', 'Receiver health'), node('strong', '', stateLabel));
   overview.append(status, metrics([
-    ['Service-impact alerts', summary.active_count],
-    ['Diagnostics', summary.diagnostic_count],
+    ['Active incidents', summary.active_count],
     ['Critical', summary.critical_count],
     ['Warnings', summary.warning_count]
   ], true));
@@ -14982,10 +15020,21 @@ function preferenceSelect(name, choices, selected) {
   return select;
 }
 
+function settingsCard(title, description, ...items) {
+  const card = node('section', 'settings-card');
+  const header = node('div', 'settings-card-header');
+  header.append(node('h3', 'settings-card-title', title));
+  if (description) header.append(node('p', 'settings-card-description', description));
+  const body = node('div', 'settings-card-body');
+  body.append(...items);
+  card.append(header, body);
+  return card;
+}
+
 async function renderSettings() {
   const renderContext = captureRenderContext();
   if (!beginPage(renderContext, pageHeader('My Settings',
-    'These choices affect only your signed-in account'))) return;
+    'Personal choices that do not have a control on their own page'))) return;
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message || 'My Settings could not be loaded.');
@@ -15001,66 +15050,22 @@ async function renderSettings() {
   }
 
   const current = snapshot.preferences;
-  const form = node('form', 'admin-form user-settings-form');
+  const form = node('form', 'admin-form settings-page-form user-settings-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  const theme = preferenceSelect('theme', [['light', 'Light'], ['dark', 'Dark']], current.appearance.theme);
   const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
     current.page_titles.prepend_playing_call,
     'The Scanner title always shows the audible target. This option adds it to other pages too.');
-  const scannerMode = preferenceSelect('scanner-detail-mode', [
-    ['simple', 'Simple'], ['normal', 'Normal'], ['advanced', 'Advanced'], ['engineer', 'Engineer']
-  ], current.scanner.detail_mode);
-  const volume = node('input');
-  volume.type = 'range';
-  volume.name = 'playback-volume';
-  volume.min = '0';
-  volume.max = '1';
-  volume.step = '0.05';
-  volume.value = String(current.playback.volume);
-  const volumeValue = node('output', '', `${Math.round(current.playback.volume * 100)}%`);
-  volume.addEventListener('input', () => { volumeValue.textContent = `${Math.round(Number(volume.value) * 100)}%`; });
-  const volumeField = node('label', 'admin-form-field');
-  volumeField.append(node('span', 'admin-form-label', 'Browser playback volume'), volume, volumeValue);
-
-  const scanLists = node('fieldset', 'admin-settings-group');
-  scanLists.append(node('legend', '', 'Playback scan lists'),
-    node('p', 'admin-settings-group-intro', 'No selection means this account receives no browser calls.'));
-  const scanListChoices = node('div', 'user-settings-scan-lists');
-  const playerState = webCallPlayer?.viewState();
-  const availableScanListIds = new Set();
-  (playerState?.scanLists || []).forEach((item) => {
-    const id = Number(item.id);
-    if (!Number.isSafeInteger(id) || id <= 0) return;
-    availableScanListIds.add(id);
-    const input = node('input');
-    input.type = 'checkbox';
-    input.name = 'scan-list-id';
-    input.value = String(id);
-    input.checked = current.playback.selected_scan_list_ids.includes(id);
-    input.disabled = !item.enabled;
-    const label = node('label', 'column-chooser-option');
-    const copy = node('span');
-    copy.append(node('strong', '', item.name));
-    if (item.description) copy.append(node('small', '', item.description));
-    label.append(input, copy);
-    scanListChoices.append(label);
-  });
-  if (!scanListChoices.childElementCount) scanListChoices.append(node('p', 'muted',
-    'No playback scan lists are currently available.'));
-  const unavailableScanListIds = current.playback.selected_scan_list_ids
-    .filter((id) => !availableScanListIds.has(id));
-  if (unavailableScanListIds.length) scanListChoices.append(node('p', 'muted',
-    `${number(unavailableScanListIds.length)} saved selection${unavailableScanListIds.length === 1 ? '' : 's'} ` +
-    'is not currently available and will be preserved.'));
-  scanLists.append(scanListChoices);
 
   const encryption = preferenceCheckbox('show-encryption-details', 'Show encryption algorithm and key',
-    current.presentation.show_encryption_details);
+    current.presentation.show_encryption_details,
+    'Show the decoded algorithm and key identifiers when they are available.');
   const controlQuality = preferenceCheckbox('show-control-quality', 'Show control-channel decode quality',
-    current.presentation.show_control_decode_quality);
+    current.presentation.show_control_decode_quality,
+    'Add the rolling control-channel quality reading to Live rows.');
   const voiceQuality = preferenceCheckbox('show-voice-quality', 'Show voice-channel decode quality',
-    current.presentation.show_voice_decode_quality);
+    current.presentation.show_voice_decode_quality,
+    'Add call-level voice quality when enough frames have been received.');
   const qualityMode = preferenceSelect('quality-mode', [['percentage', 'Percentage'], ['detailed', 'Detailed counters']],
     current.presentation.decode_quality_display_mode);
   const rowLimit = node('input');
@@ -15071,55 +15076,24 @@ async function renderSettings() {
   rowLimit.required = true;
   rowLimit.value = String(current.presentation.live_detail_row_limit);
 
-  const tuner = current.tuner;
-  const tunerNumber = (name, value, minimum, maximum, step = '1') => {
-    const input = node('input');
-    input.type = 'number';
-    input.name = name;
-    input.min = String(minimum);
-    input.max = String(maximum);
-    input.step = step;
-    input.required = true;
-    input.value = String(value);
-    return input;
-  };
-  const floor = tunerNumber('tuner-floor', tuner.floor_db, -200, -5);
-  const ceiling = tunerNumber('tuner-ceiling', tuner.ceiling_db, -195, 0);
-  const waterfallSpeed = tunerNumber('waterfall-speed', tuner.waterfall_speed, 0.25, 4, '0.25');
-  const snap = preferenceCheckbox('snap-frequency', 'Snap frequency', tuner.snap_frequency);
-  const smooth = preferenceCheckbox('smooth-fft', 'Smooth FFT', tuner.smooth_fft);
-  const highlight = preferenceCheckbox('highlight-waterfall', 'Highlight channels on waterfall',
-    tuner.highlight_waterfall_channels);
-  const profile = preferenceSelect('tuner-profile', [
-    ['efficient', 'Efficient'], ['balanced', 'Balanced'], ['high-detail', 'High detail'],
-    ['maximum-detail', 'Maximum detail']
-  ], tuner.profile);
-
-  const group = (title, description, ...items) => {
-    const fieldset = node('fieldset', 'admin-settings-group');
-    fieldset.append(node('legend', '', title), node('p', 'admin-settings-group-intro', description), ...items);
-    return fieldset;
-  };
-  const groups = node('div', 'admin-settings-grid');
+  const presentationFields = node('div', 'settings-field-grid');
+  presentationFields.append(formField('Decode quality format', qualityMode,
+    'Choose a compact percentage or the underlying frame and error counters.'),
+  formField('Matching rows shown', rowLimit, 'Limit each matching Live detail list to 25–500 rows.'));
+  const groups = node('div', 'settings-card-grid');
   groups.append(
-    group('Appearance', 'Personal colors and browser-title behavior.',
-      formField('Theme', theme), prependTitle.control),
-    group('Scanner', 'Choose how much call detail this account sees.',
-      formField('Detail level', scannerMode), volumeField),
-    scanLists,
-    group('Live presentation', 'These fields change only what this account sees.',
-      encryption.control, controlQuality.control, voiceQuality.control,
-      formField('Decode quality format', qualityMode), formField('Matching rows shown', rowLimit)),
-    group('Tuner spectrum', 'Personal spectrum and waterfall presentation.',
-      formField('Lower display limit (dB)', floor), formField('Upper display limit (dB)', ceiling),
-      formField('Waterfall speed', waterfallSpeed), formField('Performance profile', profile),
-      snap.control, smooth.control, highlight.control));
+    settingsCard('Page titles', 'Control the extra context shown in tabs for pages other than Scanner.',
+      prependTitle.control),
+    settingsCard('Live presentation', 'Choose which optional decoder details this account sees on Live pages.',
+      encryption.control, controlQuality.control, voiceQuality.control, presentationFields));
 
   const save = node('button', '', 'Save My Settings');
   save.type = 'submit';
+  const footer = node('div', 'settings-form-footer');
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  form.append(groups, message, actions);
+  footer.append(message, actions);
+  form.append(groups, footer);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
@@ -15129,34 +15103,18 @@ async function renderSettings() {
       return;
     }
     const submitted = {
-      theme: theme.value,
       prependPlayingCall: prependTitle.input.checked,
-      volume: Number(volume.value),
-      selectedAvailableScanListIds:
-        [...form.querySelectorAll('input[name="scan-list-id"]:checked')].map((input) => Number(input.value)),
-      scannerMode: scannerMode.value,
       show_encryption_details: encryption.input.checked,
       show_control_decode_quality: controlQuality.input.checked,
       show_voice_decode_quality: voiceQuality.input.checked,
       decode_quality_display_mode: qualityMode.value,
-      live_detail_row_limit: Number(rowLimit.value),
-      floor_db: Number(floor.value), ceiling_db: Number(ceiling.value),
-      waterfall_speed: Number(waterfallSpeed.value), snap_frequency: snap.input.checked,
-      smooth_fft: smooth.input.checked, highlight_waterfall_channels: highlight.input.checked,
-      profile: profile.value
+      live_detail_row_limit: Number(rowLimit.value)
     };
     save.disabled = true;
     message.textContent = 'Saving My Settings…';
     try {
-      const saved = await updateUserPreferences((preferences) => {
-        preferences.appearance.theme = submitted.theme;
+      await updateUserPreferences((preferences) => {
         preferences.page_titles.prepend_playing_call = submitted.prependPlayingCall;
-        preferences.playback.volume = submitted.volume;
-        preferences.playback.selected_scan_list_ids = [...new Set([
-          ...preferences.playback.selected_scan_list_ids.filter((id) => !availableScanListIds.has(id)),
-          ...submitted.selectedAvailableScanListIds
-        ])].sort((left, right) => left - right);
-        preferences.scanner.detail_mode = submitted.scannerMode;
         preferences.presentation = {
           show_encryption_details: submitted.show_encryption_details,
           show_control_decode_quality: submitted.show_control_decode_quality,
@@ -15164,19 +15122,8 @@ async function renderSettings() {
           decode_quality_display_mode: submitted.decode_quality_display_mode,
           live_detail_row_limit: submitted.live_detail_row_limit
         };
-        preferences.tuner = {
-          floor_db: submitted.floor_db,
-          ceiling_db: submitted.ceiling_db,
-          waterfall_speed: submitted.waterfall_speed,
-          snap_frequency: submitted.snap_frequency,
-          smooth_fft: submitted.smooth_fft,
-          highlight_waterfall_channels: submitted.highlight_waterfall_channels,
-          profile: submitted.profile
-        };
       });
-      webCallPlayer?.applyPreferences(saved.playback);
       message.textContent = 'My Settings saved.';
-      applyTheme();
     } catch (error) {
       message.textContent = error?.code === 'preference_conflict' ?
         'These settings changed in another session. The current saved values were reloaded.' : error.message;
@@ -15185,44 +15132,6 @@ async function renderSettings() {
     }
   });
   content.append(section('Personal preferences', form));
-
-  const layoutHost = node('div', 'user-table-layout-list');
-  const tableIds = Object.keys(current.tables).sort();
-  if (!tableIds.length) layoutHost.append(node('p', 'muted', 'No customized table layouts are saved.'));
-  tableIds.forEach((id) => {
-    const row = node('div', 'user-table-layout-row');
-    row.append(node('span', '', id));
-    const reset = node('button', 'button secondary', 'Reset');
-    reset.type = 'button';
-    reset.addEventListener('click', async () => {
-      reset.disabled = true;
-      try {
-        await updateUserPreferences((preferences) => { delete preferences.tables[id]; });
-        row.remove();
-        if (!layoutHost.childElementCount) layoutHost.append(node('p', 'muted',
-          'No customized table layouts are saved.'));
-      } catch (error) {
-        message.textContent = error.message;
-        reset.disabled = false;
-      }
-    });
-    row.append(reset);
-    layoutHost.append(row);
-  });
-  const resetAll = node('button', 'button secondary', 'Reset all table layouts');
-  resetAll.type = 'button';
-  resetAll.disabled = !tableIds.length;
-  resetAll.addEventListener('click', async () => {
-    resetAll.disabled = true;
-    try {
-      await updateUserPreferences((preferences) => { preferences.tables = {}; });
-      layoutHost.replaceChildren(node('p', 'muted', 'No customized table layouts are saved.'));
-    } catch (error) {
-      message.textContent = error.message;
-      resetAll.disabled = false;
-    }
-  });
-  content.append(section('Table layouts', layoutHost, resetAll));
 }
 
 async function renderConfiguration() {

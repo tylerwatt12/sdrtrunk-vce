@@ -110,8 +110,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
-import java.util.function.LongSupplier;
-import java.util.function.Supplier;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -1849,16 +1847,6 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     /**
-     * Captures the source drop baseline before constructing an authoritative snapshot. Drops that happen while a
-     * snapshot is being built therefore remain newer than the returned baseline and force a second recovery pass.
-     */
-    static <T> RecoveryCapture<T> captureRecovery(LongSupplier droppedCount, Supplier<T> snapshotSupplier)
-    {
-        long baseline = droppedCount.getAsLong();
-        return new RecoveryCapture<>(baseline, snapshotSupplier.get());
-    }
-
-    /**
      * Receives completed calls independently from local Java playback.
      */
     public void receive(CompletedAudioCall call)
@@ -2699,7 +2687,7 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             wrote |= reportStatelessGaps(output);
-            wrote |= recoverMetadataGaps(output);
+            wrote |= recoverStatefulGaps(output);
 
             if(mChannelDiagnostics != null)
             {
@@ -2746,7 +2734,7 @@ public class StatsWebServerService implements AutoCloseable
             return wrote;
         }
 
-        private boolean recoverMetadataGaps(MultiplexOutput output) throws IOException, InterruptedException
+        private boolean recoverStatefulGaps(MultiplexOutput output) throws IOException, InterruptedException
         {
             boolean wrote = false;
 
@@ -2764,18 +2752,6 @@ public class StatsWebServerService implements AutoCloseable
                 wrote = true;
             }
 
-            if(mCalls != null && metadataGap(output, TOPIC_CALLS, mCalls.droppedCount(), mCallDrops))
-            {
-                discardSubscription(mCalls);
-                var recovery = captureRecovery(mCalls::droppedCount,
-                    () -> mWebCallService.snapshot(mCallScanListIds));
-                mCallDrops = recovery.dropBaseline();
-                writeMultiplexRecoveryJson(output, TOPIC_CALLS, "snapshot",
-                    callSnapshot(recovery.snapshot()));
-                observeOutputDrops(output, TOPIC_CALLS);
-                wrote = true;
-            }
-
             return wrote;
         }
 
@@ -2783,6 +2759,22 @@ public class StatsWebServerService implements AutoCloseable
         private boolean reportStatelessGaps(MultiplexOutput output) throws IOException
         {
             boolean wrote = false;
+
+            if(mCalls != null)
+            {
+                long callDrops = mCalls.droppedCount();
+                long outputDrops = output.eventDrops(TOPIC_CALLS);
+                long dropped = positiveDelta(callDrops, mCallDrops) +
+                    positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_CALLS]);
+                mCallDrops = callDrops;
+                mObservedOutputDrops[TOPIC_CALLS] = outputDrops;
+
+                if(dropped > 0)
+                {
+                    writeMultiplexJson(output, TOPIC_CALLS, "live_gap", Map.of("dropped", dropped));
+                    wrote = true;
+                }
+            }
 
             if(mDecodeEvents != null)
             {
@@ -2950,11 +2942,8 @@ public class StatsWebServerService implements AutoCloseable
                 case "calls" -> {
                     mCallScanListIds = selectedScanListIds(uri);
                     mCalls = requiredSubscription(mWebCallService.subscribe(mCallScanListIds), topic);
-                    var recovery = captureRecovery(mCalls::droppedCount,
-                        () -> mWebCallService.snapshot(mCallScanListIds));
-                    mCallDrops = recovery.dropBaseline();
-                    writeMultiplexRecoveryJson(output, TOPIC_CALLS, "snapshot",
-                        callSnapshot(recovery.snapshot()));
+                    mCallDrops = mCalls.droppedCount();
+                    writeMultiplexRecoveryJson(output, TOPIC_CALLS, "ready", callSubscriptionState());
                     observeOutputDrops(output, TOPIC_CALLS);
                 }
                 case "decode_events" -> {
@@ -3121,15 +3110,12 @@ public class StatsWebServerService implements AutoCloseable
             }
         }
 
-        private Map<String,Object> callSnapshot(List<Map<String,Object>> calls)
+        private Map<String,Object> callSubscriptionState()
         {
             WebCallConfiguration configuration =
                 mUserPreferences.getApplicationPreference().getWebCallConfiguration();
-            Map<String,Object> snapshot = new LinkedHashMap<>();
-            snapshot.put("calls", calls);
-            snapshot.put("scan_list_ids", mCallScanListIds);
-            snapshot.put("waiting_calls_per_listener", configuration.waitingCallsPerListener());
-            return Map.copyOf(snapshot);
+            return Map.of("scan_list_ids", mCallScanListIds,
+                "waiting_calls_per_listener", configuration.waitingCallsPerListener());
         }
 
         private StatsLiveEventHub.Subscription closeSubscription(StatsLiveEventHub.Subscription subscription)

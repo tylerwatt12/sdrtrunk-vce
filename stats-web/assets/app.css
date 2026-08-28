@@ -3142,33 +3142,26 @@ button.secondary {
 }
 
 .table-layout-menu {
-  position: relative;
   width: max-content;
   margin: 0 0 6px auto;
-}
-
-.table-layout-menu > summary {
-  list-style: none;
-  cursor: pointer;
-}
-
-.table-layout-menu > summary::-webkit-details-marker {
-  display: none;
+  padding-top: 8px;
 }
 
 .table-layout-panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 12;
   width: min(360px, 88vw);
-  max-height: 380px;
+  max-height: min(480px, calc(100dvh - 32px));
+  margin: auto;
   padding: 10px;
   overflow: auto;
+  color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-dark);
   border-radius: 5px;
   box-shadow: var(--shadow);
+}
+
+.table-layout-panel::backdrop {
+  background: transparent;
 }
 
 .table-layout-column {
@@ -3183,21 +3176,6 @@ button.secondary {
   min-width: 28px;
   min-height: 26px;
   padding: 1px 4px;
-}
-
-.user-settings-scan-lists,
-.user-table-layout-list {
-  display: grid;
-  gap: 7px;
-}
-
-.user-table-layout-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--line);
 }
 
 .resizable-table {
@@ -3337,6 +3315,84 @@ body.modal-open {
   outline-offset: 1px;
 }
 
+.settings-page-form {
+  gap: 18px;
+  padding: 20px;
+  background: var(--surface-2);
+}
+
+.settings-card-grid {
+  width: 100%;
+  max-width: 1100px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  align-items: start;
+  gap: 18px;
+}
+
+.settings-card {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(21 37 50 / 8%);
+}
+
+.settings-card-header {
+  padding: 17px 18px 14px;
+  background: var(--section-header);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-card-title,
+.settings-card-form .admin-settings-form-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.settings-card-description {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.settings-card-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.settings-card-body .admin-toggle-control {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.settings-form-footer {
+  width: 100%;
+  max-width: 1100px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-dark);
+}
+
+.settings-form-footer .admin-form-message {
+  min-height: 20px;
+}
+
 .scan-list-admin-form input[type="checkbox"] {
   width: 24px;
   min-height: 24px;
@@ -3398,27 +3454,20 @@ body.modal-open {
 
 .admin-settings-form {
   width: 100%;
-  max-width: 720px;
+  max-width: none;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
-  padding: 14px;
+  padding: 18px;
 }
 
 .admin-settings-form-stack {
   width: 100%;
-  max-width: 720px;
-}
-
-.admin-settings-form-stack .admin-settings-form {
-  width: 100%;
-  max-width: none;
-}
-
-.admin-settings-form-stack .admin-settings-form + .admin-settings-form {
-  border-top: 1px solid var(--line);
+  max-width: 1100px;
+  padding: 18px;
 }
 
 .admin-settings-form-title,
+.settings-card-form .settings-card-description,
 .admin-settings-form .admin-form-message,
 .admin-settings-form .admin-form-actions,
 .radioreference-remember {
@@ -3427,7 +3476,7 @@ body.modal-open {
 
 .admin-settings-form-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .radioreference-remember {
@@ -3693,10 +3742,11 @@ body.modal-open {
 
 .admin-section-intro {
   margin: 0;
-  padding: 11px 10px;
+  padding: 14px 18px;
   color: var(--muted);
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
+  line-height: 1.45;
 }
 
 .receiver-health-page {
@@ -4571,7 +4621,7 @@ th.numeric {
 :root[data-theme="dark"] .dashboard-filter-button.active,
 :root[data-theme="dark"] .signal-range-button.active,
 :root[data-theme="dark"] .button:not(.secondary):not(.disabled),
-:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.systems-tab-select):not(.systems-tab-title-button):not(.systems-tab-close):not(.live-details-tab):not(.channel-diagnostic-view-button) {
+:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.systems-live-tab):not(.systems-tab-select):not(.systems-tab-title-button):not(.systems-tab-close):not(.live-details-tab):not(.channel-diagnostic-view-button) {
   color: #071a18;
   border-color: #69cec2;
 }
@@ -5753,6 +5803,22 @@ th.numeric {
   .admin-form-actions,
   .admin-row-actions {
     justify-content: flex-start;
+  }
+
+  .settings-page-form,
+  .admin-settings-form-stack {
+    padding: 12px;
+  }
+
+  .settings-card-header,
+  .settings-card-body {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .settings-field-grid,
+  .settings-form-footer {
+    grid-template-columns: 1fr;
   }
 
   .admin-audio-form,

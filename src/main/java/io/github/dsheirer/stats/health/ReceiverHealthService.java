@@ -61,10 +61,6 @@ public final class ReceiverHealthService implements AutoCloseable
     private static final long FAILURE_LOG_INTERVAL_MILLISECONDS = 60_000L;
     private static final long COUNTER_BASELINE_RETENTION_MILLISECONDS = 60_000L;
     private static final Set<String> CURRENT_CONTROL_TAGS = Set.of("CURRENT_CONTROL");
-    private static final Set<String> SERVICE_IMPACT_INCIDENT_CODES = Set.of("tuner-error",
-        "tuner-allocation-failure", "control-channel-lock-lost", "audio-coordinator-ingress",
-        "audio-coordinator-aborted", "recording", "streaming", "web-audio-drop");
-
     private final UserPreferences mUserPreferences;
     private final TunerManager mTunerManager;
     private final ChannelActivityModel mChannelActivityModel;
@@ -217,22 +213,10 @@ public final class ReceiverHealthService implements AutoCloseable
         mConditionStartTimes.keySet().retainAll(mConditionsEvaluatedThisSample);
         mIncidents.endSample(now);
         List<Map<String,Object>> active = mIncidents.active();
-        List<Map<String,Object>> serviceImpact = active.stream().filter(ReceiverHealthService::isServiceImpact)
-            .toList();
-        long critical = serviceImpact.stream().filter(incident -> "critical".equals(incident.get("severity")))
-            .count();
-        long warning = serviceImpact.size() - critical;
-        String severity = critical > 0 ? "critical" : warning > 0 ? "warning" : "healthy";
-        LinkedHashMap<String,Object> summary = new LinkedHashMap<>();
-        summary.put("severity", severity);
-        summary.put("active_count", serviceImpact.size());
-        summary.put("warning_count", warning);
-        summary.put("critical_count", critical);
-        summary.put("diagnostic_count", active.size() - serviceImpact.size());
         LinkedHashMap<String,Object> response = new LinkedHashMap<>();
         response.put("started_at_ms", mStartedAtMs);
         response.put("generated_at_ms", now);
-        response.put("summary", Map.copyOf(summary));
+        response.put("summary", summarize(active));
         response.put("active", active);
         response.put("resolved", mIncidents.resolved());
         response.put("measurements", List.copyOf(measurements));
@@ -987,9 +971,17 @@ public final class ReceiverHealthService implements AutoCloseable
         return value instanceof Number number ? number.longValue() : 0;
     }
 
-    private static boolean isServiceImpact(Map<String,Object> incident)
+    static Map<String,Object> summarize(List<Map<String,Object>> active)
     {
-        return SERVICE_IMPACT_INCIDENT_CODES.contains(String.valueOf(incident.get("code")));
+        long critical = active.stream().filter(incident -> "critical".equals(incident.get("severity"))).count();
+        long warning = active.size() - critical;
+        String severity = critical > 0 ? "critical" : warning > 0 ? "warning" : "healthy";
+        LinkedHashMap<String,Object> summary = new LinkedHashMap<>();
+        summary.put("severity", severity);
+        summary.put("active_count", active.size());
+        summary.put("warning_count", warning);
+        summary.put("critical_count", critical);
+        return Map.copyOf(summary);
     }
 
     private static double round(double value)
@@ -1006,7 +998,7 @@ public final class ReceiverHealthService implements AutoCloseable
     {
         return Map.of("started_at_ms", startedAtMs, "generated_at_ms", startedAtMs,
             "summary", Map.of("severity", "healthy", "active_count", 0, "warning_count", 0,
-                "critical_count", 0, "diagnostic_count", 0), "active", List.of(), "resolved", List.of(),
+                "critical_count", 0), "active", List.of(), "resolved", List.of(),
             "measurements", List.of());
     }
 

@@ -533,17 +533,23 @@ class StatsApiV1HttpContractTest
             assertEquals(1, OBJECT_MAPPER.readTree(accepted.body()).at("/data/revision").intValue());
 
             boolean activity = false;
-            boolean calls = false;
+            JsonNode callsReady = null;
 
-            for(int count = 0; count < 4 && (!activity || !calls); count++)
+            for(int count = 0; count < 4 && (!activity || callsReady == null); count++)
             {
                 MultiplexFrame frame = readMultiplexFrame(input);
                 activity |= frame.topic() == 1 && "snapshot".equals(frame.json().path("event").textValue());
-                calls |= frame.topic() == 2 && "snapshot".equals(frame.json().path("event").textValue());
+                if(frame.topic() == 2 && "ready".equals(frame.json().path("event").textValue()))
+                {
+                    callsReady = frame.json().path("data");
+                }
             }
 
             assertTrue(activity, "Channel activity did not arrive on the multiplex connection");
-            assertTrue(calls, "Call snapshot did not arrive on the multiplex connection");
+            assertTrue(callsReady != null, "Call live-edge acknowledgement did not arrive on the multiplex connection");
+            assertTrue(callsReady.path("scan_list_ids").isArray());
+            assertTrue(callsReady.path("waiting_calls_per_listener").isIntegralNumber());
+            assertFalse(callsReady.has("calls"), "A new call subscription must not expose cached playback history");
         }
     }
 

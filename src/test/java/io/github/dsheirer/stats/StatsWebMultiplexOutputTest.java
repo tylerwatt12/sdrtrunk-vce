@@ -24,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class StatsWebMultiplexOutputTest
@@ -410,10 +409,13 @@ class StatsWebMultiplexOutputTest
             "Same-target viewport and profile updates must not tear down the producer/session");
         assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, \"snapshot\""));
         assertTrue(source.contains("metadataGap(output, TOPIC_CHANNEL_ACTIVITY"));
-        assertTrue(source.contains("metadataGap(output, TOPIC_CALLS"));
+        assertFalse(source.contains("metadataGap(output, TOPIC_CALLS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_EVENTS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_MESSAGES"));
         assertTrue(source.contains("reportStatelessGaps(output)"));
+        assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CALLS, \"ready\""));
+        assertTrue(source.contains("TOPIC_CALLS, \"live_gap\""));
+        assertFalse(source.contains("TOPIC_CALLS, \"snapshot\""));
         assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
         assertTrue(source.contains(
@@ -449,51 +451,18 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
-    void sourceDropBaselinesPrecedeEveryRecoverySnapshot() throws Exception
+    void onlyStatefulTopicsConstructRecoverySnapshots() throws Exception
     {
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
-        assertEquals(2, countOccurrences(source, "var recovery = captureRecovery("),
-            "Only stateful topics should construct recovery snapshots");
+        assertFalse(source.contains("captureRecovery("));
         assertEquals(2, countOccurrences(source, "new RecoveryCapture<>(dropBaseline, snapshot)"),
-            "Channel activity uses the equivalent explicit ordering because snapshot encoding can throw");
+            "Only channel activity should construct initial and gap-recovery snapshots");
         assertFalse(source.contains("Drops = mChannelActivity.droppedCount();"));
-        assertFalse(source.contains("Drops = mCalls.droppedCount();"));
+        assertTrue(source.contains("long callDrops = mCalls.droppedCount();"));
+        assertFalse(source.contains("mWebCallService.snapshot("));
         assertTrue(source.contains("mDecodeEventDrops = 0;"));
         assertTrue(source.contains("mDecodeMessageDrops = 0;"));
-    }
-
-    @Test
-    void aDropDuringSnapshotConstructionForcesAnotherRecoveryPass() throws Exception
-    {
-        AtomicLong dropped = new AtomicLong(12);
-        CountDownLatch snapshotStarted = new CountDownLatch(1);
-        CountDownLatch finishSnapshot = new CountDownLatch(1);
-        AtomicReference<StatsWebServerService.RecoveryCapture<String>> capture = new AtomicReference<>();
-        Thread recovery = new Thread(() -> capture.set(StatsWebServerService.captureRecovery(dropped::get, () -> {
-            snapshotStarted.countDown();
-
-            try
-            {
-                finishSnapshot.await();
-            }
-            catch(InterruptedException exception)
-            {
-                Thread.currentThread().interrupt();
-            }
-
-            return "authoritative";
-        })), "multiplex slow snapshot test");
-        recovery.start();
-        assertTrue(snapshotStarted.await(1, TimeUnit.SECONDS));
-        dropped.incrementAndGet();
-        finishSnapshot.countDown();
-        recovery.join(1_000);
-
-        assertFalse(recovery.isAlive());
-        assertEquals(12, capture.get().dropBaseline());
-        assertEquals(13, dropped.get());
-        assertEquals("authoritative", capture.get().snapshot());
     }
 
     @Test

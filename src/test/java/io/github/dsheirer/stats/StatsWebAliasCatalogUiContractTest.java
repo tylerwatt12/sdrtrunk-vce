@@ -374,7 +374,7 @@ class StatsWebAliasCatalogUiContractTest
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);
         }
         assertTrue(css.contains(":root[data-theme=\"dark\"] .alias-editor-table-host"));
-        assertTrue(css.contains(":not(.auth-action):not(.table-sort-control)"));
+        assertTrue(css.contains(":not(.auth-action):not(.auth-session-button):not(.table-sort-control)"));
         assertTrue(function(source(), "function aliasEditorModalTabs(panels, initial = 'basics')")
             .contains("node('button', 'secondary', label)"));
         assertTrue(css.contains("@media (max-width: 900px)"));

@@ -51,11 +51,8 @@ import java.util.concurrent.atomic.AtomicLong;
 final class StatsWebCallService implements AutoCloseable
 {
     private static final int EVENT_QUEUE_CAPACITY = 256;
-    static final int MAXIMUM_SNAPSHOT_CALLS = 128;
     static final int MAXIMUM_METADATA_TEXT_CHARACTERS = 256;
     static final int MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS = 160;
-    /** Maximum encoded size demonstrated for 128 calls when every externally derived field needs JSON escaping. */
-    static final int MAXIMUM_SNAPSHOT_JSON_BYTES = 4 * 1024 * 1024;
     static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
     static final long MAXIMUM_PENDING_AUDIO_BYTES = MAXIMUM_CALL_AUDIO_BYTES;
     static final int WAVE_HEADER_BYTES = 44;
@@ -185,7 +182,7 @@ final class StatsWebCallService implements AutoCloseable
         if(!reservePendingAudio(waveLength))
         {
             mDroppedPendingCapacity.incrementAndGet();
-            publishMissed(generation, scanListIds, "pending_audio_capacity");
+            publishGap(generation, scanListIds, "pending_audio_capacity");
             return;
         }
 
@@ -206,7 +203,7 @@ final class StatsWebCallService implements AutoCloseable
         {
             mPendingAudioBytes.addAndGet(-waveLength);
             mDroppedEncoderCapacity.incrementAndGet();
-            publishMissed(generation, scanListIds, "encoder_capacity");
+            publishGap(generation, scanListIds, "encoder_capacity");
         }
     }
 
@@ -240,33 +237,6 @@ final class StatsWebCallService implements AutoCloseable
         return mRunning ? mEventHub.subscribe() : null;
     }
 
-    /**
-     * Returns a bounded oldest-first metadata snapshot so a browser can fill a gap without replaying calls it has
-     * already accepted. Audio remains in the existing bounded cache and is fetched only if the browser plays it.
-     */
-    synchronized List<Map<String,Object>> snapshot()
-    {
-        return snapshot(Set.of());
-    }
-
-    /** Returns the bounded recovery snapshot visible to the selected scan lists. */
-    synchronized List<Map<String,Object>> snapshot(Set<Long> scanListIds)
-    {
-        evictExpired(System.currentTimeMillis());
-        Set<Long> selected = scanListIds != null ? Set.copyOf(scanListIds) : Set.of();
-        List<CachedCall> cached = mCalls.values().stream()
-            .filter(call -> selected.isEmpty() || matchesScanLists(call.metadata(), selected)).toList();
-        int first = Math.max(0, cached.size() - MAXIMUM_SNAPSHOT_CALLS);
-        List<Map<String,Object>> result = new ArrayList<>(cached.size() - first);
-
-        for(int index = first; index < cached.size(); index++)
-        {
-            result.add(cached.get(index).metadata());
-        }
-
-        return List.copyOf(result);
-    }
-
     synchronized StatsLiveEventHub.Subscription subscribe(Set<Long> scanListIds)
     {
         if(!mRunning)
@@ -295,11 +265,6 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         return false;
-    }
-
-    private static boolean matchesScanLists(Map<?,?> metadata, Set<Long> selected)
-    {
-        return matchesScanLists(new StatsLiveEventHub.LiveEvent("call", metadata), selected);
     }
 
     private static boolean isUnresolvedTrafficCall(AudioCallSnapshot snapshot)
@@ -415,8 +380,8 @@ final class StatsWebCallService implements AutoCloseable
         long sequence = mSequence.incrementAndGet();
         String id = mInstanceId + "-" + Long.toUnsignedString(sequence, 36);
         long created = System.currentTimeMillis();
-        Map<String,Object> metadata = metadata(id, sequence, call, created, scanListIds);
-        CachedCall cachedCall = new CachedCall(metadata, wave, created);
+        Map<String,Object> metadata = metadata(id, call, created, scanListIds);
+        CachedCall cachedCall = new CachedCall(wave, created);
 
         synchronized(this)
         {
@@ -439,12 +404,12 @@ final class StatsWebCallService implements AutoCloseable
         return mRunning && generation == mRunGeneration.get();
     }
 
-    private void publishMissed(long generation, Set<Long> scanListIds, String reason)
+    private void publishGap(long generation, Set<Long> scanListIds, String reason)
     {
         if(isCurrentGeneration(generation))
         {
-            mEventHub.publish("missed", Map.of("scan_list_ids", scanListIds.stream().sorted().toList(),
-                "missed_calls", 1, "exact", true, "reason", reason));
+            mEventHub.publish("live_gap", Map.of("scan_list_ids", scanListIds.stream().sorted().toList(),
+                "dropped", 1, "reason", reason));
         }
     }
 
@@ -488,8 +453,7 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
-    private Map<String,Object> metadata(String id, long sequence, CompletedAudioCall call, long completedAt,
-                                        Set<Long> scanListIds)
+    private Map<String,Object> metadata(String id, CompletedAudioCall call, long completedAt, Set<Long> scanListIds)
     {
         AudioCallSnapshot snapshot = call.snapshot();
         IdentifierCollection identifiers = snapshot.identifierCollection();
@@ -499,7 +463,6 @@ final class StatsWebCallService implements AutoCloseable
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         putText(value, "call_id", id);
         putText(value, "audio_url", StatsApiV1.CALLS + "/" + id + "/audio");
-        value.put("order_sequence", sequence);
         value.put("started_at_ms", snapshot.startTimestamp());
         value.put("completed_at_ms", completedAt);
         value.put("duration_ms", call.getDuration());
@@ -884,7 +847,7 @@ final class StatsWebCallService implements AutoCloseable
         mEventHub.close();
     }
 
-    record CachedCall(Map<String,Object> metadata, byte[] wave, long createdAtMs)
+    record CachedCall(byte[] wave, long createdAtMs)
     {
     }
 }

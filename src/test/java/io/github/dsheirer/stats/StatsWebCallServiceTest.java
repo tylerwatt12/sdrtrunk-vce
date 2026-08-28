@@ -48,7 +48,6 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
-import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -56,7 +55,6 @@ import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -141,7 +139,6 @@ class StatsWebCallServiceTest
             assertEquals(49L, metadata.get("vc_decoded_frames"));
             assertEquals(1L, metadata.get("vc_repeated_frames"));
             assertEquals(4L, metadata.get("vc_fec_errors"));
-            assertEquals(List.of(metadata), service.snapshot());
 
             String callId = String.valueOf(metadata.get("call_id"));
             URI audioUri = URI.create(String.valueOf(metadata.get("audio_url")));
@@ -152,6 +149,38 @@ class StatsWebCallServiceTest
             assertEquals("RIFF", new String(cached.wave(), 0, 4, StandardCharsets.US_ASCII));
             assertEquals("WAVE", new String(cached.wave(), 8, 4, StandardCharsets.US_ASCII));
             assertEquals(44 + 800 * Short.BYTES, cached.wave().length);
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void newSubscriptionStartsAtTheLiveEdgeWithoutCachedAnnouncements() throws Exception
+    {
+        StatsWebCallService service = new StatsWebCallService();
+        service.start();
+
+        try
+        {
+            try(StatsLiveEventHub.Subscription first = service.subscribe())
+            {
+                service.receive(call());
+                StatsLiveEventHub.LiveEvent heard = first.poll(5, TimeUnit.SECONDS);
+                assertNotNull(heard);
+                assertNotNull(service.get(String.valueOf(metadata(heard).get("call_id"))));
+            }
+
+            try(StatsLiveEventHub.Subscription refreshed = service.subscribe())
+            {
+                assertNull(refreshed.poll(100, TimeUnit.MILLISECONDS),
+                    "A fresh browser subscription must not receive calls from the audio cache");
+                service.receive(call());
+                StatsLiveEventHub.LiveEvent live = refreshed.poll(5, TimeUnit.SECONDS);
+                assertNotNull(live);
+                assertEquals("call", live.name());
+            }
         }
         finally
         {
@@ -247,7 +276,7 @@ class StatsWebCallServiceTest
     }
 
     @Test
-    void boundsEveryCallMetadataStringAndTheMaximumRecoverySnapshot() throws Exception
+    void boundsEveryCallMetadataString()
     {
         String oversized = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS + 100);
         assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS,
@@ -258,49 +287,6 @@ class StatsWebCallServiceTest
         assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS - 1, boundedSurrogate.length());
         assertFalse(Character.isHighSurrogate(boundedSurrogate.charAt(boundedSurrogate.length() - 1)));
 
-        //Control characters exercise JSON's largest common escaping expansion for each externally derived text field.
-        String maximallyEscaped = "\u0001".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS);
-        Map<String,Object> maximumCall = new LinkedHashMap<>();
-        maximumCall.put("call_id", "z".repeat(16));
-        maximumCall.put("audio_url", "/api/v1/calls/" + "z".repeat(16) + "/audio");
-
-        for(String field: List.of("system", "system_identity", "site", "site_identity", "site_guid", "channel",
-            "channel_identity", "configuration_id", "alias_list", "decoder", "source_id", "source_alias", "talker_alias",
-            "target_id", "target_alias", "protocol", "lcn"))
-        {
-            maximumCall.put(field, maximallyEscaped);
-        }
-
-        String maximumAliasMetadata = "\u0001".repeat(StatsWebCallService.MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
-        for(String field: List.of("source_description", "source_group", "target_description", "target_group"))
-        {
-            maximumCall.put(field, maximumAliasMetadata);
-        }
-
-        maximumCall.put("source_form", "RADIO");
-        maximumCall.put("target_form", "TALKGROUP");
-        maximumCall.put("completed_at_ms", Long.MAX_VALUE);
-        maximumCall.put("duration_ms", Long.MAX_VALUE);
-        maximumCall.put("frequency_hz", Long.MAX_VALUE);
-        maximumCall.put("timeslot", Integer.MAX_VALUE);
-        maximumCall.put("encrypted", true);
-        maximumCall.put("vc_quality_pct", 100.0d);
-        maximumCall.put("vc_decoded_frames", Long.MAX_VALUE);
-        maximumCall.put("vc_repeated_frames", Long.MAX_VALUE);
-        maximumCall.put("vc_concealed_frames", Long.MAX_VALUE);
-        maximumCall.put("vc_missing_frames", Long.MAX_VALUE);
-        maximumCall.put("vc_fec_errors", Long.MAX_VALUE);
-        maximumCall.put("vc_fec_protected_bits", Long.MAX_VALUE);
-        List<Map<String,Object>> calls = new ArrayList<>(StatsWebCallService.MAXIMUM_SNAPSHOT_CALLS);
-
-        for(int index = 0; index < StatsWebCallService.MAXIMUM_SNAPSHOT_CALLS; index++)
-        {
-            calls.add(maximumCall);
-        }
-
-        byte[] encoded = ApiHttpResponse.encodePayload(Map.of("event", "snapshot", "data", Map.of("calls", calls)));
-        assertTrue(encoded.length <= StatsWebCallService.MAXIMUM_SNAPSHOT_JSON_BYTES,
-            () -> "Maximum call recovery snapshot encoded " + encoded.length + " bytes");
     }
 
     @Test
@@ -351,7 +337,7 @@ class StatsWebCallServiceTest
     }
 
     @Test
-    void reportsAnExactMissedEventWhenPendingAudioCapacityIsFull() throws Exception
+    void reportsALiveGapWhenPendingAudioCapacityIsFull() throws Exception
     {
         StatsWebCallService service = new StatsWebCallService(
             scanListModel(Map.of(101L, Set.of(2L))), WebCallConfiguration.defaults());
@@ -366,13 +352,12 @@ class StatsWebCallServiceTest
         {
             service.receive(maximum);
             service.receive(template);
-            StatsLiveEventHub.LiveEvent missed = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(missed);
-            assertEquals("missed", missed.name());
-            assertEquals(1, metadata(missed).get("missed_calls"));
-            assertEquals(true, metadata(missed).get("exact"));
-            assertEquals("pending_audio_capacity", metadata(missed).get("reason"));
-            assertEquals(List.of(2L), metadata(missed).get("scan_list_ids"));
+            StatsLiveEventHub.LiveEvent gap = subscription.poll(5, TimeUnit.SECONDS);
+            assertNotNull(gap);
+            assertEquals("live_gap", gap.name());
+            assertEquals(1, metadata(gap).get("dropped"));
+            assertEquals("pending_audio_capacity", metadata(gap).get("reason"));
+            assertEquals(List.of(2L), metadata(gap).get("scan_list_ids"));
             assertEquals(1L, service.status().get("dropped_pending_capacity"));
         }
         finally
@@ -541,7 +526,7 @@ class StatsWebCallServiceTest
             @SuppressWarnings("unchecked")
             Map<String,Object> metadata = (Map<String,Object>)event.data();
             assertEquals(100L, metadata.get("duration_ms"));
-            assertEquals(List.of(metadata), service.snapshot());
+            assertNotNull(service.get(String.valueOf(metadata.get("call_id"))));
             assertEquals(1, ((Number)service.status().get("cached_calls")).intValue());
             assertNull(subscription.poll(0, TimeUnit.MILLISECONDS));
         }

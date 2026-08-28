@@ -80,8 +80,9 @@ class StatsWebReceiverHealthUiContractTest
         String measurement = block(source, "function receiverHealthMeasurementRow(row)");
 
         assertTrue(page.contains("'Active alerts and diagnostics'"));
-        assertTrue(page.contains("'Service-impact alerts'"));
-        assertTrue(page.contains("summary.diagnostic_count"));
+        assertTrue(page.contains("'Active incidents'"));
+        assertFalse(page.contains("'Service-impact alerts'"));
+        assertFalse(page.contains("summary.diagnostic_count"));
         assertTrue(page.contains("receiverHealthResolvedSection(snapshot.resolved)"));
         assertTrue(page.contains("'Measurements'"));
         assertTrue(page.contains("Showing the last receiver health snapshot."));

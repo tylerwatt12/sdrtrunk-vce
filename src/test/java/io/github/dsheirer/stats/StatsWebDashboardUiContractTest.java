@@ -153,17 +153,22 @@ class StatsWebDashboardUiContractTest
         String health = declaration(source, "const dashboardHealthColumns = [");
         String calls = declaration(source, "const dashboardCallSourceColumns = [");
         String identities = function(source, "function dashboardIdentityColumns(identityLabel)");
+        String context = function(source, "function dashboardReceiverContext(row)");
         assertTrue(health.contains("label: 'Site / Channel'"));
-        assertTrue(health.contains("label: 'System'"));
         assertTrue(health.contains("label: 'Mode'"));
-        assertTrue(health.contains("label: 'RFSS'"));
-        assertTrue(health.contains("label: 'Site ID'"));
-        assertTrue(health.contains("label: 'NAC'"));
+        assertTrue(health.contains("label: 'Context'"));
         assertTrue(health.contains("label: 'MHz'"));
         assertTrue(health.contains("label: 'Seen'"));
+        assertFalse(health.contains("label: 'System'"));
+        assertFalse(health.contains("label: 'RFSS'"));
+        assertFalse(health.contains("label: 'Site ID'"));
+        assertFalse(health.contains("label: 'NAC'"));
         assertFalse(health.contains("label: 'Decoder'"));
         assertFalse(health.contains("label: 'Protocol'"));
         assertFalse(health.contains("label: 'Topology'"));
+        assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
+        assertTrue(context.contains("`RAN ${identifierNumber(row.ran)}`"));
+        assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
 
         assertTrue(calls.contains("label: 'Conventional Channel'"));
         assertTrue(calls.contains("label: 'Mode'"));
@@ -272,11 +277,13 @@ class StatsWebDashboardUiContractTest
         assertFalse(section.contains("Weakest signal"));
         String tile = function(source, "function updateSignalCurrentTile(tile, site)");
         assertTrue(tile.contains("siteNameSummary(site)"));
-        assertTrue(tile.contains("dashboardReceiverSystemDetails(site)"));
-        String identifiers = function(source, "function dashboardReceiverIdentifiers(row)");
-        assertTrue(identifiers.contains("`RFSS ${rfss}`"));
-        assertTrue(identifiers.contains("`Site ID ${site}`"));
-        assertTrue(identifiers.contains("`NAC ${nac}`"));
+        assertTrue(tile.contains("dashboardReceiverContext(site)"));
+        String context = function(source, "function dashboardReceiverContext(row)");
+        assertTrue(context.contains("row.site_kind"));
+        assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
+        assertTrue(context.contains("`Site ${isP25(row) ? hex(row.site_id, 2) : " +
+            "identifierNumber(row.site_id)}`"));
+        assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
     }
 
     @Test
