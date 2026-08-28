@@ -276,14 +276,15 @@ function clearUserPreferenceError() {
   status.replaceChildren();
 }
 
-function showUserPreferenceError(error, retry = null) {
+function showUserPreferenceError(error, retry = null, saveFailed = false) {
   userPreferenceError = error instanceof Error ? error : new Error('My Settings are unavailable.');
   const status = document.getElementById('preference-status');
   if (!status) return;
   const retryable = typeof retry === 'function';
   const message = error?.code === 'preference_conflict' ?
-    'My Settings changed in another session. Current values were reloaded.' :
-    (retryable ? 'My Settings could not be saved. Your previous values are still active.' :
+    (error.reloadError ? 'My Settings changed in another session, but the current values could not be reloaded.' :
+      'My Settings changed in another session. Current values were reloaded.') :
+    (saveFailed ? 'My Settings could not be saved. Your previous values are still active.' :
       'My Settings are unavailable.');
   status.hidden = false;
   status.className = 'preference-status preference-error';
@@ -360,32 +361,40 @@ async function synchronizeUserPreferences() {
   }
 }
 
-async function updateUserPreferences(mutator) {
+async function updateUserPreferences(mutator, allowRetry = true) {
   try {
     const result = await userPreferenceController.update(mutator);
+    if (result?.state === 'stale') {
+      const error = new Error('The signed-in user changed before these settings were saved.');
+      error.code = 'preference_session_changed';
+      throw error;
+    }
     clearUserPreferenceError();
     return result?.preferences || userPreferenceController.snapshot().preferences;
   } catch (error) {
-    showUserPreferenceError(error, () => settleUserPreferenceMutation(mutator));
+    if (error?.code === 'preference_session_changed') throw error;
+    const retry = allowRetry && error?.code !== 'preference_conflict' ?
+      () => settleUserPreferenceMutation(mutator) : null;
+    showUserPreferenceError(error, retry, true);
     throw error;
   }
 }
 
-function settleUserPreferenceMutation(mutator) {
-  return updateUserPreferences(mutator).catch(() => null);
+function settleUserPreferenceMutation(mutator, allowRetry = true) {
+  return updateUserPreferences(mutator, allowRetry).catch(() => null);
 }
 
 async function saveTableLayoutPreference(tableType, layout) {
   if (!userPreferenceController.snapshot().loaded) return null;
   return settleUserPreferenceMutation((preferences) => {
     preferences.tables[tableType] = tableLayouts.persisted(layout);
-  });
+  }, false);
 }
 
 function removeResetTableLayout(tableType) {
   if (!userPreferenceController.snapshot().loaded || tableLayoutResetPending.has(tableType)) return;
   tableLayoutResetPending.add(tableType);
-  void settleUserPreferenceMutation((preferences) => { delete preferences.tables[tableType]; })
+  void settleUserPreferenceMutation((preferences) => { delete preferences.tables[tableType]; }, false)
     .finally(() => tableLayoutResetPending.delete(tableType));
 }
 
@@ -394,6 +403,12 @@ function svgNode(tag, attributes = {}, textValue) {
   Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
   if (textValue !== undefined) element.textContent = String(textValue);
   return element;
+}
+
+function iconGlyph(id) {
+  const icon = svgNode('svg', { 'aria-hidden': 'true' });
+  icon.append(svgNode('use', { href: `#${id}` }));
+  return icon;
 }
 
 function installTimeChartHover(wrapper, svg, options) {
@@ -1619,6 +1634,7 @@ function clearAliasEditorRoute() {
 function closeReadOnlyModal(force = false) {
   const active = activeReadOnlyModal;
   if (!active) return true;
+  if (!force && active.isBusy?.()) return false;
   if (!force && active.isDirty?.() && !window.confirm('Discard your unsaved changes?')) return false;
   activeReadOnlyModal = null;
   document.removeEventListener('keydown', active.keydown);
@@ -1653,7 +1669,8 @@ function openReadOnlyModal(title, body, options = {}) {
   dialog.append(header, contentNode);
   backdrop.append(dialog);
 
-  const dismiss = () => closeReadOnlyModal();
+  let modalState = null;
+  const dismiss = () => activeReadOnlyModal === modalState && closeReadOnlyModal();
   const focusable = () => [...dialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), ' +
     '[tabindex]:not([tabindex="-1"])')]
@@ -1686,19 +1703,28 @@ function openReadOnlyModal(title, body, options = {}) {
     if (event.target === backdrop) dismiss();
   });
   let dirty = false;
-  activeReadOnlyModal = {
+  let busy = false;
+  modalState = {
     backdrop, keydown, returnFocusSelector: options.returnFocusSelector || null,
     isDirty: () => dirty,
+    isBusy: () => busy,
     cleanup: options.cleanup || null,
     onClose: options.onClose || null
   };
+  activeReadOnlyModal = modalState;
   document.addEventListener('keydown', keydown);
   document.body.classList.add('modal-open');
   document.body.append(backdrop);
   close.focus();
   return {
-    dialog, content: contentNode, close: dismiss, state: activeReadOnlyModal,
+    dialog, content: contentNode, close: dismiss, state: modalState,
     setDirty: (value = true) => { dirty = Boolean(value); },
+    setBusy: (value = true) => {
+      busy = Boolean(value);
+      close.disabled = busy;
+      if (busy) dialog.setAttribute('aria-busy', 'true');
+      else dialog.removeAttribute('aria-busy');
+    },
     isDirty: () => dirty
   };
 }
@@ -1850,6 +1876,85 @@ function tableSortValue(row, column) {
   return rendered instanceof Node ? rendered.textContent : rendered;
 }
 
+function anchoredDropdownPlacement(anchorRect, panelRect, viewport) {
+  const gutter = 8;
+  const gap = 6;
+  const viewportWidth = Math.max(gutter * 2, Number(viewport?.width) || 0);
+  const viewportHeight = Math.max(gutter * 2, Number(viewport?.height) || 0);
+  const panelWidth = Math.min(Math.max(0, Number(panelRect?.width) || 0), viewportWidth - gutter * 2);
+  const panelHeight = Math.min(480, Math.max(0, Number(panelRect?.height) || 0));
+  const rightAligned = (Number(anchorRect?.right) || 0) - panelWidth;
+  const maximumLeft = viewportWidth - panelWidth - gutter;
+  const left = Math.max(gutter, Math.min(rightAligned, maximumLeft));
+  const belowTop = Math.max(gutter, (Number(anchorRect?.bottom) || 0) + gap);
+  const availableBelow = Math.max(0, Math.floor(viewportHeight - belowTop - gutter));
+  const availableAbove = Math.max(0,
+    Math.floor((Number(anchorRect?.top) || 0) - gap - gutter));
+  const minimumUsefulHeight = Math.min(96, panelHeight || 96);
+  if (availableBelow < minimumUsefulHeight && availableAbove > availableBelow) {
+    const maxHeight = Math.min(480, availableAbove);
+    return {
+      left: Math.round(left),
+      top: Math.round(Math.max(gutter,
+        (Number(anchorRect?.top) || 0) - gap - Math.min(panelHeight || maxHeight, maxHeight))),
+      maxHeight
+    };
+  }
+  return {
+    left: Math.round(left),
+    top: Math.round(belowTop),
+    maxHeight: Math.min(480, availableBelow)
+  };
+}
+
+function bindAnchoredDropdown(trigger, panel, signal = null) {
+  let viewportListeners = null;
+  let cleaned = false;
+  const stopTracking = () => {
+    viewportListeners?.abort();
+    viewportListeners = null;
+  };
+  const position = () => {
+    const anchorRect = trigger.getBoundingClientRect();
+    if (anchorRect.bottom <= 0 || anchorRect.top >= window.innerHeight ||
+        anchorRect.right <= 0 || anchorRect.left >= window.innerWidth) {
+      if (panel.matches(':popover-open')) panel.hidePopover();
+      return;
+    }
+    panel.style.maxHeight = '';
+    const placement = anchoredDropdownPlacement(anchorRect, panel.getBoundingClientRect(), {
+      width: window.innerWidth,
+      height: window.innerHeight
+    });
+    panel.style.left = `${placement.left}px`;
+    panel.style.top = `${placement.top}px`;
+    panel.style.maxHeight = `${placement.maxHeight}px`;
+  };
+  const toggle = (event) => {
+    const open = event.newState === 'open';
+    trigger.setAttribute('aria-expanded', String(open));
+    stopTracking();
+    if (!open) return;
+    position();
+    viewportListeners = new AbortController();
+    const options = { signal: viewportListeners.signal };
+    window.addEventListener('resize', position, options);
+    window.addEventListener('scroll', position, { ...options, capture: true, passive: true });
+  };
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    stopTracking();
+    panel.removeEventListener('toggle', toggle);
+    signal?.removeEventListener('abort', cleanup);
+    trigger.setAttribute('aria-expanded', 'false');
+    if (panel.matches(':popover-open')) panel.hidePopover();
+  };
+  panel.addEventListener('toggle', toggle);
+  signal?.addEventListener('abort', cleanup, { once: true });
+  return cleanup;
+}
+
 function compareTableValues(left, right) {
   const leftEmpty = left === null || left === undefined || left === '';
   const rightEmpty = right === null || right === undefined || right === '';
@@ -1914,12 +2019,17 @@ function applyPreferredTableWidths(element, columns, columnElements, layout) {
   setTableColumnWidths(element, columnElements, widths);
 }
 
-function addColumnResizers(element, columns, columnElements, headers, tableType, layout) {
-  const saveWidths = (widths) => {
+function addColumnResizers(element, columns, columnElements, headers, tableType,
+    currentLayout, setCurrentLayout, beginLayoutMutation, endLayoutMutation, onSaveFailure) {
+  const saveWidths = async (widths) => {
+    let nextLayout = currentLayout();
     columns.forEach((column, index) => {
-      layout = tableLayouts.resize(layout, tableColumnKey(column, index), Math.round(widths[index]));
+      nextLayout = tableLayouts.resize(nextLayout, tableColumnKey(column, index), Math.round(widths[index]));
     });
-    void saveTableLayoutPreference(tableType, layout);
+    setCurrentLayout(nextLayout);
+    const saved = await saveTableLayoutPreference(tableType, nextLayout);
+    endLayoutMutation();
+    if (!saved) onSaveFailure?.();
   };
   const resizeColumns = (index, startingWidths, requestedDelta) => {
     const widths = [...startingWidths];
@@ -1943,15 +2053,17 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
       if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       event.preventDefault();
       event.stopPropagation();
+      if (!beginLayoutMutation()) return;
       const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
       const widths = resizeColumns(index, startingWidths, event.key === 'ArrowLeft' ? -10 : 10);
       handle.setAttribute('aria-valuenow', String(Math.round(widths[index])));
-      saveWidths(widths);
+      void saveWidths(widths);
     });
     handle.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
+      if (!beginLayoutMutation()) return;
       const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
       const startingX = event.clientX;
       let resizedWidths = startingWidths;
@@ -1965,7 +2077,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
         handle.removeEventListener('pointermove', pointerMove);
         handle.removeEventListener('pointerup', pointerUp);
         handle.removeEventListener('pointercancel', pointerUp);
-        saveWidths(resizedWidths);
+        void saveWidths(resizedWidths);
       };
       handle.setPointerCapture(event.pointerId);
       handle.addEventListener('pointermove', pointerMove);
@@ -1979,6 +2091,8 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
 function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableType = tableLayouts.tableId(options.type);
   const tableController = options.controller || {};
+  tableController.layoutMenuCleanup?.();
+  tableController.layoutMenuCleanup = null;
   const declaredColumns = columns.slice();
   const defaultSchema = tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
   const storedLayout = options.layout || activeUserPreferences().tables[tableType] ||
@@ -2096,34 +2210,82 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   }
   head.append(headRow);
   element.append(columnGroup, head, body);
+  let layoutMenuOpen = () => false;
+  let layoutMenuFocus = () => null;
+  let setLayoutMenuBusy = () => {};
+  let layoutMutationPending = false;
+  const setTableLayoutBusy = (busy) => {
+    setLayoutMenuBusy(busy);
+    element.classList.toggle('table-layout-busy', Boolean(busy));
+    element.querySelectorAll('.column-resizer').forEach((handle) =>
+      handle.setAttribute('aria-disabled', String(Boolean(busy))));
+  };
+  const beginLayoutMutation = () => {
+    if (layoutMutationPending) return false;
+    layoutMutationPending = true;
+    setTableLayoutBusy(true);
+    return true;
+  };
+  const endLayoutMutation = () => {
+    layoutMutationPending = false;
+    setTableLayoutBusy(false);
+  };
+  const rebuildTable = (nextLayout, reopenLayoutMenu = false, restoreLayoutFocus = null) => {
+    if (!wrapper.isConnected) return;
+    table(tableController.rows(), declaredColumns, emptyText,
+      { ...options, layout: nextLayout, layoutMenuOpen: reopenLayoutMenu,
+        layoutMenuFocus: restoreLayoutFocus,
+        controller: tableController, wrapper });
+  };
   const replaceForLayout = async (nextLayout) => {
+    if (!beginLayoutMutation()) return;
     const saved = await saveTableLayoutPreference(tableType, nextLayout);
+    const reopenLayoutMenu = layoutMenuOpen();
+    const restoreLayoutFocus = reopenLayoutMenu ? layoutMenuFocus() : null;
+    endLayoutMutation();
+    if (!wrapper.isConnected) {
+      return;
+    }
     if (!saved) {
-      if (wrapper.isConnected) table(tableController.rows(), declaredColumns, emptyText,
-        { ...options, layout: tableLayouts.persisted(layout), controller: tableController, wrapper });
+      rebuildTable(null, reopenLayoutMenu, restoreLayoutFocus);
       return;
     }
     layout = nextLayout;
-    if (wrapper.isConnected) table(tableController.rows(), declaredColumns, emptyText,
-      { ...options, layout: tableLayouts.persisted(layout), controller: tableController, wrapper });
+    rebuildTable(tableLayouts.persisted(layout), reopenLayoutMenu, restoreLayoutFocus);
   };
   if (userPreferenceController.snapshot().loaded) {
     const chooser = node('div', 'table-layout-menu');
+    const inline = options.layoutMenuHost instanceof Node;
+    if (inline) chooser.classList.add('table-layout-menu-inline');
+    chooser.dataset.tableType = tableType;
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
-    const trigger = node('button', 'button secondary', 'Columns');
+    const trigger = node('button', inline ?
+      'button secondary icon-button section-title-icon table-layout-trigger' :
+      'button secondary table-layout-trigger', inline ? '' : 'Columns');
     trigger.type = 'button';
+    if (inline) trigger.append(iconGlyph('icon-columns'));
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-controls', panelId);
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-label', 'Choose table columns');
+    trigger.title = 'Choose table columns';
     const panel = node('div', 'table-layout-panel');
     panel.id = panelId;
     panel.setAttribute('popover', 'auto');
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'Table columns');
+    const panelHeader = node('div', 'table-layout-panel-header');
+    panelHeader.append(node('strong', '', 'Table columns'), node('span', '', 'Show and arrange this table.'));
+    const optionsHost = node('div', 'table-layout-options');
+    panel.append(panelHeader, optionsHost);
     const byId = new Map(declaredColumns.map((column) => [column.id, column]));
     layout.column_order.forEach((id) => {
       const item = node('div', 'table-layout-column');
       const visibility = node('input');
       visibility.type = 'checkbox';
+      visibility.dataset.layoutFocusKey = `visibility:${id}`;
+      visibility.dataset.layoutColumnId = id;
       visibility.checked = !layout.hidden_columns.includes(id);
       const visibleCount = layout.column_order.length - layout.hidden_columns.length;
       visibility.disabled = visibility.checked && visibleCount <= 1;
@@ -2134,14 +2296,18 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       const group = layout.groups[id] || '';
       const siblings = layout.column_order.filter((column) => (layout.groups[column] || '') === group);
       const position = siblings.indexOf(id);
-      const earlier = node('button', 'table-layout-move', '←');
+      const earlier = node('button', 'button secondary table-layout-move', '←');
       earlier.type = 'button';
+      earlier.dataset.layoutFocusKey = `earlier:${id}`;
+      earlier.dataset.layoutColumnId = id;
       earlier.disabled = position <= 0;
       earlier.setAttribute('aria-label', `Move ${label.textContent} left`);
       earlier.addEventListener('click', () => void replaceForLayout(
         tableLayouts.move(layout, id, siblings[position - 1])));
-      const later = node('button', 'table-layout-move', '→');
+      const later = node('button', 'button secondary table-layout-move', '→');
       later.type = 'button';
+      later.dataset.layoutFocusKey = `later:${id}`;
+      later.dataset.layoutColumnId = id;
       later.disabled = position < 0 || position >= siblings.length - 1;
       later.setAttribute('aria-label', `Move ${label.textContent} right`);
       later.addEventListener('click', () => {
@@ -2149,27 +2315,71 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         void replaceForLayout(tableLayouts.move(layout, id, after));
       });
       item.append(visibility, label, earlier, later);
-      panel.append(item);
+      optionsHost.append(item);
     });
-    const reset = node('button', 'button secondary', 'Reset this table');
+    const reset = node('button', 'button secondary table-layout-reset', 'Reset this table');
     reset.type = 'button';
+    reset.dataset.layoutFocusKey = 'reset';
     reset.addEventListener('click', async () => {
-      reset.disabled = true;
-      const saved = await settleUserPreferenceMutation((preferences) => { delete preferences.tables[tableType]; });
-      if (!saved) {
-        reset.disabled = false;
+      if (!beginLayoutMutation()) return;
+      const saved = await settleUserPreferenceMutation(
+        (preferences) => { delete preferences.tables[tableType]; }, false);
+      const reopenLayoutMenu = layoutMenuOpen();
+      const restoreLayoutFocus = reopenLayoutMenu ? layoutMenuFocus() : null;
+      endLayoutMutation();
+      if (!wrapper.isConnected) {
         return;
       }
-      if (wrapper.isConnected) table(tableController.rows(), declaredColumns, emptyText,
-        { ...options, layout: null, controller: tableController, wrapper });
+      rebuildTable(null, reopenLayoutMenu, restoreLayoutFocus);
     });
-    panel.append(reset);
+    const panelFooter = node('div', 'table-layout-panel-footer');
+    panelFooter.append(reset);
+    panel.append(panelFooter);
     chooser.append(trigger, panel);
-    wrapper.append(chooser);
+    layoutMenuOpen = () => panel.matches(':popover-open');
+    layoutMenuFocus = () => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !chooser.contains(active)) return null;
+      return {
+        key: active.dataset.layoutFocusKey || null,
+        columnId: active.dataset.layoutColumnId || null
+      };
+    };
+    setLayoutMenuBusy = (busy) => chooser.querySelectorAll('button, input').forEach((control) => {
+      if (busy) {
+        if (!control.hasAttribute('data-layout-was-disabled')) {
+          control.dataset.layoutWasDisabled = String(control.disabled);
+        }
+        control.disabled = true;
+      } else if (control.hasAttribute('data-layout-was-disabled')) {
+        control.disabled = control.dataset.layoutWasDisabled === 'true';
+        delete control.dataset.layoutWasDisabled;
+      }
+    });
+    const dropdownCleanup = bindAnchoredDropdown(trigger, panel, activeRenderController?.signal);
+    tableController.layoutMenuCleanup = () => {
+      dropdownCleanup();
+      chooser.remove();
+    };
+    (options.layoutMenuHost || wrapper).append(chooser);
+    if (options.layoutMenuOpen) window.requestAnimationFrame(() => {
+      if (!panel.isConnected || typeof panel.showPopover !== 'function') return;
+      panel.showPopover();
+      const controls = [...panel.querySelectorAll('[data-layout-focus-key]')];
+      const requested = options.layoutMenuFocus;
+      const focusTarget = controls.find((control) => !control.disabled &&
+        control.dataset.layoutFocusKey === requested?.key) ||
+        controls.find((control) => !control.disabled && requested?.columnId &&
+          control.dataset.layoutColumnId === requested.columnId) ||
+        controls.find((control) => !control.disabled);
+      if (focusTarget instanceof HTMLElement) focusTarget.focus();
+    });
   }
   wrapper.append(element);
   applyPreferredTableWidths(element, columns, columnElements, layout);
-  addColumnResizers(element, columns, columnElements, headers, tableType, layout);
+  addColumnResizers(element, columns, columnElements, headers, tableType,
+    () => layout, (nextLayout) => { layout = nextLayout; }, beginLayoutMutation, endLayoutMutation,
+    () => rebuildTable(null));
   updateSortIndicators();
   renderBody();
   Object.assign(tableController, {
@@ -3713,7 +3923,7 @@ function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescri
   let selected = 'add';
   [['add', '+', positiveDescription], ['remove', '−', negativeDescription]]
     .forEach(([value, label, description]) => {
-      const button = node('button', '', label);
+      const button = node('button', 'secondary', label);
       button.type = 'button';
       button.title = description;
       button.setAttribute('aria-label', description);
@@ -7357,8 +7567,7 @@ function openPlaybackAvoidList(player = webCallPlayer) {
     avoids.forEach((avoid) => {
       const row = node('div', 'scanner-modal-row');
       const copy = node('div');
-      copy.append(node('strong', '', avoid.label || 'Avoided target'),
-        node('span', '', `${avoid.details || avoid.key} · ${scannerRelativeAge(avoid.addedAtMs)}`));
+      copy.append(node('strong', '', avoid.label || 'Avoided target'));
       const remove = node('button', 'secondary', 'Remove');
       remove.type = 'button';
       remove.addEventListener('click', () => {
@@ -7534,7 +7743,7 @@ function renderScanner() {
 
   const controls = node('div', 'scanner-controls');
   const play = scannerControl('Play', () => void player.togglePlayback(), 'primary');
-  const replay = scannerControl('Replay Call', () => void player.replayCurrent());
+  const replay = scannerControl('Replay Last Call', () => void player.replayLastCall());
   const skip = scannerControl('Skip', () => player.skip());
   const hold = scannerControl('Hold', () => player.toggleHold());
   const avoid = scannerControl('Avoid', () => player.avoidCurrent(), 'danger');
@@ -7597,7 +7806,7 @@ function renderScanner() {
       `Replaying ${scannerTargetLabel(state.current)}. Live playback is paused at its saved position.`;
     play.textContent = state.paused ? 'Play' : 'Pause';
     play.classList.toggle('active', !state.paused);
-    replay.disabled = !state.currentReady;
+    replay.disabled = !state.lastCallReady;
     skip.disabled = !state.current && !state.queuedCount;
     hold.disabled = state.recentReplay || (!state.holdTarget && !state.currentReady);
     hold.classList.toggle('active', Boolean(state.holdTarget));
@@ -12225,6 +12434,20 @@ function liveSystemsSection(onSelectionChange) {
   ];
   const tabBar = node('div', 'systems-live-tabs');
   const connection = badge('Connecting', 'state-stale');
+  const titleActions = node('div', 'section-title-actions live-systems-title-actions');
+  titleActions.append(connection);
+  if (userPreferenceController.snapshot().loaded) {
+    const presentationSettings = node('button',
+      'button secondary icon-button section-title-icon live-presentation-settings');
+    presentationSettings.id = 'live-presentation-settings';
+    presentationSettings.type = 'button';
+    presentationSettings.setAttribute('aria-label', 'Live presentation settings');
+    presentationSettings.title = 'Live presentation settings';
+    presentationSettings.append(iconGlyph('icon-live-presentation'));
+    presentationSettings.addEventListener('click', () =>
+      openLivePresentationSettings('#live-presentation-settings'));
+    titleActions.append(presentationSettings);
+  }
   let activeTableId = null;
   let selection = null;
   let selectRow = () => {};
@@ -12235,12 +12458,11 @@ function liveSystemsSection(onSelectionChange) {
       const value = tables.get(activeTableId);
       if (value) selectRow(value, row);
     },
-    wrapperClass: 'table-scroll', tableClass: 'systems-live-table'
+    wrapperClass: 'table-scroll', tableClass: 'systems-live-table', layoutMenuHost: titleActions
   });
   const host = node('div', 'systems-live');
   host.append(tabBar, liveTable);
-  const block = section('Live Systems', host);
-  block.querySelector('.section-title').append(connection);
+  const block = section('Live Systems', host, titleActions);
 
   const clearSelection = () => {
     if (!selection) return;
@@ -14546,7 +14768,7 @@ async function renderAdminSiteBehaviorSettings() {
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
   const group = settingsCard('Shared Live behavior',
-    'These controls affect everyone using this receiver. Personal display choices are under My Settings.',
+    'These controls affect everyone using this receiver. Personal Live display choices are on the Live page.',
     retainIdle.control, clearVoice.control,
     formField('Idle grant retention (milliseconds)', grantAge,
       'How long inactive traffic grants remain in the shared Live state.'));
@@ -15037,6 +15259,102 @@ function settingsCardGrid(...cards) {
   return grid;
 }
 
+function openLivePresentationSettings(returnFocusSelector = null) {
+  const snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded) return;
+  const current = snapshot.preferences.presentation;
+  const form = node('form', 'admin-form live-presentation-form');
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  const encryption = preferenceCheckbox('show-encryption-details', 'Show encryption algorithm and key',
+    current.show_encryption_details,
+    'Show the decoded algorithm and key identifiers when they are available.');
+  const controlQuality = preferenceCheckbox('show-control-quality', 'Show control-channel decode quality',
+    current.show_control_decode_quality,
+    'Add the rolling control-channel quality reading to Live rows.');
+  const voiceQuality = preferenceCheckbox('show-voice-quality', 'Show voice-channel decode quality',
+    current.show_voice_decode_quality,
+    'Add call-level voice quality when enough frames have been received.');
+  const qualityMode = preferenceSelect('quality-mode', [['percentage', 'Percentage'], ['detailed', 'Detailed counters']],
+    current.decode_quality_display_mode);
+  const rowLimit = node('input');
+  rowLimit.type = 'number';
+  rowLimit.name = 'live-detail-row-limit';
+  rowLimit.min = '25';
+  rowLimit.max = '500';
+  rowLimit.required = true;
+  rowLimit.value = String(current.live_detail_row_limit);
+  const apply = (presentation) => {
+    encryption.input.checked = presentation.show_encryption_details;
+    controlQuality.input.checked = presentation.show_control_decode_quality;
+    voiceQuality.input.checked = presentation.show_voice_decode_quality;
+    qualityMode.value = presentation.decode_quality_display_mode;
+    rowLimit.value = String(presentation.live_detail_row_limit);
+  };
+  const fields = node('div', 'settings-field-grid');
+  fields.append(formField('Decode quality format', qualityMode,
+    'Choose a compact percentage or the underlying frame and error counters.'),
+  formField('Matching rows shown', rowLimit, 'Limit each matching Live detail list to 25–500 rows.'));
+  const save = node('button', '', 'Save Live Presentation');
+  save.type = 'submit';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(save);
+  const footer = node('div', 'settings-form-footer');
+  footer.append(message, actions);
+  form.append(node('p', 'live-presentation-intro',
+    'These choices affect only this signed-in user and apply to the Live page.'),
+  encryption.control, controlQuality.control, voiceQuality.control, fields, footer);
+  const modal = openReadOnlyModal('Live presentation', form, {
+    id: 'live-presentation-settings', className: 'live-presentation-modal', returnFocusSelector
+  });
+  if (!modal) return;
+  form.addEventListener('input', () => modal.setDirty(true));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || save.disabled) return;
+    const submitted = {
+      show_encryption_details: encryption.input.checked,
+      show_control_decode_quality: controlQuality.input.checked,
+      show_voice_decode_quality: voiceQuality.input.checked,
+      decode_quality_display_mode: qualityMode.value,
+      live_detail_row_limit: Number(rowLimit.value)
+    };
+    const controls = [encryption.input, controlQuality.input, voiceQuality.input, qualityMode, rowLimit, save];
+    controls.forEach((control) => { control.disabled = true; });
+    save.disabled = true;
+    modal.setBusy(true);
+    message.textContent = 'Saving Live presentation…';
+    try {
+      await updateUserPreferences((preferences) => {
+        preferences.presentation = submitted;
+      }, false);
+      modal.setDirty(false);
+      modal.setBusy(false);
+      if (modal.close()) void render();
+    } catch (error) {
+      if (error?.code === 'preference_session_changed') {
+        modal.setDirty(false);
+        modal.setBusy(false);
+        if (modal.close()) void render();
+      } else if (error?.code === 'preference_conflict') {
+        if (error.reloadError) {
+          modal.setDirty(true);
+          message.textContent = 'These settings changed in another session, but the current values could not be ' +
+            'reloaded. Try saving again or reopen this panel.';
+        } else {
+          const latest = userPreferenceController.snapshot();
+          if (latest.loaded) apply(latest.preferences.presentation);
+          modal.setDirty(false);
+          message.textContent = 'These settings changed in another session. The current saved values were loaded.';
+        }
+      } else message.textContent = error.message;
+    } finally {
+      modal.setBusy(false);
+      controls.forEach((control) => { control.disabled = false; });
+    }
+  });
+}
+
 async function renderSettings() {
   const renderContext = captureRenderContext();
   if (!beginPage(renderContext, pageHeader('My Settings',
@@ -15062,35 +15380,8 @@ async function renderSettings() {
   const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
     current.page_titles.prepend_playing_call,
     'The Scanner title always shows the audible target. This option adds it to other pages too.');
-
-  const encryption = preferenceCheckbox('show-encryption-details', 'Show encryption algorithm and key',
-    current.presentation.show_encryption_details,
-    'Show the decoded algorithm and key identifiers when they are available.');
-  const controlQuality = preferenceCheckbox('show-control-quality', 'Show control-channel decode quality',
-    current.presentation.show_control_decode_quality,
-    'Add the rolling control-channel quality reading to Live rows.');
-  const voiceQuality = preferenceCheckbox('show-voice-quality', 'Show voice-channel decode quality',
-    current.presentation.show_voice_decode_quality,
-    'Add call-level voice quality when enough frames have been received.');
-  const qualityMode = preferenceSelect('quality-mode', [['percentage', 'Percentage'], ['detailed', 'Detailed counters']],
-    current.presentation.decode_quality_display_mode);
-  const rowLimit = node('input');
-  rowLimit.type = 'number';
-  rowLimit.name = 'live-detail-row-limit';
-  rowLimit.min = '25';
-  rowLimit.max = '500';
-  rowLimit.required = true;
-  rowLimit.value = String(current.presentation.live_detail_row_limit);
-
-  const presentationFields = node('div', 'settings-field-grid');
-  presentationFields.append(formField('Decode quality format', qualityMode,
-    'Choose a compact percentage or the underlying frame and error counters.'),
-  formField('Matching rows shown', rowLimit, 'Limit each matching Live detail list to 25–500 rows.'));
-  const groups = settingsCardGrid(
-    settingsCard('Page titles', 'Control the extra context shown in tabs for pages other than Scanner.',
-      prependTitle.control),
-    settingsCard('Live presentation', 'Choose which optional decoder details this account sees on Live pages.',
-      encryption.control, controlQuality.control, voiceQuality.control, presentationFields));
+  const groups = settingsCardGrid(settingsCard('Page titles',
+    'Control the extra context shown in tabs for pages other than Scanner.', prependTitle.control));
 
   const save = node('button', '', 'Save My Settings');
   save.type = 'submit';
@@ -15107,32 +15398,28 @@ async function renderSettings() {
       message.textContent = 'My Settings must be reloaded before they can be saved.';
       return;
     }
-    const submitted = {
-      prependPlayingCall: prependTitle.input.checked,
-      show_encryption_details: encryption.input.checked,
-      show_control_decode_quality: controlQuality.input.checked,
-      show_voice_decode_quality: voiceQuality.input.checked,
-      decode_quality_display_mode: qualityMode.value,
-      live_detail_row_limit: Number(rowLimit.value)
-    };
+    const submitted = prependTitle.input.checked;
+    prependTitle.input.disabled = true;
     save.disabled = true;
     message.textContent = 'Saving My Settings…';
     try {
       await updateUserPreferences((preferences) => {
-        preferences.page_titles.prepend_playing_call = submitted.prependPlayingCall;
-        preferences.presentation = {
-          show_encryption_details: submitted.show_encryption_details,
-          show_control_decode_quality: submitted.show_control_decode_quality,
-          show_voice_decode_quality: submitted.show_voice_decode_quality,
-          decode_quality_display_mode: submitted.decode_quality_display_mode,
-          live_detail_row_limit: submitted.live_detail_row_limit
-        };
-      });
+        preferences.page_titles.prepend_playing_call = submitted;
+      }, false);
       message.textContent = 'My Settings saved.';
     } catch (error) {
-      message.textContent = error?.code === 'preference_conflict' ?
-        'These settings changed in another session. The current saved values were reloaded.' : error.message;
+      if (error?.code === 'preference_conflict' && !error.reloadError) {
+        const currentSnapshot = userPreferenceController.snapshot();
+        if (currentSnapshot.loaded) {
+          prependTitle.input.checked = currentSnapshot.preferences.page_titles.prepend_playing_call;
+        }
+        message.textContent = 'These settings changed in another session. The current saved values were reloaded.';
+      } else if (error?.code === 'preference_conflict') {
+        message.textContent = 'These settings changed in another session, but the current values could not be ' +
+          'reloaded. Try saving again or reload this page.';
+      } else message.textContent = error.message;
     } finally {
+      prependTitle.input.disabled = false;
       save.disabled = false;
     }
   });

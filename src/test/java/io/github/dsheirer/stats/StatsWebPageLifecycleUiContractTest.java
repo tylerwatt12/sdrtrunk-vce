@@ -25,7 +25,7 @@ class StatsWebPageLifecycleUiContractTest
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
         int systems = source.indexOf("import * as systemsDirectory from './features/systems-directory.js';");
-        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=124\"></script>");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=125\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);

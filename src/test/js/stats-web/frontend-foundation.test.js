@@ -179,10 +179,17 @@ async function main() {
   assert.match(functionBinding(appSource, 'aliasScanListChoices'), /Number\(scanList\?\.id\)/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
-  assert.match(functionBinding(appSource, 'updateUserPreferences'),
-    /showUserPreferenceError\(error, \(\) => settleUserPreferenceMutation\(mutator\)\)/);
+  assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(\)/);
+  assert.match(appSource, /if \(!force && active\.isBusy\?\.\(\)\) return false/);
+  const updatePreferencesSource = functionBinding(appSource, 'updateUserPreferences');
+  assert.match(updatePreferencesSource, /result\?\.state === 'stale'/);
+  assert.match(updatePreferencesSource, /error\.code = 'preference_session_changed'/);
+  assert.match(updatePreferencesSource, /error\?\.code !== 'preference_conflict'/);
+  assert.match(updatePreferencesSource, /showUserPreferenceError\(error, retry, true\)/);
+  assert.match(functionBinding(appSource, 'showUserPreferenceError'), /saveFailed \?/);
   assert.match(functionBinding(appSource, 'settleUserPreferenceMutation'), /\.catch\(\(\) => null\)/);
-  assert.match(functionBinding(appSource, 'saveTableLayoutPreference'), /return settleUserPreferenceMutation/);
+  assert.match(functionBinding(appSource, 'saveTableLayoutPreference'),
+    /return settleUserPreferenceMutation[\s\S]*\}, false\)/);
   assert.doesNotMatch(appSource, /void updateUserPreferences\(/);
   assert.match(indexSource,
     /id="preference-status" class="preference-status" role="status" aria-live="polite" hidden/);
@@ -191,20 +198,73 @@ async function main() {
   const settingsSource = functionBinding(appSource, 'renderSettings');
   assert.match(settingsSource, /const latest = userPreferenceController\.snapshot\(\)/);
   assert.match(settingsSource, /await updateUserPreferences\(\(preferences\) =>/);
+  assert.match(settingsSource, /preferences\.page_titles\.prepend_playing_call = submitted;\s*\}, false\)/);
+  assert.match(settingsSource, /prependTitle\.input\.checked = currentSnapshot\.preferences\.page_titles/);
   assert.match(settingsSource, /settingsCard\('Page titles'/);
-  assert.match(settingsSource, /settingsCard\('Live presentation'/);
+  assert.doesNotMatch(settingsSource, /Live presentation|preferences\.presentation|show_encryption_details/);
   assert.doesNotMatch(settingsSource,
     /appearance\.theme|playback\.volume|selected_scan_list_ids|scanner\.detail_mode|preferences\.tuner|preferences\.tables/);
   assert.doesNotMatch(settingsSource, /userPreferenceController\.replace\(/);
+  const livePresentationSource = functionBinding(appSource, 'openLivePresentationSettings');
+  assert.match(livePresentationSource, /openReadOnlyModal\('Live presentation'/);
+  assert.match(livePresentationSource, /modal\.setDirty\(true\)/);
+  assert.match(livePresentationSource, /modal\.setBusy\(true\)/);
+  assert.match(livePresentationSource, /const submitted = \{/);
+  assert.match(livePresentationSource, /preferences\.presentation = submitted;\s*\}, false\)/);
+  assert.match(livePresentationSource, /if \(modal\.close\(\)\) void render\(\)/);
+  assert.match(livePresentationSource, /error\?\.code === 'preference_session_changed'/);
+  assert.match(livePresentationSource, /void render\(\)/);
+  assert.match(livePresentationSource, /apply\(latest\.preferences\.presentation\)/);
+  const liveSystemsSource = functionBinding(appSource, 'liveSystemsSection');
+  assert.match(liveSystemsSource, /layoutMenuHost: titleActions/);
+  assert.match(liveSystemsSource, /iconGlyph\('icon-live-presentation'\)/);
+  assert.match(liveSystemsSource, /section\('Live Systems', host, titleActions\)/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
+  assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
+  assert.match(appSource, /layoutMenuOpen: reopenLayoutMenu/);
+  assert.match(appSource, /panel\.showPopover\(\)/);
+  assert.match(appSource, /layoutMenuFocus: restoreLayoutFocus/);
+  assert.match(appSource, /focusTarget instanceof HTMLElement/);
+  assert.match(appSource, /control\.dataset\.layoutWasDisabled = String\(control\.disabled\)/);
+  const resizerSource = functionBinding(appSource, 'addColumnResizers');
+  assert.match(resizerSource, /if \(!saved\) onSaveFailure\?\.\(\)/);
+  assert.match(resizerSource, /setCurrentLayout\(nextLayout\)/);
+  assert.match(resizerSource, /if \(!beginLayoutMutation\(\)\) return/);
+  assert.match(resizerSource, /endLayoutMutation\(\)/);
+  assert.match(appSource, /let layoutMutationPending = false/);
+  assert.match(appCssSource, /\.resizable-table\.table-layout-busy \.column-resizer/);
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
   assert.match(appSource, /panel\.setAttribute\('popover', 'auto'\)/);
-  assert.match(appCssSource, /\.table-layout-menu \{[^}]*padding-top: 8px/s);
+  assert.match(appSource, /bindAnchoredDropdown\(trigger, panel, activeRenderController\?\.signal\)/);
+  const dropdownBinding = functionBinding(appSource, 'bindAnchoredDropdown');
+  assert.match(dropdownBinding, /new AbortController\(\)/);
+  assert.match(dropdownBinding, /addEventListener\('resize'/);
+  assert.match(dropdownBinding, /addEventListener\('scroll'/);
+  assert.match(dropdownBinding, /setAttribute\('aria-expanded'/);
+  assert.match(dropdownBinding, /panel\.style\.maxHeight = ''/);
+  assert.match(dropdownBinding, /panel\.hidePopover\(\)/);
+  assert.match(appCssSource, /\.table-layout-menu \{[^}]*margin: 0 8px 6px auto[^}]*padding-top: 8px/s);
+  assert.match(appCssSource, /\.table-layout-panel \{[^}]*position: fixed[^}]*inset: auto[^}]*margin: 0/s);
+  const dropdownPlacement = vm.runInNewContext(
+    `(function(anchorRect, panelRect, viewport) ${functionBinding(appSource, 'anchoredDropdownPlacement')})`);
+  assert.deepEqual(JSON.parse(JSON.stringify(dropdownPlacement({ right: 600, bottom: 100 }, { width: 300 },
+    { width: 800, height: 600 }))), { left: 300, top: 106, maxHeight: 480 });
+  assert.equal(dropdownPlacement({ right: 100, bottom: 20 }, { width: 300 },
+    { width: 800, height: 600 }).left, 8, 'A wide dropdown must stay inside the left viewport gutter');
+  assert.deepEqual(JSON.parse(JSON.stringify(dropdownPlacement(
+    { right: 600, top: 560, bottom: 590 }, { width: 300, height: 300 },
+    { width: 800, height: 600 }))), { left: 300, top: 254, maxHeight: 480 },
+  'A dropdown may move above its trigger only when there is no usable room below it');
   assert.match(appCssSource, /button:not\([^\n]+:not\(\.auth-session-button\)/);
-  assert.match(appCssSource, /\.settings-card-grid \{/);
-  assert.match(appCssSource, /\.settings-form-footer \{/);
+  assert.match(appCssSource, /\.settings-card-grid \{[^}]*align-items: stretch/s);
+  assert.doesNotMatch(appCssSource, /\.settings-card-grid \{[^}]*max-width/s);
+  assert.match(appCssSource, /\.settings-card \{[^}]*height: 100%/s);
+  assert.match(appCssSource, /\.settings-form-footer \{[^}]*grid-column: 1 \/ -1[^}]*justify-self: stretch/s);
+  assert.doesNotMatch(appCssSource, /\.settings-form-footer \{[^}]*max-width/s);
+  const aliasMembershipOperation = functionBinding(appSource, 'aliasBulkBinaryOperation');
+  assert.match(aliasMembershipOperation, /node\('button', 'secondary', label\)/);
   const settingsCardGrid = vm.runInNewContext(
     `(function(...cards) ${functionBinding(appSource, 'settingsCardGrid')})`, {
       node: (tag, className) => ({
@@ -286,7 +346,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 30, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 28, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -635,7 +695,7 @@ async function main() {
     const submitted = JSON.parse(options.body);
     assert.equal(options.headers['If-Match'], '"7"');
     assert.ok(submitted.tables.sample);
-    assert.equal(submitted.scanner.detail_mode, 'advanced');
+    assert.equal(submitted.presentation.show_voice_decode_quality, false);
     return response(200, { revision: 8, preferences: submitted });
   });
   const layoutSave = controller.update((profile) => {
@@ -643,7 +703,9 @@ async function main() {
       schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
     };
   });
-  const settingsSave = controller.update((profile) => { profile.scanner.detail_mode = 'advanced'; });
+  const settingsSave = controller.update((profile) => {
+    profile.presentation.show_voice_decode_quality = false;
+  });
   slowLayoutSave.resolve(response(200, { revision: 7, preferences: {
     ...controller.snapshot().preferences,
     tables: { sample: {
@@ -652,7 +714,7 @@ async function main() {
   } }));
   await Promise.all([layoutSave, settingsSave]);
   assert.ok(controller.snapshot().preferences.tables.sample);
-  assert.equal(controller.snapshot().preferences.scanner.detail_mode, 'advanced');
+  assert.equal(controller.snapshot().preferences.presentation.show_voice_decode_quality, false);
 
   const serverCurrent = { ...decodedDefaults, scanner: { detail_mode: 'engineer' } };
   queuedResponses.push(response(409, { error: 'stale' }),

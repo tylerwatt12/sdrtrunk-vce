@@ -23,6 +23,7 @@ class StatsWebSettingsOwnershipUiContractTest
         String site = function(source, "async function renderAdminSiteBehaviorSettings()");
         String request = function(source, "async function requestSiteSettings(method = 'GET', settings = null, revision = null)");
         String personal = function(source, "async function renderSettings()");
+        String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
         String admin = function(source, "async function renderAdmin()");
 
         assertTrue(admin.contains("id: 'site-settings', label: 'Site Settings'"));
@@ -39,13 +40,14 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(site.contains("live_detail_row_limit"));
 
         assertTrue(personal.contains("userPreferenceController.snapshot()"));
-        assertTrue(personal.contains("show_encryption_details"));
-        assertTrue(personal.contains("show_control_decode_quality"));
-        assertTrue(personal.contains("show_voice_decode_quality"));
-        assertTrue(personal.contains("live_detail_row_limit"));
         assertTrue(personal.contains("prepend_playing_call"));
         assertTrue(personal.contains("settingsCard('Page titles'"));
-        assertTrue(personal.contains("settingsCard('Live presentation'"));
+        assertFalse(personal.contains("Live presentation"));
+        assertFalse(personal.contains("preferences.presentation"));
+        assertFalse(personal.contains("show_encryption_details"));
+        assertFalse(personal.contains("show_control_decode_quality"));
+        assertFalse(personal.contains("show_voice_decode_quality"));
+        assertFalse(personal.contains("live_detail_row_limit"));
         assertFalse(personal.contains("appearance.theme"));
         assertFalse(personal.contains("playback.volume"));
         assertFalse(personal.contains("selected_scan_list_ids"));
@@ -54,6 +56,17 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(personal.contains("preferences.tables"));
         assertFalse(personal.contains("retain_idle_call_details"));
         assertFalse(personal.contains("traffic_grant_age_out_milliseconds"));
+
+        assertTrue(livePresentation.contains("openReadOnlyModal('Live presentation'"));
+        assertTrue(livePresentation.contains("show_encryption_details"));
+        assertTrue(livePresentation.contains("show_control_decode_quality"));
+        assertTrue(livePresentation.contains("show_voice_decode_quality"));
+        assertTrue(livePresentation.contains("decode_quality_display_mode"));
+        assertTrue(livePresentation.contains("live_detail_row_limit"));
+        assertTrue(livePresentation.contains("preferences.presentation ="));
+        assertFalse(livePresentation.contains("preferences.page_titles"));
+        assertTrue(livePresentation.contains("modal.setDirty(true)"));
+        assertTrue(livePresentation.contains("void render()"));
 
         assertFalse(source.contains("/api/v1/admin/web-display"));
         assertFalse(source.contains("/api/v1/live/settings"));

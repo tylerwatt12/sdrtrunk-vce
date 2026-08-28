@@ -14,6 +14,7 @@ export class WebCallPlayer {
     this.avoids = new Map();
     this.recentCalls = [];
     this.recentReplay = null;
+    this.lastHeard = null;
     this.stateObservers = new Set();
     this.actions = {};
     this.holdTarget = null;
@@ -120,11 +121,13 @@ export class WebCallPlayer {
 
   viewState() {
     this.pruneRecentCalls();
+    const lastHeardCall = this.lastHeardCall();
     return {
       current: this.current,
       displayCall: this.displayCall(),
       currentReady: Boolean(this.current && this.currentBuffer),
       recentReplay: Boolean(this.recentReplay),
+      lastCallReady: Boolean(lastHeardCall && !lastHeardCall._audioUnavailable),
       paused: this.paused,
       playing: Boolean(this.source),
       targetLabel: this.currentTargetLabel(),
@@ -230,6 +233,7 @@ export class WebCallPlayer {
     this.avoids.clear();
     this.recentCalls = [];
     this.recentReplay = null;
+    this.lastHeard = null;
     this.holdTarget = null;
     this.clearLossNotice();
     this.clearIdleDisplay();
@@ -456,6 +460,15 @@ export class WebCallPlayer {
     const oldest = Date.now() - WebCallPlayer.MAXIMUM_RECENT_CALL_AGE_MS;
     this.recentCalls = this.recentCalls.filter((call) => this.callCompletedAt(call) >= oldest)
       .slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS);
+    if (this.lastHeard && this.callCompletedAt(this.lastHeard) < oldest) {
+      const stillBuffered = this.current?._callId === this.lastHeard._callId && Boolean(this.currentBuffer);
+      if (!stillBuffered) this.lastHeard = null;
+    }
+  }
+
+  lastHeardCall() {
+    this.pruneRecentCalls();
+    return this.lastHeard;
   }
 
   callCompletedAt(call) {
@@ -586,7 +599,7 @@ export class WebCallPlayer {
   bindControls() {
     this.ui.play.addEventListener('click', () => this.togglePlayback());
     this.ui.skip.addEventListener('click', () => this.skip());
-    this.ui.replay.addEventListener('click', () => this.replayCurrent());
+    this.ui.replay.addEventListener('click', () => this.replayLastCall());
     this.ui.hold.addEventListener('click', () => this.toggleHold());
     this.ui.avoid.addEventListener('click', () => this.avoidCurrent());
     this.ui.avoidList?.addEventListener('click', () => this.actions.openAvoidList?.(this));
@@ -651,9 +664,7 @@ export class WebCallPlayer {
     this.avoids.delete(target);
     this.avoids.set(target, {
       key: target,
-      label: this.callLabel(this.current),
-      details: this.callDetails(this.current),
-      addedAtMs: Date.now()
+      label: this.targetLabel(this.current)
     });
     while (this.avoids.size > WebCallPlayer.MAXIMUM_AVOIDS) {
       this.avoids.delete(this.avoids.keys().next().value);
@@ -701,9 +712,25 @@ export class WebCallPlayer {
     this.startCurrent();
   }
 
+  async replayLastCall() {
+    this.pruneRecentCalls();
+    const lastCall = this.lastHeardCall();
+    if (!lastCall || lastCall._audioUnavailable) return false;
+    if (this.current?._callId === lastCall._callId && this.currentBuffer && !this.recentReplay) {
+      this.paused = false;
+      await this.replayCurrent();
+      return true;
+    }
+    return this.replayCall(lastCall);
+  }
+
   async replayRecent(callId) {
     this.pruneRecentCalls();
     const call = this.recentCalls.find((item) => item._callId === String(callId || ''));
+    return this.replayCall(call);
+  }
+
+  async replayCall(call) {
     if (!call || call._audioUnavailable) return false;
     if (this.current?._callId === call._callId && !this.recentReplay) {
       await this.replayCurrent();
@@ -888,6 +915,7 @@ export class WebCallPlayer {
     this.source = source;
     this.playbackStartedAt = this.audioContext.currentTime - offset;
     source.start(0, offset);
+    if (!this.recentReplay) this.lastHeard = this.current;
     this.setStatus('Listening');
     this.render();
     this.startProgress();
@@ -1074,15 +1102,18 @@ export class WebCallPlayer {
     return `${target}${source ? ` ← ${source}` : ''}`;
   }
 
-  currentTargetLabel() {
-    const call = this.current;
+  targetLabel(call) {
     if (!call) return '';
     const alias = String(call.target_alias || '').trim();
     if (alias) return alias;
     const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
       String(call.target_id);
     if (targetId) return `${this.identifierType(call.target_form, 'TGID')} ${targetId}`;
-    return String(call.channel || '').trim();
+    return String(call.channel || '').trim() || 'Unknown target';
+  }
+
+  currentTargetLabel() {
+    return this.targetLabel(this.current);
   }
 
   identifierType(form, fallback) {
@@ -1147,6 +1178,8 @@ export class WebCallPlayer {
   render() {
     this.renderVolume();
     const currentReady = Boolean(this.current && this.currentBuffer);
+    const lastHeardCall = this.lastHeardCall();
+    const lastCallReady = Boolean(lastHeardCall && !lastHeardCall._audioUnavailable);
     const displayedCall = this.displayCall();
     this.ui.current.replaceChildren();
     if (displayedCall) {
@@ -1199,7 +1232,9 @@ export class WebCallPlayer {
     this.ui.play.setAttribute('aria-pressed', String(!this.paused));
     this.ui.play.setAttribute('aria-label', playLabel);
     this.ui.play.title = playLabel;
-    this.ui.replay.disabled = !currentReady;
+    this.ui.replay.disabled = !lastCallReady;
+    this.ui.replay.setAttribute('aria-label', 'Replay last call');
+    this.ui.replay.title = 'Replay last call';
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));
     this.ui.hold.disabled = Boolean(this.recentReplay) || (!this.holdTarget && !currentReady);
     this.ui.hold.title = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';

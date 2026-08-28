@@ -377,6 +377,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(css.contains(":not(.auth-action):not(.auth-session-button):not(.table-sort-control)"));
         assertTrue(function(source(), "function aliasEditorModalTabs(panels, initial = 'basics')")
             .contains("node('button', 'secondary', label)"));
+        assertTrue(function(source(), "function aliasBulkBinaryOperation")
+            .contains("node('button', 'secondary', label)"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .alias-membership-operation button[aria-pressed=\"true\"]"));
         assertTrue(css.contains("@media (max-width: 900px)"));
         assertTrue(source().contains("alias-list-mobile-create"));
         assertTrue(css.contains("@media (max-width: 560px)"));

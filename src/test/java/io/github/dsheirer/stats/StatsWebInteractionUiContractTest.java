@@ -284,7 +284,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"102\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"103\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -604,7 +604,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=85"));
+        assertTrue(html.contains("/assets/app.css?v=86"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -699,9 +699,11 @@ class StatsWebInteractionUiContractTest
         String enqueue = function(source, "  enqueue(call)");
         String togglePlayback = function(source, "  async togglePlayback()");
         String replayCurrent = function(source, "  async replayCurrent()");
+        String replayLast = function(source, "  async replayLastCall()");
         String toggleHold = function(source, "  toggleHold()");
         String avoidCurrent = function(source, "  avoidCurrent()");
         String render = function(source, "  render()");
+        String avoidList = function(source(), "function openPlaybackAvoidList(player = webCallPlayer)");
 
         int play = html.indexOf("id=\"playback-play\"");
         int skip = html.indexOf("id=\"playback-skip\"");
@@ -711,7 +713,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(play >= 0 && play < skip && skip < replay && replay < hold && hold < avoid);
         assertTrue(html.contains("id=\"icon-replay\""));
         assertTrue(html.contains("id=\"playback-replay\" class=\"playback-command playback-icon-command\" " +
-            "aria-label=\"Replay current call\""));
+            "aria-label=\"Replay last call\""));
         assertTrue(html.contains("<use href=\"#icon-replay\"></use>"));
         assertTrue(html.contains("id=\"playback-control-menu\" class=\"playback-control-menu\" open"));
         assertTrue(css.contains("#desktop-playback-slot .playback-control-menu[open] > " +
@@ -735,11 +737,19 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("persistSelectedScanLists"));
         assertTrue(replayCurrent.contains("this.playbackOffset = 0"));
         assertTrue(replayCurrent.contains("this.startCurrent()"));
+        assertTrue(replayLast.contains("const lastCall = this.lastHeardCall()"));
+        assertTrue(replayLast.contains("return this.replayCall(lastCall)"));
+        assertTrue(source.contains("if (!this.recentReplay) this.lastHeard = this.current"));
         assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
         assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer || this.recentReplay) return;"));
+        assertTrue(avoidCurrent.contains("label: this.targetLabel(this.current)"));
+        assertFalse(avoidCurrent.contains("details:"));
+        assertFalse(avoidCurrent.contains("addedAtMs:"));
+        assertFalse(avoidList.contains("avoid.details"));
+        assertFalse(avoidList.contains("avoid.addedAtMs"));
         assertTrue(render.contains("Boolean(this.recentReplay) || (!this.holdTarget && !currentReady)"));
         assertTrue(render.contains("this.ui.avoid.disabled = !currentReady || Boolean(this.recentReplay)"));
-        assertTrue(render.contains("this.ui.replay.disabled = !currentReady"));
+        assertTrue(render.contains("this.ui.replay.disabled = !lastCallReady"));
     }
 
     @Test
@@ -782,6 +792,7 @@ class StatsWebInteractionUiContractTest
         String recent = function(source, "  rememberRecentCall(call)");
         String pruneRecent = function(source, "  pruneRecentCalls()");
         String replayRecent = function(source, "  async replayRecent(callId)");
+        String replayCall = function(source, "  async replayCall(call)");
         String returnLive = function(source, "  async returnToLive()");
         String subscribeState = function(source, "  subscribeState(observer)");
 
@@ -817,8 +828,9 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("this.missedCountExact"));
         assertTrue(recent.contains("this.pruneRecentCalls()"));
         assertTrue(pruneRecent.contains(".slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS)"));
-        assertTrue(replayRecent.contains("playbackOffset: savedOffset"));
-        assertTrue(replayRecent.contains("paused: this.paused"));
+        assertTrue(replayRecent.contains("return this.replayCall(call)"));
+        assertTrue(replayCall.contains("playbackOffset: savedOffset"));
+        assertTrue(replayCall.contains("paused: this.paused"));
         assertTrue(returnLive.contains("this.current = saved.current"));
         assertTrue(returnLive.contains("this.playbackOffset = saved.playbackOffset"));
         assertTrue(subscribeState.contains("return () => this.stateObservers.delete(observer)"));
@@ -865,6 +877,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Engineer"));
         assertTrue(scanner.contains("Avoid List"));
         assertTrue(scanner.contains("Recent Calls"));
+        assertTrue(scanner.contains("Replay Last Call"));
         assertTrue(scanner.contains("Clear Queue"));
         assertTrue(scanner.contains("View coverage tree"));
         assertTrue(source.contains("scannerParticipant('Target'"));
@@ -1119,9 +1132,19 @@ class StatsWebInteractionUiContractTest
         String showTable = function(systems, "const showTable = (tableId) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
+        String html = readText(INDEX_HTML);
 
         assertTrue(live.contains("node('div', 'live-split')"));
         assertTrue(live.contains("liveSystemsSection(eventsPanel.select)"));
+        assertTrue(systems.contains("node('div', 'section-title-actions live-systems-title-actions')"));
+        assertTrue(systems.contains("layoutMenuHost: titleActions"));
+        assertTrue(systems.contains("iconGlyph('icon-live-presentation')"));
+        assertTrue(systems.contains("openLivePresentationSettings('#live-presentation-settings')"));
+        assertTrue(systems.contains("section('Live Systems', host, titleActions)"));
+        assertFalse(events.contains("layoutMenuHost"));
+        assertFalse(messages.contains("layoutMenuHost"));
+        assertTrue(html.contains("id=\"icon-columns\""));
+        assertTrue(html.contains("id=\"icon-live-presentation\""));
         assertTrue(events.contains("['events', 'messages', 'channel']"));
         assertTrue(events.contains("liveMessagesPane()"));
         assertTrue(events.contains("liveChannelPane()"));
