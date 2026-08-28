@@ -319,6 +319,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("denial_observations", "denial_observation_count"),
                 number("data_observations", "data_observation_count"),
                 number("other_signaling_observations", "other_signaling_observation_count"),
+                number("signaling_observations", "signaling_observation_count"),
                 number("relationships", "relationship_count"),
                 number("join_relationships", "join_relationship_count"),
                 number("current_affiliations", "current_affiliation_count"),

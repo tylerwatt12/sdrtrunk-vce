@@ -109,6 +109,7 @@ class StatsCsvExportTest
             assertFalse(parser.getHeaderMap().containsKey("priority"));
             assertTrue(parser.getHeaderMap().containsKey("scan_list_ids"));
             assertTrue(parser.getHeaderMap().containsKey("scan_lists"));
+            assertTrue(parser.getHeaderMap().containsKey("signaling_observations"));
             CSVRecord row = parser.getRecords().getFirst();
             assertEquals("100", row.get("value"));
             assertEquals("p25", row.get("family"));

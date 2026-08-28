@@ -227,9 +227,8 @@ const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
 const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
 const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
 const SERVICE_STATUS_RETRY_DELAY_MS = 500;
-const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
-  'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'recorded', 'streamed',
-  'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout', 'relationships', 'last-evidence'
+const ALIAS_CATALOG_DEFAULT_COLUMNS = Object.freeze([
+  'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'signaling', 'last-seen'
 ]);
 let serviceStatus = null;
 let serviceStatusRequestPending = false;
@@ -2536,15 +2535,6 @@ function aliasMetricTime(row, field) {
   return Number(row[field]) > 0 ? dateTime(row[field]) : '—';
 }
 
-function aliasMetricsState(value) {
-  return ({
-    observed: 'Observed',
-    covered_no_evidence: 'Covered · no evidence',
-    not_collected: 'Not collected',
-    unsupported: 'Unsupported'
-  })[String(value || '').toLowerCase()] || '—';
-}
-
 function aliasBehavior(row) {
   const values = [];
   const scanLists = Array.isArray(row.scan_lists) ? row.scan_lists.filter(Boolean) : [];
@@ -2665,51 +2655,19 @@ function aliasCustomConfigurationColumns() {
   ];
 }
 
-function aliasCatalogEnrichmentColumns() {
+function aliasActivityColumns() {
   const count = (id, label, field, group, fullLabel, sort = field) => ({
     id, label, field, group, fullLabel, sort,
     render: (row) => aliasMetricValue(row, field), className: 'numeric',
     sortValue: (row) => row[field] === null || row[field] === undefined ? -1 : Number(row[field])
   });
-  const evidence = 'Signaling / Relationship Evidence';
   return [
-    count('logical-calls', 'Logical Calls', 'logical_call_count', 'Call Activity',
+    count('calls', 'Calls', 'logical_call_count', 'Activity',
       'Unique transmissions associated with this alias after matching multisite copies are combined.'),
-    count('recorded-logical-calls', 'Recorded', 'recorded_logical_call_count', 'Call Activity',
-      'Logical calls whose selected best copy was recorded.'),
-    count('stream-submitted-logical-calls', 'Submitted', 'stream_submitted_logical_call_count',
-      'Call Activity', 'Logical calls whose selected best copy was submitted to a configured streamer.'),
-    count('encrypted-logical-calls', 'Encrypted', 'encrypted_logical_call_count', 'Call Activity',
-      'Logical calls for which encrypted voice was confirmed.'),
-    count('grant-observations', 'Grants', 'grant_observation_count', evidence, 'Channel-grant observations.'),
-    count('join-observations', 'Join', 'join_observation_count', evidence, 'Group affiliation or join observations.'),
-    count('emergency-observations', 'Emergency', 'emergency_observation_count', evidence, 'Emergency signaling observations.'),
-    count('register-observations', 'Register', 'register_observation_count', evidence, 'Unit registration observations.'),
-    count('logout-observations', 'Logout', 'logout_observation_count', evidence,
-      'Unit deregistration or logout observations. This does not mean a radio left a talkgroup.'),
-    count('denial-observations', 'Denial', 'denial_observation_count', evidence, 'Denied service observations.'),
-    count('data-observations', 'Data', 'data_observation_count', evidence, 'Data-service observations.'),
-    count('other-signaling-observations', 'Other', 'other_signaling_observation_count', evidence,
-      'Other signaling observations that do not fit the named categories.'),
-    count('relationships', 'Relationships', 'relationship_count', evidence,
-      'Distinct retained radio/talkgroup relationship evidence.'),
-    count('join-relationships', 'Join Rel.', 'join_relationship_count', evidence,
-      'Relationship evidence established by join or affiliation signaling.'),
-    count('current-affiliations', 'Current Affil.', 'current_affiliation_count', evidence,
-      'Current affiliations. Unsupported protocols show an em dash.'),
-    count('covered-scopes', 'Covered', 'coverage_scope_count', evidence,
-      'Compatible monitored scopes where this alias could be resolved.', null),
-    count('observed-scopes', 'Observed', 'observed_scope_count', evidence,
-      'Compatible scopes with retained activity or relationship evidence.', null),
-    { id: 'evidence-state', label: 'Evidence', field: 'metrics_state', group: evidence,
-      fullLabel: 'Collection coverage state', render: (row) => aliasMetricsState(row.metrics_state),
-      sortValue: (row) => row.metrics_state || '' },
-    { id: 'first-evidence', label: 'First Evidence', field: 'first_evidence_ms', group: evidence,
-      fullLabel: 'First retained activity or relationship evidence', render: (row) =>
-        aliasMetricTime(row, 'first_evidence_ms'), sort: 'first_evidence_ms',
-      sortValue: (row) => Number(row.first_evidence_ms || 0) },
-    { id: 'last-evidence', label: 'Last Evidence', field: 'last_evidence_ms', group: evidence,
-      fullLabel: 'Most recent retained activity or relationship evidence',
+    count('signaling', 'Signaling', 'signaling_observation_count', 'Activity',
+      'Recognized grants, joins, registrations, logouts, emergencies, denials, data, and other signaling actions.'),
+    { id: 'last-seen', label: 'Last Seen', field: 'last_evidence_ms', group: 'Activity',
+      fullLabel: 'Most recent retained call or signaling activity',
       render: (row) => aliasMetricTime(row, 'last_evidence_ms'), sort: 'last_evidence_ms',
       sortValue: (row) => Number(row.last_evidence_ms || 0) }
   ];
@@ -2822,22 +2780,7 @@ function aliasDetailMetricBand(row, definitions) {
     [label, row[field] ?? 0, aliasMetricValue(row, field)]), true);
 }
 
-function aliasScopeMetricSummary(row, definitions, emptyText) {
-  const values = definitions.filter(([, field]) => Number(row[field] || 0) > 0)
-    .map(([label, field]) => badge(`${label} ${aliasMetricValue(row, field)}`));
-  return values.length ? badgeGroup(values) : node('span', 'muted', emptyText);
-}
-
 function aliasEditorScopeBreakdownColumns() {
-  const callUse = [['Logical Calls', 'logical_call_count'], ['Rec', 'recorded_logical_call_count'],
-    ['Submitted', 'stream_submitted_logical_call_count'], ['Enc', 'encrypted_logical_call_count']];
-  const systemEvidence = [['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
-    ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
-    ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
-    ['Data', 'data_observation_count'], ['Other', 'other_signaling_observation_count'],
-    ['Relationships', 'relationship_count'],
-    ['Join Rel.', 'join_relationship_count'], ['Current Affil.', 'current_affiliation_count']];
-  const total = (row, definitions) => definitions.reduce((sum, [, field]) => sum + Number(row[field] || 0), 0);
   return [
     { id: 'scope', label: 'Scope', width: 230, className: 'alias-cell', render: (row) => {
       const value = node('div', 'alias-scope-identity');
@@ -2845,13 +2788,13 @@ function aliasEditorScopeBreakdownColumns() {
       if (row.topology) value.append(node('span', 'muted', availableValue(row.topology)));
       return value;
     } },
-    { id: 'scope-call-use', label: 'Call Use', width: 210,
-      render: (row) => aliasScopeMetricSummary(row, callUse, 'No calls observed'),
-      sortValue: (row) => total(row, callUse) },
-    { id: 'scope-system-evidence', label: 'System Evidence', width: 320,
-      render: (row) => aliasScopeMetricSummary(row, systemEvidence, 'No signaling observed'),
-      sortValue: (row) => total(row, systemEvidence) },
-    { id: 'last-evidence', label: 'Last Evidence', width: 166,
+    { id: 'scope-calls', label: 'Calls', width: 100, className: 'numeric',
+      render: (row) => aliasMetricValue(row, 'logical_call_count'),
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'scope-signaling', label: 'Signaling', width: 110, className: 'numeric',
+      render: (row) => aliasMetricValue(row, 'signaling_observation_count'),
+      sortValue: (row) => Number(row.signaling_observation_count || 0) },
+    { id: 'last-seen', label: 'Last Seen', width: 166,
       render: (row) => aliasMetricTime(row, 'last_evidence_ms'),
       sortValue: (row) => Number(row.last_evidence_ms || 0) }
   ];
@@ -2943,22 +2886,26 @@ function aliasListRail(lists, selectedList) {
   return rail;
 }
 
+function aliasEditorView(selectedList) {
+  const supportsDiscovery = observedTalkgroupDiscoverySupported(selectedList);
+  const allowed = supportsDiscovery ? ['configure', 'discover', 'activity', 'custom'] :
+    ['configure', 'activity', 'custom'];
+  const requested = ['calls', 'evidence'].includes(route.get('aliasTab')) ?
+    'activity' : route.get('aliasTab');
+  return allowed.includes(requested) ? requested : 'configure';
+}
+
 function aliasEditorViewTabs(selectedList) {
   const id = aliasListId(selectedList);
-  const supportsDiscovery = observedTalkgroupDiscoverySupported(selectedList);
-  const allowed = supportsDiscovery ? ['configure', 'discover', 'calls', 'evidence', 'custom'] :
-    ['configure', 'calls', 'evidence', 'custom'];
-  const active = allowed.includes(route.get('aliasTab')) ?
-    route.get('aliasTab') : 'configure';
+  const active = aliasEditorView(selectedList);
   const entries = [
     { id: 'configure', label: 'Configure', href: href('aliases', { list: id, aliasTab: 'configure' }) }
   ];
-  if (supportsDiscovery) {
+  if (observedTalkgroupDiscoverySupported(selectedList)) {
     entries.push({ id: 'discover', label: 'Discover', href: href('aliases', { list: id, aliasTab: 'discover' }) });
   }
   entries.push(
-    { id: 'calls', label: 'Call Use', href: href('aliases', { list: id, aliasTab: 'calls' }) },
-    { id: 'evidence', label: 'System Evidence', href: href('aliases', { list: id, aliasTab: 'evidence' }) },
+    { id: 'activity', label: 'Activity', href: href('aliases', { list: id, aliasTab: 'activity' }) },
     { id: 'custom', label: 'Custom', href: href('aliases', { list: id, aliasTab: 'custom' }) }
   );
   return tabs(entries, active);
@@ -3038,19 +2985,16 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
         `${row.name}${row.published === false ? ' · not published' : ''}`])]),
     selectFilter('Record', 'record', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
     selectFilter('Stream', 'stream', [['', 'Any'], ['present', 'Configured'], ['none', 'None']]),
-    selectFilter('Evidence', 'evidence', [['', 'Any'], ['observed', 'Observed'],
-      ['covered_no_evidence', 'Covered · no evidence'], ['not_collected', 'Not collected'],
-      ['unsupported', 'Unsupported']]),
-    selectFilter('Call use', 'use', [['', 'Any'], ['used', 'Has calls'],
+    selectFilter('Calls', 'use', [['', 'Any'], ['used', 'Has calls'],
       ['unused', 'No calls observed']]),
     (() => {
       const wrapper = node('label', 'alias-filter');
-      wrapper.append(node('span', '', 'Active after'), lastAfter);
+      wrapper.append(node('span', '', 'Seen after'), lastAfter);
       return wrapper;
     })(),
     (() => {
       const wrapper = node('label', 'alias-filter');
-      wrapper.append(node('span', '', 'Active before'), lastBefore);
+      wrapper.append(node('span', '', 'Seen before'), lastBefore);
       return wrapper;
     })(),
     node('button', '', 'Apply'));
@@ -3124,19 +3068,13 @@ function aliasEditorBaseColumns(rows, onSelectionChange) {
 
 function aliasEditorColumns(view, rows, onSelectionChange) {
   const base = aliasEditorBaseColumns(rows, onSelectionChange);
-  const enrichment = aliasCatalogEnrichmentColumns();
-  if (view === 'calls') {
-    return [...base, ...enrichment.filter((column) =>
-      ['calls', 'recorded', 'streamed', 'encrypted-evidence', 'last-evidence'].includes(column.id))];
-  }
-  if (view === 'evidence') {
-    return [...base, ...enrichment.filter((column) =>
-      ['grants', 'joins', 'emergency', 'register', 'logout', 'relationships', 'join-relationships',
-        'current-affiliations', 'evidence-state', 'last-evidence'].includes(column.id))];
+  const activity = aliasActivityColumns();
+  if (view === 'activity') {
+    return [...base, ...activity];
   }
   if (view === 'custom') {
     const selection = base.filter((column) => column.id === 'select');
-    const definitions = [...aliasCustomConfigurationColumns(), ...enrichment];
+    const definitions = [...aliasCustomConfigurationColumns(), ...activity];
     return [...selection, ...definitions];
   }
   return [...base,
@@ -3507,38 +3445,45 @@ function aliasMatcherPayload(form, descriptor) {
   return matcher;
 }
 
-function aliasUsageContent(response) {
-  const alias = response?.alias || {};
+function aliasActivityContent(response) {
+  const alias = response || {};
   const scopeRows = response?.breakdown || [];
   const wrapper = node('div', 'alias-usage-content');
-  wrapper.append(section('Call Use', aliasDetailMetricBand(alias, [
+  wrapper.append(section('Calls', aliasDetailMetricBand(alias, [
     ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
     ['Submitted', 'stream_submitted_logical_call_count'], ['Encrypted', 'encrypted_logical_call_count']
   ])));
-  wrapper.append(section('System Evidence', fragment(
+  wrapper.append(section('Signaling', fragment(
     aliasDetailMetricBand(alias, [
+      ['Total', 'signaling_observation_count'],
       ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
       ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
       ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
-      ['Data', 'data_observation_count'], ['Other', 'other_signaling_observation_count'],
+      ['Data', 'data_observation_count']
+    ]),
+    node('p', 'metric-meaning-note',
+      'The total also includes other recognized signaling actions. Calls and signaling can describe the same ' +
+      'transmission, so they should not be added together. Logout means unit deregistration, not leaving a talkgroup.')
+  )));
+  wrapper.append(section('Related State', fragment(
+    aliasDetailMetricBand(alias, [
       ['Relationships', 'relationship_count'],
       ['Join Relationships', 'join_relationship_count'], ['Current Affiliations', 'current_affiliation_count']
     ]),
     keyValues([
-      ['Collection State', aliasMetricsState(alias.metrics_state)],
-      ['First Evidence', aliasMetricTime(alias, 'first_evidence_ms')],
-      ['Last Evidence', aliasMetricTime(alias, 'last_evidence_ms')]
+      ['First Seen', aliasMetricTime(alias, 'first_evidence_ms')],
+      ['Last Seen', aliasMetricTime(alias, 'last_evidence_ms')]
     ]),
     node('p', 'metric-meaning-note',
-      'Calls and signaling are separate evidence. An em dash means unavailable or not collected; 0 means the ' +
-      'compatible scope was collected and the count was zero.')
+      'Relationships and current affiliations are derived from retained call and signaling activity and are not ' +
+      'included in the Signaling total. ' +
+      'An em dash means unavailable; 0 means monitored with none observed.')
   )));
   wrapper.append(section('Scope Breakdown', fragment(
     table(scopeRows, aliasEditorScopeBreakdownColumns(), 'No compatible monitored scopes',
       { type: 'alias-editor-scope-breakdown' }),
     node('p', 'metric-meaning-note',
-      'Scope already includes the system and site. Per-scope cells show only positive counts; complete totals remain ' +
-      'above, including zero or unavailable metrics.'))));
+      'Scope already includes the system and site. Calls and signaling remain separate.'))));
   return wrapper;
 }
 
@@ -3554,7 +3499,7 @@ function aliasEditorModalTabs(panels, initial = 'basics') {
     });
   };
   [['basics', 'Basics'], ['identifier', 'Identifier'], ['audio', 'Call Handling'],
-    ['usage', 'Usage & Evidence']].forEach(([id, label]) => {
+    ['usage', 'Activity']].forEach(([id, label]) => {
     const button = node('button', 'secondary', label);
     button.type = 'button';
     button.dataset.tab = id;
@@ -3764,8 +3709,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     audio.append(scanLists, audioGrid, streams, aliasFormField('Stream as talkgroup', streamAs,
       'Optional talkgroup ID sent to configured streaming destinations'));
 
-    usage.append(analytics ? aliasUsageContent(analytics) :
-      node('div', 'empty', 'Usage and evidence become available after the alias is saved and observed.'));
+    usage.append(analytics ? aliasActivityContent(analytics) :
+      node('div', 'empty', 'Activity becomes available after the alias is saved and observed.'));
     const panels = { basics, identifier, audio, usage };
     const tabBar = aliasEditorModalTabs(panels);
     const errorHost = node('div', 'alias-form-message');
@@ -4477,16 +4422,20 @@ function observedTalkgroupDetail(row, selectedList) {
       ['Reason', observedTalkgroupPromotionReason(row)]);
   }
   wrapper.append(section('Alias Coverage', keyValues(coverage)));
-  wrapper.append(section('Call Use', aliasDetailMetricBand(row, [
+  wrapper.append(section('Calls', aliasDetailMetricBand(row, [
     ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
     ['Submitted', 'stream_submitted_logical_call_count'], ['Encrypted', 'encrypted_logical_call_count']
   ])));
-  wrapper.append(section('System Evidence', aliasDetailMetricBand(row, [
-    ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
-    ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
-    ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
-    ['Data', 'data_observation_count'], ['Other', 'other_signaling_observation_count']
-  ])));
+  wrapper.append(section('Signaling', fragment(
+    aliasDetailMetricBand(row, [
+      ['Total', 'signaling_observation_count'],
+      ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
+      ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
+      ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
+      ['Data', 'data_observation_count']
+    ]),
+    node('p', 'metric-meaning-note',
+      'The total also includes other recognized signaling actions. Calls and signaling can overlap.'))));
   wrapper.append(section('Observed', keyValues([
     ['First Activity', observedTalkgroupTime(row, row.first_seen_ms)],
     ['Latest Activity', observedTalkgroupTime(row, row.last_seen_ms)]
@@ -4545,12 +4494,12 @@ function renderObservedTalkgroups(main, page, selectedList) {
       render: observedTalkgroupIdentity },
     { id: 'system', label: 'System', sort: 'system', className: 'alias-cell', render: observedTalkgroupSystem },
     { id: 'match', label: 'Alias Match', className: 'alias-cell', render: observedTalkgroupMatch },
-    { id: 'call-use', label: 'Call Use', sort: 'logical_call_count', render: (row) => observedTalkgroupCounts([
+    { id: 'calls', label: 'Calls', sort: 'logical_call_count', render: (row) => observedTalkgroupCounts([
       ['Logical', row.logical_call_count], ['Rec', row.recorded_logical_call_count],
-      ['Submitted', row.stream_submitted_logical_call_count]
+      ['Submitted', row.stream_submitted_logical_call_count], ['Enc', row.encrypted_logical_call_count]
     ]) },
-    { id: 'evidence', label: 'Evidence', render: (row) => observedTalkgroupCounts([
-      ['Enc', row.encrypted_logical_call_count], ['Signal', row.signaling_observation_count]
+    { id: 'signaling', label: 'Signaling', render: (row) => observedTalkgroupCounts([
+      ['Signal', row.signaling_observation_count]
     ]) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', sort: 'last_seen',
       render: (row) => observedTalkgroupTime(row, row.last_seen_ms) },
@@ -4740,10 +4689,7 @@ async function renderAliases() {
     return;
   }
 
-  const allowedViews = observedTalkgroupDiscoverySupported(selectedList) ?
-    ['configure', 'discover', 'calls', 'evidence', 'custom'] : ['configure', 'calls', 'evidence', 'custom'];
-  const view = allowedViews.includes(route.get('aliasTab')) ?
-    route.get('aliasTab') : 'configure';
+  const view = aliasEditorView(selectedList);
   const filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), scan_list_id: route.get('scanListId'), record: route.get('record'),
@@ -4806,7 +4752,7 @@ async function renderAliases() {
     return;
   }
 
-  const definitions = [...aliasCustomConfigurationColumns(), ...aliasCatalogEnrichmentColumns()];
+  const definitions = [...aliasCustomConfigurationColumns(), ...aliasActivityColumns()];
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   let bulkBar = null;
   const updateSelection = () => {
@@ -4824,7 +4770,7 @@ async function renderAliases() {
       type: `alias-editor-${view}`, serverSort: true, sortable: false,
       defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
       defaultHiddenColumns: view === 'custom' ? definitions
-        .map((column) => column.id).filter((id) => !ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS.includes(id)) : [],
+        .map((column) => column.id).filter((id) => !ALIAS_CATALOG_DEFAULT_COLUMNS.includes(id)) : [],
       onRowClick: (row, _tableRow, event) => {
         const id = Number(row.alias_id);
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
@@ -4869,7 +4815,7 @@ async function renderAliases() {
   });
   actions.append(exportCsvLink('aliases', exportContext));
   const block = section(view === 'configure' ? 'Alias Configuration' :
-    (view === 'calls' ? 'Call Use' : (view === 'evidence' ? 'System Evidence' : 'Custom View')),
+    (view === 'activity' ? 'Activity' : 'Custom View'),
   tableHost, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section');
   bulkBar = aliasBulkBar(() => {
@@ -4881,9 +4827,9 @@ async function renderAliases() {
   renderTable();
   block.append(node('p', 'metric-meaning-note alias-catalog-guide', view === 'configure' ?
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
-    'Calls and recordings are separate from system signaling. Logout means unit deregistration, not leaving a ' +
-      'talkgroup. An em dash means unavailable or not collected; ' +
-      '0 means coverage was collected and the count was zero.'), pager(page));
+    'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
+      'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
+      'observed.'), pager(page));
   main.append(block);
 
   if (route.get('createAlias') === '1') {

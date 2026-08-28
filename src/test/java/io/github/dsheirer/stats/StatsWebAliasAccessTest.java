@@ -23,6 +23,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -42,6 +45,14 @@ class StatsWebAliasAccessTest
     {
         Path database = mTemporaryDirectory.resolve("sdrtrunk.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES(1, 1, 'Dispatch', 'TALKGROUP', 'APCO25', 56132)
+                """);
+        }
         WebAccessService accessService = new WebAccessService(database);
         char[] adminPassword = "alias-admin-password".toCharArray();
         char[] userPassword = "alias-user-password".toCharArray();
@@ -86,6 +97,10 @@ class StatsWebAliasAccessTest
             assertEquals(200, get(client, origin, StatsApiV1.ALIAS_LISTS, admin).statusCode());
             assertEquals(200, get(client, origin, StatsApiV1.ALIASES, admin).statusCode());
             assertEquals(200, get(client, origin, StatsApiV1.EXPORTS + "/aliases.csv", admin).statusCode());
+            HttpResponse<String> detail = get(client, origin, StatsApiV1.ALIASES + "/1", admin);
+            assertEquals(200, detail.statusCode());
+            assertEquals(1, OBJECT_MAPPER.readTree(detail.body()).at("/data/alias_id").asInt());
+            assertEquals(true, OBJECT_MAPPER.readTree(detail.body()).at("/data/breakdown").isArray());
         }
         finally
         {

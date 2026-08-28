@@ -98,6 +98,7 @@ final class StatsAliasCatalog
         Map.entry("denial_observation_count", "denial_observation_count"),
         Map.entry("data_observation_count", "data_observation_count"),
         Map.entry("other_signaling_observation_count", "other_signaling_observation_count"),
+        Map.entry("signaling_observation_count", "signaling_observation_count"),
         Map.entry("relationships", "relationship_count"),
         Map.entry("relationship_count", "relationship_count"),
         Map.entry("join_relationships", "join_relationship_count"),
@@ -114,8 +115,14 @@ final class StatsAliasCatalog
         "encrypted_logical_call_count", "grant_observation_count", "join_observation_count",
         "emergency_observation_count", "register_observation_count", "logout_observation_count",
         "denial_observation_count", "data_observation_count", "other_signaling_observation_count",
-        "relationship_count",
+        "signaling_observation_count", "relationship_count",
         "join_relationship_count", "current_affiliation_count");
+    private static final String SIGNALING_SQL = "summary.grant_count + summary.join_count + " +
+        "summary.register_count + summary.active_count + summary.denial_count + summary.emergency_count + " +
+        "summary.request_count + summary.busy_count + summary.queued_count + summary.acknowledge_count + " +
+        "summary.check_count + summary.check_ack_count + summary.page_count + summary.status_count + " +
+        "summary.gps_count + summary.logout_count + summary.patch_count + summary.patch_create_count + " +
+        "summary.patch_cancel_count + summary.data_count";
     private static final String OTHER_SIGNALING_SQL = "summary.acknowledge_count + summary.active_count + " +
         "summary.busy_count + summary.check_count + summary.check_ack_count + summary.continue_count + " +
         "summary.gps_count + summary.page_count + summary.patch_count + summary.patch_cancel_count + " +
@@ -1109,6 +1116,7 @@ final class StatsAliasCatalog
                 summary.denial_count AS denial_observation_count,
                 summary.data_count AS data_observation_count,
                 %s AS other_signaling_observation_count,
+                %s AS signaling_observation_count,
                 scope.protocol_code, scope.p25_system_key AS system_key,
                 system.wacn, system.system_id
             FROM trunked_identity_summary summary
@@ -1116,7 +1124,7 @@ final class StatsAliasCatalog
             LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE summary.scope_id IN (%s)
               AND
-            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size())));
+            """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(scopeIds.size())));
         parameters.addAll(scopeIds);
         targets.appendPredicate(sql, "summary.scope_id", "summary.identity_kind_code", "summary.identity_id");
         sql.append("""
@@ -1139,6 +1147,7 @@ final class StatsAliasCatalog
                 summary.denial_count AS denial_observation_count,
                 summary.data_count AS data_observation_count,
                 %s AS other_signaling_observation_count,
+                %s AS signaling_observation_count,
                 scope.protocol_code, scope.p25_system_key AS system_key,
                 system.wacn, system.system_id
             FROM p25_zero_local_fq_talkgroup_summary summary
@@ -1146,7 +1155,7 @@ final class StatsAliasCatalog
             LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE summary.scope_id IN (%s)
               AND
-            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size())));
+            """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(scopeIds.size())));
         parameters.addAll(scopeIds);
         targets.appendPredicate(sql, "summary.scope_id", "1", "0");
         sql.append("""
@@ -1188,6 +1197,7 @@ final class StatsAliasCatalog
                 NULL AS emergency_observation_count, NULL AS register_observation_count,
                 NULL AS logout_observation_count, NULL AS denial_observation_count,
                 NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                NULL AS signaling_observation_count,
                 3 AS protocol_code
             FROM dmr_conventional_talkgroup_summary summary
             WHERE summary.context_id IN (%1$s)
@@ -1209,6 +1219,7 @@ final class StatsAliasCatalog
                 NULL AS emergency_observation_count, NULL AS register_observation_count,
                 NULL AS logout_observation_count, NULL AS denial_observation_count,
                 NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                NULL AS signaling_observation_count,
                 3 AS protocol_code
             FROM dmr_conventional_radio_summary summary
             WHERE summary.context_id IN (%1$s)
@@ -1281,6 +1292,7 @@ final class StatsAliasCatalog
                 NULL AS emergency_observation_count, NULL AS register_observation_count,
                 NULL AS logout_observation_count, NULL AS denial_observation_count,
                 NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                NULL AS signaling_observation_count,
                 3 AS protocol_code
             FROM conventional_call_identity_bucket bucket
             JOIN receiver_context context ON context.id = bucket.context_id
@@ -2143,6 +2155,7 @@ final class StatsAliasCatalog
         private Long denialCount;
         private Long dataCount;
         private Long otherSignalingCount;
+        private Long signalingCount;
         private Long relationshipCount;
         private Long joinRelationshipCount;
         private Long currentAffiliationCount;
@@ -2163,6 +2176,7 @@ final class StatsAliasCatalog
             denialCount = trunked ? 0L : null;
             dataCount = trunked ? 0L : null;
             otherSignalingCount = trunked ? 0L : null;
+            signalingCount = trunked ? 0L : null;
             relationshipCount = trunked ? 0L : null;
             joinRelationshipCount = trunked ? 0L : null;
             currentAffiliationCount = trunked && scope.protocolCode == 1 ? 0L : null;
@@ -2183,6 +2197,7 @@ final class StatsAliasCatalog
             dataCount = addNullable(dataCount, row.get("data_observation_count"));
             otherSignalingCount = addNullable(otherSignalingCount,
                 row.get("other_signaling_observation_count"));
+            signalingCount = addNullable(signalingCount, row.get("signaling_observation_count"));
             observe(row.get("first_seen_ms"), row.get("last_seen_ms"));
         }
 
@@ -2244,6 +2259,7 @@ final class StatsAliasCatalog
                 case "denial_observation_count" -> denialCount;
                 case "data_observation_count" -> dataCount;
                 case "other_signaling_observation_count" -> otherSignalingCount;
+                case "signaling_observation_count" -> signalingCount;
                 case "relationship_count" -> relationshipCount;
                 case "join_relationship_count" -> joinRelationshipCount;
                 case "current_affiliation_count" -> currentAffiliationCount;
@@ -2254,7 +2270,6 @@ final class StatsAliasCatalog
         private Map<String,Object> toMap()
         {
             Map<String,Object> row = new LinkedHashMap<>();
-            row.put("scope_key", scope.key);
             row.put("scope_label", scopeLabel());
             row.put("topology", scope.trunked ? "TRUNKED" : "CONVENTIONAL");
             row.put("protocol", scope.protocol);

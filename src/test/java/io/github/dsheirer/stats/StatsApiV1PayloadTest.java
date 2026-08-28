@@ -66,11 +66,13 @@ class StatsApiV1PayloadTest
             Map.entry("join_count", 6),
             Map.entry("event_count", 12),
             Map.entry("signaling_count", 8),
+            Map.entry("signaling_observation_count", 9),
             Map.entry("logical_call_count", 7),
             Map.entry("site_observation_count", 11),
             Map.entry("stream_submitted_logical_call_count", 2)));
 
         assertEquals(7, payload.path("logical_call_count").intValue());
+        assertEquals(9, payload.path("signaling_observation_count").intValue());
         assertEquals(11, payload.path("site_observation_count").intValue());
         assertEquals(2, payload.path("stream_submitted_logical_call_count").intValue());
         for(String field: new String[]{"call_count", "source_call_count", "target_call_count",
@@ -323,12 +325,14 @@ class StatsApiV1PayloadTest
     {
         JsonNode observedAlias = StatsApiV1Payload.present(Map.of(
             "observed_key", "p25:test:205",
+            "scope_key", "p25:test",
             "topology", "CONVENTIONAL"));
         JsonNode neighbor = StatsApiV1Payload.present(Map.of(
             "entry_type", "ISSI",
             "system_id", 0x348));
 
         assertEquals("conventional", observedAlias.get("topology").textValue());
+        assertEquals("p25:test", observedAlias.get("scope_key").textValue());
         assertEquals("issi", neighbor.get("entry_type").textValue());
     }
 

@@ -52,26 +52,40 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
-    void separatesConfigurationCallsEvidenceAndCustomColumns() throws Exception
+    void combinesCallsAndSignalingInOneActivityView() throws Exception
     {
         String source = source();
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
+        String view = function(source, "function aliasEditorView(selectedList)");
         String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
-        String optional = function(source, "function aliasCatalogEnrichmentColumns()");
+        String activity = function(source, "function aliasActivityColumns()");
         String configuration = function(source, "function aliasCustomConfigurationColumns()");
         String base = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
 
-        for(String label: new String[]{"Configure", "Call Use", "System Evidence", "Custom"})
+        for(String label: new String[]{"Configure", "Activity", "Custom"})
         {
             assertTrue(tabs.contains("'" + label + "'"), () -> "Missing editor view " + label);
         }
-        assertTrue(columns.contains("view === 'calls'"));
-        assertTrue(columns.contains("view === 'evidence'"));
+        assertFalse(tabs.contains("'Call Use'"));
+        assertFalse(tabs.contains("'System Evidence'"));
+        assertTrue(view.contains("['calls', 'evidence']"));
+        assertTrue(view.contains("'activity' : route.get('aliasTab')"));
+        assertTrue(columns.contains("view === 'activity'"));
+        assertFalse(columns.contains("view === 'calls'"));
+        assertFalse(columns.contains("view === 'evidence'"));
         assertTrue(columns.contains("view === 'custom'"));
         assertFalse(source.contains("function aliasColumnChooser("));
         assertTrue(source.contains("defaultHiddenColumns: view === 'custom' ? definitions"));
         assertTrue(source.contains("exportCsvLink('aliases', exportContext)"));
         assertTrue(base.contains("id: 'description'"));
+        for(String field: new String[]{"logical_call_count", "signaling_observation_count", "last_evidence_ms"})
+        {
+            assertTrue(activity.contains(field), () -> "Missing simplified activity field " + field);
+        }
+        for(String detail: new String[]{"grant_observation_count", "relationship_count", "metrics_state"})
+        {
+            assertFalse(activity.contains(detail), () -> "Detailed metric leaked into Activity table " + detail);
+        }
         for(String facet: new String[]{"alias-id", "alias-list", "family", "alias", "description", "group",
             "color", "icon", "matcher", "matcher-type", "identity-type", "protocol", "protocol-variant",
             "identifier", "exact", "ranged", "value", "minimum", "maximum", "text-value",
@@ -79,14 +93,6 @@ class StatsWebAliasCatalogUiContractTest
             "stream-as-talkgroup", "behavior", "overlap"})
         {
             assertTrue(configuration.contains("'" + facet + "'"), () -> "Missing custom Alias facet " + facet);
-        }
-        for(String field: new String[]{"logical_call_count", "recorded_logical_call_count",
-            "stream_submitted_logical_call_count", "encrypted_logical_call_count", "grant_observation_count",
-            "join_observation_count", "emergency_observation_count", "register_observation_count",
-            "logout_observation_count", "relationship_count", "current_affiliation_count", "metrics_state",
-            "first_evidence_ms", "last_evidence_ms"})
-        {
-            assertTrue(optional.contains(field), () -> "Missing evidence field " + field);
         }
     }
 
@@ -122,7 +128,7 @@ class StatsWebAliasCatalogUiContractTest
         String editorPayload = function(source, "function aliasEditorPayload(form, options)");
         String tabs = function(source, "function aliasEditorModalTabs(panels, initial = 'basics')");
 
-        for(String label: new String[]{"Basics", "Identifier", "Call Handling", "Usage & Evidence"})
+        for(String label: new String[]{"Basics", "Identifier", "Call Handling", "Activity"})
         {
             assertTrue(tabs.contains("'" + label + "'"), () -> "Missing modal tab " + label);
         }
@@ -151,24 +157,28 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
-    void keepsUsageScopeBreakdownFocusedAndRemovesRepeatedColumns() throws Exception
+    void keepsActivityBreakdownFocusedAndRetainsDetailsInTheAliasDialog() throws Exception
     {
         String source = source();
         String columns = function(source, "function aliasEditorScopeBreakdownColumns()");
-        String usage = function(source, "function aliasUsageContent(response)");
+        String activity = function(source, "function aliasActivityContent(response)");
 
         assertTrue(columns.contains("availableValue(row.scope_label)"));
         assertTrue(columns.contains("availableValue(row.topology)"));
+        assertTrue(columns.contains("aliasMetricValue(row, 'logical_call_count')"));
+        assertTrue(columns.contains("aliasMetricValue(row, 'signaling_observation_count')"));
         assertTrue(columns.contains("Number(row.last_evidence_ms || 0)"));
-        assertTrue(columns.contains("aliasScopeMetricSummary(row, callUse, 'No calls observed')"));
-        assertTrue(columns.contains("aliasScopeMetricSummary(row, systemEvidence, 'No signaling observed')"));
+        assertFalse(source.contains("function aliasScopeMetricSummary("));
         for(String repeated: new String[]{"row.protocol", "row.system_name", "row.site_name", "row.metrics_state",
             "first_evidence_ms"})
         {
             assertFalse(columns.contains(repeated), () -> "Repeated scope field remains " + repeated);
         }
-        assertTrue(usage.contains("aliasEditorScopeBreakdownColumns()"));
-        assertTrue(usage.contains("complete totals remain"));
+        assertTrue(activity.contains("aliasEditorScopeBreakdownColumns()"));
+        assertTrue(activity.contains("grant_observation_count"));
+        assertTrue(activity.contains("relationship_count"));
+        assertTrue(activity.contains("retained call and signaling activity"));
+        assertTrue(activity.contains("included in the Signaling total"));
     }
 
     @Test
@@ -239,7 +249,7 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
-    void retainsExactServerFiltersAndEvidenceSemantics() throws Exception
+    void retainsExactServerFiltersAndUsesSimpleActivitySemantics() throws Exception
     {
         String source = source();
         String renderer = function(source, "async function renderAliases()");
@@ -254,13 +264,14 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(filters.contains("selectFilter('Scan list', 'scanListId'"));
         assertTrue(renderer.contains("last_activity_before: route.get('lastActivityBefore')"));
         assertTrue(renderer.contains("last_activity_after: route.get('lastActivityAfter')"));
-        assertTrue(filters.contains("'Call use'"));
+        assertTrue(filters.contains("selectFilter('Calls', 'use'"));
         assertTrue(filters.contains("'No calls observed'"));
+        assertFalse(filters.contains("selectFilter('Evidence'"));
+        assertFalse(filters.contains("'Covered · no evidence'"));
         assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
         assertTrue(filters.contains("'lastActivityAfter', 'lastActivityBefore'"));
-        assertTrue(source.contains("An em dash means unavailable or not collected"));
-        assertTrue(source.contains("Logout means unit deregistration, not leaving a "));
-        assertTrue(source.contains("talkgroup. An em dash means unavailable or not collected"));
+        assertTrue(source.contains("A call can also have signaling"));
+        assertTrue(source.contains("An em dash means unavailable; 0 means monitored with none observed"));
     }
 
     @Test
@@ -268,6 +279,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
+        String view = function(source, "function aliasEditorView(selectedList)");
         String renderer = function(source, "async function renderAliases()");
         String discoverySupport = function(source, "function observedTalkgroupDiscoverySupported(selectedList)");
         String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
@@ -293,7 +305,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("aliasEditorContext.selectedList = selectedList"));
         assertTrue(source.contains("aliasTab: 'discover'"));
         assertTrue(tabs.contains("observedTalkgroupDiscoverySupported(selectedList)"));
-        assertTrue(renderer.contains("observedTalkgroupDiscoverySupported(selectedList)"));
+        assertTrue(view.contains("observedTalkgroupDiscoverySupported(selectedList)"));
+        assertTrue(renderer.contains("aliasEditorView(selectedList)"));
         assertTrue(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
         assertFalse(discoverySupport.contains("'NBFM'"));
         assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
@@ -351,6 +364,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(identity.contains("identityNumber(row, row.talkgroup_id)"));
         assertTrue(detail.contains("'Decoded Home'"));
         assertTrue(detail.contains("'Local Talkgroup'"));
+        assertTrue(detail.contains("other recognized signaling actions"));
         assertTrue(create.contains("!observedTalkgroupPromotionSupported(row)"));
         assertTrue(create.contains("'Review only'"));
         assertTrue(create.contains("observedTalkgroupPromotionReason(row)"));

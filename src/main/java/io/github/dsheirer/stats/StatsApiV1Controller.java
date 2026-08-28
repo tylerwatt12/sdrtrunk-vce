@@ -178,7 +178,7 @@ final class StatsApiV1Controller
         else if(segments.size() == 1)
         {
             request.requireOnly();
-            return unwrap(mDatabase.alias(request.withPathParameter("id", segments.get(0))), "alias");
+            return aliasDetail(mDatabase.alias(request.withPathParameter("id", segments.get(0))));
         }
 
         throw notFound();
@@ -599,6 +599,25 @@ final class StatsApiV1Controller
         }
 
         return result.get(field);
+    }
+
+    private static Map<String,Object> aliasDetail(Map<String,Object> result)
+    {
+        if(result == null || !(result.get("alias") instanceof Map<?,?> alias) ||
+            !result.containsKey("breakdown"))
+        {
+            throw new IllegalStateException("Alias detail API result is incomplete");
+        }
+
+        LinkedHashMap<String,Object> detail = new LinkedHashMap<>();
+        alias.forEach((key, value) -> {
+            if(key instanceof String name)
+            {
+                detail.put(name, value);
+            }
+        });
+        detail.put("breakdown", result.get("breakdown"));
+        return java.util.Collections.unmodifiableMap(detail);
     }
 
     @FunctionalInterface

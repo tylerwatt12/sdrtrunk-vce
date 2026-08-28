@@ -482,6 +482,11 @@ class StatsWebDatabaseTest
                 WHERE scope_id=1 AND radio_id=1811332 AND talkgroup_id=56132
                 """);
             statement.executeUpdate("""
+                UPDATE trunked_identity_summary
+                SET active_count=3, request_count=4, continue_count=50, unknown_count=70
+                WHERE scope_id=1 AND identity_kind_code=1 AND identity_id=56132
+                """);
+            statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     configuration_id, channel_kind, sort_order, name, alias_list_name, decoder_type, config_json
                 ) VALUES('00000000-0000-0000-0000-000000000457', 'CONVENTIONAL', 3,
@@ -514,6 +519,8 @@ class StatsWebDatabaseTest
         assertEquals("observed", dispatch.get("metrics_state"));
         assertEquals(12L, number(dispatch.get("logical_call_count")));
         assertEquals(12L, number(dispatch.get("grant_observation_count")));
+        assertEquals(19L, number(dispatch.get("signaling_observation_count")),
+            "Signaling includes semantic observations but excludes continue and unknown buckets");
         assertEquals(1L, number(dispatch.get("relationship_count")));
         assertEquals(1L, number(dispatch.get("join_relationship_count")));
         assertEquals(1L, number(dispatch.get("current_affiliation_count")));
@@ -525,21 +532,28 @@ class StatsWebDatabaseTest
         Map<String,Object> range = aliases.getLast();
         assertEquals("covered_no_evidence", range.get("metrics_state"));
         assertEquals(0L, number(range.get("logical_call_count")));
+        assertEquals(0L, number(range.get("signaling_observation_count")));
         assertEquals(0L, number(range.get("relationship_count")));
 
         Map<String,Object> detail = mDatabase.alias(request("/api/alias?id=1"));
         assertEquals(1L, number(map(detail, "alias").get("alias_list_id")));
         assertEquals(List.of(1L, 2L), map(detail, "alias").get("scan_list_ids"));
         Map<String,Object> breakdown = rowsFrom(detail, "breakdown").getFirst();
-        assertEquals("scope:1", breakdown.get("scope_key"));
+        assertFalse(breakdown.containsKey("scope_key"));
         assertEquals("Greater Cleveland", breakdown.get("scope_label"));
         assertEquals(1L, number(breakdown.get("alias_list_id")));
+        assertEquals(19L, number(breakdown.get("signaling_observation_count")));
+
+        Map<String,Object> signalingSorted = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&type=talkgroup&sort=signaling_observation_count&direction=desc"));
+        assertEquals("Dispatch", rows(signalingSorted).getFirst().get("name"));
 
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=logical_call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
         assertEquals("1; 2", csv.getFirst().get("scan_list_ids"));
         assertEquals("Default; Cleveland", csv.getFirst().get("scan_lists"));
+        assertEquals("19", csv.getFirst().get("signaling_observations"));
         assertFalse(csv.getFirst().isMapped("priority"));
     }
 
@@ -1824,6 +1838,7 @@ class StatsWebDatabaseTest
         assertEquals(2L, number(dispatch.get("stream_submitted_logical_call_count")));
         assertEquals(2L, number(dispatch.get("encrypted_logical_call_count")));
         assertNull(dispatch.get("grant_observation_count"));
+        assertNull(dispatch.get("signaling_observation_count"));
         assertNull(dispatch.get("relationship_count"));
         assertEquals(1000L, number(dispatch.get("first_evidence_ms")));
         assertEquals(5000L, number(dispatch.get("last_evidence_ms")));

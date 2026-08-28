@@ -48,8 +48,8 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/quality` | Current quality across a bounded site page. Global requests cannot include history. |
 | `GET /api/v1/alias-lists` | Paged alias-list catalog. |
 | `GET /api/v1/alias-lists/{id}/observed-talkgroups` | Paged unmatched or observed talkgroup discovery for one alias list. |
-| `GET /api/v1/aliases` | Paged alias catalog and bounded evidence metrics. |
-| `GET /api/v1/aliases/{id}` | One alias and its bounded evidence breakdown. |
+| `GET /api/v1/aliases` | Paged alias catalog and bounded activity metrics. |
+| `GET /api/v1/aliases/{id}` | One alias and its bounded activity breakdown. Alias fields remain flat; `breakdown` is additive. |
 | `GET /api/v1/scan-lists` | Published scan lists available to the signed-in browser listener. |
 | `GET /api/v1/systems` | Paged protocol-neutral system scopes with an optional bounded site preview. |
 | `GET /api/v1/systems/{scope}` | One system scope and its summary. The scope token is opaque. |
@@ -206,6 +206,10 @@ rows or 16 MiB instead of attempting an unbounded materialization.
 Alias-list and alias resources, including `aliases.csv`, require administrator Alias access. Resolved alias labels in
 Live, Systems, conventional activity, and call playback remain part of those resources; only the configuration
 catalog and export are administrator-only.
+
+`signaling_observation_count` on alias resources, and `signaling_observations` in `aliases.csv`, count recognized
+signaling actions. The legacy `other_signaling_observation_count` field and `other_signaling_observations` CSV column
+also include continue and unknown observations, so they are not subtotals of the recognized-signaling aggregate.
 
 `system-radios` CSV exports accept the same `affiliated` and `site_guid` filters as the JSON collection. Nested
 presence is not serialized into CSV; the export retains the scalar affiliation fields.
