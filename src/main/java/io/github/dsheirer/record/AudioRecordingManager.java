@@ -459,23 +459,19 @@ public class AudioRecordingManager
         StringBuilder sbFinal = new StringBuilder();
         sbFinal.append(TimeStamp.getLongTimeStamp(completedAudioCall.snapshot().lastActivityTimestamp(), "_"))
             .append("_");
-        String callIdentity = "_CALL_" +
-            Long.toUnsignedString(completedAudioCall.logicalCallId().coordinatorId()) + "_" +
-            completedAudioCall.logicalCallId().sequence();
 
         //Remove any illegal filename characters
         String cleaned = StringUtils.replaceIllegalCharacters(sb.toString());
 
-        //Ensure total length doesn't exceed 255 characters.  Allow room for timestamp, call identity and extension.
-        int maxLength = 255 - sbFinal.length() - callIdentity.length() -
-            recordFormat.getExtension().length();
+        //Ensure total length doesn't exceed 255 characters.  Allow room for timestamp and extension.
+        int maxLength = 255 - sbFinal.length() - recordFormat.getExtension().length();
 
         if(cleaned.length() > maxLength)
         {
             cleaned = cleaned.substring(0, maxLength);
         }
 
-        sbFinal.append(cleaned).append(callIdentity).append(recordFormat.getExtension());
+        sbFinal.append(cleaned).append(recordFormat.getExtension());
 
         return getRecordingBasePath().resolve(sbFinal.toString());
     }
