@@ -90,7 +90,14 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         mRequestedMaximumQueueDurationMilliseconds.set(maximumQueueDurationMilliseconds);
         mMaximumQueuedSampleCount = sampleRate > 0 ? calculateMaximumQueuedSampleCount(sampleRate) : 0;
         mListener = listener;
-        mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory(name));
+        NamingThreadFactory threadFactory = new NamingThreadFactory(name);
+        mExecutorService = Executors.newSingleThreadExecutor(runnable ->
+        {
+            Thread worker = threadFactory.newThread(runnable);
+            //Keep raw-IQ processing above normal-priority downstream work on constrained receivers.
+            worker.setPriority(Math.min(Thread.MAX_PRIORITY, Thread.NORM_PRIORITY + 2));
+            return worker;
+        });
     }
 
     /**

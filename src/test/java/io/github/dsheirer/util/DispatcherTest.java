@@ -117,8 +117,8 @@ public class DispatcherTest
             dispatcher.start();
             dispatcher.receive(1);
             assertTrue(firstProcessed.await(5, TimeUnit.SECONDS));
-            assertEquals(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1), firstWorker.get().getPriority(),
-                "the arrival worker must yield to its normal-priority producer");
+            assertEquals(Thread.NORM_PRIORITY, firstWorker.get().getPriority(),
+                "the arrival worker must retain the normal default priority");
             dispatcher.receive(2);
             assertTrue(secondProcessed.await(5, TimeUnit.SECONDS));
             assertNotSame(Thread.currentThread(), firstWorker.get());

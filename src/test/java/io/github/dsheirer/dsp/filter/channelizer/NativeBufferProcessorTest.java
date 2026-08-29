@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
@@ -199,6 +200,31 @@ public class NativeBufferProcessorTest
             assertTrue(processed.await(2, TimeUnit.SECONDS));
             assertEquals(0, processor.getDroppedBufferCount());
             assertEquals(0, processor.getDroppedSampleCount());
+        }
+        finally
+        {
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void processingWorkerRunsAboveNormalPriority() throws Exception
+    {
+        CountDownLatch processed = new CountDownLatch(1);
+        AtomicInteger callbackPriority = new AtomicInteger();
+        NativeBufferProcessor processor = new NativeBufferProcessor("native buffer priority", 10_000_000,
+            buffer -> {
+                callbackPriority.set(Thread.currentThread().getPriority());
+                processed.countDown();
+            });
+
+        try
+        {
+            processor.start();
+            processor.receive(new TestNativeBuffer(1, 65_536));
+            assertTrue(processed.await(2, TimeUnit.SECONDS));
+            assertEquals(Math.min(Thread.MAX_PRIORITY, Thread.NORM_PRIORITY + 2), callbackPriority.get());
         }
         finally
         {
