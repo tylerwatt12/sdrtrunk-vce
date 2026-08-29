@@ -62,7 +62,6 @@ import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
 import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
-import io.github.dsheirer.web.http.WebCallConfigurationHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.WebSiteSettingsHttpController;
@@ -128,25 +127,25 @@ public class StatsWebServerService implements AutoCloseable
     private static final int MAXIMUM_WEB_INDEX_BYTES = 64 * 1024;
     private static final int MAXIMUM_MULTIPLEX_CLIENTS = 32;
     private static final int MAXIMUM_MULTIPLEX_CONTROL_BYTES = 32 * 1024;
+    private static final int MAXIMUM_MULTIPLEX_PARAMETER_VALUES = 64;
     private static final int MULTIPLEX_MAGIC = 0x534C4D58;
-    private static final int MULTIPLEX_VERSION = 1;
+    private static final int MULTIPLEX_VERSION = 2;
     private static final int MULTIPLEX_HEADER_BYTES = 16;
     private static final int MULTIPLEX_JSON = 1;
     private static final int MULTIPLEX_DIAGNOSTIC = 2;
     private static final int TOPIC_CONTROL = 0;
     private static final int TOPIC_CHANNEL_ACTIVITY = 1;
-    private static final int TOPIC_CALLS = 2;
-    private static final int TOPIC_DECODE_EVENTS = 3;
-    private static final int TOPIC_DECODE_MESSAGES = 4;
-    private static final int TOPIC_CHANNEL_DIAGNOSTICS = 5;
-    private static final int TOPIC_TUNER_DIAGNOSTICS = 6;
+    private static final int TOPIC_DECODE_EVENTS = 2;
+    private static final int TOPIC_DECODE_MESSAGES = 3;
+    private static final int TOPIC_CHANNEL_DIAGNOSTICS = 4;
+    private static final int TOPIC_TUNER_DIAGNOSTICS = 5;
     private static final int TOPIC_MAXIMUM = TOPIC_TUNER_DIAGNOSTICS;
     private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
-    private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "calls", "decode_events",
+    private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "decode_events",
         "decode_messages", "channel_diagnostics", "tuner_diagnostics");
     static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
-        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN);
+        WebCapability.TUNER_SPECTRUM_VIEW);
 
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
@@ -240,8 +239,7 @@ public class StatsWebServerService implements AutoCloseable
         mDatabase = new StatsWebDatabase(userPreferences);
         WebEntityNavigationCatalog entityCatalog =
             new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
-        mWebCallService = new StatsWebCallService(mScanListModel,
-            mUserPreferences.getApplicationPreference().getWebCallConfiguration(), entityCatalog);
+        mWebCallService = new StatsWebCallService(mScanListModel, entityCatalog);
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mAliasAdministrationService = aliasAdministrationService;
@@ -279,10 +277,6 @@ public class StatsWebServerService implements AutoCloseable
     {
         if(preferenceType == PreferenceType.APPLICATION || preferenceType == PreferenceType.DIRECTORY)
         {
-            if(preferenceType == PreferenceType.APPLICATION)
-            {
-                mWebCallService.configure(mUserPreferences.getApplicationPreference().getWebCallConfiguration());
-            }
             updateServerState();
         }
     }
@@ -684,14 +678,6 @@ public class StatsWebServerService implements AutoCloseable
             server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, protectedAliases);
         }
 
-        WebCallConfigurationHttpController webCallConfigurationController =
-            new WebCallConfigurationHttpController(
-                () -> mUserPreferences.getApplicationPreference().getWebCallConfiguration(),
-                configuration -> mUserPreferences.getApplicationPreference().setWebCallConfiguration(configuration),
-                mWebCallService::status);
-        server.createContext(WebCallConfigurationHttpController.PATH, mWebRequestSecurity.protectApi(
-            WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
-
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
             mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
         server.createContext(RadioReferenceHttpController.PATH, mWebRequestSecurity.protectApi(
@@ -717,6 +703,8 @@ public class StatsWebServerService implements AutoCloseable
                 this::handleLiveMultiplexControl));
         createProtectedContext(server, StatsApiV1.SCAN_LISTS, WebCapability.WEB_AUDIO_LISTEN,
             this::handleScanLists);
+        createProtectedContext(server, StatsApiV1.CALLS_FEED, WebCapability.WEB_AUDIO_LISTEN,
+            this::handleWebCallFeed);
         createProtectedContext(server, StatsApiV1.CALLS + "/", WebCapability.WEB_AUDIO_LISTEN,
             this::handleWebCallAudio);
         server.createContext(StatsApiV1.ROOT, StatsWebServerService::handleApiNotFound);
@@ -900,7 +888,6 @@ public class StatsWebServerService implements AutoCloseable
         status.put("server", server);
         status.put("database", mDatabase.status());
         status.put("statsLogging", statsLoggingStatusResponse());
-        status.put("webPlayer", mWebCallService.status());
         return status;
     }
 
@@ -910,6 +897,7 @@ public class StatsWebServerService implements AutoCloseable
      */
     private Map<String,Object> receiverHealthObserverStatus()
     {
+        mWebCallService.maintain();
         Map<String,Object> transport = Map.of(
             "activeClients", mMultiplexClients.size(),
             "rejectedClients", mMultiplexRejectedClients.get(),
@@ -1272,7 +1260,6 @@ public class StatsWebServerService implements AutoCloseable
                     throw new StatsApiException(400, "This live subscription does not accept parameters");
                 }
             }
-            case "calls" -> selectedScanListIds(uri);
             case "decode_events" -> decodeEventScope(uri);
             case "decode_messages" -> decodeMessageScope(uri);
             case "channel_diagnostics" -> channelDiagnosticScope(uri);
@@ -1317,7 +1304,7 @@ public class StatsWebServerService implements AutoCloseable
                                                  AtomicInteger valueCount)
     {
         if(value == null || (!value.isTextual() && !value.isNumber() && !value.isBoolean()) ||
-            valueCount.incrementAndGet() > WebCallConfiguration.MAXIMUM_SELECTED_SCAN_LISTS)
+            valueCount.incrementAndGet() > MAXIMUM_MULTIPLEX_PARAMETER_VALUES)
         {
             throw new StatsApiException(400, "Live subscription parameters must contain bounded scalar values");
         }
@@ -1620,11 +1607,8 @@ public class StatsWebServerService implements AutoCloseable
                 row.put("default", scanList.isDefault());
                 return Map.copyOf(row);
             }).toList();
-        WebCallConfiguration configuration =
-            mUserPreferences.getApplicationPreference().getWebCallConfiguration();
         ApiHttpResponse.sendData(exchange, 200, Map.of("scan_lists", rows,
-            "maximum_selected_scan_lists", configuration.maximumSelectedScanLists(),
-            "waiting_calls_per_listener", configuration.waitingCallsPerListener()));
+            "maximum_selected_scan_lists", StatsWebCallService.MAXIMUM_SELECTED_SCAN_LISTS));
     }
 
     static Long scanListCoverageId(URI uri)
@@ -1655,13 +1639,12 @@ public class StatsWebServerService implements AutoCloseable
         }
     }
 
-    Set<Long> selectedScanListIds(URI uri)
+    private CallFeedRequest callFeedRequest(URI uri)
     {
-        return selectedScanListIds(uri, mScanListModel,
-            mUserPreferences.getApplicationPreference().getWebCallConfiguration().maximumSelectedScanLists());
+        return parseCallFeedRequest(uri, mScanListModel, StatsWebCallService.MAXIMUM_SELECTED_SCAN_LISTS);
     }
 
-    static Set<Long> selectedScanListIds(URI uri, ScanListModel scanListModel, int maximum)
+    static CallFeedRequest parseCallFeedRequest(URI uri, ScanListModel scanListModel, int maximum)
     {
         if(scanListModel == null)
         {
@@ -1670,6 +1653,7 @@ public class StatsWebServerService implements AutoCloseable
 
         String query = uri != null ? uri.getRawQuery() : null;
         Set<Long> selected = new LinkedHashSet<>();
+        Long cursor = null;
 
         if(query != null && !query.isBlank())
         {
@@ -1702,10 +1686,32 @@ public class StatsWebServerService implements AutoCloseable
                     throw new StatsApiException(400, "invalid_parameter", "query encoding is invalid", "query");
                 }
 
+                if("cursor".equals(name))
+                {
+                    if(cursor != null || !value.matches("0|[1-9][0-9]*"))
+                    {
+                        throw new StatsApiException(400, "invalid_parameter",
+                            "cursor must be one non-negative decimal integer", "cursor");
+                    }
+
+                    try
+                    {
+                        cursor = Long.parseLong(value);
+                    }
+                    catch(NumberFormatException exception)
+                    {
+                        throw new StatsApiException(400, "invalid_parameter",
+                            "cursor must be a non-negative decimal integer", "cursor");
+                    }
+
+                    continue;
+                }
+
                 if(!"scan_list_id".equals(name) || !value.matches("[1-9][0-9]*"))
                 {
                     throw new StatsApiException(400, "invalid_parameter",
-                        "Only positive scan_list_id values are allowed", "scan_list_id");
+                        "Only scan_list_id and cursor parameters are allowed",
+                        "scan_list_id");
                 }
 
                 try
@@ -1747,7 +1753,71 @@ public class StatsWebServerService implements AutoCloseable
             }
         }
 
-        return Set.copyOf(selected);
+        return new CallFeedRequest(Set.copyOf(selected), cursor);
+    }
+
+    record CallFeedRequest(Set<Long> scanListIds, Long cursor)
+    {
+    }
+
+    private void handleWebCallFeed(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, StatsApiV1.CALLS_FEED) || !requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        CallFeedRequest request;
+
+        try
+        {
+            request = callFeedRequest(exchange.getRequestURI());
+        }
+        catch(StatsApiException exception)
+        {
+            sendApiException(exchange, exception);
+            return;
+        }
+
+        long feedGeneration = mWebCallService.tryAcquireFeed();
+
+        if(feedGeneration == StatsWebCallService.NO_FEED_GENERATION)
+        {
+            if(mWebCallService.isRunning())
+            {
+                sendApiError(exchange, 429, "too_many_call_feeds", "Too many call-feed requests are active");
+            }
+            else
+            {
+                sendApiError(exchange, 503, "service_unavailable", "The call feed is unavailable");
+            }
+            return;
+        }
+
+        try
+        {
+            StatsWebCallService.FeedResult result = mWebCallService.feed(request.scanListIds(), request.cursor(),
+                StatsWebCallService.FEED_WAIT_MILLISECONDS, TimeUnit.MILLISECONDS, feedGeneration);
+            ApiHttpResponse.sendData(exchange, 200, callFeedResponse(result));
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            sendApiError(exchange, 503, "service_unavailable", "The call feed was interrupted");
+        }
+        finally
+        {
+            mWebCallService.releaseFeed(feedGeneration);
+        }
+    }
+
+    static Map<String,Object> callFeedResponse(StatsWebCallService.FeedResult result)
+    {
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("cursor", result.cursor());
+        response.put("reset", result.reset());
+        response.put("calls", result.calls());
+        return response;
     }
 
     private void handleWebCallAudio(HttpExchange exchange) throws IOException
@@ -2588,8 +2658,6 @@ public class StatsWebServerService implements AutoCloseable
         private final long[] mObservedOutputDrops = new long[TOPIC_MAXIMUM + 1];
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
-        private StatsLiveEventHub.Subscription mCalls;
-        private Set<Long> mCallScanListIds = Set.of();
         private StatsLiveEventHub.Subscription mDecodeEvents;
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
@@ -2601,7 +2669,6 @@ public class StatsWebServerService implements AutoCloseable
         private long mLastMessagePoll;
         private long mLastTunerStatePoll;
         private long mChannelActivityDrops;
-        private long mCallDrops;
         private long mDecodeEventDrops;
         private long mDecodeEventIngressDrops;
         private long mDecodeMessageDrops;
@@ -2654,7 +2721,6 @@ public class StatsWebServerService implements AutoCloseable
         {
             boolean wrote = reconcile(output);
             wrote |= pumpEvents(output, TOPIC_CHANNEL_ACTIVITY, mChannelActivity);
-            wrote |= pumpEvents(output, TOPIC_CALLS, mCalls);
             wrote |= pumpEvents(output, TOPIC_DECODE_EVENTS, mDecodeEvents);
 
             long now = System.nanoTime();
@@ -2759,22 +2825,6 @@ public class StatsWebServerService implements AutoCloseable
         private boolean reportStatelessGaps(MultiplexOutput output) throws IOException
         {
             boolean wrote = false;
-
-            if(mCalls != null)
-            {
-                long callDrops = mCalls.droppedCount();
-                long outputDrops = output.eventDrops(TOPIC_CALLS);
-                long dropped = positiveDelta(callDrops, mCallDrops) +
-                    positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_CALLS]);
-                mCallDrops = callDrops;
-                mObservedOutputDrops[TOPIC_CALLS] = outputDrops;
-
-                if(dropped > 0)
-                {
-                    writeMultiplexJson(output, TOPIC_CALLS, "live_gap", Map.of("dropped", dropped));
-                    wrote = true;
-                }
-            }
 
             if(mDecodeEvents != null)
             {
@@ -2939,13 +2989,6 @@ public class StatsWebServerService implements AutoCloseable
                         MULTIPLEX_OBJECT_MAPPER.readTree(recovery.snapshot()));
                     observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
                 }
-                case "calls" -> {
-                    mCallScanListIds = selectedScanListIds(uri);
-                    mCalls = requiredSubscription(mWebCallService.subscribe(mCallScanListIds), topic);
-                    mCallDrops = mCalls.droppedCount();
-                    writeMultiplexRecoveryJson(output, TOPIC_CALLS, "ready", callSubscriptionState());
-                    observeOutputDrops(output, TOPIC_CALLS);
-                }
                 case "decode_events" -> {
                     if(mDecodeEventViewService == null)
                     {
@@ -3097,25 +3140,12 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivity = closeSubscription(mChannelActivity);
                     mChannelActivityDrops = 0;
                 }
-                case "calls" -> {
-                    mCalls = closeSubscription(mCalls);
-                    mCallScanListIds = Set.of();
-                    mCallDrops = 0;
-                }
                 case "decode_events" -> closeDecodeEvents();
                 case "decode_messages" -> closeDecodeMessages();
                 case "channel_diagnostics" -> closeChannelDiagnostics();
                 case "tuner_diagnostics" -> closeTunerDiagnostics();
                 default -> { }
             }
-        }
-
-        private Map<String,Object> callSubscriptionState()
-        {
-            WebCallConfiguration configuration =
-                mUserPreferences.getApplicationPreference().getWebCallConfiguration();
-            return Map.of("scan_list_ids", mCallScanListIds,
-                "waiting_calls_per_listener", configuration.waitingCallsPerListener());
         }
 
         private StatsLiveEventHub.Subscription closeSubscription(StatsLiveEventHub.Subscription subscription)
@@ -3314,7 +3344,6 @@ public class StatsWebServerService implements AutoCloseable
     {
         return switch(topic)
         {
-            case "calls" -> WebCapability.WEB_AUDIO_LISTEN;
             case "tuner_diagnostics" -> WebCapability.TUNER_SPECTRUM_VIEW;
             default -> WebCapability.LIVE_VIEW;
         };
@@ -3325,7 +3354,6 @@ public class StatsWebServerService implements AutoCloseable
         return switch(topic)
         {
             case "channel_activity" -> TOPIC_CHANNEL_ACTIVITY;
-            case "calls" -> TOPIC_CALLS;
             case "decode_events" -> TOPIC_DECODE_EVENTS;
             case "decode_messages" -> TOPIC_DECODE_MESSAGES;
             case "channel_diagnostics" -> TOPIC_CHANNEL_DIAGNOSTICS;

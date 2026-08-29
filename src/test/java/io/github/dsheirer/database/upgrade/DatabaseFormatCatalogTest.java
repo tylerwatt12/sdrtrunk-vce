@@ -16,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -61,6 +60,8 @@ class DatabaseFormatCatalogTest
 
         assertEquals(DatabaseFormatCatalog.requireVersion(DatabaseFormatCatalog.CURRENT_VERSION),
             DatabaseFormatCatalog.current());
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("limit of 16 scan lists")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -110,7 +111,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format6TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -160,7 +161,7 @@ class DatabaseFormatCatalogTest
                 """));
             assertEquals(1, statement.executeUpdate("""
                 INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, radres_guid, config_json)
-                VALUES ('66666666-7777-4888-8999-aaaaaaaaaaaa', 'CONVENTIONAL', 0, NULL, '{}')
+                VALUES ('67676767-7777-4888-8999-aaaaaaaaaaaa', 'CONVENTIONAL', 100, NULL, '{}')
                 """));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, auto_start, config_json)
@@ -195,30 +196,14 @@ class DatabaseFormatCatalogTest
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, radres_guid, config_json
-                ) VALUES (
-                    '66666666-7777-4888-8999-aaaaaaaaaaaa', 'CONVENTIONAL', 0,
-                    'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', '{}'
-                )
-                """);
-            statement.executeUpdate("""
-                INSERT INTO receiver_context(
-                    context_key, guid, kind_code, protocol_code, channel_name,
-                    first_seen_ms, last_seen_ms, primary_frequency_hz
-                ) VALUES (
-                    'GUID:bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
-                    'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', 10, 11, 'Legacy Context',
-                    100, 200, 155550000
-                )
+                UPDATE receiver_context
+                SET context_key='GUID:bbbbbbbb-cccc-4ddd-8eee-ffffffffffff'
+                WHERE id=900
                 """);
 
             SQLException catalog = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspect(connection));
             assertTrue(catalog.getMessage().contains("uses noncanonical key"));
-            SQLException startup = assertThrows(SQLException.class,
-                () -> SdrTrunkDatabaseSchema.validate(connection));
-            assertTrue(startup.getMessage().contains("uses noncanonical key"));
         }
     }
 
@@ -284,7 +269,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactUnmarkedCurrentLayoutGetsAMarkerAdoptionPlan() throws Exception
+    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixAndSevenAreSemanticallyAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -298,16 +283,11 @@ class DatabaseFormatCatalogTest
 
         try(Connection connection = open(database))
         {
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
-            assertFalse(detected.markerPresent());
-            assertTrue(detected.requiresMigration());
-            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection,
-                detected);
-            assertEquals(1, plan.steps().size());
-            assertEquals("adopt-global-format-marker", plan.steps().getFirst().id());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, plan.steps().getFirst().sourceVersion());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, plan.steps().getFirst().targetVersion());
+            SQLException exception = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspect(connection));
+            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7]"), exception::getMessage);
+            assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
+                exception::getMessage);
         }
     }
 

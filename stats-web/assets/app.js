@@ -47,7 +47,6 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CALL_AUDIO: 'call-audio',
   RECEIVER_HEALTH: 'receiver-health',
   ADMIN_ALIASES: 'admin-aliases',
-  ADMIN_AUDIO: 'admin-audio',
   ADMIN_SETTINGS: 'admin-settings',
   ADMIN_USERS: 'admin-users',
   ADMIN_ACCESS: 'admin-access'
@@ -606,7 +605,6 @@ function routeDefinitionAllowed(definition) {
       (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
-        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_AUDIO) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS));
   }
@@ -6359,6 +6357,7 @@ function disconnectPageObserversWithin(root) {
 }
 
 const LIVE_MULTIPLEX_MAGIC = 0x534c4d58;
+const LIVE_MULTIPLEX_VERSION = 2;
 const LIVE_MULTIPLEX_HEADER_BYTES = 16;
 const LIVE_MULTIPLEX_MAXIMUM_BYTES = 16 * 1024 * 1024;
 const LIVE_MULTIPLEX_READY_TIMEOUT_MS = 10_000;
@@ -6366,11 +6365,10 @@ const LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS = 25_000;
 const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   0: 'control',
   1: 'channel_activity',
-  2: 'calls',
-  3: 'decode_events',
-  4: 'decode_messages',
-  5: 'channel_diagnostics',
-  6: 'tuner_diagnostics'
+  2: 'decode_events',
+  3: 'decode_messages',
+  4: 'channel_diagnostics',
+  5: 'tuner_diagnostics'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -6561,7 +6559,7 @@ class LiveMultiplexer {
     while (this.pending.byteLength - offset >= LIVE_MULTIPLEX_HEADER_BYTES) {
       const header = new DataView(this.pending.buffer, this.pending.byteOffset + offset,
         this.pending.byteLength - offset);
-      if (header.getUint32(0) !== LIVE_MULTIPLEX_MAGIC || header.getUint8(4) !== 1) {
+      if (header.getUint32(0) !== LIVE_MULTIPLEX_MAGIC || header.getUint8(4) !== LIVE_MULTIPLEX_VERSION) {
         throw new Error('The live connection returned an invalid frame marker.');
       }
       const kind = header.getUint8(5);
@@ -7123,7 +7121,7 @@ async function refreshPlaybackScanLists(force = false) {
     const response = await api('/api/v1/scan-lists');
     if (request !== playbackScanListRequest || player !== webCallPlayer ||
         !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) return;
-    player.setScanLists(response?.scan_lists, response);
+    player.setScanLists(response?.scan_lists);
   } catch (error) {
     if (request !== playbackScanListRequest || player !== webCallPlayer) return;
     const message = error?.status === 404 ? 'Scan lists are not available on this receiver' :
@@ -7182,17 +7180,15 @@ function synchronizePlaybackAccess(accessChanged = false) {
       pageTitleController.update({ playerState }));
   }
   webCallPlayer.setActions({
-    openAvoidList: openPlaybackAvoidList,
-    openRecentCalls: openPlaybackRecentCalls,
-    openScanListCoverage: openPlaybackScanListCoverage
+    openAvoidList: openPlaybackAvoidList
   });
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
   webCallPlayer.render();
   webCallPlayer.renderScanLists();
   if (accessChanged || !webCallPlayer.scanListsReady()) refreshPlaybackScanLists(accessChanged);
-  if (!webCallPlayer.connectionFactory) {
-    webCallPlayer.connect('calls',
-      (topic, parameters) => liveConnection(topic, parameters, false));
+  if (!webCallPlayer.feedUrl) {
+    webCallPlayer.connect('/api/v1/calls/feed', (path, options) =>
+      requestJson(path, { ...options, csrf: false, page: false, timeoutMs: 10_000 }));
   }
 }
 
@@ -7419,9 +7415,8 @@ function renderScannerCall(host, state, site) {
   if (host.dataset.renderKey === renderKey && host.childNodes.length) {
     const wave = host.querySelector('.scanner-audio-wave');
     if (wave) {
-      const paused = state.paused || !state.currentReady;
-      wave.classList.toggle('paused', paused);
-      wave.setAttribute('aria-label', paused ? 'Audio paused' : 'Audio playing');
+      wave.classList.toggle('paused', !state.playing);
+      wave.setAttribute('aria-label', state.playing ? 'Audio playing' : 'Audio idle');
     }
     return;
   }
@@ -7441,9 +7436,9 @@ function renderScannerCall(host, state, site) {
   copy.append(node('span', 'scanner-call-kind', `${call.decoder || call.protocol || 'Call'}${call.encrypted ?
     ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call)),
     node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
-  const wave = node('div', `scanner-audio-wave${state.paused || !state.currentReady ? ' paused' : ''}`);
+  const wave = node('div', `scanner-audio-wave${state.playing ? '' : ' paused'}`);
   for (let index = 0; index < 24; index++) wave.append(node('i'));
-  wave.setAttribute('aria-label', state.paused ? 'Audio paused' : 'Audio playing');
+  wave.setAttribute('aria-label', state.playing ? 'Audio playing' : 'Audio idle');
   const instruments = node('div', 'scanner-call-instruments');
   instruments.append(scannerVoiceMeter(call), wave);
   intro.append(copy, instruments);
@@ -7526,34 +7521,6 @@ function openPlaybackAvoidList(player = webCallPlayer) {
   };
   renderRows();
   openReadOnlyModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
-}
-
-function openPlaybackRecentCalls(player = webCallPlayer) {
-  if (!player) return;
-  const body = node('div', 'scanner-modal-list');
-  const calls = player.viewState().recentCalls;
-  if (!calls.length) body.append(node('div', 'empty', 'No recent calls are available in this browser session.'));
-  calls.forEach((call) => {
-    const row = node('div', 'scanner-modal-row');
-    const copy = node('div');
-    copy.append(node('strong', '', player.callLabel(call)), node('span', '',
-      `${scannerRelativeAge(call.completed_at_ms)}${call.duration_ms ? ` · ${scannerDuration(call.duration_ms)}` : ''}`));
-    const replay = node('button', call._audioUnavailable ? 'secondary' : '',
-      call._audioUnavailable ? 'Unavailable' : 'Replay');
-    replay.type = 'button';
-    replay.disabled = Boolean(call._audioUnavailable);
-    replay.addEventListener('click', async () => {
-      replay.disabled = true;
-      const started = await player.replayRecent(call._callId);
-      if (started) closeReadOnlyModal(true);
-      else replay.disabled = false;
-    });
-    row.append(copy, replay);
-    body.append(row);
-  });
-  body.append(node('p', 'scanner-modal-note',
-    'Recent audio is session-only and remains replayable only while retained in the receiver cache (up to 30 minutes).'));
-  openReadOnlyModal('Recent Calls', body, { id: 'scanner-recent', className: 'scanner-list-modal' });
 }
 
 function scanListCoverageTree(coverage) {
@@ -7679,14 +7646,6 @@ function renderScanner() {
   const displayShell = node('div', 'scanner-display-shell');
   const display = node('div', 'scanner-display');
   displayShell.append(display);
-  const replayBanner = node('div', 'scanner-replay-banner');
-  const replayCopy = node('span', '', 'Replaying a recent call. Live playback is paused at its saved position.');
-  const returnLive = node('button', '', 'Return to live');
-  returnLive.type = 'button';
-  returnLive.addEventListener('click', () => void player.returnToLive());
-  replayBanner.append(replayCopy, returnLive);
-  replayBanner.hidden = true;
-
   const controls = node('div', 'scanner-controls');
   const play = scannerControl('Play', () => void player.togglePlayback(), 'primary');
   const replay = scannerControl('Replay Last Call', () => void player.replayLastCall());
@@ -7695,9 +7654,8 @@ function renderScanner() {
   const avoid = scannerControl('Avoid', () => player.avoidCurrent(), 'danger');
   const avoidList = scannerControl('Avoid List', () => openPlaybackAvoidList(player));
   avoidList.dataset.scannerAction = 'avoid-list';
-  const recent = scannerControl('Recent Calls', () => openPlaybackRecentCalls(player));
   const clearQueue = scannerControl('Clear Queue', () => player.clearQueue());
-  controls.append(play, replay, skip, hold, avoid, avoidList, recent, clearQueue);
+  controls.append(play, replay, skip, hold, avoid, avoidList, clearQueue);
 
   const utility = node('div', 'scanner-utility-row');
   const volume = node('input');
@@ -7725,10 +7683,21 @@ function renderScanner() {
   const scanButtons = node('div', 'scanner-scan-buttons');
   scanPanel.append(scanHeading, scanButtons);
 
-  chassis.append(statusBar, displayShell, replayBanner, controls, utility);
+  chassis.append(statusBar, displayShell, controls, utility);
   page.append(chassis, scanPanel);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
-  heading.append(modeBar);
+  const headingActions = node('div', 'scanner-header-actions');
+  const playbackSettings = node('button',
+    'button secondary icon-button section-title-icon scanner-playback-settings');
+  playbackSettings.type = 'button';
+  playbackSettings.id = 'scanner-playback-settings';
+  playbackSettings.title = 'Scanner playback settings';
+  playbackSettings.setAttribute('aria-label', 'Scanner playback settings');
+  playbackSettings.append(iconGlyph('icon-live-presentation'));
+  playbackSettings.addEventListener('click', () =>
+    openScannerPlaybackSettings('#scanner-playback-settings'));
+  headingActions.append(modeBar, playbackSettings);
+  heading.append(headingActions);
   const host = node('div', 'scanner-player-host');
   host.append(page);
   if (!beginPage(renderContext, heading, host)) return;
@@ -7744,21 +7713,17 @@ function renderScanner() {
   };
   const draw = (state) => {
     latestState = state;
-    playbackStatus.textContent = state.recentReplay ? 'Replaying recent call' : state.status ||
+    playbackStatus.textContent = state.status ||
       (state.paused ? 'Ready' : 'Listening');
-    playbackStatus.classList.toggle('active', !state.paused || state.recentReplay);
-    replayBanner.hidden = !state.recentReplay;
-    if (state.recentReplay && state.current) replayCopy.textContent =
-      `Replaying ${scannerTargetLabel(state.current)}. Live playback is paused at its saved position.`;
-    play.textContent = state.paused ? 'Play' : 'Pause';
+    playbackStatus.classList.toggle('active', !state.paused);
+    play.textContent = state.paused ? 'Play' : 'Stop';
     play.classList.toggle('active', !state.paused);
     replay.disabled = !state.lastCallReady;
     skip.disabled = !state.current && !state.queuedCount;
-    hold.disabled = state.recentReplay || (!state.holdTarget && !state.currentReady);
+    hold.disabled = state.replayingLast || (!state.holdTarget && !state.currentReady);
     hold.classList.toggle('active', Boolean(state.holdTarget));
-    avoid.disabled = !state.currentReady || state.recentReplay;
+    avoid.disabled = !state.currentReady || state.replayingLast;
     avoidList.textContent = `Avoid List${state.avoids.length ? ` (${state.avoids.length})` : ''}`;
-    recent.textContent = `Recent Calls${state.recentCalls.length ? ` (${state.recentCalls.length})` : ''}`;
     clearQueue.textContent = `Clear Queue${state.queuedCount ? ` (${state.queuedCount})` : ''}`;
     clearQueue.disabled = !state.queuedCount;
     volume.value = String(state.volume);
@@ -7802,7 +7767,7 @@ function renderScanner() {
     if (wave) {
       const playing = player.readAudioWaveform(waveformLevels);
       wave.classList.toggle('paused', !playing);
-      wave.setAttribute('aria-label', playing ? 'Audio playing' : 'Audio paused');
+      wave.setAttribute('aria-label', playing ? 'Audio playing' : 'Audio idle');
       [...wave.children].forEach((bar, index) => {
         bar.style.height = `${Math.round(3 + waveformLevels[index] * 31)}px`;
       });
@@ -14772,24 +14737,6 @@ async function renderAdminSiteBehaviorSettings() {
   }
 }
 
-function adminAudioNumberField(configuration, limits, key, label, help) {
-  const input = node('input');
-  input.type = 'number';
-  input.name = key;
-  input.required = true;
-  input.step = '1';
-  input.value = String(configuration?.[key] ?? '');
-  const range = limits?.[key] || {};
-  if (Number.isFinite(Number(range.minimum))) input.min = String(range.minimum);
-  if (Number.isFinite(Number(range.maximum))) input.max = String(range.maximum);
-  return formField(label, input, `${help} Allowed range: ${number(range.minimum)}–${number(range.maximum)}.`);
-}
-
-function adminStatusNumber(value) {
-  const numeric = typeof value === 'number' ? value : Number.NaN;
-  return Number.isFinite(numeric) && numeric >= 0 ? number(numeric) : '—';
-}
-
 function adminStatusBytes(value) {
   const numeric = typeof value === 'number' ? value : Number.NaN;
   if (!Number.isFinite(numeric) || numeric < 0) return '—';
@@ -14804,124 +14751,6 @@ function adminDatabaseDisplay(database) {
   if (!database.database_exists) return 'Missing';
   const size = adminStatusBytes(database.database_bytes);
   return size === '—' ? 'Present' : size;
-}
-
-function adminStatusRatio(status, currentKey, maximumKey, formatter = adminStatusNumber) {
-  return `${formatter(status?.[currentKey])} / ${formatter(status?.[maximumKey])}`;
-}
-
-function adminListenerStatusGroup(title, entries) {
-  const group = node('section', 'admin-listener-status-group');
-  group.append(node('h3', '', title));
-  const values = node('dl', 'admin-listener-status-values');
-  entries.forEach(([label, value]) => {
-    values.append(node('dt', '', label), node('dd', '', value));
-  });
-  group.append(values);
-  return group;
-}
-
-async function renderAdminWebAudio() {
-  const response = await requestJson('/api/v1/admin/web-audio', { csrf: false });
-  const configuration = response?.configuration || {};
-  const limits = response?.limits || {};
-  const status = response?.status || {};
-  const form = node('form', 'admin-form admin-audio-form settings-card settings-card-form');
-  let formDirty = false;
-  form.append(node('h3', 'admin-settings-form-title', 'Listener limits'),
-    node('p', 'settings-card-description',
-      'Bound browser playback, cached audio, and per-listener queue use without restarting the receiver.'));
-  const fields = [
-    ['maximum_listeners', 'Simultaneous listeners', 'Admission limit for browser-audio connections.'],
-    ['maximum_selected_scan_lists', 'Scan lists per listener', 'Maximum lists one listener may subscribe to.'],
-    ['waiting_calls_per_listener', 'Waiting calls per listener',
-      'Exact bounded waiting-call policy silently enforced for each browser listener.'],
-    ['maximum_cached_calls', 'Cached calls', 'Maximum completed calls retained for browser retrieval.'],
-    ['maximum_cached_audio_mib', 'Cached audio (MiB)', 'Maximum memory used by completed-call audio.']
-  ];
-  fields.forEach(([key, label, help]) => form.append(
-    adminAudioNumberField(configuration, limits, key, label, help)));
-  const message = node('div', 'admin-form-message');
-  message.setAttribute('role', 'status');
-  const save = node('button', '', 'Save Web Audio Settings');
-  save.type = 'submit';
-  const actions = node('div', 'admin-form-actions');
-  actions.append(save);
-  form.append(message, actions);
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
-    save.disabled = true;
-    message.textContent = 'Saving web-audio settings…';
-    try {
-      const body = Object.fromEntries(fields.map(([key]) => [key, Number(form.elements[key].value)]));
-      await requestJson('/api/v1/admin/web-audio', { method: 'PUT', body });
-      formDirty = false;
-      message.textContent = 'Web-audio settings saved.';
-    } catch (error) {
-      message.textContent = error.message;
-    } finally {
-      save.disabled = false;
-    }
-  });
-  form.addEventListener('input', () => { formDirty = true; });
-  const runtime = metrics([
-    ['Active listeners', status.active_listeners || 0],
-    ['Cached calls', status.cached_calls || 0],
-    ['Published calls', status.published_calls || 0],
-    ['Dropped calls', Number(status.dropped_no_listeners || 0) +
-      Number(status.dropped_no_matching_listeners || 0) + Number(status.dropped_invalid_calls || 0) +
-      Number(status.dropped_no_scan_list || 0) + Number(status.dropped_pending_capacity || 0) +
-      Number(status.dropped_encoder_capacity || 0)]
-  ], true);
-  const statusDetails = node('div', 'admin-listener-status-grid');
-  statusDetails.append(
-    adminListenerStatusGroup('Delivery', [
-      ['Listeners / maximum', adminStatusRatio(status, 'active_listeners', 'maximum_listeners')],
-      ['Audio responses / maximum', adminStatusRatio(status, 'active_audio_responses',
-        'maximum_audio_responses')],
-      ['Received calls', adminStatusNumber(status.received_calls)],
-      ['Published calls', adminStatusNumber(status.published_calls)],
-      ['SSE events dropped', adminStatusNumber(status.dropped_sse_events)],
-      ['Listeners rejected', adminStatusNumber(status.rejected_listeners)],
-      ['Audio responses rejected', adminStatusNumber(status.rejected_audio_responses)]
-    ]),
-    adminListenerStatusGroup('Cache & pipeline', [
-      ['Cached calls / maximum', adminStatusRatio(status, 'cached_calls', 'maximum_calls')],
-      ['Cached audio / maximum', adminStatusRatio(status, 'cached_audio_bytes', 'maximum_audio_bytes',
-        adminStatusBytes)],
-      ['Pending audio / maximum', adminStatusRatio(status, 'pending_audio_bytes',
-        'maximum_pending_audio_bytes', adminStatusBytes)],
-      ['Per-call audio limit', adminStatusBytes(status.maximum_call_audio_bytes)],
-      ['Encoder queue depth', adminStatusNumber(status.encoder_queue_depth)],
-      ['SSE event queue capacity', adminStatusNumber(status.event_queue_capacity)]
-    ]),
-    adminListenerStatusGroup('Call drops', [
-      ['No listeners', adminStatusNumber(status.dropped_no_listeners)],
-      ['No matching subscription', adminStatusNumber(status.dropped_no_matching_listeners)],
-      ['No scan-list membership', adminStatusNumber(status.dropped_no_scan_list)],
-      ['Invalid call', adminStatusNumber(status.dropped_invalid_calls)],
-      ['Pending-audio capacity', adminStatusNumber(status.dropped_pending_capacity)],
-      ['Encoder capacity', adminStatusNumber(status.dropped_encoder_capacity)]
-    ]),
-    adminListenerStatusGroup('Retrieval & eviction', [
-      ['Audio fetch misses', adminStatusNumber(status.audio_fetch_misses)],
-      ['Age evictions', adminStatusNumber(status.age_evictions)],
-      ['Capacity evictions', adminStatusNumber(status.capacity_evictions)]
-    ])
-  );
-  const body = node('div', 'admin-section-body admin-audio-settings');
-  body.append(node('p', 'admin-section-intro',
-    'Live listener status and bounded completed-call browser-audio controls. Settings update without a restart.'),
-    runtime, statusDetails, form);
-  const refresh = node('button', 'secondary', 'Refresh Status');
-  refresh.type = 'button';
-  refresh.addEventListener('click', async () => {
-    if (formDirty && !window.confirm('Discard unsaved web-audio setting changes and refresh status?')) return;
-    refresh.disabled = true;
-    await render();
-  });
-  content.append(section('Listener status & capacity', body, refresh));
 }
 
 function receiverHealthText(value, fallback = '—') {
@@ -15247,9 +15076,12 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   actions.append(save);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
+  const presentationCard = settingsCard('Live details',
+    'Choose how decoded activity is shown on the Live page.',
+    encryption.control, controlQuality.control, voiceQuality.control, fields);
   form.append(node('p', 'live-presentation-intro',
-    'These choices affect only this signed-in user and apply to the Live page.'),
-  encryption.control, controlQuality.control, voiceQuality.control, fields, footer);
+    'These choices affect only this signed-in user.'),
+  settingsCardGrid(presentationCard), footer);
   const modal = openReadOnlyModal('Live presentation', form, {
     id: 'live-presentation-settings', className: 'live-presentation-modal', returnFocusSelector
   });
@@ -15290,6 +15122,89 @@ function openLivePresentationSettings(returnFocusSelector = null) {
         } else {
           const latest = userPreferenceController.snapshot();
           if (latest.loaded) apply(latest.preferences.presentation);
+          modal.setDirty(false);
+          message.textContent = 'These settings changed in another session. The current saved values were loaded.';
+        }
+      } else message.textContent = error.message;
+    } finally {
+      modal.setBusy(false);
+      controls.forEach((control) => { control.disabled = false; });
+    }
+  });
+}
+
+function openScannerPlaybackSettings(returnFocusSelector = null) {
+  const snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded) return;
+  const current = snapshot.preferences.playback;
+  const form = node('form', 'admin-form scanner-playback-form');
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  const conversationGrouping = preferenceCheckbox('conversation-grouping', 'Conversation Mode',
+    current.conversation_grouping,
+    'When calls are waiting, keep a conversation together before switching to another target.');
+  const conversationBurstLimit = node('input');
+  conversationBurstLimit.type = 'number';
+  conversationBurstLimit.name = 'conversation-burst-limit';
+  conversationBurstLimit.min = '1';
+  conversationBurstLimit.max = '20';
+  conversationBurstLimit.required = true;
+  conversationBurstLimit.value = String(current.conversation_burst_limit);
+  const apply = (playback) => {
+    conversationGrouping.input.checked = playback.conversation_grouping;
+    conversationBurstLimit.value = String(playback.conversation_burst_limit);
+  };
+  const fields = node('div', 'settings-field-grid');
+  fields.append(formField('Calls before switching', conversationBurstLimit,
+    'Play 1–20 waiting calls from the same conversation before another waiting conversation gets a turn.'));
+  const card = settingsCard('Conversation playback',
+    'These choices affect only calls that have already built up in this browser queue.',
+    conversationGrouping.control, fields);
+  const save = node('button', '', 'Save Scanner Settings');
+  save.type = 'submit';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(save);
+  const footer = node('div', 'settings-form-footer');
+  footer.append(message, actions);
+  form.append(node('p', 'live-presentation-intro',
+    'These choices affect only this signed-in user.'), settingsCardGrid(card), footer);
+  const modal = openReadOnlyModal('Scanner playback', form, {
+    id: 'scanner-playback-settings-modal', className: 'scanner-playback-modal', returnFocusSelector
+  });
+  if (!modal) return;
+  form.addEventListener('input', () => modal.setDirty(true));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || save.disabled) return;
+    const submitted = {
+      conversation_grouping: conversationGrouping.input.checked,
+      conversation_burst_limit: Number(conversationBurstLimit.value)
+    };
+    const controls = [conversationGrouping.input, conversationBurstLimit, save];
+    controls.forEach((control) => { control.disabled = true; });
+    modal.setBusy(true);
+    message.textContent = 'Saving Scanner settings…';
+    try {
+      await updateUserPreferences((preferences) => {
+        preferences.playback.conversation_grouping = submitted.conversation_grouping;
+        preferences.playback.conversation_burst_limit = submitted.conversation_burst_limit;
+      }, false);
+      modal.setDirty(false);
+      modal.setBusy(false);
+      if (modal.close()) void render();
+    } catch (error) {
+      if (error?.code === 'preference_session_changed') {
+        modal.setDirty(false);
+        modal.setBusy(false);
+        if (modal.close()) void render();
+      } else if (error?.code === 'preference_conflict') {
+        if (error.reloadError) {
+          modal.setDirty(true);
+          message.textContent = 'These settings changed in another session, but the current values could not be ' +
+            'reloaded. Try saving again or reopen this panel.';
+        } else {
+          const latest = userPreferenceController.snapshot();
+          if (latest.loaded) apply(latest.preferences.playback);
           modal.setDirty(false);
           message.textContent = 'These settings changed in another session. The current saved values were loaded.';
         }
@@ -15434,7 +15349,6 @@ async function renderAdmin() {
   const availableTabs = [
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'site-settings', label: 'Site Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-    { id: 'web-audio', label: 'Listener Status', capability: ACCESS_CAPABILITIES.ADMIN_AUDIO },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
     { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
     { id: 'system', label: 'System', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
@@ -15454,7 +15368,6 @@ async function renderAdmin() {
     pageTitleController.update({ pageTitle: 'Site Settings' });
     await renderSiteSettings();
   }
-  else if (active === 'web-audio') await renderAdminWebAudio();
   else if (active === 'access') await renderAdminAccess();
   else if (active === 'system') renderAdminSystem();
   else await renderAdminUsers();

@@ -164,24 +164,49 @@ class StatsWebServerServiceBindAddressTest
             new ScanList(3, 2, "Cleveland", null, true, false),
             new ScanList(4, 3, "Draft", null, false, false)), Map.of(), Map.of()));
 
-        assertEquals(Set.of(1L), StatsWebServerService.selectedScanListIds(
-            URI.create("/api/v1/live/calls"), model, 2));
-        assertEquals(Set.of(2L, 3L), StatsWebServerService.selectedScanListIds(
-            URI.create("/api/v1/live/calls?scan_list_id=2&scan_list_id=3"), model, 2));
-        assertEquals(Set.of(2L), StatsWebServerService.selectedScanListIds(
-            URI.create("/api/v1/live/calls?scan_list_id=2&scan_list_id=2"), model, 1));
+        assertEquals(Set.of(1L), StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED), model, 2).scanListIds());
+        assertEquals(Set.of(2L, 3L), StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED + "?scan_list_id=2&scan_list_id=3"), model, 2).scanListIds());
+        assertEquals(Set.of(2L), StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED + "?scan_list_id=2&scan_list_id=2"), model, 1).scanListIds());
 
         for(String query : List.of("scan_list_id=0", "scan_list_id=-1", "scan_list_id=01",
             "scan_list_id=missing", "other=2", "scan_list_id=4", "scan_list_id=99"))
         {
-            assertThrows(StatsApiException.class, () -> StatsWebServerService.selectedScanListIds(
-                URI.create("/api/v1/live/calls?" + query), model, 2), query);
+            assertThrows(StatsApiException.class, () -> StatsWebServerService.parseCallFeedRequest(
+                URI.create(StatsApiV1.CALLS_FEED + "?" + query), model, 2), query);
         }
 
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.selectedScanListIds(
-            URI.create("/api/v1/live/calls?scan_list_id=1&scan_list_id=2"), model, 1));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.selectedScanListIds(
-            URI.create("/api/v1/live/calls"), null, 2));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED + "?scan_list_id=1&scan_list_id=2"), model, 1));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED), null, 2));
+    }
+
+    @Test
+    void parsesTheCallFeedCursorAsAnOptionalDecimalString()
+    {
+        ScanListModel model = new ScanListModel();
+        model.replaceConfiguration(new ScanListConfiguration(List.of(
+            new ScanList(1, 0, "Default", null, true, true),
+            new ScanList(2, 1, "SouthWest", null, true, false)), Map.of(), Map.of()));
+
+        StatsWebServerService.CallFeedRequest liveEdge = StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED + "?scan_list_id=2"), model, 2);
+        assertEquals(Set.of(2L), liveEdge.scanListIds());
+        assertEquals(null, liveEdge.cursor());
+
+        StatsWebServerService.CallFeedRequest continued = StatsWebServerService.parseCallFeedRequest(
+            URI.create(StatsApiV1.CALLS_FEED + "?scan_list_id=2&cursor=9007199254740993"), model, 2);
+        assertEquals(9_007_199_254_740_993L, continued.cursor());
+
+        for(String query: List.of("cursor=-1", "cursor=01", "cursor=1&cursor=2", "cursor=9223372036854775808",
+            "other=1"))
+        {
+            assertThrows(StatsApiException.class, () -> StatsWebServerService.parseCallFeedRequest(
+                URI.create(StatsApiV1.CALLS_FEED + "?" + query), model, 2), query);
+        }
     }
 
     @Test

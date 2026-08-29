@@ -14,7 +14,9 @@ is still being produced.
 
 1. A configured channel or trunked site can be assigned one compatible Alias List.
 2. A matching Alias, or the Alias List Defaults when no destination Alias matches, assigns the call to Scan Lists.
-3. After the call finishes, each subscribed browser either plays it or places it in that browser's waiting queue.
+3. While at least one browser is playing or has just finished a feed request, the receiver places one browser copy of
+   each eligible completed call in a shared bounded feed. Each playing browser fetches that announcement and either
+   plays it or places it in that tab's local waiting queue.
 
 ## From a Call to the Browser
 
@@ -31,7 +33,10 @@ flowchart TD
     defaults --> complete
     complete --> resolve[Resolve duplicate receiver legs to one completed call]
     resolve --> routes[Combine and deduplicate published Scan List memberships]
-    routes --> selected{Listener selected a matching Scan List?}
+    routes --> active{Any browser feed active or recently active?}
+    active -- No --> done[Do no browser work]
+    active -- Yes --> feed[Add one browser copy to the shared bounded feed]
+    feed --> selected{Playing browser selected a matching Scan List?}
     selected -- Yes --> busy{Browser player busy?}
     busy -- No --> play[Play the call]
     busy -- Yes --> queue[Wait in this browser's queue]
@@ -74,8 +79,9 @@ talkgroup and talkgroup-range Aliases.
 A Scan List is a reusable group of Alias routes. One Alias can belong to several Scan Lists, and one Scan List can
 contain Aliases from different systems and Alias Lists, including Aliases used by conventional channels.
 
-A browser listener can select one or more published Scan Lists. If a call matches several selected lists, the browser
-receives that call once with all of its matching Scan List IDs.
+A browser listener can select up to 16 published Scan Lists. If a call matches several selected lists, the feed
+returns that call once with all of its matching Scan List IDs. The browser also remembers recent call IDs so an
+overlapping selection cannot enqueue the same call twice.
 
 ## The Default Setup
 
@@ -102,9 +108,9 @@ disabled. Partial or unknown encryption status continues to inherit the normal d
 when a new Alias is imported; updating an existing RadioReference Alias preserves its Scan List, recording, and
 streaming choices.
 
-The current browser interface requires at least one published Scan List to be selected. Selecting a list starts
-listening and saves the selection in that user's preferences. At the API level, omitting `scan_list_id` selects the
-published Scan List currently marked as default.
+The current browser interface requires at least one published Scan List to be selected. Selecting a list saves the
+selection in that user's preferences but does not start playback; press **Play** when ready. At the API level,
+omitting `scan_list_id` selects the published Scan List currently marked as default.
 
 When importing legacy upstream SDRTrunk XML, listening-enabled Aliases are placed in the current default Scan List,
 while Do Not Monitor Aliases remain outside it. Supported imported channels with no Alias List assignment receive the
@@ -112,36 +118,45 @@ compatible factory Alias List.
 
 ## What the Browser Queue Does
 
-A new browser subscription starts with an empty announcement stream at the live edge. Calls in the shared audio cache
-are not replayed or backfilled into it.
+A browser starts at the feed's live edge. Calls already in the shared ring are not replayed or backfilled when Play is
+pressed.
 
 Each browser tab owns its own in-memory waiting queue:
 
 - If the player is listening and idle, the next matching completed call becomes the current call immediately.
 - If another call is playing or buffering, the new call waits.
 - The call currently playing or buffering is separate from the waiting-call count.
-- The default limit is 100 waiting calls per browser, configurable by an administrator from 1 through 500.
+- The limit is 100 waiting calls per browser.
 - When a new call arrives at the limit, the oldest waiting call is removed and the new call is kept. This keeps the
   player closer to current activity.
-- Pause keeps an established subscription open, so matching calls continue to enter the queue.
-- Refreshing the page, opening a new browser document, losing playback access, or explicitly resetting the player
-  clears the tab's queue. A temporary connection interruption preserves the existing queue, although calls can be
-  missed before the live connection resumes. Hold, Avoid, Scan List changes, Skip, and Clear Queue can also remove or
-  bypass waiting calls.
+- **Stop** ends feed requests, stops the current call, and clears the tab's waiting queue. Pressing Play again starts
+  at the then-current live edge instead of replaying calls received while stopped.
+- Refreshing the page, opening a new browser document, or losing playback access also clears the tab's queue. A
+  temporary connection interruption preserves calls already in the queue, although calls can be missed before the
+  feed resumes. Hold, Avoid, Scan List changes, Skip, and Clear Queue can also remove or bypass waiting calls.
+- **Replay Last Call** keeps exactly one decoded call in that tab and replays it locally. It does not ask the receiver
+  to retain or retrieve browser listening history.
 
-Playback is conversation-aware rather than a strict global first-in, first-out order. Calls remain ordered by start
-time within each conversation. After at most four consecutive calls from one conversation, another waiting
-conversation gets a turn so one busy talkgroup does not monopolize the player.
+With **Conversation Mode** off, the browser plays the oldest known waiting call by call start time. With it on, calls
+remain ordered by start time within each conversation, but the browser may keep playing the same conversation while
+other calls are waiting. The per-user **Calls before switching** setting allows 1 through 20 calls and defaults to
+four, after which another waiting conversation gets a turn. Both choices are in the Scanner page's playback-settings
+panel. This regrouping applies only after calls have built up in the local queue; it cannot reorder audio that has
+already started.
 
 The browser queue stores call announcements and audio URLs rather than WAV audio. The browser fetches a call's audio
-when that call reaches playback. The shared server cache defaults to 512 calls and 128 MiB, and cached entries expire
-after 30 minutes. Cache limits can therefore make an older queued call unavailable before the browser reaches its
-100-call limit. If the audio is unavailable, its fetch exceeds 15 seconds, or fetching or decoding fails, the player
-skips that call and continues.
+when that call reaches playback. While a browser feed remains active, the shared server ring holds at most 512 calls
+or 128 MiB, and entries expire after 30 minutes. After the last feed request and a five-second handoff grace period,
+the existing receiver-health maintenance pass releases the ring. These are safety bounds, not a replay-history
+promise. A queued call can therefore become unavailable before the browser reaches it. If the audio is unavailable,
+its fetch exceeds 15 seconds, or fetching or decoding fails, the player skips that call and continues.
 
-The 100-call setting limits only the browser's waiting queue. Receiver decoding, completed-call encoding, the live
-server connection, the shared audio cache, and the network are separately bounded, so that number is not an
-end-to-end delivery guarantee. See [Web API v1](api-v1.md) for the complete technical capacity limits.
+The browser has no server-side listener queue or playback session. It makes one bounded call-feed request at a time;
+one low-priority worker performs Scan List matching, metadata projection, and WAV encoding away from receiver
+callbacks. When nobody is listening, completed calls bypass that browser worker and ring entirely. Receiver decoding,
+the bounded handoff, the shared ring, and the network are separately bounded, so the 100-call browser limit is not an
+end-to-end delivery guarantee. When the feed detects a gap, the browser says only that some calls were skipped and
+continues with valid new calls. See [Web API v1](api-v1.md) for the technical limits.
 
 ## Example: A Cleveland Scan List
 

@@ -88,9 +88,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("announcement.setAttribute('role', 'status')"));
         assertTrue(activity.contains("Activity refresh recovered."));
         assertTrue(activity.contains("else announcement.textContent = ''"));
+        assertTrue(source.contains("const LIVE_MULTIPLEX_VERSION = 2"));
         assertTrue(topics.contains("1: 'channel_activity'"));
-        assertTrue(topics.contains("6: 'tuner_diagnostics'"));
-        assertFalse(topics.contains("7: 'activity'"));
+        assertTrue(topics.contains("2: 'decode_events'"));
+        assertTrue(topics.contains("5: 'tuner_diagnostics'"));
+        assertFalse(topics.contains("'calls'"));
         assertTrue(css.contains("@keyframes activity-row-highlight"));
         assertTrue(css.contains(".activity-row-new > td"));
         assertTrue(css.contains("animation: activity-row-highlight 8s ease-out"));
@@ -147,14 +149,12 @@ class StatsWebInteractionUiContractTest
     void rendersSystemStatusWithoutCoercingLabelsOrMissingValuesToNumbers() throws Exception
     {
         String javascript = source();
-        String statusNumber = function(javascript, "function adminStatusNumber(value)");
         String statusBytes = function(javascript, "function adminStatusBytes(value)");
         String databaseDisplay = function(javascript, "function adminDatabaseDisplay(database)");
         String system = function(javascript, "function adminSystemStatusSection()");
         String refresh = function(javascript, "function refreshAdminSystemStatus()");
         String loadStatus = function(javascript, "async function loadStatus(refreshCurrentView = false)");
 
-        assertTrue(statusNumber.contains("typeof value === 'number' ? value : Number.NaN"));
         assertTrue(statusBytes.contains("typeof value === 'number' ? value : Number.NaN"));
         assertTrue(databaseDisplay.contains("typeof database?.database_exists !== 'boolean'"));
         assertTrue(databaseDisplay.contains("if (!database.database_exists) return 'Missing'"));
@@ -284,7 +284,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"103\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"104\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -673,16 +673,20 @@ class StatsWebInteractionUiContractTest
     {
         String player = readText(WEB_CALL_PLAYER);
         String ensureConnected = function(player, "  ensureConnected()");
+        String requestFeed = function(player, "  async requestFeed(signal)");
+        String pollFeed = function(player, "  async pollFeed(generation)");
         String enqueue = function(player, "  enqueue(call)");
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
 
-        assertFalse(ensureConnected.contains("addEventListener('snapshot'"));
-        assertTrue(ensureConnected.contains("addEventListener('ready'"));
-        assertTrue(ensureConnected.contains("addEventListener('live_gap'"));
-        assertTrue(ensureConnected.contains("this.possibleCallGap = true"));
+        assertTrue(ensureConnected.contains("this.feedCursor = null"));
+        assertTrue(requestFeed.contains("this.feedRequestUrl()"));
+        assertTrue(requestFeed.contains("typeof value?.reset !== 'boolean'"));
+        assertTrue(pollFeed.contains("if (response.reset) this.recordSkippedCallNotice()"));
+        assertTrue(pollFeed.contains("this.setStatus('Reconnecting')"));
         assertTrue(enqueue.contains("this.seenCallIds.has(normalized._callId)"));
         assertTrue(enqueue.contains("this.rememberCallId(normalized._callId)"));
         assertFalse(player.contains("consumeSnapshot("));
+        assertFalse(player.contains("live_gap"));
         assertTrue(activity.contains("api('/api/v1/activity'"));
         assertTrue(activity.contains("tableController.replaceRows"));
         assertTrue(activity.contains("refreshFailed = true"));
@@ -698,7 +702,6 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         String enqueue = function(source, "  enqueue(call)");
         String togglePlayback = function(source, "  async togglePlayback()");
-        String replayCurrent = function(source, "  async replayCurrent()");
         String replayLast = function(source, "  async replayLastCall()");
         String toggleHold = function(source, "  toggleHold()");
         String avoidCurrent = function(source, "  avoidCurrent()");
@@ -712,6 +715,7 @@ class StatsWebInteractionUiContractTest
         int avoid = html.indexOf("id=\"playback-avoid\"");
         assertTrue(play >= 0 && play < skip && skip < replay && replay < hold && hold < avoid);
         assertTrue(html.contains("id=\"icon-replay\""));
+        assertTrue(html.contains("id=\"icon-stop\""));
         assertTrue(html.contains("id=\"playback-replay\" class=\"playback-command playback-icon-command\" " +
             "aria-label=\"Replay last call\""));
         assertTrue(html.contains("<use href=\"#icon-replay\"></use>"));
@@ -729,26 +733,26 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("this.paused = true"));
         assertTrue(enqueue.contains("if (!this.paused && !this.current) this.playNext();"));
         assertTrue(enqueue.contains("else this.render();"));
-        assertTrue(togglePlayback.contains("this.playbackOffset = this.getPlaybackPosition()"));
-        assertTrue(togglePlayback.contains("if (this.currentBuffer) this.startCurrent();"));
+        assertTrue(togglePlayback.contains("this.stopFeed()"));
+        assertTrue(togglePlayback.contains("this.clearQueuedCalls()"));
+        assertTrue(togglePlayback.contains("this.stopCurrent()"));
         assertTrue(togglePlayback.contains("if (!this.ensureConnected())"));
         assertTrue(togglePlayback.contains("this.setStatus('Unavailable')"));
         assertFalse(togglePlayback.contains("defaultSelected"));
         assertFalse(source.contains("persistSelectedScanLists"));
-        assertTrue(replayCurrent.contains("this.playbackOffset = 0"));
-        assertTrue(replayCurrent.contains("this.startCurrent()"));
-        assertTrue(replayLast.contains("const lastCall = this.lastHeardCall()"));
-        assertTrue(replayLast.contains("return this.replayCall(lastCall)"));
-        assertTrue(source.contains("if (!this.recentReplay) this.lastHeard = this.current"));
+        assertTrue(replayLast.contains("this.current = this.lastHeard"));
+        assertTrue(replayLast.contains("this.currentBuffer = this.lastHeardBuffer"));
+        assertFalse(replayLast.contains("fetch("));
+        assertTrue(source.contains("this.lastHeardBuffer = completedBuffer"));
         assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
-        assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer || this.recentReplay) return;"));
+        assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer || this.replayingLast) return;"));
         assertTrue(avoidCurrent.contains("label: this.targetLabel(this.current)"));
         assertFalse(avoidCurrent.contains("details:"));
         assertFalse(avoidCurrent.contains("addedAtMs:"));
         assertFalse(avoidList.contains("avoid.details"));
         assertFalse(avoidList.contains("avoid.addedAtMs"));
-        assertTrue(render.contains("Boolean(this.recentReplay) || (!this.holdTarget && !currentReady)"));
-        assertTrue(render.contains("this.ui.avoid.disabled = !currentReady || Boolean(this.recentReplay)"));
+        assertTrue(render.contains("this.replayingLast || (!this.holdTarget && !currentReady)"));
+        assertTrue(render.contains("this.ui.avoid.disabled = !currentReady || this.replayingLast"));
         assertTrue(render.contains("this.ui.replay.disabled = !lastCallReady"));
     }
 
@@ -763,7 +767,8 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(html.contains("id=\"playback-progress\" class=\"playback-progress\" aria-hidden=\"true\""));
         assertTrue(html.contains("id=\"playback-progress-glow\" class=\"playback-progress-glow\""));
-        assertTrue(startCurrent.contains("source.start(0, offset)"));
+        assertTrue(startCurrent.contains("source.start(0)"));
+        assertFalse(source.contains("playbackOffset"));
         assertTrue(startCurrent.contains("this.startProgress()"));
         assertTrue(progress.contains("position / duration"));
         assertTrue(progress.contains("duration - position <= fadeWindow"));
@@ -780,32 +785,27 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void subscribesToBoundedScanListsDeduplicatesCallsAndSchedulesConversationLanes() throws Exception
+    void pollsBoundedScanListsDeduplicatesCallsAndSchedulesOneBrowserQueue() throws Exception
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
         String enqueue = function(source, "  enqueue(call)");
-        String parameters = function(source, "  subscriptionParameters()");
+        String feedUrl = function(source, "  feedRequestUrl()");
         String synchronize = function(source, "  synchronizeSubscription()");
         String normalize = function(source, "  normalizeCall(value)");
-        String schedule = function(source, "  chooseNextLane(lanes, lastKey, consecutive)");
-        String recent = function(source, "  rememberRecentCall(call)");
-        String pruneRecent = function(source, "  pruneRecentCalls()");
-        String replayRecent = function(source, "  async replayRecent(callId)");
-        String replayCall = function(source, "  async replayCall(call)");
-        String returnLive = function(source, "  async returnToLive()");
+        String schedule = function(source, "  nextQueueIndex(queue, lastKey, consecutive)");
         String subscribeState = function(source, "  subscribeState(observer)");
 
         assertTrue(html.contains("id=\"playback-scan-list-options\""));
         assertFalse(html.contains("id=\"playback-missed\""));
-        assertTrue(parameters.contains("scan_list_id: this.activeSelectedScanListIds()"));
+        assertTrue(feedUrl.contains("query.append('scan_list_id', id)"));
+        assertTrue(feedUrl.contains("query.set('cursor', this.feedCursor)"));
         assertTrue(function(source, "  activeSelectedScanListIds()")
             .contains("this.scanListById.get(id)?.enabled"));
-        assertTrue(synchronize.contains("this.events.update(this.subscriptionParameters())"));
-        assertTrue(source.contains("maximum_selected_scan_lists"));
-        assertTrue(source.contains("waiting_calls_per_listener"));
-        assertTrue(function(source, "  setScanListSelected(id, selected)")
-            .contains("if (selected && this.paused) void this.togglePlayback()"));
+        assertTrue(synchronize.contains("this.stopFeed()"));
+        assertFalse(source.contains("maximum_selected_scan_lists"));
+        assertFalse(source.contains("waiting_calls_per_listener"));
+        assertFalse(function(source, "  setScanListSelected(id, selected)").contains("togglePlayback()"));
         assertTrue(normalize.contains("typeof value.call_id === 'string'"));
         assertTrue(normalize.contains("Array.isArray(value.scan_list_ids)"));
         assertTrue(normalize.contains("scanListIds.map(String)"));
@@ -818,26 +818,22 @@ class StatsWebInteractionUiContractTest
         assertTrue(enqueue.indexOf("callMatchesSelection(normalized)") <
             enqueue.indexOf("rememberCallId(normalized._callId)"));
         assertTrue(source.contains("MAXIMUM_SEEN_CALL_IDS = 2048"));
-        assertTrue(source.contains("MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4"));
-        assertTrue(source.contains("MAXIMUM_RECENT_CALLS = 256"));
-        assertTrue(source.contains("MAXIMUM_RECENT_CALL_AGE_MS = 30 * 60 * 1000"));
+        assertTrue(source.contains("MAXIMUM_QUEUED_CALLS = 100"));
         assertTrue(source.contains("MAXIMUM_AVOIDS = 256"));
-        assertTrue(schedule.contains("consecutive < WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS"));
+        assertTrue(schedule.contains("consecutive < this.conversationBurstLimit"));
+        assertTrue(schedule.contains("!this.conversationGrouping"));
         assertTrue(source.contains("first._startedAtMs - second._startedAtMs"));
-        assertFalse(source.contains("events.addEventListener('missed'"));
-        assertFalse(source.contains("this.missedCountExact"));
-        assertTrue(recent.contains("this.pruneRecentCalls()"));
-        assertTrue(pruneRecent.contains(".slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS)"));
-        assertTrue(replayRecent.contains("return this.replayCall(call)"));
-        assertTrue(replayCall.contains("playbackOffset: savedOffset"));
-        assertTrue(replayCall.contains("paused: this.paused"));
-        assertTrue(returnLive.contains("this.current = saved.current"));
-        assertTrue(returnLive.contains("this.playbackOffset = saved.playbackOffset"));
+        assertTrue(normalize.contains("typeof value.conversation_key !== 'string'"));
+        assertTrue(normalize.contains("value.conversation_key.trim()"));
+        assertFalse(source.contains("conversationKey(call)"));
+        assertFalse(source.contains("recentCalls"));
+        assertFalse(source.contains("recentReplay"));
+        assertFalse(source.contains("conversationLanes"));
         assertTrue(subscribeState.contains("return () => this.stateObservers.delete(observer)"));
     }
 
     @Test
-    void providesOneResponsiveScannerShellAndBoundedAdministratorAudioControls() throws Exception
+    void providesOneResponsiveScannerShellWithoutAdministratorAudioControls() throws Exception
     {
         String html = Files.readString(INDEX_HTML);
         String source = source();
@@ -849,7 +845,6 @@ class StatsWebInteractionUiContractTest
         String voiceMeter = function(source, "function scannerVoiceMeter(call)");
         String configuration = function(source, "async function renderConfiguration()");
         String scanLists = function(source, "async function renderAdminScanLists()");
-        String audio = function(source, "async function renderAdminWebAudio()");
 
         assertTrue(html.contains("id=\"navigation-toggle\""));
         assertTrue(html.contains("id=\"navigation-backdrop\""));
@@ -859,7 +854,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-avoid-list\""));
         assertTrue(html.contains("id=\"playback-clear-queue\""));
         assertTrue(html.contains("id=\"icon-play\""));
-        assertTrue(html.contains("id=\"icon-pause\""));
+        assertTrue(html.contains("id=\"icon-stop\""));
         assertTrue(html.contains("id=\"icon-skip\""));
         assertTrue(html.contains("id=\"icon-clear-queue\""));
         assertTrue(html.contains("id=\"playback-hold\"") && html.contains(">H</button>"));
@@ -876,7 +871,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Advanced"));
         assertTrue(scanner.contains("Engineer"));
         assertTrue(scanner.contains("Avoid List"));
-        assertTrue(scanner.contains("Recent Calls"));
+        assertFalse(scanner.contains("Recent Calls"));
         assertTrue(scanner.contains("Replay Last Call"));
         assertTrue(scanner.contains("Clear Queue"));
         assertTrue(scanner.contains("View coverage tree"));
@@ -963,20 +958,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(deleteScanList.contains("await refreshPlaybackScanLists(true)"));
         assertFalse(editScanList.contains("location.reload"));
         assertFalse(deleteScanList.contains("location.reload"));
-        assertTrue(audio.contains("requestJson('/api/v1/admin/web-audio'"));
-        assertTrue(audio.contains("'Refresh Status'"));
-        for(String field: new String[]{"maximum_listeners", "maximum_selected_scan_lists",
-            "waiting_calls_per_listener", "maximum_cached_calls", "maximum_cached_audio_mib"})
-        {
-            assertTrue(audio.contains(field), () -> "Missing web-audio setting " + field);
-        }
+        assertFalse(source.contains("/api/v1/admin/web-audio"));
+        assertFalse(source.contains("renderAdminWebAudio"));
+        assertFalse(source.contains("label: 'Listener Status'"));
         assertFalse(html.contains("playback-max-queued"));
-        for(String counter: new String[]{"dropped_sse_events", "rejected_listeners", "audio_fetch_misses",
-            "rejected_audio_responses", "active_audio_responses", "age_evictions", "capacity_evictions",
-            "encoder_queue_depth", "event_queue_capacity"})
-        {
-            assertTrue(audio.contains(counter), () -> "Missing listener status counter " + counter);
-        }
     }
 
     @Test
@@ -1661,13 +1646,16 @@ class StatsWebInteractionUiContractTest
         String live = function(source, "function liveConnection(topic, parameters = {}, pageScoped = true)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         String player = readText(WEB_CALL_PLAYER);
-        String connect = function(player, "  connect(url, connectionFactory)");
+        String connect = function(player, "  connect(url, feedFetch = null)");
         String toggle = function(player, "  async togglePlayback()");
 
-        assertTrue(playback.contains("(topic, parameters) => liveConnection(topic, parameters, false)"));
-        assertFalse(connect.contains("this.connectionFactory(this.connectionTopic)"));
+        assertTrue(playback.contains("webCallPlayer.connect('/api/v1/calls/feed'"));
+        assertTrue(playback.contains("requestJson(path, { ...options, csrf: false, page: false"));
+        assertFalse(playback.contains("liveConnection('calls'"));
+        assertTrue(connect.contains("this.feedFetch = typeof feedFetch === 'function'"));
         assertTrue(connect.contains("return this.connectionHandle()"));
         assertTrue(toggle.contains("this.ensureConnected()"));
+        assertTrue(toggle.contains("this.stopFeed()"));
         assertTrue(channelActivity.contains("document.hidden || !liveChannelActivitySubscribers.size"));
         assertTrue(channelActivity.contains("source.close()"));
         assertTrue(live.contains("pageScoped && document.hidden"));

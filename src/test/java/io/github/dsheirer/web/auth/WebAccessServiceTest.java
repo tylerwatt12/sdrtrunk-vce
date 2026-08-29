@@ -200,10 +200,10 @@ class WebAccessServiceTest
     @Test
     void definesEveryCapabilityAndLocksFixedPolicies()
     {
-        assertEquals(16, WebCapability.registry().size());
+        assertEquals(15, WebCapability.registry().size());
         for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems",
             "conventional", "credits", "csv-export", "call-audio", "user-settings", "admin-users",
-            "admin-access", "admin-aliases", "admin-audio", "admin-settings", "receiver-health"})
+            "admin-access", "admin-aliases", "admin-settings", "receiver-health"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);
         }

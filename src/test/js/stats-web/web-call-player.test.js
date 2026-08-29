@@ -23,259 +23,291 @@ async function main() {
       timers.set(id, { callback, delay });
       return id;
     },
-    clearTimeout(id) {
-      timers.delete(id);
-    }
+    clearTimeout(id) { timers.delete(id); }
   };
 
   try {
-    const player = Object.create(WebCallPlayer.prototype);
-    Object.assign(player, {
+    const presentation = Object.create(WebCallPlayer.prototype);
+    Object.assign(presentation, {
       current: null,
-      currentBuffer: null,
       idleDisplayCall: null,
       idleDisplayTimer: null,
       idleDisplayDeadline: 0,
-      paused: false,
-      queuedCount: 0,
       renderCount: 0,
-      render() { this.renderCount++; },
-      setStatus(value) { this.status = value; }
+      render() { this.renderCount++; }
     });
     const first = { _callId: 'first' };
-    player.showIdleDisplay(first);
+    presentation.showIdleDisplay(first);
     const firstTimer = timers.values().next().value;
     assert.equal(firstTimer.delay, 5000);
     now = 4999;
-    assert.equal(player.displayCall(), first);
+    assert.equal(presentation.displayCall(), first);
     firstTimer.callback();
     const finalTimer = [...timers.values()].at(-1);
     assert.equal(finalTimer.delay, 1);
-    assert.equal(player.displayCall(), first);
     now = 5000;
-    assert.equal(player.displayCall(), null,
-      'Reading presentation state at the deadline must not keep an expired call visible');
-    assert.equal(timers.has([...timers.keys()].at(-1)), true,
-      'Reading presentation state must not cancel the timer that repaints the UI');
+    assert.equal(presentation.displayCall(), null);
     finalTimer.callback();
-    assert.equal(player.displayCall(), null);
-    assert.equal(player.renderCount, 1);
+    assert.equal(presentation.renderCount, 1);
 
-    now = 10_000;
-    player.showIdleDisplay(first);
-    const staleTimer = [...timers.values()].at(-1).callback;
-    const second = { _callId: 'second' };
-    player.showIdleDisplay(second);
-    staleTimer();
-    assert.equal(player.displayCall(), second, 'A stale timer must not clear a newer call');
+    const queuePlayer = Object.create(WebCallPlayer.prototype);
+    Object.assign(queuePlayer, {
+      queuedCalls: [],
+      queuedCount: 0,
+      conversationGrouping: false,
+      conversationBurstLimit: 2,
+      lastConversationKey: 'A',
+      consecutiveConversationCalls: 1
+    });
+    const call = (id, started, conversation) => ({
+      _callId: id, _startedAtMs: started, _arrivalSequence: started, _conversationKey: conversation
+    });
+    queuePlayer.insertQueuedCall(call('a-late', 30, 'A'));
+    queuePlayer.insertQueuedCall(call('b-first', 10, 'B'));
+    queuePlayer.insertQueuedCall(call('a-first', 20, 'A'));
+    assert.equal(queuePlayer.takeNextCall()._callId, 'b-first',
+      'Conversation Mode off must choose the globally earliest waiting call');
 
-    const next = { _callId: 'next' };
-    player.takeNextCall = () => next;
-    player.callMatchesSelection = () => true;
-    player.isAllowed = () => true;
-    player.loadCurrent = async () => {};
-    await player.playNext();
-    assert.equal(player.current, next);
-    assert.equal(player.idleDisplayCall, null, 'A queued call replaces the lingering call immediately');
+    queuePlayer.queuedCalls = [];
+    queuePlayer.queuedCount = 0;
+    queuePlayer.conversationGrouping = true;
+    queuePlayer.lastConversationKey = 'A';
+    queuePlayer.consecutiveConversationCalls = 1;
+    queuePlayer.insertQueuedCall(call('b-oldest', 10, 'B'));
+    queuePlayer.insertQueuedCall(call('a-one', 20, 'A'));
+    queuePlayer.insertQueuedCall(call('a-two', 30, 'A'));
+    assert.equal(queuePlayer.takeNextCall()._callId, 'a-one',
+      'Conversation Mode may regroup only a call that is already waiting');
+    assert.equal(queuePlayer.takeNextCall()._callId, 'b-oldest',
+      'The burst limit must give another waiting conversation its turn');
+    assert.equal(queuePlayer.takeNextCall()._callId, 'a-two');
+    queuePlayer.queuedCalls = [];
+    queuePlayer.queuedCount = 0;
+    queuePlayer.lastConversationKey = 'A';
+    queuePlayer.consecutiveConversationCalls = 0;
+    queuePlayer.conversationBurstLimit = 20;
+    queuePlayer.insertQueuedCall(call('same-later', 30, 'A'));
+    queuePlayer.insertQueuedCall(call('same-earlier', 20, 'A'));
+    assert.deepEqual(queuePlayer.scheduledQueue().map((item) => item._callId), ['same-earlier', 'same-later'],
+      'Calls from one conversation must remain chronological');
 
-    player.current = null;
-    player.takeNextCall = () => null;
-    await player.playNext(first);
-    assert.equal(player.displayCall(), first);
-    assert.equal(player.status, 'Waiting');
+    const trunked = {
+      protocol: 'P25', system: 'Display name can change', system_identity: 'p25:BEE00:49F',
+      target_form: 'TALKGROUP', target_id: 56735, timeslot: 0,
+      conversation_key: 'p25|system:p25:BEE00:49F|talkgroup:56735|slot:0'
+    };
 
-    const heard = { _callId: 'heard', completed_at_ms: now };
-    const announcedLater = { _callId: 'announced-later', completed_at_ms: now + 1 };
-    const replayPlayer = Object.create(WebCallPlayer.prototype);
+    const normalized = Object.assign(Object.create(WebCallPlayer.prototype), { arrivalSequence: 0 });
+    const normalizedCall = normalized.normalizeCall({
+      ...trunked,
+      call_id: 'instance:1', audio_url: '/api/v1/calls/instance:1/audio',
+      started_at_ms: 100, completed_at_ms: 200, scan_list_ids: [1, 1, 2]
+    });
+    assert.deepEqual(normalizedCall._matchedScanListIds, ['1', '2']);
+    assert.equal(normalizedCall._conversationKey, trunked.conversation_key);
+
+    const dedupe = Object.assign(Object.create(WebCallPlayer.prototype), {
+      arrivalSequence: 0,
+      selectedScanListIds: new Set(['1', '2']),
+      scanListById: new Map([['1', { enabled: true }], ['2', { enabled: true }]]),
+      maximumSelectedScanLists: 128,
+      maximumQueued: 100,
+      seenCallIds: new Set(),
+      seenCallOrder: [],
+      queuedCalls: [],
+      queuedCount: 0,
+      avoids: new Map(),
+      holdTarget: null,
+      paused: true,
+      current: null,
+      render() {}
+    });
+    const overlap = {
+      ...trunked,
+      call_id: 'instance:overlap', audio_url: '/api/v1/calls/instance:overlap/audio',
+      started_at_ms: 300, completed_at_ms: 400, scan_list_ids: [1, 2]
+    };
+    dedupe.enqueue(overlap);
+    dedupe.enqueue(overlap);
+    assert.equal(dedupe.queuedCount, 1,
+      'One call matching several selected Scan Lists must enter the browser queue only once');
+
+    const feedPlayer = Object.assign(Object.create(WebCallPlayer.prototype), {
+      feedUrl: '/api/v1/calls/feed',
+      feedCursor: null,
+      scanListById: new Map([['1', { enabled: true }], ['2', { enabled: true }]]),
+      selectedScanListIds: new Set(['2', '1']),
+      maximumSelectedScanLists: 128
+    });
+    assert.equal(feedPlayer.feedRequestUrl(), '/api/v1/calls/feed?scan_list_id=1&scan_list_id=2');
+    feedPlayer.feedCursor = '42';
+    assert.equal(feedPlayer.feedRequestUrl(), '/api/v1/calls/feed?scan_list_id=1&scan_list_id=2&cursor=42');
+    feedPlayer.feedFetch = async () => ({ cursor: '43', reset: false, calls: [] });
+    assert.deepEqual(await feedPlayer.requestFeed({}), { cursor: '43', reset: false, calls: [] });
+    feedPlayer.feedFetch = async () => ({ cursor: 43, reset: false, calls: [] });
+    await assert.rejects(() => feedPlayer.requestFeed({}), /invalid response/);
+    feedPlayer.feedCursor = '99';
+    feedPlayer.feedActive = true;
+    feedPlayer.feedGeneration = 0;
+    feedPlayer.feedController = null;
+    feedPlayer.feedTimer = null;
+    feedPlayer.stopFeed();
+    assert.equal(feedPlayer.feedCursor, null);
+    assert.equal(feedPlayer.feedRequestUrl(), '/api/v1/calls/feed?scan_list_id=1&scan_list_id=2',
+      'A restarted player must omit its old cursor and begin at the live edge');
+    feedPlayer.paused = false;
+    feedPlayer.feedActive = false;
+    feedPlayer.scanListCatalogReady = true;
+    feedPlayer.pollFeed = async function () { this.firstRestartUrl = this.feedRequestUrl(); };
+    assert.equal(feedPlayer.ensureConnected(), true);
+    await Promise.resolve();
+    assert.equal(feedPlayer.firstRestartUrl, '/api/v1/calls/feed?scan_list_id=1&scan_list_id=2');
+
+    const notice = Object.assign(Object.create(WebCallPlayer.prototype), {
+      skippedNotice: false,
+      statusValue: 'Waiting',
+      ui: { status: { textContent: '' } },
+      stateObservers: new Set()
+    });
+    notice.recordSkippedCallNotice();
+    notice.recordSkippedCallNotice();
+    assert.equal(notice.ui.status.textContent, 'Waiting · Some calls were skipped',
+      'Feed resets and queue overflow use one generic notice instead of an exact count');
+    const resetPoll = Object.assign(Object.create(WebCallPlayer.prototype), {
+      feedActive: true,
+      paused: false,
+      feedGeneration: 7,
+      feedController: null,
+      feedCursor: '10',
+      current: null,
+      queuedCount: 0,
+      skippedNotice: false,
+      statusValue: '',
+      ui: { status: { textContent: '' } },
+      stateObservers: new Set(),
+      requestFeed: async () => ({ cursor: '20', reset: true, calls: [] }),
+      scheduleFeedPoll() {},
+      enqueue() {}
+    });
+    await resetPoll.pollFeed(7);
+    assert.equal(resetPoll.feedCursor, '20');
+    assert.equal(resetPoll.ui.status.textContent, 'Waiting · Some calls were skipped');
+
+    const stopped = Object.assign(Object.create(WebCallPlayer.prototype), {
+      paused: false,
+      transportToken: 0,
+      feedStopped: 0,
+      queueCleared: 0,
+      currentStopped: 0,
+      replayingLast: false,
+      stopAfterReplay: false,
+      lastConversationKey: 'A',
+      consecutiveConversationCalls: 2,
+      lastHeard: { _callId: 'retained' },
+      lastHeardBuffer: { duration: 3 },
+      audioContext: { state: 'running', async suspend() {} },
+      stopFeed() { this.feedStopped++; },
+      clearQueuedCalls() { this.queueCleared++; },
+      stopCurrent() { this.currentStopped++; },
+      clearLossNotice() {},
+      setStatus(value) { this.status = value; },
+      render() {}
+    });
+    await stopped.togglePlayback();
+    assert.equal(stopped.paused, true);
+    assert.equal(stopped.feedStopped, 1);
+    assert.equal(stopped.queueCleared, 1);
+    assert.equal(stopped.currentStopped, 1);
+    assert.equal(stopped.lastHeard._callId, 'retained');
+    assert.equal(stopped.lastHeardBuffer.duration, 3,
+      'Stop must retain exactly the one local Replay Last buffer');
+    assert.equal(stopped.lastConversationKey, null);
+    assert.equal(stopped.status, 'Ready');
+
+    const selection = Object.assign(Object.create(WebCallPlayer.prototype), {
+      scanListById: new Map([['1', { id: '1', enabled: true }]]),
+      selectedScanListIds: new Set(),
+      maximumSelectedScanLists: 128,
+      scanListCatalogReady: true,
+      paused: true,
+      toggleCount: 0,
+      togglePlayback() { this.toggleCount++; },
+      clearLossNotice() {}, writePreferences() {}, updateScanListStatus() {}, filterQueueForSelectedLists() {},
+      renderScanLists() {},
+      ensureConnected() { this.feedStartCount = (this.feedStartCount || 0) + 1; return true; },
+      stopFeed() {}, setStatus() {}, render() {}
+    });
+    selection.setScanListSelected('1', true);
+    assert.equal(selection.toggleCount, 0, 'Selecting a Scan List while stopped must not start playback');
+    assert.equal(selection.feedStartCount || 0, 0, 'Selecting a Scan List while stopped must not start the feed');
+
+    const preferencePlayer = Object.assign(Object.create(WebCallPlayer.prototype), {
+      selectedScanListIds: new Set(['1']),
+      ui: { volume: { value: '1' } },
+      volume: 1,
+      conversationGrouping: true,
+      conversationBurstLimit: 4,
+      subscriptionChanges: 0,
+      filterQueueForSelectedLists() {}, renderScanLists() {}, render() {},
+      synchronizeSubscription() { this.subscriptionChanges++; }
+    });
+    preferencePlayer.applyPreferences({
+      volume: 0.5, selected_scan_list_ids: [1], conversation_grouping: false,
+      conversation_burst_limit: 2
+    });
+    assert.equal(preferencePlayer.subscriptionChanges, 0,
+      'Unrelated preference saves must not restart a live call feed at a new cursor');
+    preferencePlayer.applyPreferences({
+      volume: 0.5, selected_scan_list_ids: [2], conversation_grouping: false,
+      conversation_burst_limit: 2
+    });
+    assert.equal(preferencePlayer.subscriptionChanges, 1);
+
     let audioSource;
-    Object.assign(replayPlayer, {
+    const heard = { _callId: 'heard' };
+    const heardBuffer = { duration: 1 };
+    const replay = Object.assign(Object.create(WebCallPlayer.prototype), {
       current: heard,
-      currentBuffer: { duration: 1 },
-      recentCalls: [heard, announcedLater],
-      recentReplay: null,
+      currentBuffer: heardBuffer,
       lastHeard: null,
+      lastHeardBuffer: null,
+      replayingLast: false,
+      stopAfterReplay: false,
       paused: false,
       source: null,
-      playbackOffset: 0,
       playbackStartedAt: 0,
       loadToken: 1,
+      transportToken: 0,
+      loadController: null,
       audioContext: {
-        currentTime: 0,
+        currentTime: 0, state: 'running', async resume() {}, async suspend() {},
         createBufferSource() {
-          audioSource = {
-            connect() {}, disconnect() {}, start() {}, stop() {}, onended: null, buffer: null
-          };
+          audioSource = { connect() {}, disconnect() {}, start() {}, stop() {}, onended: null, buffer: null };
           return audioSource;
         }
       },
       analyserNode: {},
-      setStatus() {},
-      render() {},
-      startProgress() {},
-      stopProgress() {},
-      playNext(completed) { this.completed = completed; }
+      setStatus(value) { this.status = value; }, render() {}, startProgress() {}, stopProgress() {},
+      clearIdleDisplay() {}, playNext() {}
     });
-    replayPlayer.startCurrent();
-    assert.equal(replayPlayer.lastHeard, heard,
-      'The replay target must be set only when normal browser audio actually starts');
-    assert.equal(replayPlayer.lastHeardCall(), heard,
-      'A newer announced call must not replace the last call the listener heard');
+    replay.startCurrent();
+    assert.equal(replay.lastHeard, null,
+      'Replay Last must refer to the prior completed call, not the call currently playing');
     audioSource.onended();
-    assert.equal(replayPlayer.current, null);
-    assert.equal(replayPlayer.lastHeardCall(), heard,
-      'The last-heard replay target must remain available after normal completion');
-    let replayedId = null;
-    replayPlayer.replayCall = async (call) => { replayedId = call?._callId; return true; };
-    assert.equal(await replayPlayer.replayLastCall(), true);
-    assert.equal(replayedId, 'heard');
+    assert.equal(replay.lastHeard, heard);
+    assert.equal(replay.lastHeardBuffer, heardBuffer,
+      'A naturally completed call must keep one decoded audio buffer for local replay');
+    replay.paused = true;
+    replay.current = null;
+    replay.currentBuffer = null;
+    assert.equal(await replay.replayLastCall(), true);
+    assert.equal(replay.current, heard);
+    assert.equal(replay.currentBuffer, heardBuffer);
+    assert.equal(replay.replayingLast, true);
+    assert.equal(replay.stopAfterReplay, true);
 
-    replayPlayer.current = heard;
-    replayPlayer.currentBuffer = { duration: 1 };
-    replayPlayer.paused = true;
-    let currentReplayCount = 0;
-    replayPlayer.replayCurrent = async () => { currentReplayCount++; };
-    assert.equal(await replayPlayer.replayLastCall(), true);
-    assert.equal(replayPlayer.paused, false, 'Replay last call must start playback even when live audio was paused');
-    assert.equal(currentReplayCount, 1);
-
-    replayPlayer.lastHeard = heard;
-    replayPlayer.current = announcedLater;
-    replayPlayer.currentBuffer = { duration: 1 };
-    replayPlayer.recentReplay = { current: null };
-    replayPlayer.source = null;
-    replayPlayer.startCurrent();
-    assert.equal(replayPlayer.lastHeard, heard,
-      'Replaying history must not redefine the normal last-heard target');
-
-    replayPlayer.recentReplay = null;
-    replayPlayer.current = null;
-    replayPlayer.currentBuffer = null;
-    replayPlayer.recentCalls = Array.from({ length: WebCallPlayer.MAXIMUM_RECENT_CALLS + 20 }, (_, index) => ({
-      _callId: `newer-${index}`,
-      completed_at_ms: now + index + 1
-    }));
-    replayPlayer.pruneRecentCalls();
-    assert.equal(replayPlayer.lastHeardCall(), heard,
-      'Queued announcements must not evict the independently bounded last-heard call');
-
-    const avoidedCall = {
-      _conversationKey: 'p25|GCRCN|target:1234',
-      target_alias: 'GCRCN (Greater Cleveland Radio Communications Network)',
-      target_id: 1234,
-      target_form: 'TALKGROUP',
-      source_alias: 'Cleveland',
-      source_id: 5678,
-      channel: 'T-GCRCN'
-    };
-    const avoidPlayer = Object.create(WebCallPlayer.prototype);
-    Object.assign(avoidPlayer, {
-      current: avoidedCall,
-      currentBuffer: {},
-      recentReplay: null,
-      avoids: new Map(),
-      holdTarget: null,
-      paused: true,
-      filterQueuedCalls() {},
-      stopCurrent() {},
-      setStatus() {},
-      render() {}
-    });
-    avoidPlayer.avoidCurrent();
-    assert.deepEqual([...avoidPlayer.avoids.values()], [{
-      key: avoidedCall._conversationKey,
-      label: 'GCRCN (Greater Cleveland Radio Communications Network)'
-    }], 'The Avoid List must retain only the target label while removal continues to use the exact hidden key');
-    assert.equal(avoidPlayer.removeAvoid(avoidedCall._conversationKey), true);
-    assert.equal(avoidPlayer.avoids.size, 0, 'Removing the concise row must still remove its exact target key');
-
-    const liveCall = { _callId: 'live' };
-    const historicalCall = { _callId: 'historical' };
-    const liveBuffer = { duration: 10 };
-    const overlayPlayer = Object.create(WebCallPlayer.prototype);
-    Object.assign(overlayPlayer, {
-      current: liveCall,
-      currentBuffer: liveBuffer,
-      playbackOffset: 0.25,
-      playbackStartedAt: 0,
-      paused: false,
-      source: {},
-      recentReplay: null,
-      transportToken: 0,
-      loadToken: 0,
-      loadController: null,
-      queuedCount: 2,
-      audioContext: { async resume() {} },
-      getPlaybackPosition: () => 4.5,
-      stopSource() { this.source = null; },
-      clearIdleDisplay() {},
-      ensureAudioContext() {},
-      ensureConnected: () => true,
-      setStatus() {},
-      render() {},
-      async loadCurrent() { this.loadedCall = this.current; },
-      startCurrent() { this.restartedCall = this.current; }
-    });
-    assert.equal(await overlayPlayer.replayCall(historicalCall), true);
-    assert.equal(overlayPlayer.current, historicalCall);
-    assert.equal(overlayPlayer.loadedCall, historicalCall);
-    assert.equal(overlayPlayer.recentReplay.current, liveCall);
-    assert.equal(overlayPlayer.recentReplay.currentBuffer, liveBuffer);
-    assert.equal(overlayPlayer.recentReplay.playbackOffset, 4.5);
-    assert.equal(overlayPlayer.queuedCount, 2, 'Starting Replay Last Call must not alter the live queue');
-    overlayPlayer.queuedCount = 3;
-    overlayPlayer.currentBuffer = { duration: 2 };
-    await overlayPlayer.returnToLive();
-    assert.equal(overlayPlayer.current, liveCall);
-    assert.equal(overlayPlayer.currentBuffer, liveBuffer);
-    assert.equal(overlayPlayer.playbackOffset, 4.5);
-    assert.equal(overlayPlayer.restartedCall, liveCall);
-    assert.equal(overlayPlayer.queuedCount, 3, 'Calls arriving during replay must remain queued on return to live');
-
-    assert.doesNotMatch(source, /addEventListener\('snapshot'|consumeSnapshot\(/,
-      'Automatic browser playback must not rebuild its queue from cached snapshots');
-    assert.match(source, /addEventListener\('live_gap'/,
-      'Dropped live calls must be reported instead of replayed from history');
-
-    const listeners = new Map();
-    const events = {
-      addEventListener(name, listener) { listeners.set(name, listener); },
-      close() {},
-      update() {}
-    };
-    const connected = Object.create(WebCallPlayer.prototype);
-    Object.assign(connected, {
-      events: null,
-      connectionFactory: () => events,
-      connectionTopic: 'calls',
-      scanListCatalogReady: true,
-      scanListById: new Map([['1', { enabled: true }]]),
-      selectedScanListIds: new Set(['1']),
-      maximumSelectedScanLists: 8,
-      maximumQueued: 100,
-      queuedCount: 0,
-      conversationLanes: new Map(),
-      paused: false,
-      current: null,
-      currentBuffer: null,
-      source: null,
-      statusValue: '',
-      missedCallCount: 0,
-      possibleCallGap: false,
-      stateObservers: new Set(),
-      ui: { status: { textContent: '' } },
-      renderCount: 0,
-      render() { this.renderCount++; }
-    });
-    connected.ensureConnected();
-    listeners.get('ready')({ data: JSON.stringify({ waiting_calls_per_listener: 12 }) });
-    assert.equal(connected.maximumQueued, 12, 'A fresh subscription must apply the current queue limit');
-    listeners.get('live_gap')({ data: JSON.stringify({ dropped: 2 }) });
-    assert.equal(connected.missedCallCount, 2);
-    assert.match(connected.ui.status.textContent, /2 calls skipped/);
-    events.onerror();
-    events.onopen();
-    assert.equal(connected.possibleCallGap, true);
-    assert.match(connected.ui.status.textContent, /additional calls may have been skipped during reconnect/);
+    assert.doesNotMatch(source, /Recent Calls|recentCalls|recentReplay|live_gap|conversationLanes|playbackOffset/);
+    assert.match(source, /feedCursor|recordSkippedCallNotice/);
   } finally {
     Date.now = originalNow;
     global.window = originalWindow;

@@ -15,14 +15,12 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.configuration.ConfigurationChannelProjection;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebPasswordVerifier;
 import io.github.dsheirer.web.auth.WebCapability;
-import io.github.dsheirer.web.settings.WebUserPreferences;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -70,12 +68,6 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT);
-    private static final ObjectMapper PREFERENCES_MAPPER = new ObjectMapper(JsonFactory.builder()
-        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-        .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-        .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
-        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     private static final ObjectMapper CHANNEL_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
@@ -190,15 +182,10 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                 throw new IOException("Personal web settings exist without an account to own them; " +
                     "create the primary administrator in the old build before migrating");
             }
-            String preferencesJson = PREFERENCES_MAPPER.writeValueAsString(WebUserPreferences.defaults(
+            String preferencesJson = Format6WebUserPreferencesCodec.defaults(
                 presentation.showEncryptionDetails(), presentation.showControlDecodeQuality(),
                 presentation.showVoiceDecodeQuality(), presentation.decodeQualityDisplayMode(),
-                presentation.liveDetailRowLimit()));
-
-            if(preferencesJson.getBytes(StandardCharsets.UTF_8).length > WebUserPreferences.MAXIMUM_JSON_BYTES)
-            {
-                throw new IOException("Migrated web preference document exceeds its storage bound");
-            }
+                presentation.liveDetailRowLimit());
 
             return new MigrationInput(channelInspection.activeChannels(), channelInspection.retiredChannelIds(),
                 access.accounts(), access.policies(), preferencesJson, presentation.portablePreferences(),

@@ -2,19 +2,21 @@ export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
   static IDLE_CALL_DISPLAY_MS = 5000;
   static MAXIMUM_SCAN_LISTS = 128;
-  static MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4;
-  static MAXIMUM_RECENT_CALLS = 256;
-  static MAXIMUM_RECENT_CALL_AGE_MS = 30 * 60 * 1000;
+  static MAXIMUM_SELECTED_SCAN_LISTS = 16;
+  static MAXIMUM_QUEUED_CALLS = 100;
+  static FEED_POLL_INTERVAL_MS = 100;
+  static FEED_RETRY_INTERVAL_MS = 2000;
   static MAXIMUM_AVOIDS = 256;
 
   constructor(ids) {
     this.ui = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
-    this.conversationLanes = new Map();
+    this.queuedCalls = [];
     this.queuedCount = 0;
     this.avoids = new Map();
-    this.recentCalls = [];
-    this.recentReplay = null;
     this.lastHeard = null;
+    this.lastHeardBuffer = null;
+    this.replayingLast = false;
+    this.stopAfterReplay = false;
     this.stateObservers = new Set();
     this.actions = {};
     this.holdTarget = null;
@@ -28,23 +30,27 @@ export class WebCallPlayer {
     this.waveformSamples = null;
     this.gainNode = null;
     this.audioContext = null;
-    this.playbackOffset = 0;
     this.playbackStartedAt = 0;
     this.progressFrame = null;
     this.transportToken = 0;
-    this.events = null;
-    this.connectionTopic = null;
-    this.connectionFactory = null;
+    this.feedUrl = null;
+    this.feedFetch = null;
+    this.feedActive = false;
+    this.feedController = null;
+    this.feedTimer = null;
+    this.feedGeneration = 0;
+    this.feedCursor = null;
     this.loadToken = 0;
     this.loadController = null;
     this.paused = true;
     this.volume = 1;
     this.statusValue = this.ui.status?.textContent || '';
-    this.missedCallCount = 0;
-    this.possibleCallGap = false;
+    this.skippedNotice = false;
     this.preferenceWriter = null;
-    this.maximumQueued = 100;
-    this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SCAN_LISTS;
+    this.maximumQueued = WebCallPlayer.MAXIMUM_QUEUED_CALLS;
+    this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SELECTED_SCAN_LISTS;
+    this.conversationGrouping = true;
+    this.conversationBurstLimit = 4;
     this.arrivalSequence = 0;
     this.lastConversationKey = null;
     this.consecutiveConversationCalls = 0;
@@ -60,12 +66,17 @@ export class WebCallPlayer {
     this.render();
   }
 
-  connect(url, connectionFactory) {
-    if (this.events) this.events.close();
-    this.events = null;
-    if (typeof connectionFactory !== 'function') throw new Error('A shared live connection is required.');
-    this.connectionTopic = url;
-    this.connectionFactory = connectionFactory;
+  connect(url, feedFetch = null) {
+    this.stopFeed();
+    this.feedUrl = String(url || '').trim();
+    this.feedFetch = typeof feedFetch === 'function' ? feedFetch :
+      ((path, options) => fetch(path, { cache: 'no-store', credentials: 'same-origin', ...options })
+        .then(async (response) => {
+          if (!response.ok) throw Object.assign(new Error(`Call feed returned ${response.status}`),
+            { status: response.status });
+          return response.json();
+        }));
+    if (!this.feedUrl) throw new Error('A browser call feed URL is required.');
     return this.connectionHandle();
   }
 
@@ -86,10 +97,22 @@ export class WebCallPlayer {
       if (this.gainNode) this.gainNode.gain.value = volume;
     }
     if (Array.isArray(preferences.selected_scan_list_ids)) {
-      this.selectedScanListIds = new Set(preferences.selected_scan_list_ids.map(String));
-      this.filterQueueForSelectedLists();
-      this.renderScanLists();
-      this.synchronizeSubscription();
+      const selected = new Set(preferences.selected_scan_list_ids.map(String));
+      const changed = selected.size !== this.selectedScanListIds.size ||
+        [...selected].some((id) => !this.selectedScanListIds.has(id));
+      if (changed) {
+        this.selectedScanListIds = selected;
+        this.filterQueueForSelectedLists();
+        this.renderScanLists();
+        this.synchronizeSubscription();
+      }
+    }
+    if (typeof preferences.conversation_grouping === 'boolean') {
+      this.conversationGrouping = preferences.conversation_grouping;
+    }
+    const burstLimit = Number(preferences.conversation_burst_limit);
+    if (Number.isInteger(burstLimit) && burstLimit >= 1 && burstLimit <= 20) {
+      this.conversationBurstLimit = burstLimit;
     }
     this.render();
   }
@@ -100,7 +123,9 @@ export class WebCallPlayer {
       .filter((id) => Number.isSafeInteger(id) && id > 0).sort((left, right) => left - right);
     void Promise.resolve().then(() => this.preferenceWriter({
       volume: this.volume,
-      selected_scan_list_ids: selectedScanListIds
+      selected_scan_list_ids: selectedScanListIds,
+      conversation_grouping: this.conversationGrouping,
+      conversation_burst_limit: this.conversationBurstLimit
     })).catch(() => {});
   }
 
@@ -120,14 +145,12 @@ export class WebCallPlayer {
   }
 
   viewState() {
-    this.pruneRecentCalls();
-    const lastHeardCall = this.lastHeardCall();
     return {
       current: this.current,
       displayCall: this.displayCall(),
       currentReady: Boolean(this.current && this.currentBuffer),
-      recentReplay: Boolean(this.recentReplay),
-      lastCallReady: Boolean(lastHeardCall && !lastHeardCall._audioUnavailable),
+      replayingLast: this.replayingLast,
+      lastCallReady: Boolean(this.lastHeard && this.lastHeardBuffer),
       paused: this.paused,
       playing: Boolean(this.source),
       targetLabel: this.currentTargetLabel(),
@@ -135,26 +158,23 @@ export class WebCallPlayer {
       queuedCount: this.queuedCount,
       status: this.ui.status?.textContent || '',
       avoids: [...this.avoids.values()].reverse(),
-      recentCalls: this.recentCalls.slice(),
       scanLists: this.scanLists.map((item) => ({ ...item, selected: this.selectedScanListIds.has(item.id) })),
       scanListCatalogReady: this.scanListCatalogReady,
       maximumSelectedScanLists: this.maximumSelectedScanLists,
-      volume: this.volume
+      volume: this.volume,
+      conversationGrouping: this.conversationGrouping,
+      conversationBurstLimit: this.conversationBurstLimit
     };
   }
 
   connectionHandle() {
     return {
       close: () => {
-        this.closeEvents();
-        this.connectionTopic = null;
-        this.connectionFactory = null;
+        this.stopFeed();
+        this.feedUrl = null;
+        this.feedFetch = null;
       }
     };
-  }
-
-  subscriptionParameters() {
-    return { scan_list_id: this.activeSelectedScanListIds() };
   }
 
   activeSelectedScanListIds() {
@@ -165,75 +185,104 @@ export class WebCallPlayer {
   }
 
   ensureConnected() {
-    if (this.events) return this.events;
-    if (typeof this.connectionFactory !== 'function' || !this.scanListCatalogReady ||
-        !this.activeSelectedScanListIds().length) return null;
-    const events = this.connectionFactory(this.connectionTopic, this.subscriptionParameters());
-    let reconnecting = false;
-    this.events = events;
-    events.addEventListener('call', (event) => this.enqueue(this.eventPayload(event)));
-    events.addEventListener('ready', (event) => {
-      this.applyLimits(this.eventPayload(event));
-      this.render();
-    });
-    events.addEventListener('live_gap', (event) => {
-      const dropped = Math.max(1, Math.trunc(Number(this.eventPayload(event)?.dropped) || 1));
-      this.recordMissedCalls(dropped);
-    });
-    events.onopen = () => {
-      if (reconnecting) this.possibleCallGap = true;
-      reconnecting = false;
-      this.setStatus(this.paused ? (this.currentBuffer ? 'Paused' : 'Ready') :
-        (this.source ? 'Listening' : this.current ? 'Buffering' : 'Waiting'));
-      this.notifyStateObservers();
-    };
-    events.onerror = () => {
-      if (this.events === events) {
-        reconnecting = true;
-        this.setStatus('Reconnecting');
-        this.notifyStateObservers();
-      }
-    };
-    return events;
+    if (this.feedActive) return true;
+    if (typeof this.feedFetch !== 'function' || !this.feedUrl || !this.scanListCatalogReady ||
+        !this.activeSelectedScanListIds().length || this.paused) return false;
+    this.feedActive = true;
+    this.feedCursor = null;
+    const generation = ++this.feedGeneration;
+    void this.pollFeed(generation);
+    return true;
   }
 
-  closeEvents() {
-    if (this.events) {
-      this.events.close();
-      this.events = null;
+  feedRequestUrl() {
+    const query = new URLSearchParams();
+    this.activeSelectedScanListIds().forEach((id) => query.append('scan_list_id', id));
+    if (this.feedCursor !== null) query.set('cursor', this.feedCursor);
+    return `${this.feedUrl}?${query}`;
+  }
+
+  async requestFeed(signal) {
+    const value = await this.feedFetch(this.feedRequestUrl(), { signal });
+    const cursor = typeof value?.cursor === 'string' && /^\d+$/.test(value.cursor) ? value.cursor : null;
+    if (cursor === null || typeof value?.reset !== 'boolean' || !Array.isArray(value?.calls)) {
+      throw new Error('The browser call feed returned an invalid response.');
     }
+    return { cursor, reset: value.reset, calls: value.calls };
+  }
+
+  scheduleFeedPoll(generation, delay) {
+    if (!this.feedActive || this.paused || generation !== this.feedGeneration) return;
+    this.feedTimer = window.setTimeout(() => {
+      this.feedTimer = null;
+      void this.pollFeed(generation);
+    }, delay);
+  }
+
+  async pollFeed(generation) {
+    if (!this.feedActive || this.paused || generation !== this.feedGeneration) return;
+    const controller = new AbortController();
+    this.feedController = controller;
+    try {
+      const response = await this.requestFeed(controller.signal);
+      if (!this.feedActive || this.paused || generation !== this.feedGeneration) return;
+      this.feedCursor = response.cursor;
+      if (response.reset) this.recordSkippedCallNotice();
+      response.calls.forEach((call) => this.enqueue(call));
+      if (!this.current && !this.queuedCount) this.setStatus('Waiting');
+      this.scheduleFeedPoll(generation, WebCallPlayer.FEED_POLL_INTERVAL_MS);
+    } catch (error) {
+      if (controller.signal.aborted || !this.feedActive || this.paused || generation !== this.feedGeneration) return;
+      this.setStatus('Reconnecting');
+      this.scheduleFeedPoll(generation, WebCallPlayer.FEED_RETRY_INTERVAL_MS);
+    } finally {
+      if (this.feedController === controller) this.feedController = null;
+    }
+  }
+
+  stopFeed() {
+    this.feedActive = false;
+    this.feedCursor = null;
+    this.feedGeneration++;
+    this.feedController?.abort();
+    this.feedController = null;
+    if (this.feedTimer !== null) window.clearTimeout(this.feedTimer);
+    this.feedTimer = null;
   }
 
   synchronizeSubscription() {
     if (!this.scanListCatalogReady || !this.activeSelectedScanListIds().length) {
-      this.closeEvents();
+      this.stopFeed();
+      if (!this.paused) {
+        this.paused = true;
+        this.clearQueuedCalls();
+        this.stopCurrent();
+        this.replayingLast = false;
+        this.stopAfterReplay = false;
+        if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
+      }
       this.setStatus(this.scanListCatalogReady ? 'Select a scan list' : 'Loading scan lists');
       return;
     }
-    if (this.events) this.events.update(this.subscriptionParameters());
-    else if (!this.paused) this.ensureConnected();
+    if (this.feedActive) {
+      this.stopFeed();
+      this.ensureConnected();
+    } else if (!this.paused && !this.stopAfterReplay) this.ensureConnected();
     else this.setStatus('Ready');
   }
 
-  eventPayload(event) {
-    try {
-      return JSON.parse(event?.data || '{}');
-    } catch (_) {
-      return {};
-    }
-  }
-
   disconnect(status = 'Unavailable') {
-    this.closeEvents();
+    this.stopFeed();
     this.transportToken++;
     this.loadController?.abort();
     this.loadController = null;
     this.paused = true;
     this.clearQueuedCalls();
     this.avoids.clear();
-    this.recentCalls = [];
-    this.recentReplay = null;
     this.lastHeard = null;
+    this.lastHeardBuffer = null;
+    this.replayingLast = false;
+    this.stopAfterReplay = false;
     this.holdTarget = null;
     this.clearLossNotice();
     this.clearIdleDisplay();
@@ -246,7 +295,7 @@ export class WebCallPlayer {
   setScanListsLoading() {
     this.scanListCatalogReady = false;
     this.scanListCatalogState = 'loading';
-    this.closeEvents();
+    this.stopFeed();
     if (this.ui.scanListStatus) this.ui.scanListStatus.textContent = 'Loading available scan lists…';
     this.renderScanLists();
   }
@@ -256,15 +305,14 @@ export class WebCallPlayer {
     this.scanListCatalogState = 'unavailable';
     this.scanLists = [];
     this.scanListById.clear();
-    this.closeEvents();
+    this.stopFeed();
     this.clearLossNotice();
     if (this.ui.scanListStatus) this.ui.scanListStatus.textContent = message;
     this.setStatus(message);
     this.renderScanLists();
   }
 
-  setScanLists(rows, limits = {}) {
-    this.applyLimits(limits);
+  setScanLists(rows) {
     const unique = new Map();
     (Array.isArray(rows) ? rows : []).slice(0, WebCallPlayer.MAXIMUM_SCAN_LISTS).forEach((row) => {
       const id = Number.isSafeInteger(row?.id) && row.id > 0 ? String(row.id) : '';
@@ -283,6 +331,10 @@ export class WebCallPlayer {
     // The server already applies the administrator-owned scan-list order.
     this.scanLists = [...unique.values()];
     this.scanListById = new Map(this.scanLists.map((item) => [item.id, item]));
+    const retainedSelections = new Set([...this.selectedScanListIds]
+      .filter((id) => this.scanListById.has(id)));
+    const selectionChanged = retainedSelections.size !== this.selectedScanListIds.size;
+    if (selectionChanged) this.selectedScanListIds = retainedSelections;
     this.scanListCatalogReady = true;
     this.scanListCatalogState = 'ready';
     this.updateScanListStatus();
@@ -290,30 +342,18 @@ export class WebCallPlayer {
     this.renderScanLists();
     this.synchronizeSubscription();
     this.render();
+    if (selectionChanged) this.writePreferences();
   }
 
   scanListsReady() {
     return this.scanListCatalogReady;
   }
 
-  applyLimits(value = {}) {
-    const selected = value?.maximum_selected_scan_lists;
-    if (Number.isInteger(selected) && selected >= 1) {
-      this.maximumSelectedScanLists = Math.min(WebCallPlayer.MAXIMUM_SCAN_LISTS, selected);
-    }
-    const queued = value?.waiting_calls_per_listener;
-    if (Number.isInteger(queued) && queued >= 1) {
-      this.maximumQueued = Math.min(500, queued);
-      this.trimQueueToLimit();
-    }
-  }
-
   setScanListSelected(id, selected) {
     const item = this.scanListById.get(String(id));
     if (!item?.enabled) return;
     const updated = new Set(this.selectedScanListIds);
-    const activeCount = [...updated].filter((value) => this.scanListById.get(value)?.enabled).length;
-    if (selected && !updated.has(item.id) && activeCount >= this.maximumSelectedScanLists) {
+    if (selected && !updated.has(item.id) && updated.size >= this.maximumSelectedScanLists) {
       if (this.ui.scanListStatus) {
         this.ui.scanListStatus.textContent = `Choose up to ${this.maximumSelectedScanLists} scan lists.`;
       }
@@ -331,7 +371,6 @@ export class WebCallPlayer {
     this.renderScanLists();
     this.synchronizeSubscription();
     this.render();
-    if (selected && this.paused) void this.togglePlayback();
   }
 
   renderScanLists() {
@@ -398,18 +437,18 @@ export class WebCallPlayer {
     return value;
   }
 
-  // Recorded-call pages can feed this same queue by providing the same call shape and an audio_url.
+  // The shared HTTP feed supplies normalized completed-call announcements.
   enqueue(call) {
     const normalized = this.normalizeCall(call);
     if (!normalized || !this.callMatchesSelection(normalized)) return;
     if (this.seenCallIds.has(normalized._callId)) return;
     this.rememberCallId(normalized._callId);
-    this.rememberRecentCall(normalized);
     if (!this.isAllowed(normalized)) return;
 
     while (this.queuedCount >= this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
+      this.recordSkippedCallNotice();
     }
 
     this.insertQueuedCall(normalized);
@@ -447,42 +486,11 @@ export class WebCallPlayer {
     }
   }
 
-  rememberRecentCall(call) {
-    if (!call?._callId) return;
-    this.recentCalls = this.recentCalls.filter((item) => item._callId !== call._callId);
-    this.recentCalls.push(call);
-    this.recentCalls.sort((first, second) => this.callCompletedAt(second) - this.callCompletedAt(first) ||
-      second._arrivalSequence - first._arrivalSequence);
-    this.pruneRecentCalls();
-  }
-
-  pruneRecentCalls() {
-    const oldest = Date.now() - WebCallPlayer.MAXIMUM_RECENT_CALL_AGE_MS;
-    this.recentCalls = this.recentCalls.filter((call) => this.callCompletedAt(call) >= oldest)
-      .slice(0, WebCallPlayer.MAXIMUM_RECENT_CALLS);
-    if (this.lastHeard && this.callCompletedAt(this.lastHeard) < oldest) {
-      const stillBuffered = this.current?._callId === this.lastHeard._callId && Boolean(this.currentBuffer);
-      if (!stillBuffered) this.lastHeard = null;
-    }
-  }
-
-  lastHeardCall() {
-    this.pruneRecentCalls();
-    return this.lastHeard;
-  }
-
-  callCompletedAt(call) {
-    const completed = Number(call?.completed_at_ms ?? call?._startedAtMs);
-    return Number.isFinite(completed) && completed > 0 ? completed : Date.now();
-  }
-
   insertQueuedCall(call) {
-    const lane = this.conversationLanes.get(call._conversationKey) || [];
-    let index = lane.length;
-    while (index > 0 && this.compareCalls(call, lane[index - 1]) < 0) index--;
-    lane.splice(index, 0, call);
-    this.conversationLanes.set(call._conversationKey, lane);
-    this.queuedCount++;
+    let index = this.queuedCalls.length;
+    while (index > 0 && this.compareCalls(call, this.queuedCalls[index - 1]) < 0) index--;
+    this.queuedCalls.splice(index, 0, call);
+    this.queuedCount = this.queuedCalls.length;
   }
 
   compareCalls(first, second) {
@@ -491,37 +499,23 @@ export class WebCallPlayer {
       first._callId.localeCompare(second._callId);
   }
 
-  oldestLaneKey(lanes, excludedKey = null) {
-    let selectedKey = null;
-    let selected = null;
-    lanes.forEach((lane, key) => {
-      if (!lane.length || key === excludedKey) return;
-      if (!selected || this.compareCalls(lane[0], selected) < 0) {
-        selectedKey = key;
-        selected = lane[0];
-      }
-    });
-    return selectedKey;
-  }
-
-  chooseNextLane(lanes, lastKey, consecutive) {
-    const same = lastKey ? lanes.get(lastKey) : null;
-    const otherKey = this.oldestLaneKey(lanes, lastKey);
-    if (same?.length &&
-        (consecutive < WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS || !otherKey)) return lastKey;
-    return otherKey || this.oldestLaneKey(lanes);
+  nextQueueIndex(queue, lastKey, consecutive) {
+    if (!queue.length || !this.conversationGrouping || !lastKey) return queue.length ? 0 : -1;
+    const same = queue.findIndex((call) => call._conversationKey === lastKey);
+    const other = queue.findIndex((call) => call._conversationKey !== lastKey);
+    if (same >= 0 && (consecutive < this.conversationBurstLimit || other < 0)) return same;
+    return other >= 0 ? other : same;
   }
 
   takeNextCall() {
-    const key = this.chooseNextLane(this.conversationLanes, this.lastConversationKey,
+    const index = this.nextQueueIndex(this.queuedCalls, this.lastConversationKey,
       this.consecutiveConversationCalls);
-    if (!key) return null;
-    const lane = this.conversationLanes.get(key);
-    const call = lane.shift();
-    if (!lane.length) this.conversationLanes.delete(key);
-    this.queuedCount--;
+    if (index < 0) return null;
+    const [call] = this.queuedCalls.splice(index, 1);
+    this.queuedCount = this.queuedCalls.length;
+    const key = call._conversationKey;
     if (key === this.lastConversationKey) {
-      this.consecutiveConversationCalls = Math.min(WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS,
+      this.consecutiveConversationCalls = Math.min(this.conversationBurstLimit,
         this.consecutiveConversationCalls + 1);
     } else {
       this.lastConversationKey = key;
@@ -531,17 +525,17 @@ export class WebCallPlayer {
   }
 
   scheduledQueue(limit = 100) {
-    const lanes = new Map([...this.conversationLanes].map(([key, lane]) => [key, lane.slice()]));
+    const queue = this.queuedCalls.slice();
     const result = [];
     let lastKey = this.lastConversationKey;
     let consecutive = this.consecutiveConversationCalls;
     while (result.length < limit) {
-      const key = this.chooseNextLane(lanes, lastKey, consecutive);
-      if (!key) break;
-      const lane = lanes.get(key);
-      result.push(lane.shift());
-      if (!lane.length) lanes.delete(key);
-      if (key === lastKey) consecutive = Math.min(WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS,
+      const index = this.nextQueueIndex(queue, lastKey, consecutive);
+      if (index < 0) break;
+      const [call] = queue.splice(index, 1);
+      result.push(call);
+      const key = call._conversationKey;
+      if (key === lastKey) consecutive = Math.min(this.conversationBurstLimit,
         consecutive + 1);
       else {
         lastKey = key;
@@ -552,17 +546,13 @@ export class WebCallPlayer {
   }
 
   dropOldestQueued() {
-    const key = this.oldestLaneKey(this.conversationLanes);
-    if (!key) return null;
-    const lane = this.conversationLanes.get(key);
-    const call = lane.shift();
-    if (!lane.length) this.conversationLanes.delete(key);
-    this.queuedCount--;
+    const call = this.queuedCalls.shift() || null;
+    this.queuedCount = this.queuedCalls.length;
     return call;
   }
 
   clearQueuedCalls() {
-    this.conversationLanes.clear();
+    this.queuedCalls.length = 0;
     this.queuedCount = 0;
   }
 
@@ -572,17 +562,8 @@ export class WebCallPlayer {
   }
 
   filterQueuedCalls(predicate) {
-    this.conversationLanes.forEach((lane, key) => {
-      const retained = [];
-      lane.forEach((call) => {
-        if (predicate(call)) retained.push(call);
-        else {
-          this.queuedCount--;
-        }
-      });
-      if (retained.length) this.conversationLanes.set(key, retained);
-      else this.conversationLanes.delete(key);
-    });
+    this.queuedCalls = this.queuedCalls.filter(predicate);
+    this.queuedCount = this.queuedCalls.length;
   }
 
   filterQueueForSelectedLists() {
@@ -618,17 +599,21 @@ export class WebCallPlayer {
 
   async togglePlayback() {
     const token = ++this.transportToken;
-    this.paused = !this.paused;
-
-    if (this.paused) {
-      if (this.source) {
-        this.playbackOffset = this.getPlaybackPosition();
-        this.stopSource();
-      }
+    if (!this.paused) {
+      this.paused = true;
+      this.stopFeed();
+      this.clearQueuedCalls();
+      this.lastConversationKey = null;
+      this.consecutiveConversationCalls = 0;
+      this.stopCurrent();
+      this.replayingLast = false;
+      this.stopAfterReplay = false;
+      this.clearLossNotice();
       if (this.audioContext?.state === 'running') await this.audioContext.suspend();
       if (token !== this.transportToken) return;
-      this.setStatus(this.currentBuffer ? 'Paused' : 'Ready');
+      this.setStatus('Ready');
     } else {
+      this.paused = false;
       if (!this.ensureConnected()) {
         this.paused = true;
         this.setStatus('Unavailable');
@@ -638,16 +623,14 @@ export class WebCallPlayer {
       this.ensureAudioContext();
       await this.audioContext.resume();
       if (token !== this.transportToken) return;
-      if (this.currentBuffer) this.startCurrent();
-      else if (!this.current) this.playNext();
-      else this.setStatus('Buffering');
+      this.setStatus('Waiting');
     }
 
     this.render();
   }
 
   toggleHold() {
-    if (this.recentReplay) return;
+    if (this.replayingLast) return;
     if (this.holdTarget) {
       this.holdTarget = null;
     } else if (this.current && this.currentBuffer) {
@@ -659,7 +642,7 @@ export class WebCallPlayer {
   }
 
   avoidCurrent() {
-    if (!this.current || !this.currentBuffer || this.recentReplay) return;
+    if (!this.current || !this.currentBuffer || this.replayingLast) return;
     const target = this.current._conversationKey;
     this.avoids.delete(target);
     this.avoids.set(target, {
@@ -683,12 +666,13 @@ export class WebCallPlayer {
   }
 
   skip() {
-    if (this.recentReplay) {
-      void this.returnToLive();
-      return;
-    }
     if (this.current) this.stopCurrent();
     else this.takeNextCall();
+    if (this.replayingLast) {
+      this.replayingLast = false;
+      if (this.stopAfterReplay) this.paused = true;
+      this.stopAfterReplay = false;
+    }
     if (this.paused) {
       this.setStatus('Ready');
       this.render();
@@ -697,106 +681,26 @@ export class WebCallPlayer {
     }
   }
 
-  async replayCurrent() {
-    if (!this.current || !this.currentBuffer) return;
-    this.playbackOffset = 0;
-    this.stopSource();
-    if (this.paused) {
-      this.setStatus('Paused');
-      this.render();
-      return;
-    }
-
-    this.ensureAudioContext();
-    await this.audioContext.resume();
-    this.startCurrent();
-  }
-
   async replayLastCall() {
-    this.pruneRecentCalls();
-    const lastCall = this.lastHeardCall();
-    if (!lastCall || lastCall._audioUnavailable) return false;
-    if (this.current?._callId === lastCall._callId && this.currentBuffer && !this.recentReplay) {
-      this.paused = false;
-      await this.replayCurrent();
-      return true;
-    }
-    return this.replayCall(lastCall);
-  }
-
-  async replayRecent(callId) {
-    this.pruneRecentCalls();
-    const call = this.recentCalls.find((item) => item._callId === String(callId || ''));
-    return this.replayCall(call);
-  }
-
-  async replayCall(call) {
-    if (!call || call._audioUnavailable) return false;
-    if (this.current?._callId === call._callId && !this.recentReplay) {
-      await this.replayCurrent();
-      return true;
-    }
-    if (this.recentReplay) await this.returnToLive();
-
-    const savedOffset = this.source ? this.getPlaybackPosition() : this.playbackOffset;
+    if (!this.lastHeard || !this.lastHeardBuffer) return false;
+    const wasStopped = this.paused;
     this.transportToken++;
     this.loadToken++;
     this.loadController?.abort();
     this.loadController = null;
     this.stopSource();
     this.clearIdleDisplay();
-    this.recentReplay = {
-      current: this.current,
-      currentBuffer: this.currentBuffer,
-      playbackOffset: savedOffset,
-      paused: this.paused
-    };
-    this.current = call;
-    this.currentBuffer = null;
-    this.playbackOffset = 0;
+    this.current = this.lastHeard;
+    this.currentBuffer = this.lastHeardBuffer;
     this.paused = false;
+    this.replayingLast = true;
+    this.stopAfterReplay = wasStopped;
     this.ensureAudioContext();
     await this.audioContext.resume();
-    if (!this.recentReplay || this.current !== call) return false;
-    this.setStatus('Replaying recent call');
-    this.render();
-    await this.loadCurrent();
+    if (!this.replayingLast || !this.currentBuffer) return false;
+    this.setStatus('Replaying last call');
+    this.startCurrent();
     return true;
-  }
-
-  async returnToLive() {
-    const saved = this.recentReplay;
-    if (!saved) return;
-    this.recentReplay = null;
-    this.transportToken++;
-    this.loadToken++;
-    this.loadController?.abort();
-    this.loadController = null;
-    this.stopSource();
-    this.current = saved.current;
-    this.currentBuffer = saved.currentBuffer;
-    this.playbackOffset = saved.playbackOffset;
-    this.paused = saved.paused;
-
-    if (this.paused) {
-      if (this.audioContext?.state === 'running') await this.audioContext.suspend();
-      this.setStatus(this.currentBuffer ? 'Paused' : 'Ready');
-      this.render();
-      return;
-    }
-
-    if (!this.ensureConnected()) {
-      this.paused = true;
-      this.setStatus('Unavailable');
-      this.render();
-      return;
-    }
-    this.ensureAudioContext();
-    await this.audioContext.resume();
-    if (this.currentBuffer) this.startCurrent();
-    else if (this.current) await this.loadCurrent();
-    else await this.playNext();
-    this.render();
   }
 
   async playNext(completedCall = null) {
@@ -816,7 +720,6 @@ export class WebCallPlayer {
     this.clearIdleDisplay();
     this.current = next;
     this.currentBuffer = null;
-    this.playbackOffset = 0;
     await this.loadCurrent();
   }
 
@@ -852,22 +755,10 @@ export class WebCallPlayer {
       if (token !== this.loadToken || this.current !== requested) return;
       this.currentBuffer = buffer;
       if (!this.paused) this.startCurrent();
-      else {
-        this.setStatus('Paused');
-        this.render();
-      }
     } catch (error) {
       if (error?.name === 'AbortError' && !loadTimedOut) return;
       if (token === this.loadToken) {
-        if (this.recentReplay) {
-          requested._audioUnavailable = true;
-          this.setStatus('Recent call is no longer available');
-          this.render();
-          window.setTimeout(() => {
-            if (this.recentReplay && this.current === requested) void this.returnToLive();
-          }, 150);
-          return;
-        }
+        this.recordSkippedCallNotice();
         this.stopCurrent();
         this.setStatus('Skipped unavailable call');
         setTimeout(() => {
@@ -889,33 +780,43 @@ export class WebCallPlayer {
     if (!this.current || !this.currentBuffer || this.paused || this.source) return;
     const token = this.loadToken;
     const source = this.audioContext.createBufferSource();
-    const duration = Number(this.currentBuffer.duration);
-    const maximumOffset = Number.isFinite(duration) && duration > 0 ? Math.max(0, duration - 0.001) : 0;
-    const offset = Math.min(maximumOffset, Math.max(0, this.playbackOffset));
     source.buffer = this.currentBuffer;
     source.connect(this.analyserNode);
     source.onended = () => {
       if (token !== this.loadToken || source !== this.source) return;
-      if (this.recentReplay) {
+      if (this.replayingLast) {
+        const stopAfterReplay = this.stopAfterReplay;
         source.disconnect();
         this.stopProgress();
         this.source = null;
-        void this.returnToLive();
+        this.current = null;
+        this.currentBuffer = null;
+        this.replayingLast = false;
+        this.stopAfterReplay = false;
+        if (stopAfterReplay) {
+          this.paused = true;
+          if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
+          this.setStatus('Ready');
+          this.render();
+        } else {
+          this.playNext();
+        }
         return;
       }
       const completed = this.current;
+      const completedBuffer = this.currentBuffer;
       source.disconnect();
       this.stopProgress();
       this.source = null;
       this.current = null;
       this.currentBuffer = null;
-      this.playbackOffset = 0;
+      this.lastHeard = completed;
+      this.lastHeardBuffer = completedBuffer;
       this.playNext(completed);
     };
     this.source = source;
-    this.playbackStartedAt = this.audioContext.currentTime - offset;
-    source.start(0, offset);
-    if (!this.recentReplay) this.lastHeard = this.current;
+    this.playbackStartedAt = this.audioContext.currentTime;
+    source.start(0);
     this.setStatus('Listening');
     this.render();
     this.startProgress();
@@ -939,7 +840,6 @@ export class WebCallPlayer {
     this.stopSource();
     this.current = null;
     this.currentBuffer = null;
-    this.playbackOffset = 0;
     this.clearIdleDisplay();
     this.render();
   }
@@ -979,7 +879,7 @@ export class WebCallPlayer {
   getPlaybackPosition() {
     const duration = Number(this.currentBuffer?.duration);
     const position = this.source && this.audioContext ?
-      this.audioContext.currentTime - this.playbackStartedAt : this.playbackOffset;
+      this.audioContext.currentTime - this.playbackStartedAt : 0;
     if (!Number.isFinite(position)) return 0;
     return Number.isFinite(duration) && duration > 0 ? Math.min(duration, Math.max(0, position)) :
       Math.max(0, position);
@@ -1008,18 +908,10 @@ export class WebCallPlayer {
     const position = hasDuration ? this.getPlaybackPosition() : 0;
     const progress = hasDuration ? Math.min(1, position / duration) : 0;
     const fadeWindow = hasDuration ? Math.min(1.2, Math.max(0.35, duration * 0.12)) : 0;
-    const active = hasDuration && (Boolean(this.source) || (this.paused && this.playbackOffset > 0));
+    const active = hasDuration && Boolean(this.source);
     this.ui.progress.style.setProperty('--playback-progress', String(progress));
     this.ui.progress.classList.toggle('active', active);
-    this.ui.progress.classList.toggle('paused', active && this.paused);
     this.ui.progress.classList.toggle('ending', Boolean(this.source) && duration - position <= fadeWindow);
-  }
-
-  trimQueueToLimit() {
-    while (this.queuedCount > this.maximumQueued) {
-      const dropped = this.dropOldestQueued();
-      if (!dropped) break;
-    }
   }
 
   changeVolume(write = false) {
@@ -1076,14 +968,7 @@ export class WebCallPlayer {
   }
 
   targetKey(call) {
-    const system = call?.system || '';
-    const protocol = call?.protocol || call?.decoder || '';
-    const timeslot = call?.timeslot === null || call?.timeslot === undefined ? '' : `|slot:${call.timeslot}`;
-    if (call?.target_id !== null && call?.target_id !== undefined && call?.target_id !== '') {
-      return `${protocol}|${system}|target:${call.target_id}${timeslot}`;
-    }
-    if (call?.channel) return `${protocol}|${system}|channel:${call.channel}${timeslot}`;
-    return `${protocol}|${system}|frequency:${call?.frequency_hz || 0}${timeslot}`;
+    return String(call?._conversationKey || call?.conversation_key || '').trim();
   }
 
   callLabel(call) {
@@ -1154,32 +1039,25 @@ export class WebCallPlayer {
 
   renderStatus() {
     if (!this.ui.status) return;
-    const notices = [];
-    if (this.missedCallCount > 0) {
-      notices.push(`${this.missedCallCount} call${this.missedCallCount === 1 ? '' : 's'} skipped`);
-    }
-    if (this.possibleCallGap) notices.push('additional calls may have been skipped during reconnect');
-    this.ui.status.textContent = [this.statusValue, ...notices].filter(Boolean).join(' · ');
+    this.ui.status.textContent = [this.statusValue, this.skippedNotice ? 'Some calls were skipped' : '']
+      .filter(Boolean).join(' · ');
   }
 
-  recordMissedCalls(count) {
-    const dropped = Math.max(1, Math.trunc(Number(count) || 1));
-    this.missedCallCount += dropped;
+  recordSkippedCallNotice() {
+    this.skippedNotice = true;
     this.renderStatus();
     this.notifyStateObservers();
   }
 
   clearLossNotice() {
-    this.missedCallCount = 0;
-    this.possibleCallGap = false;
+    this.skippedNotice = false;
     this.renderStatus();
   }
 
   render() {
     this.renderVolume();
     const currentReady = Boolean(this.current && this.currentBuffer);
-    const lastHeardCall = this.lastHeardCall();
-    const lastCallReady = Boolean(lastHeardCall && !lastHeardCall._audioUnavailable);
+    const lastCallReady = Boolean(this.lastHeard && this.lastHeardBuffer);
     const displayedCall = this.displayCall();
     this.ui.current.replaceChildren();
     if (displayedCall) {
@@ -1225,9 +1103,9 @@ export class WebCallPlayer {
       this.ui.queueList.append(empty);
     }
 
-    const playLabel = this.paused ? 'Play browser call audio' : 'Pause browser call audio';
+    const playLabel = this.paused ? 'Play browser call audio' : 'Stop browser call audio';
     const playIcon = this.ui.play.querySelector('use');
-    if (playIcon) playIcon.setAttribute('href', this.paused ? '#icon-play' : '#icon-pause');
+    if (playIcon) playIcon.setAttribute('href', this.paused ? '#icon-play' : '#icon-stop');
     this.ui.play.classList.toggle('active', !this.paused);
     this.ui.play.setAttribute('aria-pressed', String(!this.paused));
     this.ui.play.setAttribute('aria-label', playLabel);
@@ -1236,10 +1114,10 @@ export class WebCallPlayer {
     this.ui.replay.setAttribute('aria-label', 'Replay last call');
     this.ui.replay.title = 'Replay last call';
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));
-    this.ui.hold.disabled = Boolean(this.recentReplay) || (!this.holdTarget && !currentReady);
+    this.ui.hold.disabled = this.replayingLast || (!this.holdTarget && !currentReady);
     this.ui.hold.title = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';
     this.ui.hold.setAttribute('aria-label', this.ui.hold.title);
-    this.ui.avoid.disabled = !currentReady || Boolean(this.recentReplay);
+    this.ui.avoid.disabled = !currentReady || this.replayingLast;
     if (this.ui.avoidList) {
       const avoidListLabel = `View ${this.avoids.size} browser avoid(s)`;
       this.ui.avoidList.setAttribute('aria-label', avoidListLabel);

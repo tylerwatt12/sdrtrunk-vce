@@ -6,6 +6,7 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -169,13 +170,13 @@ class ScanListAdminDeliveryWorkflowTest
                                                      Resource cleveland, AliasList county, AliasList city)
         throws Exception
     {
-        StatsWebCallService service = new StatsWebCallService(model, WebCallConfiguration.defaults());
+        StatsWebCallService service = new StatsWebCallService(model);
         service.start();
 
         try
         {
-            try(StatsLiveEventHub.Subscription southwestListener = service.subscribe(Set.of(southwest.id()));
-                StatsLiveEventHub.Subscription clevelandListener = service.subscribe(Set.of(cleveland.id())))
+            try(FeedCursor southwestListener = new FeedCursor(service, Set.of(southwest.id()));
+                FeedCursor clevelandListener = new FeedCursor(service, Set.of(cleveland.id())))
             {
                 service.receive(completedCall(1, county, 1101));
                 assertEquals(List.of(southwest.id()), scanListIds(awaitCall(southwestListener)));
@@ -194,7 +195,7 @@ class ScanListAdminDeliveryWorkflowTest
                 assertNull(southwestListener.poll(200, TimeUnit.MILLISECONDS));
             }
 
-            try(StatsLiveEventHub.Subscription both = service.subscribe(Set.of(southwest.id(), cleveland.id())))
+            try(FeedCursor both = new FeedCursor(service, Set.of(southwest.id(), cleveland.id())))
             {
                 service.receive(completedCall(5, city, 3303));
                 assertEquals(List.of(southwest.id(), cleveland.id()), scanListIds(awaitCall(both)));
@@ -228,19 +229,50 @@ class ScanListAdminDeliveryWorkflowTest
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 
-    private static StatsLiveEventHub.LiveEvent awaitCall(StatsLiveEventHub.Subscription subscription)
+    private static Map<String,Object> awaitCall(FeedCursor subscription)
         throws InterruptedException
     {
-        StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-        assertNotNull(event);
-        assertEquals("call", event.name());
-        return event;
+        Map<String,Object> call = subscription.poll(5, TimeUnit.SECONDS);
+        assertNotNull(call);
+        return call;
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Long> scanListIds(StatsLiveEventHub.LiveEvent event)
+    private static List<Long> scanListIds(Map<String,Object> call)
     {
-        return (List<Long>)((Map<String,Object>)event.data()).get("scan_list_ids");
+        return (List<Long>)call.get("scan_list_ids");
+    }
+
+    private static final class FeedCursor implements AutoCloseable
+    {
+        private final StatsWebCallService mService;
+        private final Set<Long> mScanListIds;
+        private final long mGeneration;
+        private long mCursor;
+
+        private FeedCursor(StatsWebCallService service, Set<Long> scanListIds) throws InterruptedException
+        {
+            mService = service;
+            mScanListIds = scanListIds;
+            mGeneration = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, mGeneration);
+            mCursor = Long.parseLong(service.feed(scanListIds, null, 0, TimeUnit.NANOSECONDS,
+                mGeneration).cursor());
+        }
+
+        private Map<String,Object> poll(long wait, TimeUnit unit) throws InterruptedException
+        {
+            StatsWebCallService.FeedResult result = mService.feed(mScanListIds, mCursor, wait, unit, mGeneration);
+            mCursor = Long.parseLong(result.cursor());
+            assertTrue(!result.reset());
+            return result.calls().isEmpty() ? null : result.calls().getFirst();
+        }
+
+        @Override
+        public void close()
+        {
+            mService.releaseFeed(mGeneration);
+        }
     }
 
     private static long awaitPublishedCalls(StatsWebCallService service, long expected) throws InterruptedException
@@ -250,7 +282,7 @@ class ScanListAdminDeliveryWorkflowTest
 
         do
         {
-            actual = ((Number)service.status().get("published_calls")).longValue();
+            actual = ((Number)service.observerStatus().get("published_calls")).longValue();
             if(actual == expected)
             {
                 return actual;

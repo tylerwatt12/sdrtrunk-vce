@@ -19,6 +19,8 @@ public final class WebUserPreferencesCodec
     private static final ObjectMapper MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_NULL_CREATOR_PROPERTIES)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);

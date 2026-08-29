@@ -7,9 +7,10 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
@@ -19,6 +20,7 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegId;
@@ -28,17 +30,16 @@ import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
-import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
@@ -46,12 +47,12 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
-import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -59,64 +60,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class StatsWebCallServiceTest
 {
     @Test
-    void serializesSubscriptionAdmissionWithLifecycleChanges() throws Exception
-    {
-        assertTrue(Modifier.isSynchronized(StatsWebCallService.class.getDeclaredMethod("subscribe").getModifiers()));
-        assertTrue(Modifier.isSynchronized(
-            StatsWebCallService.class.getDeclaredMethod("subscribe", Set.class).getModifiers()));
-    }
-
-    @Test
-    void callIdsRemainDistinctAcrossServiceRestarts() throws Exception
-    {
-        String firstId;
-        String secondId;
-
-        try(StatsWebCallService first = new StatsWebCallService();
-            StatsWebCallService second = new StatsWebCallService())
-        {
-            first.start();
-            second.start();
-
-            try(StatsLiveEventHub.Subscription firstSubscription = first.subscribe();
-                StatsLiveEventHub.Subscription secondSubscription = second.subscribe())
-            {
-                first.receive(call());
-                second.receive(call());
-                StatsLiveEventHub.LiveEvent firstEvent = firstSubscription.poll(5, TimeUnit.SECONDS);
-                StatsLiveEventHub.LiveEvent secondEvent = secondSubscription.poll(5, TimeUnit.SECONDS);
-                assertNotNull(firstEvent);
-                assertNotNull(secondEvent);
-                firstId = String.valueOf(metadata(firstEvent).get("call_id"));
-                secondId = String.valueOf(metadata(secondEvent).get("call_id"));
-            }
-        }
-
-        assertNotEquals(firstId, secondId);
-    }
-
-    @Test
-    void publishesCompletedCallAndServesMonoWave() throws Exception
+    void encoderWorkerFollowsServiceOwnership() throws Exception
     {
         StatsWebCallService service = new StatsWebCallService();
+        Thread worker = encoderThread(service);
+        assertEquals(Thread.State.NEW, worker.getState(), "Construction alone must not start a permanent web worker");
         service.start();
+        assertTrue(worker.isAlive());
+        service.close();
+        assertFalse(worker.isAlive());
+        assertThrows(IllegalStateException.class, service::start);
+    }
 
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+    @Test
+    void publishesCompletedCallToTheSharedFeedAndServesOneMonoWave() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
         {
             service.receive(call());
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            assertEquals("call", event.name());
-
-            @SuppressWarnings("unchecked")
-            Map<String,Object> metadata = (Map<String,Object>)event.data();
+            Map<String,Object> metadata = client.awaitCall();
+            assertNotNull(metadata);
             assertEquals("Test System", metadata.get("system"));
             assertEquals("Test Site", metadata.get("site"));
             assertEquals("00000000-0000-0000-0000-000000000021", metadata.get("site_guid"));
@@ -127,6 +99,7 @@ class StatsWebCallServiceTest
             assertEquals("RADIO", metadata.get("source_form"));
             assertEquals("CAR 9001", metadata.get("talker_alias"));
             assertEquals("APCO25", metadata.get("protocol"));
+            assertEquals("apco25:test system:talkgroup:4400", metadata.get("conversation_key"));
             assertEquals(854_187_500L, metadata.get("frequency_hz"));
             assertEquals("0-737", metadata.get("lcn"));
             assertEquals(String.valueOf(0xBEE00), metadata.get("wacn"));
@@ -136,63 +109,467 @@ class StatsWebCallServiceTest
             assertEquals("21", metadata.get("site_id"));
             assertEquals(100L, metadata.get("duration_ms"));
             assertEquals(98.0d, metadata.get("vc_quality_pct"));
-            assertEquals(49L, metadata.get("vc_decoded_frames"));
-            assertEquals(1L, metadata.get("vc_repeated_frames"));
-            assertEquals(4L, metadata.get("vc_fec_errors"));
 
             String callId = String.valueOf(metadata.get("call_id"));
             URI audioUri = URI.create(String.valueOf(metadata.get("audio_url")));
             assertEquals(callId, StatsWebServerService.callAudioId(audioUri));
-
             StatsWebCallService.CachedCall cached = service.get(callId);
             assertNotNull(cached);
             assertEquals("RIFF", new String(cached.wave(), 0, 4, StandardCharsets.US_ASCII));
             assertEquals("WAVE", new String(cached.wave(), 8, 4, StandardCharsets.US_ASCII));
             assertEquals(44 + 800 * Short.BYTES, cached.wave().length);
         }
-        finally
+    }
+
+    @Test
+    void aMissingCursorStartsAtTheLiveEdgeWithoutHistory() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient first = listen(service, Set.of()))
         {
-            service.close();
+            service.receive(call());
+            assertNotNull(first.awaitCall());
+
+            try(FeedClient refreshed = listen(service, Set.of()))
+            {
+                assertTrue(refreshed.page(0, TimeUnit.NANOSECONDS).calls().isEmpty());
+                service.receive(call());
+                assertNotNull(refreshed.awaitCall());
+            }
         }
     }
 
     @Test
-    void newSubscriptionStartsAtTheLiveEdgeWithoutCachedAnnouncements() throws Exception
+    void keepsTheFeedActiveAcrossTheRequestGap() throws Exception
     {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-
-        try
+        try(StatsWebCallService service = started(new StatsWebCallService()))
         {
-            try(StatsLiveEventHub.Subscription first = service.subscribe())
+            String cursor;
+
+            try(FeedClient first = listen(service, Set.of()))
             {
-                service.receive(call());
-                StatsLiveEventHub.LiveEvent heard = first.poll(5, TimeUnit.SECONDS);
-                assertNotNull(heard);
-                assertNotNull(service.get(String.valueOf(metadata(heard).get("call_id"))));
+                cursor = first.cursor();
             }
 
-            try(StatsLiveEventHub.Subscription refreshed = service.subscribe())
+            service.receive(call());
+
+            try(FeedClient resumed = resume(service, Set.of(), cursor))
             {
-                assertNull(refreshed.poll(100, TimeUnit.MILLISECONDS),
-                    "A fresh browser subscription must not receive calls from the audio cache");
-                service.receive(call());
-                StatsLiveEventHub.LiveEvent live = refreshed.poll(5, TimeUnit.SECONDS);
-                assertNotNull(live);
-                assertEquals("call", live.name());
+                assertNotNull(resumed.awaitCall(),
+                    "A completed call between consecutive polls must not fall through the transport gap");
             }
-        }
-        finally
-        {
-            service.close();
         }
     }
 
     @Test
-    void publishesLearnedP25SiteIdentityInsteadOfGenericCallIdentifiers() throws Exception
+    void aPublishedCallWakesTheBoundedLongPoll() throws Exception
     {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient ignored = listen(service, Set.of()))
+        {
+            AtomicReference<StatsWebCallService.FeedResult> result = new AtomicReference<>();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            CountDownLatch started = new CountDownLatch(1);
+            Thread waiter = new Thread(() -> {
+                started.countDown();
+                try
+                {
+                    result.set(service.feed(Set.of(), 0L, 5, TimeUnit.SECONDS, ignored.generation()));
+                }
+                catch(Throwable throwable)
+                {
+                    failure.set(throwable);
+                }
+            }, "web-call-feed-test");
+            waiter.start();
+            assertTrue(started.await(1, TimeUnit.SECONDS));
+            service.receive(call());
+            waiter.join(2_000L);
+            assertFalse(waiter.isAlive(), "A new shared call should wake the long poll immediately");
+            assertNull(failure.get());
+            assertNotNull(result.get());
+            assertEquals(1, result.get().calls().size());
+        }
+    }
+
+    @Test
+    void doesNoBrowserWorkWithoutAnActiveOrRecentlyActiveFeed() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService()))
+        {
+            service.receive(call());
+            Thread.sleep(100);
+            assertEquals(0L, service.observerStatus().get("published_calls"));
+        }
+    }
+
+    @Test
+    void filtersOneSharedCallBySelectedScanListsAndDeduplicatesOverlap() throws Exception
+    {
+        ScanListModel model = scanListModel(Map.of(101L, Set.of(2L, 3L), 102L, Set.of(3L)));
+
+        try(StatsWebCallService service = started(new StatsWebCallService(model));
+            FeedClient southwest = listen(service, Set.of(2L));
+            FeedClient cleveland = listen(service, Set.of(3L)))
+        {
+            service.receive(call(Set.of(101L)));
+            Map<String,Object> southwestCall = southwest.awaitCall();
+            Map<String,Object> clevelandCall = cleveland.awaitCall();
+            assertNotNull(southwestCall);
+            assertNotNull(clevelandCall);
+            assertEquals(southwestCall.get("call_id"), clevelandCall.get("call_id"));
+            assertEquals(List.of(2L, 3L), southwestCall.get("scan_list_ids"));
+            assertTrue(southwest.page(50, TimeUnit.MILLISECONDS).calls().isEmpty());
+
+            service.receive(call(Set.of(102L)));
+            assertNotNull(cleveland.awaitCall());
+            assertTrue(southwest.page(250, TimeUnit.MILLISECONDS).calls().isEmpty());
+            assertEquals(2L, awaitStatus(service, "published_calls", 2L));
+        }
+    }
+
+    @Test
+    void aFutureCursorGetsOneSimpleLiveEdgeReset() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient ignored = listen(service, Set.of()))
+        {
+            StatsWebCallService.FeedResult result = service.feed(Set.of(), 100L, 0, TimeUnit.NANOSECONDS,
+                ignored.generation());
+            assertTrue(result.reset());
+            assertEquals("0", result.cursor());
+            assertTrue(result.calls().isEmpty());
+        }
+    }
+
+    @Test
+    void returnsAscendingCallsInFixedBatches() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            for(int count = 1; count <= StatsWebCallService.MAXIMUM_FEED_CALLS + 6; count++)
+            {
+                service.receive(call());
+                assertEquals(count, awaitStatus(service, "published_calls", count));
+            }
+
+            StatsWebCallService.FeedResult first = client.page(0, TimeUnit.NANOSECONDS);
+            assertEquals(StatsWebCallService.MAXIMUM_FEED_CALLS, first.calls().size());
+            assertFalse(first.reset());
+            StatsWebCallService.FeedResult second = client.page(0, TimeUnit.NANOSECONDS);
+            assertEquals(6, second.calls().size());
+            assertFalse(second.reset());
+
+            List<String> ids = new ArrayList<>();
+            first.calls().forEach(call -> ids.add(String.valueOf(call.get("call_id"))));
+            second.calls().forEach(call -> ids.add(String.valueOf(call.get("call_id"))));
+            assertEquals(ids.size(), ids.stream().distinct().count());
+        }
+    }
+
+    @Test
+    void anExpiredCursorResetsToTheCurrentLiveEdgeWithoutReconstruction() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient ignored = listen(service, Set.of()))
+        {
+            for(int count = 1; count <= StatsWebCallService.MAXIMUM_CACHED_CALLS + 1; count++)
+            {
+                service.receive(call());
+                assertEquals(count, awaitStatus(service, "published_calls", count));
+            }
+
+            StatsWebCallService.FeedResult result = service.feed(Set.of(), 0L, 0, TimeUnit.NANOSECONDS,
+                ignored.generation());
+            assertTrue(result.reset());
+            assertEquals(Long.toString(StatsWebCallService.MAXIMUM_CACHED_CALLS + 1L), result.cursor());
+            assertTrue(result.calls().isEmpty());
+        }
+    }
+
+    @Test
+    void boundedIngressNeverRunsEncodingOnTheCallingThreadAndSignalsTheSharedLoss() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient firstClient = listen(service, Set.of());
+            FeedClient secondClient = listen(service, Set.of()))
+        {
+            Thread worker = encoderThread(service);
+            assertTrue(worker.isAlive(), "Lifecycle construction must start the single encoder worker");
+            assertEquals(Thread.MIN_PRIORITY + 1, worker.getPriority());
+
+            synchronized(service)
+            {
+                service.receive(call());
+                assertTrue(awaitThreadState(worker, Thread.State.BLOCKED, 5, TimeUnit.SECONDS),
+                    "The first call should reach publication while the test holds the service monitor");
+
+                long started = System.nanoTime();
+                service.receive(call());
+                service.receive(call());
+                service.receive(call());
+                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                assertTrue(elapsedMs < 100, "The coordinator-facing offer must not wait for the encoder");
+                assertEquals(1L, service.observerStatus().get("dropped_encoder_capacity"));
+            }
+
+            assertEquals(3L, awaitStatus(service, "published_calls", 3L));
+            StatsWebCallService.FeedResult first = firstClient.page(0, TimeUnit.NANOSECONDS);
+            StatsWebCallService.FeedResult second = secondClient.page(0, TimeUnit.NANOSECONDS);
+            assertTrue(first.reset(), "Every cursor that crosses shared encoder loss must be notified");
+            assertTrue(second.reset(), "The loss marker must remain visible to other connected cursors");
+            assertEquals(3, first.calls().size(), "A loss notice must not discard later valid calls");
+            assertEquals(first.calls(), second.calls());
+        }
+    }
+
+    @Test
+    void encoderFailureSignalsTheNextSuccessfullyPublishedCall() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(callWithFailingIdentifiers());
+            assertEquals(1L, awaitStatus(service, "encoder_failures", 1L));
+            service.receive(call());
+            assertEquals(1L, awaitStatus(service, "published_calls", 1L));
+            StatsWebCallService.FeedResult result = client.page(0, TimeUnit.NANOSECONDS);
+            assertTrue(result.reset());
+            assertEquals(1, result.calls().size());
+        }
+    }
+
+    @Test
+    void fullyQualifiedP25AndNxdnDestinationsDoNotShareConversationKeys() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            String firstP25 = conversationKey(client, service,
+                APCO25FullyQualifiedTalkgroupIdentifier.createTo(4400, 0xBEE00, 0x4A7, 12345));
+            String secondP25 = conversationKey(client, service,
+                APCO25FullyQualifiedTalkgroupIdentifier.createTo(4400, 0xABCDE, 0x123, 12345));
+            assertNotEquals(firstP25, secondP25);
+            assertTrue(firstP25.contains("apco25:fq:781824:1191:12345"));
+
+            String firstNxdn = conversationKey(client, service,
+                NXDNFullyQualifiedTalkgroupIdentifier.createTo(11, 1200));
+            String secondNxdn = conversationKey(client, service,
+                NXDNFullyQualifiedTalkgroupIdentifier.createTo(12, 1200));
+            assertNotEquals(firstNxdn, secondNxdn);
+            assertTrue(firstNxdn.contains("nxdn:fq:11:1200"));
+        }
+    }
+
+    @Test
+    void validatesAudioSizeOnTheWorkerAndBoundsEachWave()
+    {
+        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
+            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
+        List<float[]> maximum = audioBuffers(maximumSamples);
+        List<float[]> oversized = new ArrayList<>(maximum);
+        oversized.add(new float[1]);
+        assertEquals(StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES,
+            StatsWebCallService.checkedWaveLength(maximum));
+        assertEquals(-1, StatsWebCallService.checkedWaveLength(oversized));
+        assertNull(StatsWebCallService.wave(new CompletedAudioCall(call().snapshot(), oversized)));
+    }
+
+    @Test
+    void boundsConcurrentAudioResponsesWithAFixedLimit()
+    {
+        try(StatsWebCallService service = new StatsWebCallService())
+        {
+            for(int count = 0; count < StatsWebCallService.MAXIMUM_ACTIVE_FEEDS; count++)
+            {
+                assertTrue(service.tryAcquireAudioResponse());
+            }
+            assertFalse(service.tryAcquireAudioResponse());
+            assertEquals(1L, service.observerStatus().get("rejected_audio_responses"));
+
+            for(int count = 0; count < StatsWebCallService.MAXIMUM_ACTIVE_FEEDS; count++)
+            {
+                service.releaseAudioResponse();
+            }
+            assertTrue(service.tryAcquireAudioResponse());
+            service.releaseAudioResponse();
+        }
+    }
+
+    @Test
+    void boundsConcurrentFeedRequestsWithAFixedLimit()
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService()))
+        {
+            List<Long> generations = new ArrayList<>();
+
+            for(int count = 0; count < StatsWebCallService.MAXIMUM_ACTIVE_FEEDS; count++)
+            {
+                long generation = service.tryAcquireFeed();
+                assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, generation);
+                generations.add(generation);
+            }
+            assertEquals(StatsWebCallService.NO_FEED_GENERATION, service.tryAcquireFeed());
+            assertEquals(1L, service.observerStatus().get("rejected_feeds"));
+
+            for(long generation: generations)
+            {
+                service.releaseFeed(generation);
+            }
+            assertEquals(0, service.observerStatus().get("active_feeds"));
+        }
+    }
+
+    @Test
+    void anInactivePeriodProducesOneResetForAnOlderCursor() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService()))
+        {
+            service.receive(call());
+            assertEquals(0L, service.observerStatus().get("published_calls"));
+
+            long generation = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, generation);
+
+            try
+            {
+                StatsWebCallService.FeedResult result = service.feed(Set.of(), 0L, 0, TimeUnit.NANOSECONDS,
+                    generation);
+                assertTrue(result.reset());
+                assertEquals("1", result.cursor());
+                assertTrue(result.calls().isEmpty());
+            }
+            finally
+            {
+                service.releaseFeed(generation);
+            }
+        }
+    }
+
+    @Test
+    void stopAndRestartInvalidatesAnOlderCursor() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService()))
+        {
+            long oldGeneration = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, oldGeneration);
+            StatsWebCallService.FeedResult edge = service.feed(Set.of(), null, 0, TimeUnit.NANOSECONDS,
+                oldGeneration);
+
+            service.stop();
+            service.start();
+            long newGeneration = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, newGeneration);
+
+            try
+            {
+                StatsWebCallService.FeedResult result = service.feed(Set.of(), Long.parseLong(edge.cursor()), 0,
+                    TimeUnit.NANOSECONDS, newGeneration);
+                assertTrue(result.reset());
+                assertEquals("1", result.cursor());
+                assertTrue(result.calls().isEmpty());
+            }
+            finally
+            {
+                service.releaseFeed(newGeneration);
+            }
+        }
+    }
+
+    @Test
+    void staleGenerationReleaseCannotDecrementANewRun() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService()))
+        {
+            long staleGeneration = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, staleGeneration);
+            service.stop();
+            service.start();
+            long currentGeneration = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, currentGeneration);
+
+            service.releaseFeed(staleGeneration);
+            assertEquals(1, service.observerStatus().get("active_feeds"));
+            service.releaseFeed(currentGeneration);
+            assertEquals(0, service.observerStatus().get("active_feeds"));
+        }
+    }
+
+    @Test
+    void maintenanceReleasesTheIdleRingAndPreservesTheDiscardedCursorBoundary() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService()))
+        {
+            String callId;
+            String publishedCursor;
+
+            try(FeedClient client = listen(service, Set.of()))
+            {
+                service.receive(call());
+                Map<String,Object> metadata = client.awaitCall();
+                assertNotNull(metadata);
+                callId = String.valueOf(metadata.get("call_id"));
+                publishedCursor = client.cursor();
+            }
+
+            feedActiveUntil(service).set(System.nanoTime() - 1L);
+            service.maintain();
+            assertNull(service.get(callId), "Idle maintenance must release retained WAV audio");
+
+            long generation = service.tryAcquireFeed();
+            assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, generation);
+
+            try
+            {
+                StatsWebCallService.FeedResult stale = service.feed(Set.of(), 0L, 0, TimeUnit.NANOSECONDS,
+                    generation);
+                assertTrue(stale.reset(), "A cursor before discarded data must reset");
+                assertEquals(publishedCursor, stale.cursor());
+                assertTrue(stale.calls().isEmpty());
+
+                StatsWebCallService.FeedResult boundary = service.feed(Set.of(), Long.parseLong(publishedCursor), 0,
+                    TimeUnit.NANOSECONDS, generation);
+                assertFalse(boundary.reset(), "A cursor that already acknowledged the discarded call remains valid");
+                assertEquals(publishedCursor, boundary.cursor());
+                assertTrue(boundary.calls().isEmpty());
+
+                StatsWebCallService.FeedResult fresh = service.feed(Set.of(), null, 0, TimeUnit.NANOSECONDS,
+                    generation);
+                assertFalse(fresh.reset(), "A new listener starts cleanly at the current live edge");
+                assertEquals(publishedCursor, fresh.cursor());
+                assertTrue(fresh.calls().isEmpty());
+            }
+            finally
+            {
+                service.releaseFeed(generation);
+            }
+        }
+    }
+
+    @Test
+    void callIdsRemainDistinctAcrossServiceInstances() throws Exception
+    {
+        String firstId;
+        String secondId;
+
+        try(StatsWebCallService first = started(new StatsWebCallService());
+            StatsWebCallService second = started(new StatsWebCallService());
+            FeedClient firstFeed = listen(first, Set.of());
+            FeedClient secondFeed = listen(second, Set.of()))
+        {
+            first.receive(call());
+            second.receive(call());
+            firstId = String.valueOf(firstFeed.awaitCall().get("call_id"));
+            secondId = String.valueOf(secondFeed.awaitCall().get("call_id"));
+        }
+
+        assertNotEquals(firstId, secondId);
+    }
+
+    @Test
+    void publishesLearnedP25SiteIdentity() throws Exception
+    {
         CompletedAudioCall template = call();
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "configured-channel", "Traffic",
             "learned-site-guid", 1L, new P25SiteIdentity(0xABCDE, 0x348, 0x02, 0x17), true);
@@ -205,25 +582,20 @@ class StatsWebCallServiceTest
             snapshot.recordingMetadata(), snapshot.voiceCallQuality(), snapshot.callLegId(), source,
             snapshot.callEncryptionEvidence());
 
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
         {
             service.receive(new CompletedAudioCall(learned, template.audioBuffers()));
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            Map<String,Object> metadata = metadata(event);
+            Map<String,Object> metadata = client.awaitCall();
             assertEquals(String.valueOf(0xABCDE), metadata.get("wacn"));
             assertEquals(String.valueOf(0x348), metadata.get("system_id"));
             assertEquals(String.valueOf(0x02), metadata.get("rfss_id"));
             assertEquals(String.valueOf(0x17), metadata.get("site_id"));
         }
-        finally
-        {
-            service.close();
-        }
     }
 
     @Test
-    void publishesOnlyCatalogOwnedCompletedCallNavigation() throws Exception
+    void publishesOnlyCatalogOwnedNavigationReferences() throws Exception
     {
         String configurationId = "00000000-0000-0000-0000-000000000737";
         String guid = "00000000-0000-0000-0000-000000000021";
@@ -232,15 +604,12 @@ class StatsWebCallServiceTest
                 configurationId, guid, WebEntityRef.site(guid),
                 WebEntityRef.system("p25:BEE00:4A7:alias-list:10"), 1, 0))));
         catalog.refreshNow();
-        StatsWebCallService service = new StatsWebCallService(null, WebCallConfiguration.defaults(), catalog);
-        service.start();
 
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
+            FeedClient client = listen(service, Set.of()))
         {
             service.receive(call());
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            Map<String,Object> metadata = metadata(event);
+            Map<String,Object> metadata = client.awaitCall();
             assertEquals(Map.of("kind", "site", "key", guid), metadata.get("entity_ref"));
             assertEquals(Map.of("kind", "system", "key", "p25:BEE00:4A7:alias-list:10"),
                 metadata.get("system_entity_ref"));
@@ -249,390 +618,10 @@ class StatsWebCallServiceTest
             assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:4A7:alias-list:10", "id", 4400),
                 metadata.get("target_entity_ref"));
         }
-        finally
-        {
-            service.close();
-        }
     }
 
     @Test
-    void checksThePerCallWaveLimitBeforeEncoding()
-    {
-        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
-            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
-        List<float[]> maximum = audioBuffers(maximumSamples);
-        List<float[]> oversized = new ArrayList<>(maximum);
-        oversized.add(new float[1]);
-
-        assertEquals(16 * 1024 * 1024, StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES);
-        assertEquals(StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES,
-            StatsWebCallService.MAXIMUM_PENDING_AUDIO_BYTES);
-        assertEquals(StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES,
-            StatsWebCallService.checkedWaveLength(maximum));
-        assertEquals(-1, StatsWebCallService.checkedWaveLength(oversized));
-
-        CompletedAudioCall template = call();
-        assertNull(StatsWebCallService.wave(new CompletedAudioCall(template.snapshot(), oversized)));
-    }
-
-    @Test
-    void boundsEveryCallMetadataString()
-    {
-        String oversized = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS + 100);
-        assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS,
-            StatsWebCallService.boundedText(oversized).length());
-        String splitSurrogate = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS - 1) +
-            "\uD83D\uDE00tail";
-        String boundedSurrogate = StatsWebCallService.boundedText(splitSurrogate);
-        assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS - 1, boundedSurrogate.length());
-        assertFalse(Character.isHighSurrogate(boundedSurrogate.charAt(boundedSurrogate.length() - 1)));
-
-    }
-
-    @Test
-    void truncatesPublishedConfigurationMetadata() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-        String system = "system-".repeat(100);
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
-        {
-            service.receive(call(true, true, false, system));
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            @SuppressWarnings("unchecked")
-            Map<String,Object> metadata = (Map<String,Object>)event.data();
-            String publishedSystem = String.valueOf(metadata.get("system"));
-            assertTrue(publishedSystem.length() <= StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS);
-            assertEquals(system.substring(0, publishedSystem.length()), publishedSystem);
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void boundsConcurrentAudioResponsesAndReportsRejections()
-    {
-        StatsWebCallService service = new StatsWebCallService(new WebCallConfiguration(1, 16, 100, 512, 128));
-
-        try
-        {
-            assertTrue(service.tryAcquireAudioResponse());
-            assertFalse(service.tryAcquireAudioResponse());
-            assertEquals(1, service.status().get("active_audio_responses"));
-            assertEquals(1L, service.status().get("rejected_audio_responses"));
-
-            service.releaseAudioResponse();
-            assertEquals(0, service.status().get("active_audio_responses"));
-            assertTrue(service.tryAcquireAudioResponse());
-            service.releaseAudioResponse();
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void reportsALiveGapWhenPendingAudioCapacityIsFull() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService(
-            scanListModel(Map.of(101L, Set.of(2L))), WebCallConfiguration.defaults());
-        service.start();
-        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
-            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
-        CompletedAudioCall template = call(Set.of(101L));
-        CompletedAudioCall maximum = new CompletedAudioCall(template.snapshot(), audioBuffers(maximumSamples),
-            template.resolvedPolicy());
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe(Set.of(2L)))
-        {
-            service.receive(maximum);
-            service.receive(template);
-            StatsLiveEventHub.LiveEvent gap = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(gap);
-            assertEquals("live_gap", gap.name());
-            assertEquals(1, metadata(gap).get("dropped"));
-            assertEquals("pending_audio_capacity", metadata(gap).get("reason"));
-            assertEquals(List.of(2L), metadata(gap).get("scan_list_ids"));
-            assertEquals(1L, service.status().get("dropped_pending_capacity"));
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void queuedEncodingFromAnEarlierRunCannotPublishAfterRestart() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
-            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
-        CompletedAudioCall template = call();
-        CompletedAudioCall maximum = new CompletedAudioCall(template.snapshot(), audioBuffers(maximumSamples));
-        StatsLiveEventHub.Subscription oldSubscription = service.subscribe();
-        service.receive(maximum);
-        service.stop();
-        service.start();
-
-        try(StatsLiveEventHub.Subscription restarted = service.subscribe())
-        {
-            assertNull(restarted.poll(1, TimeUnit.SECONDS));
-            assertEquals(0, service.status().get("cached_calls"));
-            assertEquals(0L, service.status().get("published_calls"));
-        }
-        finally
-        {
-            oldSubscription.close();
-            service.close();
-        }
-    }
-
-    @Test
-    void doesNotPublishAudioAboveThePerCallResponseLimit() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
-            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
-        List<float[]> oversized = audioBuffers(maximumSamples);
-        oversized.add(new float[1]);
-        CompletedAudioCall template = call();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
-        {
-            service.receive(new CompletedAudioCall(template.snapshot(), oversized));
-            assertNull(subscription.poll(1, TimeUnit.SECONDS));
-            assertEquals(0, ((Number)service.status().get("cached_calls")).intValue());
-            assertEquals(16 * 1024 * 1024,
-                ((Number)service.status().get("maximum_call_audio_bytes")).intValue());
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void doesNotCacheWhenNoBrowserIsListening() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-
-        try
-        {
-            service.receive(call());
-            Thread.sleep(100);
-            assertEquals(0, ((Number)service.status().get("cached_calls")).intValue());
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void doesNotPublishUnresolvedTrafficFragment() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
-        {
-            service.receive(call(false, true));
-            assertNull(subscription.poll(250, TimeUnit.MILLISECONDS));
-            assertEquals(0, ((Number)service.status().get("cached_calls")).intValue());
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void publishesTargetlessStandardCall() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
-        {
-            service.receive(call(false, false));
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            @SuppressWarnings("unchecked")
-            Map<String,Object> metadata = (Map<String,Object>)event.data();
-            assertFalse(metadata.containsKey("target_id"));
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void publishesTargetlessStandardP25CallWithLogicalChannelName() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
-        {
-            service.receive(call(false, false, true));
-            assertNotNull(subscription.poll(5, TimeUnit.SECONDS));
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void queuedEncodeFromPreviousRunCannotPopulateOrPublishRestartedRun() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService();
-        CountDownLatch blockerStarted = new CountDownLatch(1);
-        CountDownLatch releaseBlocker = new CountDownLatch(1);
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
-        {
-            encoderExecutor(service).execute(() -> {
-                blockerStarted.countDown();
-
-                try
-                {
-                    releaseBlocker.await();
-                }
-                catch(InterruptedException exception)
-                {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            assertTrue(blockerStarted.await(5, TimeUnit.SECONDS));
-            service.receive(call());
-            service.stop();
-            service.start();
-            service.receive(call());
-            releaseBlocker.countDown();
-
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            @SuppressWarnings("unchecked")
-            Map<String,Object> metadata = (Map<String,Object>)event.data();
-            assertEquals(100L, metadata.get("duration_ms"));
-            assertNotNull(service.get(String.valueOf(metadata.get("call_id"))));
-            assertEquals(1, ((Number)service.status().get("cached_calls")).intValue());
-            assertNull(subscription.poll(0, TimeUnit.MILLISECONDS));
-        }
-        finally
-        {
-            releaseBlocker.countDown();
-            service.close();
-        }
-    }
-
-    @Test
-    void filtersAnnouncementsByEachSubscribersSelectedScanLists() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService(scanListModel(Map.of(
-            101L, Set.of(2L), 102L, Set.of(3L))), WebCallConfiguration.defaults());
-        service.start();
-
-        try(StatsLiveEventHub.Subscription southwest = service.subscribe(Set.of(2L));
-            StatsLiveEventHub.Subscription cleveland = service.subscribe(Set.of(3L)))
-        {
-            service.receive(call(Set.of(101L)));
-            StatsLiveEventHub.LiveEvent southwestEvent = southwest.poll(5, TimeUnit.SECONDS);
-            assertNotNull(southwestEvent);
-            assertEquals(List.of(2L), metadata(southwestEvent).get("scan_list_ids"));
-            assertNull(cleveland.poll(100, TimeUnit.MILLISECONDS));
-
-            service.receive(call(Set.of(102L)));
-            StatsLiveEventHub.LiveEvent clevelandEvent = cleveland.poll(5, TimeUnit.SECONDS);
-            assertNotNull(clevelandEvent);
-            assertEquals(List.of(3L), metadata(clevelandEvent).get("scan_list_ids"));
-            assertNull(southwest.poll(100, TimeUnit.MILLISECONDS));
-            assertEquals(2L, awaitStatus(service, "published_calls", 2L));
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void publishesOneCallWithDeduplicatedMetadataForOverlappingSubscriptions() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService(
-            scanListModel(Map.of(103L, Set.of(2L, 3L))), WebCallConfiguration.defaults());
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe(Set.of(2L, 3L)))
-        {
-            service.receive(call(Set.of(103L)));
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            assertEquals(List.of(2L, 3L), metadata(event).get("scan_list_ids"));
-            assertNull(subscription.poll(100, TimeUnit.MILLISECONDS));
-            assertEquals(1L, awaitStatus(service, "published_calls", 1L));
-            assertEquals(1, ((Number)service.status().get("cached_calls")).intValue());
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void dropsCompletedCallsThatMatchNoPublishedScanList() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService(
-            scanListModel(Map.of(101L, Set.of(2L))), WebCallConfiguration.defaults());
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe(Set.of(2L)))
-        {
-            service.receive(call(Set.of(999L)));
-            assertNull(subscription.poll(250, TimeUnit.MILLISECONDS));
-            assertEquals(0, ((Number)service.status().get("cached_calls")).intValue());
-            assertEquals(1L, ((Number)service.status().get("dropped_no_scan_list")).longValue());
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void skipsEncodingWhenNoCurrentSubscriberSelectsTheMatchedList() throws Exception
-    {
-        StatsWebCallService service = new StatsWebCallService(
-            scanListModel(Map.of(101L, Set.of(2L))), WebCallConfiguration.defaults());
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe(Set.of(3L)))
-        {
-            service.receive(call(Set.of(101L)));
-            assertNull(subscription.poll(250, TimeUnit.MILLISECONDS));
-            assertEquals(0, ((Number)service.status().get("cached_calls")).intValue());
-            assertEquals(0L, ((Number)service.status().get("published_calls")).longValue());
-            assertEquals(1L,
-                ((Number)service.status().get("dropped_no_matching_listeners")).longValue());
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
-    @Test
-    void publishesAliasesFrozenWhenTheCallSnapshotWasCaptured() throws Exception
+    void publishesAliasTextFrozenAtSnapshotTime() throws Exception
     {
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
         definition.setId(10);
@@ -646,38 +635,109 @@ class StatsWebCallServiceTest
         aliasList.addAliases(List.of(destination, source));
         CompletedAudioCall completed = withAliasList(call(), aliasList);
         destination.setName("Renamed dispatch");
-        destination.setDescription("Renamed destination description");
-        destination.setGroup("Renamed destination group");
         source.setName("Renamed unit");
-        source.setDescription("Renamed source description");
-        source.setGroup("Renamed source group");
 
-        StatsWebCallService service = new StatsWebCallService(
-            scanListModel(Map.of(101L, Set.of(2L), 102L, Set.of(2L))), WebCallConfiguration.defaults());
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribe(Set.of(2L)))
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
         {
             service.receive(completed);
-            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
-            assertNotNull(event);
-            assertEquals("Dispatch", metadata(event).get("target_alias"));
-            assertEquals("County dispatch channel", metadata(event).get("target_description"));
-            assertEquals("Dispatch", metadata(event).get("target_group"));
-            assertEquals("Unit 9001", metadata(event).get("source_alias"));
-            assertEquals("Patrol unit", metadata(event).get("source_description"));
-            assertEquals("Police radios", metadata(event).get("source_group"));
-        }
-        finally
-        {
-            service.close();
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("Dispatch", metadata.get("target_alias"));
+            assertEquals("County dispatch channel", metadata.get("target_description"));
+            assertEquals("Unit 9001", metadata.get("source_alias"));
+            assertEquals("Patrol unit", metadata.get("source_description"));
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String,Object> metadata(StatsLiveEventHub.LiveEvent event)
+    @Test
+    void boundsEveryMetadataStringWithoutSplittingUnicode()
     {
-        return (Map<String,Object>)event.data();
+        String oversized = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS + 100);
+        assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS,
+            StatsWebCallService.boundedText(oversized).length());
+        String splitSurrogate = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS - 1) +
+            "\uD83D\uDE00tail";
+        String bounded = StatsWebCallService.boundedText(splitSurrogate);
+        assertFalse(Character.isHighSurrogate(bounded.charAt(bounded.length() - 1)));
+    }
+
+    private static StatsWebCallService started(StatsWebCallService service)
+    {
+        service.start();
+        return service;
+    }
+
+    private static FeedClient listen(StatsWebCallService service, Set<Long> selected) throws Exception
+    {
+        long generation = service.tryAcquireFeed();
+        assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, generation);
+        StatsWebCallService.FeedResult edge = service.feed(selected, null, 0, TimeUnit.NANOSECONDS, generation);
+        return new FeedClient(service, selected, edge.cursor(), generation);
+    }
+
+    private static FeedClient resume(StatsWebCallService service, Set<Long> selected, String cursor)
+    {
+        long generation = service.tryAcquireFeed();
+        assertNotEquals(StatsWebCallService.NO_FEED_GENERATION, generation);
+        return new FeedClient(service, selected, cursor, generation);
+    }
+
+    private static final class FeedClient implements AutoCloseable
+    {
+        private final StatsWebCallService mService;
+        private final Set<Long> mSelected;
+        private final long mGeneration;
+        private String mCursor;
+
+        private FeedClient(StatsWebCallService service, Set<Long> selected, String cursor, long generation)
+        {
+            mService = service;
+            mSelected = selected;
+            mCursor = cursor;
+            mGeneration = generation;
+        }
+
+        private String cursor()
+        {
+            return mCursor;
+        }
+
+        private long generation()
+        {
+            return mGeneration;
+        }
+
+        private StatsWebCallService.FeedResult page(long wait, TimeUnit unit) throws InterruptedException
+        {
+            StatsWebCallService.FeedResult result = mService.feed(mSelected, Long.parseLong(mCursor), wait, unit,
+                mGeneration);
+            mCursor = result.cursor();
+            return result;
+        }
+
+        private Map<String,Object> awaitCall() throws InterruptedException
+        {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+            while(System.nanoTime() < deadline)
+            {
+                StatsWebCallService.FeedResult result = page(250, TimeUnit.MILLISECONDS);
+                assertFalse(result.reset());
+
+                if(!result.calls().isEmpty())
+                {
+                    return result.calls().getFirst();
+                }
+            }
+
+            return null;
+        }
+
+        @Override
+        public void close()
+        {
+            mService.releaseFeed(mGeneration);
+        }
     }
 
     private static long awaitStatus(StatsWebCallService service, String key, long expected)
@@ -688,7 +748,7 @@ class StatsWebCallServiceTest
 
         do
         {
-            actual = ((Number)service.status().get(key)).longValue();
+            actual = ((Number)service.observerStatus().get(key)).longValue();
             if(actual == expected)
             {
                 return actual;
@@ -743,26 +803,59 @@ class StatsWebCallServiceTest
         return new CompletedAudioCall(captured, template.audioBuffers());
     }
 
+    private static String conversationKey(FeedClient client, StatsWebCallService service, Identifier<?> target)
+        throws InterruptedException
+    {
+        service.receive(call(target));
+        Map<String,Object> metadata = client.awaitCall();
+        assertNotNull(metadata);
+        return String.valueOf(metadata.get("conversation_key"));
+    }
+
+    private static CompletedAudioCall call(Identifier<?> target)
+    {
+        CompletedAudioCall template = call();
+        List<Identifier> identifiers = new ArrayList<>(template.snapshot().identifierCollection().getIdentifiers());
+        identifiers.remove(template.snapshot().identifierCollection().getToIdentifier());
+        identifiers.add(target);
+        IdentifierCollection collection = new IdentifierCollection(identifiers);
+        return withIdentifiers(template, collection,
+            AudioCallRecordingMetadata.captureAtSnapshot(null, collection));
+    }
+
+    private static CompletedAudioCall callWithFailingIdentifiers()
+    {
+        CompletedAudioCall template = call();
+        IdentifierCollection identifiers = new IdentifierCollection(
+            template.snapshot().identifierCollection().getIdentifiers())
+        {
+            @Override
+            public Identifier getToIdentifier()
+            {
+                throw new IllegalStateException("deliberate encoder projection failure");
+            }
+        };
+        return withIdentifiers(template, identifiers, null);
+    }
+
+    private static CompletedAudioCall withIdentifiers(CompletedAudioCall template, IdentifierCollection identifiers,
+                                                       AudioCallRecordingMetadata recordingMetadata)
+    {
+        AudioCallSnapshot snapshot = template.snapshot();
+        AudioCallSnapshot replaced = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
+            snapshot.aliasList(), identifiers, snapshot.broadcastChannels(), snapshot.startTimestamp(),
+            snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
+            snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
+            snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(), recordingMetadata,
+            snapshot.voiceCallQuality(), snapshot.callLegId(), snapshot.callLegSource(),
+            snapshot.callEncryptionEvidence());
+        return new CompletedAudioCall(replaced, template.audioBuffers(), template.resolvedPolicy());
+    }
+
     private static CompletedAudioCall call()
     {
-        return call(true, true);
-    }
-
-    private static CompletedAudioCall call(boolean includeTarget, boolean traffic)
-    {
-        return call(includeTarget, traffic, false);
-    }
-
-    private static CompletedAudioCall call(boolean includeTarget, boolean traffic, boolean logicalChannel)
-    {
-        return call(includeTarget, traffic, logicalChannel, "Test System");
-    }
-
-    private static CompletedAudioCall call(boolean includeTarget, boolean traffic, boolean logicalChannel,
-                                           String systemName)
-    {
         List<Identifier> identifiers = new ArrayList<>();
-        identifiers.add(SystemConfigurationIdentifier.create(systemName));
+        identifiers.add(SystemConfigurationIdentifier.create("Test System"));
         identifiers.add(SiteConfigurationIdentifier.create("Test Site"));
         identifiers.add(SiteGuidConfigurationIdentifier.create("00000000-0000-0000-0000-000000000021"));
         identifiers.add(ChannelConfigurationIdentifier.create("00000000-0000-0000-0000-000000000737"));
@@ -774,29 +867,9 @@ class StatsWebCallServiceTest
         identifiers.add(APCO25Nac.create(0x4A1));
         identifiers.add(APCO25Rfss.create(1));
         identifiers.add(APCO25Site.create(21));
-
-        if(includeTarget)
-        {
-            identifiers.add(APCO25Talkgroup.create(4400));
-        }
-
-        if(traffic)
-        {
-            identifiers.add(DecoderLogicalChannelNameIdentifier.create("0-737", Protocol.APCO25));
-            identifiers.add(TrafficChannelIdentifier.create());
-        }
-        else
-        {
-            identifiers.add(ChannelNameConfigurationIdentifier.create(logicalChannel ? "P25 Conventional" : "DMR Direct"));
-            identifiers.add(DecoderTypeConfigurationIdentifier.create(
-                logicalChannel ? DecoderType.P25_PHASE1 : DecoderType.DMR));
-        }
-
-        if(logicalChannel)
-        {
-            identifiers.add(DecoderLogicalChannelNameIdentifier.create("0-737", Protocol.APCO25));
-        }
-
+        identifiers.add(APCO25Talkgroup.create(4400));
+        identifiers.add(DecoderLogicalChannelNameIdentifier.create("0-737", Protocol.APCO25));
+        identifiers.add(TrafficChannelIdentifier.create());
         AudioCallId callId = new AudioCallId(1, 2, 0);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             new IdentifierCollection(identifiers), Set.of(), 1_000L, 1_100L, 1, 1L, 1_000L, 1_100L,
@@ -833,10 +906,33 @@ class StatsWebCallServiceTest
         return buffers;
     }
 
-    private static ThreadPoolExecutor encoderExecutor(StatsWebCallService service) throws Exception
+    private static Thread encoderThread(StatsWebCallService service) throws Exception
     {
-        var field = StatsWebCallService.class.getDeclaredField("mEncoderExecutor");
+        var field = StatsWebCallService.class.getDeclaredField("mEncoderThread");
         field.setAccessible(true);
-        return (ThreadPoolExecutor)field.get(service);
+        return (Thread)field.get(service);
+    }
+
+    private static boolean awaitThreadState(Thread thread, Thread.State state, long timeout, TimeUnit unit)
+        throws InterruptedException
+    {
+        long deadline = System.nanoTime() + unit.toNanos(timeout);
+        while(System.nanoTime() < deadline)
+        {
+            if(thread.getState() == state)
+            {
+                return true;
+            }
+
+            Thread.sleep(1);
+        }
+        return thread.getState() == state;
+    }
+
+    private static AtomicLong feedActiveUntil(StatsWebCallService service) throws Exception
+    {
+        var field = StatsWebCallService.class.getDeclaredField("mFeedActiveUntilNanos");
+        field.setAccessible(true);
+        return (AtomicLong)field.get(service);
     }
 }

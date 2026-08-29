@@ -21,13 +21,17 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 1;
+    public static final int CURRENT_VERSION = 2;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
     public static final int MAXIMUM_TABLES = 128;
     public static final int MAXIMUM_COLUMNS_PER_TABLE = 128;
+    public static final int MAXIMUM_SELECTED_SCAN_LISTS = 16;
     public static final int MINIMUM_LIVE_DETAIL_ROW_LIMIT = 25;
     public static final int MAXIMUM_LIVE_DETAIL_ROW_LIMIT = 500;
     public static final int DEFAULT_LIVE_DETAIL_ROW_LIMIT = 200;
+    public static final int MINIMUM_CONVERSATION_BURST_LIMIT = 1;
+    public static final int MAXIMUM_CONVERSATION_BURST_LIMIT = 20;
+    public static final int DEFAULT_CONVERSATION_BURST_LIMIT = 4;
     private static final Pattern STABLE_ID = Pattern.compile("[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*");
 
     public WebUserPreferences
@@ -69,7 +73,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                                int liveDetailRowLimit)
     {
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light"), new PageTitles(false),
-            new Playback(1.0, List.of()), new Scanner("normal"),
+            new Playback(1.0, List.of(), true, DEFAULT_CONVERSATION_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
                 decodeQualityDisplayMode, liveDetailRowLimit),
             new Tuner(-140, 0, 1, true, true, false, "balanced"), Map.of());
@@ -87,7 +91,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     {
     }
 
-    public record Playback(double volume, List<Long> selectedScanListIds)
+    public record Playback(double volume, List<Long> selectedScanListIds, boolean conversationGrouping,
+                           int conversationBurstLimit)
     {
         public Playback
         {
@@ -98,9 +103,10 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
 
             Objects.requireNonNull(selectedScanListIds, "playback.selected_scan_list_ids is required");
 
-            if(selectedScanListIds.size() > 128)
+            if(selectedScanListIds.size() > MAXIMUM_SELECTED_SCAN_LISTS)
             {
-                throw new IllegalArgumentException("Too many selected scan lists");
+                throw new IllegalArgumentException("playback.selected_scan_list_ids cannot contain more than " +
+                    MAXIMUM_SELECTED_SCAN_LISTS + " scan lists");
             }
 
             Set<Long> unique = new HashSet<>();
@@ -110,6 +116,13 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                 {
                     throw new IllegalArgumentException("Selected scan-list identifiers must be unique positive integers");
                 }
+            }
+
+            if(conversationBurstLimit < MINIMUM_CONVERSATION_BURST_LIMIT ||
+                conversationBurstLimit > MAXIMUM_CONVERSATION_BURST_LIMIT)
+            {
+                throw new IllegalArgumentException("playback.conversation_burst_limit must be between " +
+                    MINIMUM_CONVERSATION_BURST_LIMIT + " and " + MAXIMUM_CONVERSATION_BURST_LIMIT);
             }
 
             selectedScanListIds = List.copyOf(selectedScanListIds);

@@ -127,6 +127,44 @@ class ReceiverHealthServiceTest
     }
 
     @Test
+    void distinguishesWebCallCapacityDropsFromEncoderFailures()
+    {
+        AtomicLong clock = new AtomicLong(1_000);
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            clock::get))
+        {
+            service.setWebStatusSupplier(() -> Map.of(
+                "server", Map.of("liveTransport", Map.of()),
+                "webPlayer", Map.of(
+                    "published_calls", 7,
+                    "active_feeds", 1,
+                    "encoder_queue_depth", 0,
+                    "dropped_encoder_capacity", 2,
+                    "encoder_failures", 3,
+                    "rejected_feeds", 0,
+                    "rejected_audio_responses", 0),
+                "diagnostics", Map.of()));
+            service.sampleNow();
+
+            Map<String,Object> webAudio = measurement(service.snapshot(), "supporting", "web-audio");
+            String detail = String.valueOf(webAudio.get("detail"));
+            assertEquals("warning", webAudio.get("severity"));
+            assertTrue(detail.contains("capacity_drops=2"));
+            assertTrue(detail.contains("encoder_failures=3"));
+            assertFalse(detail.contains("capacity_drops=5"));
+
+            Map<String,Object> incident = rows(service.snapshot().get("active")).stream()
+                .filter(row -> "web-audio-drop".equals(row.get("code"))).findFirst().orElseThrow();
+            assertEquals("Web call audio was lost", incident.get("title"));
+            assertEquals(5L, incident.get("count"));
+            assertEquals("5 new dropped or failed browser calls", incident.get("observed"));
+            assertTrue(String.valueOf(incident.get("likely_cause")).contains("saturated"));
+            assertTrue(String.valueOf(incident.get("likely_cause")).contains("encoding failed"));
+        }
+    }
+
+    @Test
     void closeInterruptsAndJoinsAnInProgressObserverSample() throws Exception
     {
         CountDownLatch entered = new CountDownLatch(1);

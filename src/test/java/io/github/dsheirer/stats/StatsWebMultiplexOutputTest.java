@@ -131,9 +131,9 @@ class StatsWebMultiplexOutputTest
             output.offerEvent(2, new byte[]{1});
         }
 
-        output.offerLatest(6, new byte[]{2});
-        output.offerState(6, new byte[]{3});
-        output.offerLatest(6, new byte[]{4});
+        output.offerLatest(5, new byte[]{2});
+        output.offerState(5, new byte[]{3});
+        output.offerLatest(5, new byte[]{4});
         output.start();
 
         assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
@@ -149,7 +149,7 @@ class StatsWebMultiplexOutputTest
         RecordingOutputStream recording = new RecordingOutputStream(2);
         StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
         output.offerLatest(1, new byte[]{1});
-        output.offerState(6, new byte[]{6});
+        output.offerState(5, new byte[]{6});
         output.start();
 
         assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
@@ -409,13 +409,11 @@ class StatsWebMultiplexOutputTest
             "Same-target viewport and profile updates must not tear down the producer/session");
         assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, \"snapshot\""));
         assertTrue(source.contains("metadataGap(output, TOPIC_CHANNEL_ACTIVITY"));
-        assertFalse(source.contains("metadataGap(output, TOPIC_CALLS"));
+        assertFalse(source.contains("TOPIC_CALLS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_EVENTS"));
         assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_MESSAGES"));
         assertTrue(source.contains("reportStatelessGaps(output)"));
-        assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CALLS, \"ready\""));
-        assertTrue(source.contains("TOPIC_CALLS, \"live_gap\""));
-        assertFalse(source.contains("TOPIC_CALLS, \"snapshot\""));
+        assertFalse(source.contains("case \"calls\""));
         assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
         assertTrue(source.contains(
@@ -459,7 +457,7 @@ class StatsWebMultiplexOutputTest
         assertEquals(2, countOccurrences(source, "new RecoveryCapture<>(dropBaseline, snapshot)"),
             "Only channel activity should construct initial and gap-recovery snapshots");
         assertFalse(source.contains("Drops = mChannelActivity.droppedCount();"));
-        assertTrue(source.contains("long callDrops = mCalls.droppedCount();"));
+        assertFalse(source.contains("long callDrops = mCalls.droppedCount();"));
         assertFalse(source.contains("mWebCallService.snapshot("));
         assertTrue(source.contains("mDecodeEventDrops = 0;"));
         assertTrue(source.contains("mDecodeMessageDrops = 0;"));
@@ -471,12 +469,12 @@ class StatsWebMultiplexOutputTest
         RecordingOutputStream recording = new RecordingOutputStream(1);
         StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
         output.offerEvent(2, new byte[]{2});
-        output.offerEvent(6, new byte[100]);
-        output.offerState(6, new byte[]{6});
-        output.offerLatest(6, new byte[]{7});
-        assertEquals(100, output.pendingEventBytes(6));
-        output.clearTopic(6);
-        assertEquals(0, output.pendingEventBytes(6));
+        output.offerEvent(5, new byte[100]);
+        output.offerState(5, new byte[]{6});
+        output.offerLatest(5, new byte[]{7});
+        assertEquals(100, output.pendingEventBytes(5));
+        output.clearTopic(5);
+        assertEquals(0, output.pendingEventBytes(5));
         output.start();
 
         assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));

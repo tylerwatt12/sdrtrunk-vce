@@ -810,27 +810,28 @@ public final class ReceiverHealthService implements AutoCloseable
                 "; slow_disconnects=" + slow + "; observer_event_drops=" + dropped));
 
         Map<String,Object> webPlayer = map(webStatus.get("webPlayer"));
-        long webCapacityDrops = number(webPlayer.get("dropped_pending_capacity")) +
-            number(webPlayer.get("dropped_encoder_capacity"));
-        long webObserverDrops = number(webPlayer.get("dropped_sse_events")) +
-            number(webPlayer.get("rejected_listeners"));
-        long webAudioDelta = delta("output:web-audio", webCapacityDrops, now);
+        long webCapacityDrops = number(webPlayer.get("dropped_encoder_capacity"));
+        long webEncoderFailures = number(webPlayer.get("encoder_failures"));
+        long webAudioLosses = webCapacityDrops + webEncoderFailures;
+        long webObserverDrops = number(webPlayer.get("rejected_feeds"));
+        long webAudioDelta = delta("output:web-audio", webAudioLosses, now);
         delta("observer:web-audio", webObserverDrops, now);
         rows.add(row("web-audio", "Web call audio", number(webPlayer.get("encoder_queue_depth")),
-            "encoder queue", webAudioDelta > 0 ? "warning" : webCapacityDrops + webObserverDrops > 0 ?
-                "info" : "healthy",
-            "published=" + number(webPlayer.get("published_calls")) + "; pending_bytes=" +
-                number(webPlayer.get("pending_audio_bytes")) + "; capacity_drops=" + webCapacityDrops +
-                "; observer_drops=" + webObserverDrops + "; rejected_audio=" +
+            "encoder queue", webAudioDelta > 0 ? "warning" : webAudioLosses + webObserverDrops > 0 ?
+            "info" : "healthy",
+            "published=" + number(webPlayer.get("published_calls")) + "; active_feeds=" +
+                number(webPlayer.get("active_feeds")) + "; capacity_drops=" + webCapacityDrops +
+                "; encoder_failures=" + webEncoderFailures + "; rejected_feeds=" + webObserverDrops +
+                "; rejected_audio=" +
                 number(webPlayer.get("rejected_audio_responses"))));
 
         if(webAudioDelta > 0)
         {
-            mIncidents.observe("web-audio-drop", "warning", "Web call audio was dropped", "Web audio", now,
-                webCapacityDrops, webAudioDelta + " new capacity drops",
-                "The bounded web audio encoder or pending-audio queue was saturated",
+            mIncidents.observe("web-audio-drop", "warning", "Web call audio was lost", "Web audio", now,
+                webAudioLosses, webAudioDelta + " new dropped or failed browser calls",
+                "The bounded web audio encoder queue was saturated or browser-call encoding failed",
                 "Browser listeners may miss completed calls; receiver decoding remains protected",
-                "Reduce listener/encoding pressure and inspect host CPU and heap");
+                "Inspect host CPU, heap, and application logs; reduce browser encoding pressure if capacity drops rise");
         }
 
         Map<String,Object> diagnostics = map(webStatus.get("diagnostics"));

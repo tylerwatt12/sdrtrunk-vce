@@ -203,18 +203,26 @@ async function main() {
   assert.match(settingsSource, /settingsCard\('Page titles'/);
   assert.doesNotMatch(settingsSource, /Live presentation|preferences\.presentation|show_encryption_details/);
   assert.doesNotMatch(settingsSource,
-    /appearance\.theme|playback\.volume|selected_scan_list_ids|scanner\.detail_mode|preferences\.tuner|preferences\.tables/);
+    /appearance\.theme|playback\.volume|selected_scan_list_ids|conversation_grouping|conversation_burst_limit|scanner\.detail_mode|preferences\.tuner|preferences\.tables/);
   assert.doesNotMatch(settingsSource, /userPreferenceController\.replace\(/);
   const livePresentationSource = functionBinding(appSource, 'openLivePresentationSettings');
   assert.match(livePresentationSource, /openReadOnlyModal\('Live presentation'/);
   assert.match(livePresentationSource, /modal\.setDirty\(true\)/);
   assert.match(livePresentationSource, /modal\.setBusy\(true\)/);
   assert.match(livePresentationSource, /const submitted = \{/);
-  assert.match(livePresentationSource, /preferences\.presentation = submitted;\s*\}, false\)/);
+  assert.match(livePresentationSource, /preferences\.presentation = submitted;/);
+  assert.doesNotMatch(livePresentationSource, /conversation_grouping|conversation_burst_limit|preferences\.playback/);
   assert.match(livePresentationSource, /if \(modal\.close\(\)\) void render\(\)/);
   assert.match(livePresentationSource, /error\?\.code === 'preference_session_changed'/);
   assert.match(livePresentationSource, /void render\(\)/);
   assert.match(livePresentationSource, /apply\(latest\.preferences\.presentation\)/);
+  const scannerPlaybackSource = functionBinding(appSource, 'openScannerPlaybackSettings');
+  assert.match(scannerPlaybackSource, /openReadOnlyModal\('Scanner playback'/);
+  assert.match(scannerPlaybackSource, /preferences\.playback\.conversation_grouping =/);
+  assert.match(scannerPlaybackSource, /preferences\.playback\.conversation_burst_limit =/);
+  assert.doesNotMatch(scannerPlaybackSource, /preferences\.presentation/);
+  assert.match(appSource, /id = 'scanner-playback-settings'/);
+  assert.match(appSource, /openScannerPlaybackSettings\('#scanner-playback-settings'\)/);
   const liveSystemsSource = functionBinding(appSource, 'liveSystemsSection');
   assert.match(liveSystemsSource, /layoutMenuHost: titleActions/);
   assert.match(liveSystemsSource, /iconGlyph\('icon-live-presentation'\)/);
@@ -483,15 +491,12 @@ async function main() {
   player.maximumQueued = 100;
   player.selectedScanListIds = new Set(['1', '99']);
   player.scanListById = new Map([['1', { id: '1', enabled: true }], ['2', { id: '2', enabled: true }]]);
-  player.trimQueueToLimit = () => {};
-  player.applyLimits({ maximum_selected_scan_lists: 1, waiting_calls_per_listener: 50 });
-  assert.deepEqual([...player.selectedScanListIds], ['1', '99'],
-    'Unavailable saved scan-list IDs must survive server limit updates');
   assert.deepEqual(player.activeSelectedScanListIds(), ['1']);
-  assert.equal(player.maximumQueued, 50);
+  assert.equal(player.maximumQueued, 100);
   const canonicalCall = player.normalizeCall({
     call_id: 'call-1', audio_url: '/api/v1/calls/call-1/audio', started_at_ms: 1,
-    completed_at_ms: 2, scan_list_ids: [1], conversation_key: 'target:1'
+    completed_at_ms: 2, scan_list_ids: [1], protocol: 'P25', system_identity: 'p25:1:2',
+    target_form: 'TALKGROUP', target_id: 1, conversation_key: 'p25|system:p25:1:2|talkgroup:1'
   });
   assert.equal(canonicalCall._callId, 'call-1');
   assert.deepEqual(canonicalCall._matchedScanListIds, ['1']);
@@ -501,8 +506,6 @@ async function main() {
     logical_call_id: 'legacy', audio_url: '/audio', start_timestamp_ms: 1,
     completed_at_ms: 2, matched_scan_list_ids: [1], conversation_key: 'target:1'
   }), null, 'Legacy call field aliases must fail instead of being inferred');
-  assert.deepEqual(player.eventPayload({ data: '{"data":{"call_id":"wrapped"}}' }),
-    { data: { call_id: 'wrapped' } }, 'Live transport owns the envelope and passes event data directly');
   player.updateScanListStatus = () => {};
   player.filterQueueForSelectedLists = () => {};
   player.renderScanLists = () => {};
@@ -511,6 +514,8 @@ async function main() {
   player.setScanLists([{ id: 1, name: 'Dispatch', default: true },
     { scan_list_id: 2, name: 'Legacy' }], { maximum_selected_scan_lists: 1 });
   assert.deepEqual(player.scanLists, [{ id: '1', name: 'Dispatch', description: '', enabled: true, default: true }]);
+  assert.deepEqual([...player.selectedScanListIds], ['1'],
+    'Saved selections that are no longer published must be removed at the catalog boundary');
 
   const handlers = Object.fromEntries(routes.definitions.map(({ id }) => [id, () => id]));
   const registry = routes.createRegistry(handlers, ({ id }) => id !== 'admin');
@@ -536,10 +541,12 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 1,
+    version: 2,
     appearance: { theme: 'light' },
     page_titles: { prepend_playing_call: false },
-    playback: { volume: 1, selected_scan_list_ids: [] },
+    playback: {
+      volume: 1, selected_scan_list_ids: [], conversation_grouping: true, conversation_burst_limit: 4
+    },
     scanner: { detail_mode: 'normal' },
     presentation: {
       show_encryption_details: true, show_control_decode_quality: true,
@@ -553,11 +560,22 @@ async function main() {
   });
   assert.equal(decodedDefaults.scanner.detail_mode, 'normal');
   assert.deepEqual(decodedDefaults.playback.selected_scan_list_ids, []);
+  assert.equal(decodedDefaults.playback.conversation_grouping, true);
+  assert.equal(decodedDefaults.playback.conversation_burst_limit, 4);
+  const sixteenScanLists = Array.from({ length: 16 }, (_unused, index) => index + 1);
+  assert.deepEqual(preferenceSchema.validate({ ...decodedDefaults, playback: {
+    ...decodedDefaults.playback, selected_scan_list_ids: sixteenScanLists
+  } }).playback.selected_scan_list_ids, sixteenScanLists);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, mystery: true }), /unknown or missing/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
     appearance: { theme: 'system' } }), /appearance.theme/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
-    playback: { volume: 1, selected_scan_list_ids: ['1'] } }), /Selected scan lists/);
+    playback: { ...decodedDefaults.playback, selected_scan_list_ids: ['1'] } }), /Selected scan lists/);
+  assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, playback: {
+    ...decodedDefaults.playback, selected_scan_list_ids: [...sixteenScanLists, 17]
+  } }), /Selected scan lists/);
+  assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
+    playback: { ...decodedDefaults.playback, conversation_burst_limit: 21 } }), /conversation_burst_limit/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, tables: {
     sample: {
       schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: ['name']

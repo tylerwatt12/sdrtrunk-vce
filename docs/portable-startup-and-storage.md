@@ -56,10 +56,17 @@ account; and drops and counts recognized retired MPT-1327 and sound-card rows, r
 superseded personal setting storage. Malformed or ambiguous administrator-owned channel documents, identities,
 credentials, access policy, and shared preferences are refused rather than repaired or guessed.
 
-Global database format 6 is the current format. Its format 5-to-6 step rekeys existing configured conventional
+Global database format 6 rekeys existing configured conventional
 receiver contexts from the former RadioResolve GUID key to the saved channel configuration UUID key. The same context
 row ID is retained, so linked activity history remains attached. Databases with conflicting, duplicated, malformed,
 or otherwise ambiguous context identities are refused instead of merged or repaired.
+
+Global database format 7 is the current format. Its format 6-to-7 step upgrades each exact per-user browser
+preference document to add Conversation Mode and the bounded calls-before-switching value. It preserves every other
+personal preference, increments that user's preference revision, and removes the five retired receiver-wide browser
+audio capacity keys. Unknown or incomplete preference documents and exhausted revisions are refused rather than
+defaulted. A version-1 user with more than 16 selected Scan Lists is refused rather than silently truncated; reduce
+that user's selection in the previous build and run the migration again.
 
 Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
 the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS

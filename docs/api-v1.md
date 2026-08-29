@@ -42,7 +42,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 
 | Resource | Purpose |
 | --- | --- |
-| `GET /api/v1/status` | Server, database, logging, live-stream, and web-call status. |
+| `GET /api/v1/status` | Server, database, logging, and live-stream status. |
 | `GET /api/v1/me/preferences` | The signed-in user's complete, bounded browser preference document and revision. |
 | `GET /api/v1/dashboard` | Bounded summary counts, recent receivers, call activity, and top identities. |
 | `GET /api/v1/quality` | Current quality across a bounded site page. Global requests cannot include history. |
@@ -51,6 +51,8 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/aliases` | Paged alias catalog and bounded activity metrics. |
 | `GET /api/v1/aliases/{id}` | One alias and its bounded activity breakdown. Alias fields remain flat; `breakdown` is additive. |
 | `GET /api/v1/scan-lists` | Published scan lists available to the signed-in browser listener. |
+| `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
+| `GET /api/v1/calls/{id}/audio` | WAV audio for one call still present in the shared bounded ring. |
 | `GET /api/v1/systems` | Paged protocol-neutral system scopes with an optional bounded site preview. |
 | `GET /api/v1/systems/{scope}` | One system scope and its summary. The scope token is opaque. |
 | `GET /api/v1/systems/{scope}/sites` | Paged sites owned by the scope. |
@@ -220,12 +222,14 @@ Pages that use live receiver features share one multiplexed connection per brows
 - `POST /api/v1/live/multiplex/control` replaces that client's logical subscriptions using a monotonically increasing
   `revision` and a `subscriptions` object.
 
-Supported subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`,
-`tuner_diagnostics`, and `calls`. Their parameters use the same `snake_case` names and validation
+Supported subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`, and
+`tuner_diagnostics`. Their parameters use the same `snake_case` names and validation
 as the corresponding REST scopes. `decode_messages` accepts exactly `configuration_id` and required positive
 `frequency_hz`; `timeslot` is available for decoder events and channel diagnostics, but not decoder messages. Tuner
 viewport changes update the existing logical subscription without reconnecting or rebuilding its shared source FFT.
 Historical Activity views use bounded `GET /api/v1/activity` polling and are not multiplex subscriptions.
+The framed envelope is version 2, with contiguous topic IDs 0–5 for control followed by the five names above.
+Browser calls use the separate bounded HTTP feed described below; they are not a multiplex topic.
 Channel-activity table snapshots include protocol-neutral `system_name`, `site_name`, and `channel_name` context plus
 an `identifiers` list of `{group, label, value}` fields learned from the active protocol. Activity rows expose the
 available callsign, source and target forms/IDs/aliases, talker alias, LCN, timeslot, signal level, decoder, and call
@@ -244,15 +248,12 @@ Unchanged subscribers share the cached encoded snapshot. Strings and tags are bo
 capped at 32 browser documents. Metadata uses one bounded FIFO per topic, so a burst cannot evict another topic.
 Dense diagnostic topics use replaceable latest-value slots, and a persistently slow client is disconnected instead of
 accumulating data or applying receiver backpressure. Channel activity retains an authoritative recovery snapshot;
-call playback starts at the live edge.
+the call feed starts at the live edge.
 
-`calls`, `decode_events`, and `decode_messages` are deliberately live-only. None preloads historical call or decoder
-rows or retains a replay snapshot. Calls first emit `ready`; decoder-event and decoder-message subscriptions first
-emit `source_change` state. Completed-call audio may remain in the bounded shared cache long enough for an announced
-call to fetch it, but new subscriptions are not backfilled from that cache. Decoder events and messages are projected
-on a bounded observer worker, published, and forgotten. Known loss in a bounded live path emits `live_gap` with the
-number of dropped items and then continues with new data. A broken and reconnected transport has no exact loss count;
-the browser marks a possible gap and resumes at the live edge.
+`decode_events` and `decode_messages` are deliberately live-only. Neither preloads historical rows or retains a replay
+snapshot. They first emit `source_change` state, are projected on a bounded observer worker, published, and forgotten.
+Known loss in those bounded live paths emits `live_gap` with the number of dropped items and then continues with new
+data. A broken and reconnected transport has no exact loss count and resumes at the live edge.
 
 The decoder-event `source_change` includes an authoritative `filter_catalog` containing every event category and
 type, including types that have not yet been observed. Later decoder-message source rebinds also emit
@@ -271,52 +272,62 @@ and clears that capture on page, tab, or selection change.
 For a listener-facing explanation of this path, see
 [How Browser Listening and Scan Lists Work](browser-listening-and-scan-lists.md).
 
-The `calls` logical subscription accepts `scan_list_id` as an array of positive IDs. Duplicate IDs are folded
-together. Omitting the field selects the published default scan list; an unknown or unpublished ID is rejected. Each
-completed call is published once with all matching `scan_list_ids`, so overlapping selections never duplicate it.
-Call events also include `started_at_ms`, `completed_at_ms`, and `conversation_key`. Known subscription loss is
-reported as `live_gap` with a positive `dropped` count; reconnecting continues at the live edge instead of backfilling
-cached calls.
+`GET /api/v1/calls/feed` is the calls-only feed. Repeat `scan_list_id` to select up to 16 positive published Scan List
+IDs; duplicate IDs are folded together. Omitting all IDs selects the published default. Unknown, unpublished, or
+over-limit selections are rejected. The optional `cursor` is one non-negative decimal integer string.
 
-Opening a call subscription emits `ready` with the effective `scan_list_ids` and
-`waiting_calls_per_listener`. The event contains no call or history array.
+The standard `data` payload is:
 
-The browser orders calls inside each conversation by `started_at_ms`. It may play up to four calls from one
-conversation before choosing the oldest waiting call from another conversation, favoring coherent exchanges without
-allowing one busy talkgroup to monopolize playback. This grouping deliberately does not promise a perfect global
-timeline.
+```json
+{
+  "cursor": "42",
+  "reset": false,
+  "calls": []
+}
+```
 
-Completed call audio is fetched from `/api/v1/calls/{id}/audio`. A call is rejected before encoding if its WAV would
-exceed 16 MiB. Pending WAV work is limited to 16 MiB total. The operator can bound active audio listeners, selected
-scan lists per listener, waiting calls per listener, cached calls, and cached audio MiB. Their defaults and accepted
-ranges are 32 listeners (1–64), 16 selected lists per listener (1–64), 100 waiting calls per listener (1–500), 512
-cached calls (16–4,096), and 128 MiB of cached audio (16–1,024 MiB). The fixed live-multiplex admission limit of 32
-browser documents applies separately.
+A request without `cursor` starts at the current live edge and returns no history. A request with the returned cursor
+waits for up to five seconds when no matching call is ready, then returns at most 64 matching calls in feed order.
+The cursor advances past nonmatching calls as well, so the server does not build a private queue for the request. A
+cursor older than the retained ring or ahead of the current feed returns the current cursor, `reset: true`, and no
+reconstructed history. The browser reports only that some calls may have been skipped; the API does not invent an
+exact loss count. If the browser encoder drops work or browser copies are bypassed while no feed is active, that loss
+is coalesced into one cursor discontinuity the next time a feed request or successful publication reaches the shared
+ring. An older cursor receives `reset: true`; the response may contain valid calls or no calls. Clients must not
+discard `calls` merely because `reset` is true. A request without a cursor always establishes a new live edge and does
+not report earlier loss.
 
-The playing or buffering call is separate from the waiting-call count. When a new call reaches a full browser queue,
-the browser removes the oldest waiting call and keeps the new one. The queue holds call announcements; it fetches WAV
-audio only when a call reaches playback. Shared cache entries expire after 30 minutes, and the browser abandons an
-audio fetch after 15 seconds.
+Each completed call appears once with every matching `scan_list_ids` value, so overlapping selections do not
+duplicate it. Call metadata includes `started_at_ms`, `completed_at_ms`, `conversation_key`, identifiers, aliases,
+system and channel context, frequency, channel number, protocol identifiers when available, encryption state, and an
+`audio_url`. The browser keeps the 100-call waiting queue, deduplication, ordering, Conversation Mode, Hold, Avoid,
+Skip, Clear Queue, Stop, and Replay Last state locally. Conversation Mode and its 1-through-20 burst limit are
+per-user preferences; the default is enabled with a four-call limit.
 
-The call ID must be one strict path segment; encoded separator smuggling is rejected. Audio is encoded and retained
-only when at least one current listener selected one of that completed call's matching published Scan Lists. The
-listener limit also bounds concurrent WAV responses; excess audio fetches receive `429 too_many_audio_responses` and
-are counted on Listener Status.
+Completed-call audio is fetched from `/api/v1/calls/{id}/audio`. While a browser feed is active, one shared ring holds
+at most 512 calls or 128 MiB; entries expire after 30 minutes, and one WAV cannot exceed 16 MiB. The ring is released
+after the last feed request and a five-second handoff grace period. These are fixed safety bounds rather than operator
+settings or a replay-history guarantee. At most 16 call-feed requests and 16 WAV responses may be active at once.
+The call ID must be one strict path segment; encoded separator smuggling is rejected. Excess feed or audio-response
+admission receives `429`. A low-priority single worker performs matching, metadata projection, size checks, and WAV
+encoding after the completed-call callback makes one bounded nonblocking handoff. With no active or recently active
+feed, the callback bypasses browser work. A full encoder handoff drops the browser copy without delaying receiver work
+and leaves one coalesced generic reset signal for existing cursors.
 
 ## Authentication and administration
 
 Authentication uses `GET /api/v1/auth/session`, `POST /api/v1/auth/login`, and
 `POST /api/v1/auth/logout`. Signed-in users own one complete preference document at
-`GET, PUT /api/v1/me/preferences`. User, access-policy, site-setting, alias-list, alias, scan-list, and web-audio
-administration remain under `/api/v1/admin/*`. They use the same success/error envelopes and `snake_case` contract.
+`GET, PUT /api/v1/me/preferences`. User, access-policy, site-setting, alias-list, alias, and scan-list administration
+remain under `/api/v1/admin/*`. They use the same success/error envelopes and `snake_case` contract.
 Mutations require the session's CSRF token and the capability enforced for that resource.
 
 The user preference document contains the browser theme, optional playing-call page-title prefix, playback volume and
-selected scan lists, scanner detail mode, presentation fields, tuner display fields, and saved table layouts. Each
-table layout can store its schema, column order, widths, and hidden columns. The document is versioned, limited to
-128 KiB, 128 tables, and 128 columns per table, and is replaced as one unit. `GET` returns a quoted positive `ETag`.
-`PUT` requires that exact revision in `If-Match`; a stale revision receives `409 preference_conflict` and the current
-revision in `ETag`.
+selected scan lists, Conversation Mode and its burst limit, scanner detail mode, presentation fields, tuner display
+fields, and saved table layouts. Each table layout can store its schema, column order, widths, and hidden columns. The
+document is versioned, limited to 128 KiB, 128 tables, and 128 columns per table, and is replaced as one unit. `GET`
+returns a quoted positive `ETag`. `PUT` requires that exact revision in `If-Match`; a stale revision receives
+`409 preference_conflict` and the current revision in `ETag`.
 
 Central administration uses:
 
@@ -336,10 +347,6 @@ Scan-list administration uses:
 - `GET, POST /api/v1/admin/scan-lists`
 - `GET, PUT, DELETE /api/v1/admin/scan-lists/{id}`
 - `PUT /api/v1/admin/scan-lists/{id}/members`
-- `GET, PUT /api/v1/admin/web-audio`
-
-Web-audio configuration uses `waiting_calls_per_listener` as the administrator-owned browser waiting-call policy.
-Listeners receive and obey the effective value but do not receive a control for changing it.
 
 A scan-list definition contains `sort_order`, `name`, optional `description`, `published`, and `default`. Exactly one
 list is the published default. Up to 100 definitions are supported. A membership update uses `operation` (`add`,

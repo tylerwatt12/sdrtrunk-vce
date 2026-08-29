@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -104,6 +104,14 @@ saved channel's configuration UUID key. It updates the existing `receiver_contex
 and every linked activity, summary, and identity row are preserved. A missing activity context needs no change. An
 already-canonical context is accepted. A case mismatch, duplicate GUID match, nonconventional context, unexpected key,
 or occupied target key is refused rather than merged or guessed.
+
+The format 6-to-7 step upgrades every complete per-user browser preference document from version 1 to version 2. It
+preserves existing personal settings, enables conversation grouping with a four-call burst limit, and increments each
+user's preference revision. It also removes the five retired global browser-audio capacity keys from portable Java
+preferences while leaving every unrelated node and value intact. An unknown, incomplete, malformed, or already newer
+preference document and an exhausted preference revision are refused rather than defaulted. Version-1 preferences
+that select more than the version-2 limit of 16 Scan Lists are also refused with instructions to reduce the selection
+in the previous build; the migrator never silently truncates a user's choices.
 
 ## Replacement Boundary
 

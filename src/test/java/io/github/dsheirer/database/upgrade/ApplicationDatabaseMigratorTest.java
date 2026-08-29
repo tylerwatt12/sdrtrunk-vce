@@ -12,6 +12,7 @@ package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -75,7 +76,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void adoptsMarkerlessCurrentLayoutWithoutRunningSchemaSteps() throws Exception
+    void refusesMarkerlessCurrentLayoutWhenItsSemanticFormatIsAmbiguous() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -89,12 +90,12 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("adopt-global-format-marker"));
+        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode(), result.error());
+        assertTrue(result.error().contains("ambiguous across formats [6, 7]"), result.error());
+        assertFalse(result.output().contains("adopt-global-format-marker"));
         assertFalse(result.output().contains("format-1-to-2"));
         assertFalse(result.output().contains("format-2-to-3"));
-        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
-            metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+        assertNull(metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
     }
 
     @Test
@@ -236,6 +237,7 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains("COMPLETED STEP: 3 -> 4 [format-3-to-4]"));
         assertTrue(result.output().contains("COMPLETED STEP: 4 -> 5 [format-4-to-5]"));
         assertTrue(result.output().contains("COMPLETED STEP: 5 -> 6 [format-5-to-6]"));
+        assertTrue(result.output().contains("COMPLETED STEP: 6 -> 7 [format-6-to-7]"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())

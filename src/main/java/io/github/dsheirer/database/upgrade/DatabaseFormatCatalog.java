@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 6;
+    public static final int CURRENT_VERSION = 7;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -44,6 +44,7 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_5_FINGERPRINT =
         "cc4ab232780c6445865d86c69d4f04eb43f4f6064cf9e6770ff1405c4da32080";
     private static final String FORMAT_6_FINGERPRINT = FORMAT_5_FINGERPRINT;
+    private static final String FORMAT_7_FINGERPRINT = FORMAT_6_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -102,9 +103,19 @@ public final class DatabaseFormatCatalog
             "Preserve configured conventional receiver contexts and every row linked to their stable IDs",
             "Rewrite only exact legacy GUID context keys to canonical configuration-ID context keys",
             "Refuse ambiguous, conflicting, or malformed configured conventional context identities"));
+    private static final FormatDescriptor FORMAT_7 = descriptor(7, "web-user-playback-preferences-v2",
+        "Per-user conversation playback preference format",
+        FORMAT_7_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
+        List.of("main format 7"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format7TestDatabase.java",
+        List.of(
+            "Preserve every account, credential, role, access policy, and unrelated browser preference",
+            "Add conversation grouping and its bounded burst limit to each complete user preference document",
+            "Refuse version-1 selections above the version-2 limit of 16 scan lists instead of truncating them",
+            "Drop the five retired global browser-audio capacity settings"));
 
     private static final List<FormatDescriptor> FORMATS =
-        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6);
+        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = Map.of(
         FORMAT_1.version(), FORMAT_1,
@@ -112,7 +123,8 @@ public final class DatabaseFormatCatalog
         FORMAT_3.version(), FORMAT_3,
         FORMAT_4.version(), FORMAT_4,
         FORMAT_5.version(), FORMAT_5,
-        FORMAT_6.version(), FORMAT_6);
+        FORMAT_6.version(), FORMAT_6,
+        FORMAT_7.version(), FORMAT_7);
     /* Several marker-bearing semantic formats may intentionally share one DDL fingerprint. */
     private static final Map<String,List<FormatDescriptor>> BY_FINGERPRINT = formatsByFingerprint();
 
@@ -225,7 +237,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_6;
+        return FORMAT_7;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -389,7 +401,7 @@ public final class DatabaseFormatCatalog
         {
             try
             {
-                Format5WebStateValidator.validate(connection);
+                Format5WebStateValidator.validate(connection, webPreferenceVersion(descriptor));
             }
             catch(SQLException exception)
             {
@@ -410,6 +422,18 @@ public final class DatabaseFormatCatalog
                     exception.getMessage(), exception);
             }
         }
+    }
+
+    /** Keeps historical database-format validation independent from future preference revisions. */
+    private static int webPreferenceVersion(FormatDescriptor descriptor)
+    {
+        return switch(descriptor.version())
+        {
+            case 5, 6 -> 1;
+            case 7 -> 2;
+            default -> throw new IllegalArgumentException("No web preference version for database format " +
+                descriptor.version());
+        };
     }
 
     private static int parseMarker(String marker) throws SQLException

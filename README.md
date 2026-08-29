@@ -30,15 +30,16 @@ receiver data before installing or upgrading.
   and statistics from a browser. Subscribe to one or more administrator-defined
   [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them. Those
   defaults also normally initialize new talkgroup Aliases consistently across the desktop, web, Discover, and
-  RadioReference workflows. Overlapping routes are deduplicated before completed calls enter the conversation-aware
-  browser queue.
+  RadioReference workflows. Overlapping routes are deduplicated before completed calls enter each browser's local
+  queue, where optional Conversation Mode can regroup calls that are already waiting.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
 - **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems, while one
   conventional analog Alias-list family serves both AM and NBFM channels.
-- **Desktop and mobile listening:** The full desktop website and a separate touch-friendly mobile listener share the
-  same completed-call audio service, scan-list subscriptions, queue limits, and playback state.
+- **Desktop and mobile listening:** The full desktop website and a separate touch-friendly mobile listener use the
+  same bounded completed-call feed and Scan Lists. Queue order, Hold, Skip, Replay Last, Avoid, and Stop remain local
+  to each browser rather than creating a server-side playback session.
 
 ## Current Nightly Feature Set
 

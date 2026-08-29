@@ -44,6 +44,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -445,6 +446,7 @@ class StatsApiV1HttpContractTest
             Map.entry("LIVE_MULTIPLEX", "/api/v1/live/multiplex"),
             Map.entry("LIVE_MULTIPLEX_CONTROL", "/api/v1/live/multiplex/control"),
             Map.entry("CALLS", "/api/v1/calls"),
+            Map.entry("CALLS_FEED", "/api/v1/calls/feed"),
             Map.entry("RADIO_REFERENCE", "/api/v1/admin/radioreference")
         );
         Map<String,String> actual = new LinkedHashMap<>();
@@ -501,7 +503,7 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void oneMultiplexConnectionCarriesMultipleLogicalSubscriptions() throws Exception
+    void browserCallsAreNotAMultiplexTopic() throws Exception
     {
         String clientId = "00000000-0000-0000-0000-000000000123";
         HttpRequest streamRequest = HttpRequest.newBuilder(mOrigin.resolve(
@@ -529,28 +531,48 @@ class StatsApiV1HttpContractTest
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
             HttpResponse<String> accepted = send(control);
-            assertEquals(200, accepted.statusCode(), accepted.body());
-            assertEquals(1, OBJECT_MAPPER.readTree(accepted.body()).at("/data/revision").intValue());
-
-            boolean activity = false;
-            JsonNode callsReady = null;
-
-            for(int count = 0; count < 4 && (!activity || callsReady == null); count++)
-            {
-                MultiplexFrame frame = readMultiplexFrame(input);
-                activity |= frame.topic() == 1 && "snapshot".equals(frame.json().path("event").textValue());
-                if(frame.topic() == 2 && "ready".equals(frame.json().path("event").textValue()))
-                {
-                    callsReady = frame.json().path("data");
-                }
-            }
-
-            assertTrue(activity, "Channel activity did not arrive on the multiplex connection");
-            assertTrue(callsReady != null, "Call live-edge acknowledgement did not arrive on the multiplex connection");
-            assertTrue(callsReady.path("scan_list_ids").isArray());
-            assertTrue(callsReady.path("waiting_calls_per_listener").isIntegralNumber());
-            assertFalse(callsReady.has("calls"), "A new call subscription must not expose cached playback history");
+            assertStructuredError(accepted, 400, "invalid_request", null);
         }
+    }
+
+    @Test
+    void callFeedStartsAtTheLiveEdgeAndLongPollCompletesBeforeTheClientTimeout() throws Exception
+    {
+        HttpResponse<String> initial = get(StatsApiV1.CALLS_FEED + "?scan_list_id=1");
+        assertEquals(200, initial.statusCode(), initial.body());
+        JsonNode edge = OBJECT_MAPPER.readTree(initial.body()).path("data");
+        assertTrue(edge.path("cursor").isTextual(), initial.body());
+        assertFalse(edge.path("reset").booleanValue(), initial.body());
+        assertTrue(edge.path("calls").isArray(), initial.body());
+        assertEquals(0, edge.path("calls").size(), initial.body());
+
+        long started = System.nanoTime();
+        HttpResponse<String> waiting = get(StatsApiV1.CALLS_FEED + "?scan_list_id=1&cursor=" +
+            edge.path("cursor").textValue());
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        assertEquals(200, waiting.statusCode(), waiting.body());
+        assertTrue(elapsedMs >= 4_000L, "The empty feed should use bounded long polling");
+        assertTrue(elapsedMs < 8_000L, "The feed must complete well before the browser's 10-second request timeout");
+        JsonNode result = OBJECT_MAPPER.readTree(waiting.body()).path("data");
+        assertTrue(result.path("cursor").isTextual(), waiting.body());
+        assertFalse(result.path("reset").booleanValue(), waiting.body());
+        assertTrue(result.path("calls").isArray(), waiting.body());
+
+        assertStructuredError(get(StatsApiV1.CALLS_FEED + "?scan_list_id=1&cursor=-1"),
+            400, "invalid_parameter", "cursor");
+        assertStructuredError(get(StatsApiV1.CALLS_FEED + "?scan_list_id=1&cursor=0&cursor=1"),
+            400, "invalid_parameter", "cursor");
+    }
+
+    @Test
+    void callFeedContractKeepsValidCallsWhenItSignalsSharedLoss()
+    {
+        Map<String,Object> call = Map.of("call_id", "test-call", "audio_url", "/api/v1/calls/test-call/audio");
+        Map<String,Object> response = StatsWebServerService.callFeedResponse(
+            new StatsWebCallService.FeedResult("42", true, List.of(call)));
+        assertEquals("42", response.get("cursor"));
+        assertEquals(true, response.get("reset"));
+        assertEquals(List.of(call), response.get("calls"));
     }
 
     @Test
@@ -576,7 +598,7 @@ class StatsApiV1HttpContractTest
         assertEquals(16, headerBytes.length, "Multiplex frame header was truncated");
         ByteBuffer header = ByteBuffer.wrap(headerBytes).order(ByteOrder.BIG_ENDIAN);
         assertEquals(0x534C4D58, header.getInt());
-        assertEquals(1, Byte.toUnsignedInt(header.get()));
+        assertEquals(2, Byte.toUnsignedInt(header.get()));
         int kind = Byte.toUnsignedInt(header.get());
         int topic = Short.toUnsignedInt(header.getShort());
         int length = header.getInt();

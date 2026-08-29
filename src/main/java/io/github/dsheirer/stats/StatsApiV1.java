@@ -38,6 +38,7 @@ public final class StatsApiV1
     public static final String LIVE_MULTIPLEX = ROOT + "/live/multiplex";
     public static final String LIVE_MULTIPLEX_CONTROL = ROOT + "/live/multiplex/control";
     public static final String CALLS = ROOT + "/calls";
+    public static final String CALLS_FEED = CALLS + "/feed";
     public static final String RADIO_REFERENCE = ROOT + "/admin/radioreference";
 
     private StatsApiV1()

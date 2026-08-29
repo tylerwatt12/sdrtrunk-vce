@@ -53,7 +53,6 @@ vm.runInContext([
   functionSource('function number(value)'),
   functionSource('function valueNode(value)'),
   functionSource('function metrics(values, embedded = false)'),
-  functionSource('function adminStatusNumber(value)'),
   functionSource('function adminStatusBytes(value)'),
   functionSource('function adminDatabaseDisplay(database)')
 ].join('\n'), context);
@@ -64,10 +63,8 @@ assert.strictEqual(context.number(null), '0');
 assert.strictEqual(context.number(1234), '1,234');
 
 for (const missing of [undefined, null, '', '4096', false, Number.NaN, -1]) {
-  assert.strictEqual(context.adminStatusNumber(missing), '—');
   assert.strictEqual(context.adminStatusBytes(missing), '—');
 }
-assert.strictEqual(context.adminStatusNumber(0), '0');
 assert.strictEqual(context.adminStatusBytes(0), '0 B');
 assert.strictEqual(context.adminStatusBytes(1024), '1 KB');
 assert.strictEqual(context.adminStatusBytes(1048576), '1.0 MB');

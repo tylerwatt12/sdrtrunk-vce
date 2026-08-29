@@ -23,7 +23,6 @@ import io.github.dsheirer.gui.theme.Theme;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.stats.WebCallConfiguration;
 import java.util.prefs.Preferences;
 
 /**
@@ -46,16 +45,6 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED = "stats.web.server.https.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE =
         "stats.web.server.certificate.mode";
-    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS =
-        "stats.web.call.maximum.listeners";
-    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS =
-        "stats.web.call.maximum.selected.scan.lists";
-    private static final String PREFERENCE_KEY_WEB_CALL_WAITING_CALLS_PER_LISTENER =
-        "stats.web.call.maximum.browser.queue.calls";
-    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS =
-        "stats.web.call.maximum.cached.calls";
-    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB =
-        "stats.web.call.maximum.cached.audio.mib";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final boolean DEFAULT_STATS_WEB_SERVER_ENABLED = true;
@@ -80,8 +69,6 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsWebServerAnyIpEnabled;
     private Boolean mStatsWebServerHttpsEnabled;
     private WebCertificateMode mStatsWebServerCertificateMode;
-    private final Object mWebCallConfigurationLock = new Object();
-    private volatile WebCallConfiguration mWebCallConfiguration;
     private Theme mTheme;
     private Double mGuiScale;
 
@@ -362,63 +349,6 @@ public class ApplicationPreference extends Preference
         mPreferences.put(PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE,
             mStatsWebServerCertificateMode.name());
         notifyPreferenceUpdated();
-    }
-
-    /**
-     * Returns the operator-owned capacity settings for completed-call browser audio.
-     */
-    public WebCallConfiguration getWebCallConfiguration()
-    {
-        WebCallConfiguration configuration = mWebCallConfiguration;
-
-        if(configuration == null)
-        {
-            synchronized(mWebCallConfigurationLock)
-            {
-                configuration = mWebCallConfiguration;
-
-                if(configuration == null)
-                {
-                    configuration = new WebCallConfiguration(
-                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS,
-                            WebCallConfiguration.DEFAULT_MAXIMUM_LISTENERS),
-                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
-                            WebCallConfiguration.DEFAULT_MAXIMUM_SELECTED_SCAN_LISTS),
-                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_WAITING_CALLS_PER_LISTENER,
-                            WebCallConfiguration.DEFAULT_WAITING_CALLS_PER_LISTENER),
-                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS,
-                            WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_CALLS),
-                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
-                            WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_AUDIO_MIB));
-                    mWebCallConfiguration = configuration;
-                }
-            }
-        }
-
-        return configuration;
-    }
-
-    /**
-     * Atomically updates the related in-memory values and persistent settings before publishing one service update.
-     */
-    public void setWebCallConfiguration(WebCallConfiguration configuration)
-    {
-        WebCallConfiguration prepared = configuration != null ? configuration : WebCallConfiguration.defaults();
-
-        synchronized(mWebCallConfigurationLock)
-        {
-            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS, prepared.maximumListeners());
-            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
-                prepared.maximumSelectedScanLists());
-            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_WAITING_CALLS_PER_LISTENER,
-                prepared.waitingCallsPerListener());
-            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS,
-                prepared.maximumCachedCalls());
-            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
-                prepared.maximumCachedAudioMiB());
-            mWebCallConfiguration = prepared;
-            notifyPreferenceUpdated();
-        }
     }
 
     /**

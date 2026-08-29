@@ -24,6 +24,7 @@ class StatsWebSettingsOwnershipUiContractTest
         String request = function(source, "async function requestSiteSettings(method = 'GET', settings = null, revision = null)");
         String personal = function(source, "async function renderSettings()");
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
+        String scannerPlayback = function(source, "function openScannerPlaybackSettings(returnFocusSelector = null)");
         String admin = function(source, "async function renderAdmin()");
 
         assertTrue(admin.contains("id: 'site-settings', label: 'Site Settings'"));
@@ -51,6 +52,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(personal.contains("appearance.theme"));
         assertFalse(personal.contains("playback.volume"));
         assertFalse(personal.contains("selected_scan_list_ids"));
+        assertFalse(personal.contains("conversation_grouping"));
+        assertFalse(personal.contains("conversation_burst_limit"));
         assertFalse(personal.contains("scanner.detail_mode"));
         assertFalse(personal.contains("preferences.tuner"));
         assertFalse(personal.contains("preferences.tables"));
@@ -64,9 +67,21 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(livePresentation.contains("decode_quality_display_mode"));
         assertTrue(livePresentation.contains("live_detail_row_limit"));
         assertTrue(livePresentation.contains("preferences.presentation ="));
+        assertFalse(livePresentation.contains("conversation_grouping"));
+        assertFalse(livePresentation.contains("conversation_burst_limit"));
+        assertFalse(livePresentation.contains("preferences.playback"));
         assertFalse(livePresentation.contains("preferences.page_titles"));
         assertTrue(livePresentation.contains("modal.setDirty(true)"));
         assertTrue(livePresentation.contains("void render()"));
+
+        assertTrue(scannerPlayback.contains("openReadOnlyModal('Scanner playback'"));
+        assertTrue(scannerPlayback.contains("conversation_grouping"));
+        assertTrue(scannerPlayback.contains("conversation_burst_limit"));
+        assertTrue(scannerPlayback.contains("preferences.playback.conversation_grouping ="));
+        assertTrue(scannerPlayback.contains("preferences.playback.conversation_burst_limit ="));
+        assertFalse(scannerPlayback.contains("preferences.presentation"));
+        assertTrue(source.contains("id = 'scanner-playback-settings'"));
+        assertTrue(source.contains("openScannerPlaybackSettings('#scanner-playback-settings')"));
 
         assertFalse(source.contains("/api/v1/admin/web-display"));
         assertFalse(source.contains("/api/v1/live/settings"));

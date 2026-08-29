@@ -21,7 +21,6 @@ import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.auth.WebPasswordVerifier;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -56,10 +55,21 @@ public final class Format5WebStateValidator
 
     public static void validate(Connection connection) throws SQLException
     {
+        validate(connection, 2);
+    }
+
+    /** Validates one exact persisted preference-document generation for its owning database format. */
+    public static void validate(Connection connection, int preferenceDocumentVersion) throws SQLException
+    {
         Objects.requireNonNull(connection, "Database connection cannot be null");
-        UserCounts userCounts = validateUsers(connection);
+        if(preferenceDocumentVersion != 1 && preferenceDocumentVersion != 2)
+        {
+            throw invalid("unsupported preference-document version " + preferenceDocumentVersion);
+        }
+
+        UserCounts userCounts = validateUsers(connection, preferenceDocumentVersion);
         long policyCount = validatePolicies(connection);
-        validateSiteSettings(connection);
+        validateSiteSettings(connection, preferenceDocumentVersion == 1);
 
         if(userCounts.primary() > 1)
         {
@@ -72,7 +82,7 @@ public final class Format5WebStateValidator
         }
     }
 
-    private static UserCounts validateUsers(Connection connection) throws SQLException
+    private static UserCounts validateUsers(Connection connection, int preferenceDocumentVersion) throws SQLException
     {
         long maximumRows = (long)WebAccessService.MAXIMUM_USERS + 1;
         long total = 0;
@@ -113,7 +123,7 @@ public final class Format5WebStateValidator
                         throw invalid("ordinary user count exceeds " + WebAccessService.MAXIMUM_USERS);
                     }
 
-                    if(validateUser(resultSet))
+                    if(validateUser(resultSet, preferenceDocumentVersion))
                     {
                         primary++;
                     }
@@ -132,7 +142,7 @@ public final class Format5WebStateValidator
         return new UserCounts(total, primary, ordinary);
     }
 
-    private static boolean validateUser(ResultSet resultSet) throws SQLException
+    private static boolean validateUser(ResultSet resultSet, int preferenceDocumentVersion) throws SQLException
     {
         requireStorage(resultSet, "id_type", "integer", "account identifier");
         requireStorage(resultSet, "username_type", "text", "username");
@@ -213,7 +223,14 @@ public final class Format5WebStateValidator
 
         try
         {
-            WebUserPreferencesCodec.decode(resultSet.getString("preferences_json"));
+            if(preferenceDocumentVersion == 1)
+            {
+                Format6WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+            }
+            else
+            {
+                Format7WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+            }
         }
         catch(IOException exception)
         {
@@ -286,7 +303,8 @@ public final class Format5WebStateValidator
      * Validates the bounded portable-preferences document and the receiver-wide site settings stored inside it.
      * Other Java preference nodes and keys remain application-owned and are accepted as opaque string values.
      */
-    private static void validateSiteSettings(Connection connection) throws SQLException
+    private static void validateSiteSettings(Connection connection, boolean allowRetiredWebAudioSettings)
+        throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT settings_json, updated_at_ms,
@@ -307,12 +325,13 @@ public final class Format5WebStateValidator
                 requireStorage(resultSet, "settings_json_type", "text", "portable preference document");
                 requireStorage(resultSet, "updated_at_type", "integer", "portable preference update time");
                 requirePositive(resultSet, "updated_at_ms", "portable preference update time");
-                validatePortablePreferences(resultSet.getString("settings_json"));
+                validatePortablePreferences(resultSet.getString("settings_json"), allowRetiredWebAudioSettings);
             }
         }
     }
 
-    private static void validatePortablePreferences(String json) throws SQLException
+    private static void validatePortablePreferences(String json, boolean allowRetiredWebAudioSettings)
+        throws SQLException
     {
         if(json == null || json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_PORTABLE_PREFERENCES_BYTES)
         {
@@ -344,6 +363,13 @@ public final class Format5WebStateValidator
                     if(!preference.getValue().isTextual())
                     {
                         throw invalid("portable preference value must be text: " + nodeEntry.getKey() + "/" +
+                            preference.getKey());
+                    }
+
+                    if(!allowRetiredWebAudioSettings &&
+                        Format6To7DatabaseMigration.RETIRED_WEB_AUDIO_KEYS.contains(preference.getKey()))
+                    {
+                        throw invalid("retired global browser-audio setting is still stored: " +
                             preference.getKey());
                     }
                 }
