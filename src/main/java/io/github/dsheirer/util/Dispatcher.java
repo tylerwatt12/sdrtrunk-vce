@@ -294,6 +294,8 @@ public class Dispatcher<E> implements Listener<E>
         if(mScheduling == Scheduling.ON_ARRIVAL)
         {
             arrivalThread = new NamingThreadFactory(mThreadName).newThread(new ArrivalProcessor(generation, queue));
+            //Raw-IQ processing stays at normal priority, so its downstream IFFT worker yields on constrained hosts.
+            arrivalThread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
         }
         else
         {
