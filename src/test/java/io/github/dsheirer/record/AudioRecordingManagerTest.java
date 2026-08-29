@@ -86,7 +86,7 @@ class AudioRecordingManagerTest
     }
 
     @Test
-    void distinctCallsCompletedInTheSameSecondUseDistinctMp3Files() throws Exception
+    void callsCompletedOneMillisecondApartUseDistinctMp3Files() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
@@ -97,7 +97,8 @@ class AudioRecordingManagerTest
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
             ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
                 writtenPaths.add(path);
-                Files.write(path, new byte[]{(byte)call.logicalCallId().sequence()}, StandardOpenOption.CREATE_NEW);
+                Files.write(path, new byte[]{(byte)call.snapshot().callId().sequence()},
+                    StandardOpenOption.CREATE_NEW);
             });
         long completedAt = 1_777_777_777_123L;
 
@@ -107,17 +108,18 @@ class AudioRecordingManagerTest
             preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.MP3);
             manager.start();
             manager.receive(completedCall(1, completedAt, List.of(new float[80])));
-            manager.receive(completedCall(2, completedAt, List.of(new float[80])));
+            manager.receive(completedCall(2, completedAt + 1, List.of(new float[80])));
             manager.stop();
 
             assertEquals(2, recorded.get());
             assertEquals(2, writtenPaths.size());
             assertNotEquals(writtenPaths.get(0), writtenPaths.get(1));
-            String timestamp = TimeStamp.getLongTimeStamp(completedAt, "_");
-            assertTrue(writtenPaths.get(0).getFileName().toString().startsWith(timestamp + "_"));
-            assertTrue(writtenPaths.get(1).getFileName().toString().startsWith(timestamp + "_"));
-            assertTrue(writtenPaths.get(0).getFileName().toString().endsWith("_CALL_1_1.mp3"));
-            assertTrue(writtenPaths.get(1).getFileName().toString().endsWith("_CALL_1_2.mp3"));
+            assertTrue(writtenPaths.get(0).getFileName().toString()
+                .startsWith(TimeStamp.getLongTimeStamp(completedAt, "_") + "_"));
+            assertTrue(writtenPaths.get(1).getFileName().toString()
+                .startsWith(TimeStamp.getLongTimeStamp(completedAt + 1, "_") + "_"));
+            assertFalse(writtenPaths.get(0).getFileName().toString().contains("_CALL_"));
+            assertFalse(writtenPaths.get(1).getFileName().toString().contains("_CALL_"));
             assertArrayEquals(new byte[]{1}, Files.readAllBytes(writtenPaths.get(0)));
             assertArrayEquals(new byte[]{2}, Files.readAllBytes(writtenPaths.get(1)));
         }
