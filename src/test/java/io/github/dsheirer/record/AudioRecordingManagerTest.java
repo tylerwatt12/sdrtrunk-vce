@@ -11,8 +11,10 @@
 
 package io.github.dsheirer.record;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasList;
@@ -22,9 +24,11 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.util.TimeStamp;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -76,6 +80,51 @@ class AudioRecordingManagerTest
         finally
         {
             manager.stop();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+        }
+    }
+
+    @Test
+    void distinctCallsCompletedInTheSameSecondUseDistinctMp3Files() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> writtenPaths = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                writtenPaths.add(path);
+                Files.write(path, new byte[]{(byte)call.logicalCallId().sequence()}, StandardOpenOption.CREATE_NEW);
+            });
+        long completedAt = 1_777_777_777_123L;
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.MP3);
+            manager.start();
+            manager.receive(completedCall(1, completedAt, List.of(new float[80])));
+            manager.receive(completedCall(2, completedAt, List.of(new float[80])));
+            manager.stop();
+
+            assertEquals(2, recorded.get());
+            assertEquals(2, writtenPaths.size());
+            assertNotEquals(writtenPaths.get(0), writtenPaths.get(1));
+            String timestamp = TimeStamp.getLongTimeStamp(completedAt, "_");
+            assertTrue(writtenPaths.get(0).getFileName().toString().startsWith(timestamp + "_"));
+            assertTrue(writtenPaths.get(1).getFileName().toString().startsWith(timestamp + "_"));
+            assertTrue(writtenPaths.get(0).getFileName().toString().endsWith("_CALL_1_1.mp3"));
+            assertTrue(writtenPaths.get(1).getFileName().toString().endsWith("_CALL_1_2.mp3"));
+            assertArrayEquals(new byte[]{1}, Files.readAllBytes(writtenPaths.get(0)));
+            assertArrayEquals(new byte[]{2}, Files.readAllBytes(writtenPaths.get(1)));
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
             preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
             preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
         }
@@ -255,13 +304,26 @@ class AudioRecordingManagerTest
 
     private static CompletedAudioCall completedCall(long sequence, boolean duplicate, List<float[]> audioBuffers)
     {
+        long now = System.currentTimeMillis();
+        return completedCall(sequence, duplicate, now + 100, audioBuffers);
+    }
+
+    private static CompletedAudioCall completedCall(long sequence, long completedAt, List<float[]> audioBuffers)
+    {
+        return completedCall(sequence, false, completedAt, audioBuffers);
+    }
+
+    private static CompletedAudioCall completedCall(long sequence, boolean duplicate, long completedAt,
+                                                    List<float[]> audioBuffers)
+    {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Talkgroup.create(56138));
-        long now = System.currentTimeMillis();
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, sequence, 1), null,
+        long startedAt = completedAt - 100;
+        AudioCallId callId = new AudioCallId(1L, sequence, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null,
             AliasList.empty("test"),
-            identifiers, Set.of(), now, now + 100, 1, 1, now, now + 100, false, true, false, true,
-            100, duplicate);
+            identifiers, Set.of(), startedAt, completedAt, 1, 1, startedAt, completedAt, false, true,
+            false, true, 100, duplicate);
         return new CompletedAudioCall(snapshot, audioBuffers);
     }
 
