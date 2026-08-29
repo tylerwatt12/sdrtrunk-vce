@@ -16,25 +16,31 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DispatcherTest
 {
     @Test
-    public void boundedQueueDropsAndCleansUpTheOldestElement() throws Exception
+    public void boundedArrivalQueueRunsOffProducerAndCleansUpTheOldestElement() throws Exception
     {
         List<Integer> received = new CopyOnWriteArrayList<>();
         List<Integer> discarded = new CopyOnWriteArrayList<>();
         CountDownLatch firstProcessing = new CountDownLatch(1);
         CountDownLatch releaseFirst = new CountDownLatch(1);
         CountDownLatch processed = new CountDownLatch(3);
+        Thread producerThread = Thread.currentThread();
+        AtomicReference<Thread> consumerThread = new AtomicReference<>();
         Dispatcher<Integer> dispatcher = new Dispatcher<>("bounded dispatcher test", 1,
-            Dispatcher.ExecutorType.PRIVATE, 2, discarded::add);
+            Dispatcher.ExecutorType.PRIVATE, 2, discarded::add, Dispatcher.Scheduling.ON_ARRIVAL);
 
         dispatcher.setListener(value -> {
+            consumerThread.compareAndSet(null, Thread.currentThread());
             received.add(value);
 
             if(value == 0)
@@ -59,6 +65,8 @@ public class DispatcherTest
             dispatcher.start();
             dispatcher.receive(0);
             assertTrue(firstProcessing.await(5, TimeUnit.SECONDS));
+            assertNotSame(producerThread, consumerThread.get(),
+                "arrival processing must never run on the receiver producer");
 
             dispatcher.receive(1);
             dispatcher.receive(2);
@@ -82,13 +90,53 @@ public class DispatcherTest
     }
 
     @Test
+    public void arrivalProcessingReusesOnePrivateWorker() throws Exception
+    {
+        Dispatcher<Integer> dispatcher = new Dispatcher<>("arrival worker reuse test", 1,
+            Dispatcher.ExecutorType.PRIVATE, 2, ignored -> {}, Dispatcher.Scheduling.ON_ARRIVAL);
+        AtomicReference<Thread> firstWorker = new AtomicReference<>();
+        AtomicReference<Thread> secondWorker = new AtomicReference<>();
+        CountDownLatch firstProcessed = new CountDownLatch(1);
+        CountDownLatch secondProcessed = new CountDownLatch(1);
+
+        dispatcher.setListener(value -> {
+            if(value == 1)
+            {
+                firstWorker.set(Thread.currentThread());
+                firstProcessed.countDown();
+            }
+            else
+            {
+                secondWorker.set(Thread.currentThread());
+                secondProcessed.countDown();
+            }
+        });
+
+        try
+        {
+            dispatcher.start();
+            dispatcher.receive(1);
+            assertTrue(firstProcessed.await(5, TimeUnit.SECONDS));
+            dispatcher.receive(2);
+            assertTrue(secondProcessed.await(5, TimeUnit.SECONDS));
+            assertNotSame(Thread.currentThread(), firstWorker.get());
+            assertSame(firstWorker.get(), secondWorker.get(),
+                "separate arrivals must reuse the same permanent worker");
+        }
+        finally
+        {
+            dispatcher.stop();
+        }
+    }
+
+    @Test
     public void stopCleansUpQueuedElements() throws Exception
     {
         List<Integer> discarded = new CopyOnWriteArrayList<>();
         CountDownLatch firstProcessing = new CountDownLatch(1);
         CountDownLatch releaseFirst = new CountDownLatch(1);
         Dispatcher<Integer> dispatcher = new Dispatcher<>("dispatcher stop cleanup test", 1,
-            Dispatcher.ExecutorType.PRIVATE, 4, discarded::add);
+            Dispatcher.ExecutorType.PRIVATE, 4, discarded::add, Dispatcher.Scheduling.ON_ARRIVAL);
 
         dispatcher.setListener(value -> {
             if(value == 0)
@@ -143,7 +191,7 @@ public class DispatcherTest
     public void restartNeverRunsTwoConsumerGenerationsConcurrently() throws Exception
     {
         Dispatcher<Integer> dispatcher = new Dispatcher<>("dispatcher restart isolation test", 1,
-            Dispatcher.ExecutorType.PRIVATE, 4, ignored -> {});
+            Dispatcher.ExecutorType.PRIVATE, 4, ignored -> {}, Dispatcher.Scheduling.ON_ARRIVAL);
         CountDownLatch firstEntered = new CountDownLatch(1);
         CountDownLatch releaseFirst = new CountDownLatch(1);
         CountDownLatch secondProcessed = new CountDownLatch(1);

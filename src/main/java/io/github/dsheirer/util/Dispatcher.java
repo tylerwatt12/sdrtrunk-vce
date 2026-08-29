@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -48,12 +49,14 @@ import org.slf4j.LoggerFactory;
  * concurrent re-entry on the same dispatcher.  Shutdown cancels the per-instance ScheduledFuture without touching
  * the shared pool.
  *
- * Instances that use the private-pool constructor (recorders and other I/O-heavy users) get their own executor so
- * that slow I/O cannot starve the shared channel-dispatch pool.
+ * Instances that use private periodic scheduling (recorders and other I/O-heavy users) get their own executor so
+ * that slow I/O cannot starve the shared channel-dispatch pool.  Private arrival scheduling instead uses one
+ * long-lived worker that producers wake after a bounded queue offer.
  */
 public class Dispatcher<E> implements Listener<E>
 {
     public enum ExecutorType { SHARED, PRIVATE }
+    public enum Scheduling { PERIODIC, ON_ARRIVAL }
 
     private static final Logger mLog = LoggerFactory.getLogger(Dispatcher.class);
     //Daemon threads: the pool must not prevent JVM shutdown.
@@ -80,6 +83,7 @@ public class Dispatcher<E> implements Listener<E>
     private final ReentrantLock mProcessingLock = new ReentrantLock();
     private final AtomicReference<LifecycleState> mLifecycleState;
     private final ExecutorType mExecutorType;
+    private final Scheduling mScheduling;
     private final long mInterval;
     private HeartbeatManager mHeartbeatManager;
 
@@ -149,6 +153,17 @@ public class Dispatcher<E> implements Listener<E>
     public Dispatcher(String threadName, long interval, ExecutorType executorType, int maximumQueueSize,
                       Consumer<E> discardHandler)
     {
+        this(threadName, interval, executorType, maximumQueueSize, discardHandler, Scheduling.PERIODIC);
+    }
+
+    /**
+     * Constructs an optionally bounded dispatcher with periodic or arrival-driven processing.  Arrival-driven
+     * processing is restricted to a private worker so an incoming element can wake exactly one isolated consumer
+     * without submitting receiver work to an executor.
+     */
+    public Dispatcher(String threadName, long interval, ExecutorType executorType, int maximumQueueSize,
+                      Consumer<E> discardHandler, Scheduling scheduling)
+    {
         if(interval <= 0)
         {
             throw new IllegalArgumentException("Dispatcher interval must be greater than zero");
@@ -159,9 +174,20 @@ public class Dispatcher<E> implements Listener<E>
             throw new IllegalArgumentException("Dispatcher queue limit cannot be negative");
         }
 
+        if(scheduling == null)
+        {
+            throw new IllegalArgumentException("Dispatcher scheduling cannot be null");
+        }
+
+        if(scheduling == Scheduling.ON_ARRIVAL && executorType != ExecutorType.PRIVATE)
+        {
+            throw new IllegalArgumentException("Arrival-driven dispatchers require a private worker");
+        }
+
         mThreadName = threadName != null && !threadName.isBlank() ? threadName : "sdrtrunk dispatcher";
         mInterval = interval;
         mExecutorType = executorType;
+        mScheduling = scheduling;
         mMaximumQueueSize = maximumQueueSize;
         mDiscardHandler = discardHandler;
         mLifecycleState = new AtomicReference<>(new LifecycleState(0, LifecyclePhase.STOPPED, createQueue(), null));
@@ -220,6 +246,18 @@ public class Dispatcher<E> implements Listener<E>
             remove(lifecycle, e))
         {
             discard(e, false);
+            accepted = false;
+        }
+
+        if(accepted && mScheduling == Scheduling.ON_ARRIVAL)
+        {
+            current = mLifecycleState.get();
+
+            if(current.phase == LifecyclePhase.RUNNING && current.generation == lifecycle.generation &&
+                current.queue == lifecycle.queue && current.task != null)
+            {
+                current.task.wake();
+            }
         }
     }
 
@@ -247,25 +285,36 @@ public class Dispatcher<E> implements Listener<E>
             }
         }
 
-        ScheduledExecutorService privateExecutor = mExecutorType == ExecutorType.PRIVATE ?
-            Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName)) : null;
-        ScheduledExecutorService executor = privateExecutor != null ? privateExecutor : SHARED_POOL;
         long generation = starting.generation;
         BlockingQueue<E> queue = starting.queue;
-        Runnable processor = (mHeartbeatManager != null ? new ProcessorWithHeartbeat(generation, queue) :
-            new Processor(generation, queue));
-        Runnable guardedProcessor = () ->
-        {
-            LifecycleState current = mLifecycleState.get();
+        ScheduledExecutorService privateExecutor = null;
+        ScheduledFuture<?> future = null;
+        Thread arrivalThread = null;
 
-            if(current.phase == LifecyclePhase.RUNNING && current.generation == generation)
+        if(mScheduling == Scheduling.ON_ARRIVAL)
+        {
+            arrivalThread = new NamingThreadFactory(mThreadName).newThread(new ArrivalProcessor(generation, queue));
+        }
+        else
+        {
+            privateExecutor = mExecutorType == ExecutorType.PRIVATE ?
+                Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName)) : null;
+            ScheduledExecutorService executor = privateExecutor != null ? privateExecutor : SHARED_POOL;
+            Runnable processor = (mHeartbeatManager != null ? new ProcessorWithHeartbeat(generation, queue) :
+                new Processor(generation, queue));
+            Runnable guardedProcessor = () ->
             {
-                processor.run();
-            }
-        };
-        ScheduledFuture<?> future = executor.scheduleAtFixedRate(guardedProcessor, 0, mInterval,
-            TimeUnit.MILLISECONDS);
-        ScheduledTask task = new ScheduledTask(future, privateExecutor);
+                LifecycleState current = mLifecycleState.get();
+
+                if(current.phase == LifecyclePhase.RUNNING && current.generation == generation)
+                {
+                    processor.run();
+                }
+            };
+            future = executor.scheduleAtFixedRate(guardedProcessor, 0, mInterval, TimeUnit.MILLISECONDS);
+        }
+
+        ProcessingTask task = new ProcessingTask(future, privateExecutor, arrivalThread);
         LifecycleState scheduled = starting.withTask(task);
 
         //The lifecycle state atomically owns this task.  A stop/restart that overtakes setup changes the state first,
@@ -273,6 +322,12 @@ public class Dispatcher<E> implements Listener<E>
         if(!mLifecycleState.compareAndSet(starting, scheduled))
         {
             task.stop();
+        }
+        else if(arrivalThread != null)
+        {
+            //The worker is created before publication but started afterward.  Any producer arrival in that window is
+            //already visible in the bounded queue and will be drained before the worker parks.
+            arrivalThread.start();
         }
     }
 
@@ -636,24 +691,71 @@ public class Dispatcher<E> implements Listener<E>
         }
     }
 
+    /** Long-lived arrival-driven private consumer.  Producers wake it without allocating or submitting a task. */
+    private class ArrivalProcessor implements Runnable
+    {
+        private final long mGeneration;
+        private final BlockingQueue<E> mQueue;
+
+        private ArrivalProcessor(long generation, BlockingQueue<E> queue)
+        {
+            mGeneration = generation;
+            mQueue = queue;
+        }
+
+        @Override
+        public void run()
+        {
+            while(true)
+            {
+                LifecycleState current = mLifecycleState.get();
+
+                if(current.phase != LifecyclePhase.RUNNING || current.generation != mGeneration ||
+                    current.queue != mQueue)
+                {
+                    return;
+                }
+
+                if(current.queuedElementCount.get() <= 0)
+                {
+                    //An unpark that races this check supplies a permit, so parking cannot lose a producer wakeup.
+                    LockSupport.park(this);
+                    continue;
+                }
+
+                //Only worker generations can wait here.  The receiver producer never acquires this lifecycle lock.
+                mProcessingLock.lock();
+
+                try
+                {
+                    process(mGeneration, mQueue);
+                }
+                finally
+                {
+                    mProcessingLock.unlock();
+                }
+            }
+        }
+    }
+
     private enum LifecyclePhase { STOPPED, RUNNING, FLUSHING }
 
-    /** Atomically published ownership for one queue and scheduled-task generation. */
+    /** Atomically published ownership for one queue and processing generation. */
     private final class LifecycleState
     {
         private final long generation;
         private final LifecyclePhase phase;
         private final BlockingQueue<E> queue;
         private final AtomicInteger queuedElementCount;
-        private final ScheduledTask task;
+        private final ProcessingTask task;
 
-        private LifecycleState(long generation, LifecyclePhase phase, BlockingQueue<E> queue, ScheduledTask task)
+        private LifecycleState(long generation, LifecyclePhase phase, BlockingQueue<E> queue, ProcessingTask task)
         {
             this(generation, phase, queue, new AtomicInteger(), task);
         }
 
         private LifecycleState(long generation, LifecyclePhase phase, BlockingQueue<E> queue,
-                               AtomicInteger queuedElementCount, ScheduledTask task)
+                               AtomicInteger queuedElementCount, ProcessingTask task)
         {
             this.generation = generation;
             this.phase = phase;
@@ -662,24 +764,38 @@ public class Dispatcher<E> implements Listener<E>
             this.task = task;
         }
 
-        private LifecycleState withTask(ScheduledTask scheduledTask)
+        private LifecycleState withTask(ProcessingTask processingTask)
         {
-            return new LifecycleState(generation, phase, queue, queuedElementCount, scheduledTask);
+            return new LifecycleState(generation, phase, queue, queuedElementCount, processingTask);
         }
     }
 
-    /** Resources for one scheduled lifecycle generation. */
-    private record ScheduledTask(ScheduledFuture<?> future, ScheduledExecutorService privateExecutor)
+    /** Resources for one processing lifecycle generation. */
+    private record ProcessingTask(ScheduledFuture<?> future, ScheduledExecutorService privateExecutor,
+                                  Thread arrivalThread)
     {
+        private void wake()
+        {
+            if(arrivalThread != null)
+            {
+                LockSupport.unpark(arrivalThread);
+            }
+        }
+
         private void stop()
         {
             //False is required because downstream code may hold locks that must be released normally.
-            future.cancel(false);
+            if(future != null)
+            {
+                future.cancel(false);
+            }
 
             if(privateExecutor != null)
             {
                 privateExecutor.shutdown();
             }
+
+            wake();
         }
     }
 }
