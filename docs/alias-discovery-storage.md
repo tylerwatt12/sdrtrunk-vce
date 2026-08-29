@@ -136,16 +136,13 @@ infer a release label, then applies the registered adjacent steps through the ta
 Across the steps that advance this baseline to Alias v6/P25 v27, the migrator converts only one plain, structurally
 unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls remain aliases for manual
 review. The v24 shared projection cannot establish qualifier-safe P25 history, so the relevant step rebuilds that
-shared storage and projected P25, DMR, and NXDN identity history restarts. It then recreates only the compact ordinary
-P25 identities and relationships required by preserved authoritative P25 affiliations. The zero-local tuple
-projection starts empty.
+shared storage and projected P25, DMR, and NXDN identity history restarts. Legacy P25 affiliation history is also
+counted and reset instead of being interpreted or re-keyed. The identity, affiliation, site-presence,
+presence-lifecycle, and zero-local tuple projections start empty and rebuild from new traffic.
 
-Existing system-wide P25 affiliations are re-keyed into the protocol-neutral affiliation table. Authoritative site
-presence and presence-lifecycle state start empty because neither call history nor a source affiliation row proves
-which site last accepted a radio or when it deregistered. Supported administrator-owned aliases and unrelated
-configuration remain intact. Stored P25 fully-qualified talkgroup and radio Alias rows and their dependent routes are
-removed; their home values are not converted into ordinary local aliases. These resets and removals are declared in
-preflight and the completion report.
+Supported administrator-owned aliases and unrelated configuration remain intact. Stored P25 fully-qualified
+talkgroup and radio Alias rows and their dependent routes are removed; their home values are not converted into
+ordinary local aliases. These resets and removals are declared with row counts in preflight and the completion report.
 
 P25 activity schema v28 introduces resolved-call accounting and starts its system-level logical-call and P25
 site-observation counters at an explicit collection boundary. It does not reinterpret older physical call counters as

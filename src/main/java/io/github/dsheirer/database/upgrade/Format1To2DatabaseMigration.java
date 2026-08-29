@@ -23,26 +23,6 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
 {
     private static final String FULLY_QUALIFIED_TALKGROUP = "P25_FULLY_QUALIFIED_TALKGROUP";
     private static final String FULLY_QUALIFIED_RADIO = "P25_FULLY_QUALIFIED_RADIO_ID";
-    private static final int MAX_IDENTITIES_PER_SCOPE = 100_000;
-    private static final int MAX_RELATIONSHIPS_PER_SCOPE = 500_000;
-    private static final int MAX_AFFILIATIONS_PER_SCOPE = 100_000;
-    private static final int MAX_P25_TALKGROUP_ID = 65_534;
-    private static final int MAX_P25_RADIO_ID = 16_777_211;
-    static final String IDENTITY_ADMISSION_CAP_QUERY = """
-        SELECT COUNT(*)
-        FROM trunked_identity_scope AS scope
-        WHERE scope.protocol_code = 1
-          AND scope.scope_kind_code = 1
-          AND scope.identity_domain_code = 0
-          AND (
-              (SELECT COUNT(*) FROM p25_radio_affiliation AS radio
-               WHERE radio.system_key = scope.p25_system_key)
-              +
-              (SELECT COUNT(DISTINCT talkgroup.talkgroup_id)
-               FROM p25_radio_affiliation AS talkgroup
-               WHERE talkgroup.system_key = scope.p25_system_key)
-          ) > %d
-        """.formatted(MAX_IDENTITIES_PER_SCOPE);
 
     @Override
     public String id()
@@ -53,7 +33,7 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     @Override
     public String description()
     {
-        return "Convert Alpha 8-era aliases and P25 affiliations to scan lists and protocol-neutral identities";
+        return "Convert Alpha 8-era aliases to scan lists and reset legacy trunked identity history";
     }
 
     @Override
@@ -90,10 +70,10 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
                 "Drop stream routes whose unsupported fully-qualified Alias owner is removed"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "trunked-identity evidence", unknown,
-                "Rebuild reproducible compact identity evidence from current affiliations only"),
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
-                "current P25 affiliations", unknown,
-                "Preserve every admissible current affiliation without inventing site presence"));
+                "Reset reproducible compact identity evidence; live trunked traffic rebuilds it"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "P25 affiliation history", unknown,
+                "Reset last-known affiliations; live P25 traffic rebuilds current state"));
     }
 
     @Override
@@ -101,7 +81,6 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     {
         requireSourceFormat(connection);
         validateAliasSource(connection);
-        validateAffiliationSource(connection);
         long convertedCatchalls = eligibleCatchallCount(connection);
         long priorityValues = scalarLong(connection, "SELECT COUNT(*) FROM alias WHERE priority IS NOT NULL");
         long removedTalkgroups = matcherCount(connection, FULLY_QUALIFIED_TALKGROUP);
@@ -143,10 +122,10 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
                 "Drop stream routes whose unsupported fully-qualified Alias owner is removed"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "trunked-identity evidence", resetIdentityRows,
-                "Rebuild reproducible compact identity evidence from current affiliations only"),
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
-                "current P25 affiliations", affiliations,
-                "Preserve every admissible current affiliation without inventing site presence"));
+                "Reset reproducible compact identity evidence; live trunked traffic rebuilds it"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "P25 affiliation history", affiliations,
+                "Reset last-known affiliations; live P25 traffic rebuilds current state"));
     }
 
     @Override
@@ -154,11 +133,9 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     {
         requireSourceFormat(connection);
         validateAliasSource(connection);
-        validateAffiliationSource(connection);
-        long affiliationCount = scalarLong(connection, "SELECT COUNT(*) FROM p25_radio_affiliation");
         migrateAliases(connection);
-        migrateTrunkedIdentityProjection(connection);
-        validateAffiliationTarget(connection, affiliationCount);
+        resetTrunkedIdentityHistory(connection);
+        validateTrunkedIdentityResetTarget(connection);
     }
 
     private static void requireSourceFormat(Connection connection) throws SQLException
@@ -366,77 +343,16 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void migrateTrunkedIdentityProjection(Connection connection) throws SQLException
+    private static void resetTrunkedIdentityHistory(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("""
-                CREATE TEMP TABLE format1_affiliation_scope AS
-                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.scope_kind_code,
-                       scope.identity_domain_code, scope.p25_system_key,
-                       scope.first_seen_ms, scope.last_seen_ms
-                FROM trunked_identity_scope AS scope
-                WHERE EXISTS (
-                    SELECT 1 FROM p25_radio_affiliation AS affiliation
-                    WHERE affiliation.system_key = scope.p25_system_key
-                )
-                """);
             statement.executeUpdate("DELETE FROM trunked_identity_scope");
             statement.executeUpdate("DROP TABLE trunked_identity_summary");
             statement.executeUpdate("DROP TABLE trunked_radio_talkgroup_summary");
             Format2SchemaSql.createTrunkedIdentitySchema(statement);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope(
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                )
-                SELECT scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                       p25_system_key, first_seen_ms, last_seen_ms
-                FROM format1_affiliation_scope
-                ORDER BY scope_id
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_summary(
-                    scope_id, identity_kind_code, identity_id, p25_identity_state_code,
-                    first_seen_ms, last_seen_ms, join_count
-                )
-                SELECT scope.scope_id, 2, old.radio_id, 0,
-                       old.updated_at_ms, old.updated_at_ms, 1
-                FROM p25_radio_affiliation AS old
-                JOIN trunked_identity_scope AS scope ON scope.p25_system_key = old.system_key
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_summary(
-                    scope_id, identity_kind_code, identity_id, p25_identity_state_code,
-                    first_seen_ms, last_seen_ms, join_count
-                )
-                SELECT scope.scope_id, 1, old.talkgroup_id, 1,
-                       min(old.updated_at_ms), max(old.updated_at_ms), count(*)
-                FROM p25_radio_affiliation AS old
-                JOIN trunked_identity_scope AS scope ON scope.p25_system_key = old.system_key
-                GROUP BY scope.scope_id, old.talkgroup_id
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_radio_talkgroup_summary(
-                    scope_id, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, join_count
-                )
-                SELECT scope.scope_id, old.radio_id, old.talkgroup_id, 1,
-                       old.updated_at_ms, old.updated_at_ms, 1
-                FROM p25_radio_affiliation AS old
-                JOIN trunked_identity_scope AS scope ON scope.p25_system_key = old.system_key
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_radio_affiliation(
-                    scope_id, radio_id, talkgroup_id, confirmed_at_ms
-                )
-                SELECT scope.scope_id, old.radio_id, old.talkgroup_id, old.updated_at_ms
-                FROM p25_radio_affiliation AS old
-                JOIN trunked_identity_scope AS scope ON scope.p25_system_key = old.system_key
-                """);
             statement.executeUpdate("DROP INDEX idx_p25_radio_affiliation_talkgroup");
             statement.executeUpdate("DROP TABLE p25_radio_affiliation");
-            statement.executeUpdate("DROP TABLE format1_affiliation_scope");
         }
 
         setMetadata(connection, "p25_activity_schema_version", "26");
@@ -444,105 +360,23 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
             Long.toString(System.currentTimeMillis()));
     }
 
-    private static void validateAffiliationSource(Connection connection) throws SQLException
+    private static void validateTrunkedIdentityResetTarget(Connection connection) throws SQLException
     {
         requireZero(connection, """
-            SELECT COUNT(*)
-            FROM p25_radio_affiliation AS old
-            LEFT JOIN trunked_identity_scope AS scope
-              ON scope.p25_system_key = old.system_key
-             AND scope.protocol_code = 1
-             AND scope.scope_kind_code = 1
-             AND scope.identity_domain_code = 0
-            WHERE scope.scope_id IS NULL
-            """, "format-1 affiliations without a protocol-neutral P25 scope");
-        requireZero(connection, """
-            SELECT COUNT(*)
-            FROM p25_radio_affiliation
-            WHERE typeof(system_key) <> 'integer'
-               OR typeof(talkgroup_id) <> 'integer'
-               OR typeof(radio_id) <> 'integer'
-               OR typeof(updated_at_ms) <> 'integer'
-               OR talkgroup_id NOT BETWEEN 1 AND %d
-               OR radio_id NOT BETWEEN 1 AND %d
-               OR updated_at_ms <= 0
-            """.formatted(MAX_P25_TALKGROUP_ID, MAX_P25_RADIO_ID),
-            "format-1 affiliations with invalid identities or confirmation times");
-        requireZero(connection, capQuery("p25_radio_affiliation", MAX_AFFILIATIONS_PER_SCOPE),
-            "format-1 P25 systems exceeding the current-affiliation admission cap");
-        requireZero(connection, IDENTITY_ADMISSION_CAP_QUERY,
-            "format-1 P25 systems whose affiliations exceed the identity admission cap");
-        requireZero(connection, capQuery("p25_radio_affiliation", MAX_RELATIONSHIPS_PER_SCOPE),
-            "format-1 P25 systems whose affiliations exceed the relationship admission cap");
-    }
-
-    private static String capQuery(String table, int cap)
-    {
-        return """
-            SELECT COUNT(*)
-            FROM trunked_identity_scope AS scope
-            WHERE scope.protocol_code = 1
-              AND scope.scope_kind_code = 1
-              AND scope.identity_domain_code = 0
-              AND EXISTS (
-                  SELECT 1 FROM %s AS old
-                  WHERE old.system_key = scope.p25_system_key
-                  LIMIT 1 OFFSET %d
-              )
-            """.formatted(table, cap);
-    }
-
-    private static void validateAffiliationTarget(Connection connection, long sourceAffiliations) throws SQLException
-    {
-        long targetAffiliations = scalarLong(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation");
-
-        if(targetAffiliations != sourceAffiliations)
-        {
-            throw new SQLException("Format-1 affiliation conversion retained " + targetAffiliations + " of " +
-                sourceAffiliations + " current affiliation rows");
-        }
-
-        requireZero(connection, """
-            SELECT COUNT(*)
-            FROM trunked_radio_affiliation AS affiliation
-            LEFT JOIN trunked_identity_summary AS radio
-              ON radio.scope_id = affiliation.scope_id
-             AND radio.identity_kind_code = 2
-             AND radio.identity_id = affiliation.radio_id
-            LEFT JOIN trunked_identity_summary AS talkgroup
-              ON talkgroup.scope_id = affiliation.scope_id
-             AND talkgroup.identity_kind_code = 1
-             AND talkgroup.identity_id = affiliation.talkgroup_id
-            LEFT JOIN trunked_radio_talkgroup_summary AS relationship
-              ON relationship.scope_id = affiliation.scope_id
-             AND relationship.radio_id = affiliation.radio_id
-             AND relationship.talkgroup_id = affiliation.talkgroup_id
-             AND relationship.target_kind_code = 1
-            WHERE radio.identity_id IS NULL
-               OR talkgroup.identity_id IS NULL
-               OR relationship.radio_id IS NULL
-            """, "converted affiliations without complete compact identity projections");
-        requireZero(connection, "SELECT COUNT(*) FROM trunked_radio_site_presence",
-            "authoritative site-presence rows invented from format-1 data");
-        requireZero(connection, "SELECT COUNT(*) FROM trunked_radio_presence_lifecycle",
-            "presence lifecycle rows invented from format-1 data");
+            SELECT (SELECT COUNT(*) FROM trunked_identity_scope) +
+                   (SELECT COUNT(*) FROM trunked_identity_scope_context) +
+                   (SELECT COUNT(*) FROM trunked_identity_summary) +
+                   (SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary) +
+                   (SELECT COUNT(*) FROM trunked_radio_talkgroup_summary) +
+                   (SELECT COUNT(*) FROM trunked_radio_affiliation) +
+                   (SELECT COUNT(*) FROM trunked_radio_site_presence) +
+                   (SELECT COUNT(*) FROM trunked_radio_presence_lifecycle)
+            """, "trunked identity or P25 affiliation rows remaining after reset");
         requireZero(connection, """
             SELECT COUNT(*) FROM sqlite_schema
             WHERE type IN ('table', 'index')
               AND name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
-            """, "retired P25 affiliation objects remaining after conversion");
-        requireZero(connection, groupedCapQuery("trunked_identity_summary", MAX_IDENTITIES_PER_SCOPE),
-            "converted scopes exceeding the identity admission cap");
-        requireZero(connection, groupedCapQuery("trunked_radio_talkgroup_summary", MAX_RELATIONSHIPS_PER_SCOPE),
-            "converted scopes exceeding the relationship admission cap");
-        requireZero(connection, groupedCapQuery("trunked_radio_affiliation", MAX_AFFILIATIONS_PER_SCOPE),
-            "converted scopes exceeding the current-affiliation admission cap");
-    }
-
-    private static String groupedCapQuery(String table, int cap)
-    {
-        return "SELECT COUNT(*) FROM (SELECT scope_id FROM " + table +
-            " GROUP BY scope_id HAVING COUNT(*) > " + cap + ")";
+            """, "retired P25 affiliation objects remaining after reset");
     }
 
     private static long eligibleCatchallCount(Connection connection) throws SQLException

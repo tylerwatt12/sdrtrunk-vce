@@ -52,11 +52,11 @@ public final class DatabaseFormatCatalog
             "successful nightly publications through 2026-08-03"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format1TestDatabase.java",
         List.of(
-            "Preserve supported configuration and current P25 affiliations",
+            "Preserve supported configuration while resetting P25 affiliation history",
             "Convert eligible catch-all aliases to list-level unmatched behavior",
             "Drop retired fully-qualified alias matchers and their dependent stream routes",
             "Retain playback enablement while dropping retired numeric priority ordering",
-            "Reset reproducible trunked-identity evidence while rebuilding preserved affiliations"));
+            "Reset reproducible trunked-identity evidence; live traffic rebuilds current state"));
     private static final FormatDescriptor FORMAT_2 = descriptor(2, "scan-lists-p25-v26",
         "Scan-list and protocol-neutral identity database format", FORMAT_2_FINGERPRINT,
         new SubsystemVersions(6, 2, 2, 2, 26, 2, 1),

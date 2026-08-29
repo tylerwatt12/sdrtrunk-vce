@@ -428,11 +428,10 @@ Alpha 8, Alpha 9, and Alpha 10 shipped the same P25 activity schema v24 layout a
 stored release provenance. The format catalog therefore maps that exact layout to one Alpha 8-family baseline without
 attempting to distinguish the three release labels. As the linear chain advances from v24, the relevant step rebuilds
 shared storage because the old projection cannot establish qualifier-safe P25 history, so projected P25, DMR, and NXDN
-identity history restarts. It preserves system-wide current P25 affiliations, reconstructs only their required compact
-ordinary P25 identities and relationships within current per-scope admission caps, and leaves authoritative site
-presence and clear watermarks empty because the source layout cannot prove a site or deregistration time. Other
-activity and supported administrator-owned configuration are preserved. Later recognized development and nightly
-formats enter at their own registered version and continue through the same chain.
+identity history restarts. It also counts and resets legacy P25 affiliation history instead of interpreting or
+re-keying it. Identity, affiliation, site-presence, and presence-lifecycle state start empty and rebuild from new
+traffic. Other activity and supported administrator-owned configuration are preserved. Later recognized development
+and nightly formats enter at their own registered version and continue through the same chain.
 
 P25 activity schema v28 adds resolved-call accounting with separate system-level logical-call and P25
 site-observation buckets at a new positive collection boundary. It does not backfill logical calls from older

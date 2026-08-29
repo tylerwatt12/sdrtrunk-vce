@@ -230,8 +230,8 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains("DROP retired fully-qualified radio aliases: 1 row(s)"));
         assertTrue(result.output().contains(
             "DROP broadcast routes attached to retired fully-qualified aliases: 2 row(s)"));
-        assertTrue(result.output().contains("PRESERVE current P25 affiliations: 3 row(s)"));
-        assertTrue(result.output().contains("without inventing site presence"));
+        assertTrue(result.output().contains("RESET P25 affiliation history: 3 row(s)"));
+        assertTrue(result.output().contains("live P25 traffic rebuilds current state"));
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.output().contains("COMPLETED STEP: 3 -> 4 [format-3-to-4]"));
         assertTrue(result.output().contains("COMPLETED STEP: 4 -> 5 [format-4-to-5]"));
@@ -547,7 +547,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void refusesAlpha9AffiliationWithoutAProtocolNeutralScope() throws Exception
+    void resetsAlpha9AffiliationHistoryWithoutRequiringIdentityScopes() throws Exception
     {
         Path database = Format1TestDatabase.create(newStagedDatabase());
 
@@ -565,236 +565,18 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("without a protocol-neutral P25 scope"));
-        assertEquals("4", metadata(database, "alias_schema_version"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithANonstandardP25IdentityDomain() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("UPDATE trunked_identity_scope SET identity_domain_code=1 WHERE scope_id=70");
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001, 43, 2000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("without a protocol-neutral P25 scope"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("1", scalar(database, "SELECT identity_domain_code FROM trunked_identity_scope"));
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithAReservedP25Identity() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 16777212, 43, 2000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("invalid identities or confirmation times"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithoutAValidConfirmationTime() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001, 43, 0)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("invalid identities or confirmation times"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("0", scalar(database,
-            "SELECT updated_at_ms FROM p25_radio_affiliation WHERE system_key=70 AND radio_id=1800001"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationWithNonIntegerStorageClasses() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001.5, 43.5, 'not-a-time')
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("invalid identities or confirmation times"));
-        assertEquals("4", metadata(database, "alias_schema_version"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("real:real:text", scalar(database, """
-            SELECT typeof(radio_id) || ':' || typeof(talkgroup_id) || ':' || typeof(updated_at_ms)
-            FROM p25_radio_affiliation WHERE system_key=70
-            """));
-    }
-
-    @Test
-    void usesIndexBackedBoundedIdentityAdmissionChecks() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-        boolean usesAffiliationIndex = false;
-
-        try(Connection connection = open(database);
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(
-                "EXPLAIN QUERY PLAN " + Format1To2DatabaseMigration.IDENTITY_ADMISSION_CAP_QUERY))
-        {
-            while(resultSet.next())
-            {
-                String detail = resultSet.getString(4);
-                assertFalse(detail.contains("TEMP B-TREE"), detail);
-                usesAffiliationIndex |= detail.contains("idx_p25_radio_affiliation_talkgroup");
-            }
-        }
-
-        assertTrue(usesAffiliationIndex, "Identity admission must scan each bounded system-key index slice");
-    }
-
-    @Test
-    void refusesAlpha9AffiliationsAboveTheBoundedCurrentStateCap() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                WITH RECURSIVE radio_ids(value) AS (
-                    VALUES (1)
-                    UNION ALL
-                    SELECT value + 1 FROM radio_ids WHERE value < 100001
-                )
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                SELECT 70, value, 43, 2000 FROM radio_ids
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("current-affiliation admission cap"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("100001", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void refusesAlpha9AffiliationsWhoseEndpointsExceedTheIdentityCap() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                WITH RECURSIVE radio_ids(value) AS (
-                    VALUES (1)
-                    UNION ALL
-                    SELECT value + 1 FROM radio_ids WHERE value < 100000
-                )
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                SELECT 70, value, 43, 2000 FROM radio_ids
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("identity admission cap"));
-        assertEquals("24", metadata(database, "p25_activity_schema_version"));
-        assertEquals("100000", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-    }
-
-    @Test
-    void migratesAtTheExactIdentityAdmissionCap() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                WITH RECURSIVE radio_ids(value) AS (
-                    VALUES (1)
-                    UNION ALL
-                    SELECT value + 1 FROM radio_ids WHERE value < 99999
-                )
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                SELECT 70, value, 43, 2000 FROM radio_ids
-                """);
-        }
-
-        CommandResult result = run(database);
-
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
-        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
-    }
-
-    @Test
-    void migratesMinimumAndMaximumP25IdentitiesAcrossIndependentScopes() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9P25Scope(database, 70, 840);
-        insertAlpha9P25Scope(database, 71, 841);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1, 1, 2000),
-                       (71, 16777211, 65534, 3000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("RESET P25 affiliation history: 1 row(s)"));
+        assertTrue(result.error().isEmpty());
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_system WHERE system_key=70"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM sqlite_schema
+            WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
+            """));
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
     }
 
     @Test
@@ -1429,28 +1211,6 @@ class ApplicationDatabaseMigratorTest
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);
         return OBJECT_MAPPER.writeValueAsString(channel);
-    }
-
-    private static void insertAlpha9P25Scope(Path database, int systemKey) throws Exception
-    {
-        insertAlpha9P25Scope(database, systemKey, 840);
-    }
-
-    private static void insertAlpha9P25Scope(Path database, int systemKey, int systemId) throws Exception
-    {
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
-                VALUES (%1$d, 781824, %2$d, 1000, 2000)
-                """.formatted(systemKey, systemId));
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope(
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (%1$d, 'p25:test:%2$d', 1, 1, 0, %1$d, 1000, 2000)
-                """.formatted(systemKey, systemId));
-        }
     }
 
     private static Connection open(Path database) throws Exception
