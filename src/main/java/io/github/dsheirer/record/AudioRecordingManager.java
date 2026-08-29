@@ -70,8 +70,6 @@ public class AudioRecordingManager
     private final ScheduledExecutorService mScheduler;
     private final RecordingWriter mRecordingWriter;
     private int mUnknownAudioRecordingIndex = 1;
-    private int mDuplicateAudioRecordingSuffix = 1;
-    private String mPreviousRecordingPath = null;
 
     /**
      * Constructs an instance
@@ -174,7 +172,7 @@ public class AudioRecordingManager
                     if(!(completedAudioCall.snapshot().duplicate() &&
                         mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
                     {
-                        path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
+                        path = getAudioRecordingPath(completedAudioCall, recordFormat);
                         mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
 
                         if(Files.isRegularFile(path) && Files.size(path) > 0)
@@ -352,8 +350,9 @@ public class AudioRecordingManager
     /**
      * Provides a formatted audio recording filename to use as the final audio filename.
      */
-    private Path getAudioRecordingPath(IdentifierCollection identifierCollection, RecordFormat recordFormat)
+    private Path getAudioRecordingPath(CompletedAudioCall completedAudioCall, RecordFormat recordFormat)
     {
+        IdentifierCollection identifierCollection = completedAudioCall.snapshot().identifierCollection();
         StringBuilder sb = new StringBuilder();
 
         if(identifierCollection != null)
@@ -462,13 +461,17 @@ public class AudioRecordingManager
         }
 
         StringBuilder sbFinal = new StringBuilder();
-        sbFinal.append(TimeStamp.getTimeStamp("_")).append("_");
+        sbFinal.append(TimeStamp.getLongTimeStamp(completedAudioCall.snapshot().lastActivityTimestamp(), "_"))
+            .append("_");
+        String callIdentity = "_CALL_" +
+            Long.toUnsignedString(completedAudioCall.logicalCallId().coordinatorId()) + "_" +
+            completedAudioCall.logicalCallId().sequence();
 
         //Remove any illegal filename characters
         String cleaned = StringUtils.replaceIllegalCharacters(sb.toString());
 
-        //Ensure total length doesn't exceed 255 characters.  Allow room for timestamp, versioning and extension.
-        int maxLength = 255 - sbFinal.length() - ("_V" + mDuplicateAudioRecordingSuffix).length() -
+        //Ensure total length doesn't exceed 255 characters.  Allow room for timestamp, call identity and extension.
+        int maxLength = 255 - sbFinal.length() - callIdentity.length() -
             recordFormat.getExtension().length();
 
         if(cleaned.length() > maxLength)
@@ -476,19 +479,7 @@ public class AudioRecordingManager
             cleaned = cleaned.substring(0, maxLength);
         }
 
-        sbFinal.append(cleaned);
-
-        if(mPreviousRecordingPath != null && mPreviousRecordingPath.contentEquals(sbFinal.toString()))
-        {
-            sbFinal.append("_V").append(mDuplicateAudioRecordingSuffix++);
-        }
-        else
-        {
-            mDuplicateAudioRecordingSuffix = 2;
-            mPreviousRecordingPath = sbFinal.toString();
-        }
-
-        sbFinal.append(recordFormat.getExtension());
+        sbFinal.append(cleaned).append(callIdentity).append(recordFormat.getExtension());
 
         return getRecordingBasePath().resolve(sbFinal.toString());
     }
