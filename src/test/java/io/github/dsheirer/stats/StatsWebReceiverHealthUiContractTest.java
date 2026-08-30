@@ -123,6 +123,65 @@ class StatsWebReceiverHealthUiContractTest
     }
 
     @Test
+    void collapsesHealthSectionsByDefaultAndPaginatesResolvedAlertsFiveAtATime() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+        String controller = block(source, "class ReceiverHealthController");
+        String page = block(source, "function renderReceiverHealthPage(host, snapshot, stale, lastError)");
+        String section = block(source, "function receiverHealthSection(key, title, child, action = null)");
+        String measurement = block(source, "function receiverHealthMeasurementGroup(group, index)");
+        String resolvedPage = block(source,
+            "function receiverHealthResolvedPage(incidents, sort, requestedPage)");
+        String resolvedPager = block(source, "function receiverHealthResolvedPager(page, onPage)");
+        String resolvedSection = block(source, "function receiverHealthResolvedSection(incidents)");
+        String prune = block(source, "function receiverHealthPruneExpandedResolvedIncidents(incidents)");
+        String focusedControl = block(source, "function receiverHealthFocusedControl(host)");
+        String restoreFocus = block(source, "function receiverHealthRestoreFocus(host, key)");
+
+        assertTrue(source.contains("const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;"));
+        assertTrue(controller.contains("this.openHealthSections = new Set(['resolved'])"));
+        assertTrue(controller.contains("if (this.pageHost !== host)"));
+        assertTrue(controller.contains("this.resolvedPage = 0"));
+        assertTrue(section.contains("node('section', 'section receiver-health-section')"));
+        assertTrue(section.contains("node('button', 'receiver-health-section-toggle', title)"));
+        assertTrue(section.contains("toggle.setAttribute('aria-controls', body.id)"));
+        assertTrue(section.contains("toggle.setAttribute('aria-expanded', String(expanded))"));
+        assertTrue(section.contains("body.hidden = !expanded"));
+        assertTrue(section.contains("openHealthSections.has(key)"));
+        assertTrue(section.contains("openHealthSections.add(key)"));
+        assertTrue(section.contains("openHealthSections.delete(key)"));
+        assertTrue(page.contains("receiverHealthSection('current', 'Current status'"));
+        assertTrue(page.contains("receiverHealthSection('active', 'Active alerts and diagnostics'"));
+        assertTrue(page.contains("receiverHealthSection('measurements', 'Measurements'"));
+        assertTrue(page.contains("snapshot.measurements.map(receiverHealthMeasurementGroup)"));
+        assertTrue(measurement.contains("`measurement:${receiverHealthText(group.id, `${title}:${index}`)}`"));
+        assertTrue(measurement.contains("receiverHealthSection(key, title, body)"));
+        assertTrue(resolvedPage.indexOf("receiverHealthSortedResolvedIncidents") <
+            resolvedPage.indexOf("sorted.slice"));
+        assertTrue(resolvedPage.contains("RECEIVER_HEALTH_RESOLVED_PAGE_SIZE"));
+        assertTrue(resolvedPage.contains("Math.max(0, pageCount - 1)"));
+        assertTrue(resolvedPager.contains("'Recently resolved pagination'"));
+        assertTrue(resolvedPager.contains("'Previous'"));
+        assertTrue(resolvedPager.contains("'Next'"));
+        assertTrue(resolvedPager.contains("previous.disabled = page.page <= 0"));
+        assertTrue(resolvedPager.contains("next.disabled = !page.has_more"));
+        assertTrue(resolvedSection.contains("receiverHealthSection('resolved', 'Recently resolved'"));
+        assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = page.page"));
+        assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = 0"));
+        assertTrue(prune.contains("incidents.map(receiverHealthResolvedIncidentKey)"));
+        assertTrue(prune.contains("expandedResolvedIncidents.delete(key)"));
+        assertTrue(focusedControl.contains("host.contains(active)"));
+        assertTrue(focusedControl.contains("active.dataset.receiverHealthFocus"));
+        assertTrue(restoreFocus.contains("'[data-receiver-health-focus]'"));
+        assertTrue(restoreFocus.contains("element.dataset.receiverHealthFocus === key"));
+        assertTrue(restoreFocus.contains("focus({ preventScroll: true })"));
+        assertTrue(page.contains("receiverHealthFocusedControl(host)"));
+        assertTrue(page.contains("receiverHealthRestoreFocus(host, focusedControl)"));
+        assertTrue(section.contains("toggle.dataset.receiverHealthFocus = `section:${key}`"));
+        assertTrue(resolvedPager.contains("navigation.dataset.receiverHealthFocus = 'resolved-pager'"));
+    }
+
+    @Test
     void providesLightAndDarkPresentationContracts() throws Exception
     {
         String css = readText(APP_CSS);
@@ -135,6 +194,11 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(css.contains(":root[data-theme=\"dark\"] .receiver-health-measurement-row.receiver-health-critical"));
         assertTrue(css.contains("details.receiver-health-incident:not([open])"));
         assertTrue(css.contains(".receiver-health-resolved-sort select"));
+        assertTrue(css.contains(".receiver-health-section.collapsed > .section-title"));
+        assertTrue(css.contains(".receiver-health-section-body[hidden]"));
+        assertTrue(css.contains("button.receiver-health-section-toggle[aria-expanded=\"true\"]::before"));
+        assertTrue(css.contains("button.receiver-health-section-toggle:focus-visible"));
+        assertTrue(css.contains(".receiver-health-resolved-pager"));
     }
 
     private static String readText(Path path) throws Exception

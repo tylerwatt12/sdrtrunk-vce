@@ -23,6 +23,7 @@ const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
 const RECEIVER_HEALTH_STALE_MILLISECONDS = 15_000;
+const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
@@ -6161,6 +6162,8 @@ class ReceiverHealthController {
     this.requestController = null;
     this.pageHost = null;
     this.resolvedSort = 'recent';
+    this.resolvedPage = 0;
+    this.openHealthSections = new Set(['resolved']);
     this.expandedResolvedIncidents = new Set();
   }
 
@@ -6184,6 +6187,8 @@ class ReceiverHealthController {
       this.snapshot = null;
       this.stale = false;
       this.lastError = '';
+      this.resolvedPage = 0;
+      this.openHealthSections = new Set(['resolved']);
       this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
       this.abortRequest();
@@ -6218,6 +6223,10 @@ class ReceiverHealthController {
   }
 
   bindPage(host) {
+    if (this.pageHost !== host) {
+      this.resolvedPage = 0;
+      this.openHealthSections = new Set(['resolved']);
+    }
     this.pageHost = host;
     this.updatePage();
   }
@@ -14872,6 +14881,7 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
   });
   card.append(heading, facts, guidance);
   if (resolved) {
+    heading.dataset.receiverHealthFocus = `resolved-incident:${receiverHealthResolvedIncidentKey(incident)}`;
     card.open = expanded;
     card.addEventListener('toggle', () => onToggle?.(card.open));
   }
@@ -14905,21 +14915,39 @@ function receiverHealthSortedResolvedIncidents(incidents, sort) {
   return sorted;
 }
 
+function receiverHealthResolvedPage(incidents, sort, requestedPage) {
+  const sorted = receiverHealthSortedResolvedIncidents(incidents, sort);
+  const pageCount = Math.ceil(sorted.length / RECEIVER_HEALTH_RESOLVED_PAGE_SIZE);
+  const numericPage = Number(requestedPage);
+  const page = Math.max(0, Math.min(Number.isFinite(numericPage) ? Math.trunc(numericPage) : 0,
+    Math.max(0, pageCount - 1)));
+  const offset = page * RECEIVER_HEALTH_RESOLVED_PAGE_SIZE;
+  const rows = sorted.slice(offset, offset + RECEIVER_HEALTH_RESOLVED_PAGE_SIZE);
+  return {
+    rows,
+    page,
+    page_count: pageCount,
+    total_count: sorted.length,
+    offset,
+    limit: RECEIVER_HEALTH_RESOLVED_PAGE_SIZE,
+    has_more: offset + rows.length < sorted.length
+  };
+}
+
+function receiverHealthPruneExpandedResolvedIncidents(incidents) {
+  const current = new Set(incidents.map(receiverHealthResolvedIncidentKey));
+  receiverHealthController.expandedResolvedIncidents.forEach((key) => {
+    if (!current.has(key)) receiverHealthController.expandedResolvedIncidents.delete(key);
+  });
+}
+
 function receiverHealthIncidentList(incidents, resolved = false) {
   if (!incidents.length) {
     return node('div', resolved ? 'receiver-health-empty' : 'receiver-health-empty receiver-health-empty-healthy',
       resolved ? 'No recently resolved incidents.' : 'No active receiver health incidents.');
   }
   const list = node('div', 'receiver-health-incident-list');
-  const rows = resolved ? receiverHealthSortedResolvedIncidents(incidents, receiverHealthController.resolvedSort) :
-    incidents;
-  if (resolved) {
-    const current = new Set(rows.map(receiverHealthResolvedIncidentKey));
-    receiverHealthController.expandedResolvedIncidents.forEach((key) => {
-      if (!current.has(key)) receiverHealthController.expandedResolvedIncidents.delete(key);
-    });
-  }
-  list.append(...rows.map((incident) => {
+  list.append(...incidents.map((incident) => {
     if (!resolved) return receiverHealthIncident(incident);
     const key = receiverHealthResolvedIncidentKey(incident);
     return receiverHealthIncident(incident, true,
@@ -14931,13 +14959,40 @@ function receiverHealthIncidentList(incidents, resolved = false) {
   return list;
 }
 
+function receiverHealthResolvedPager(page, onPage) {
+  const navigation = node('nav', 'pager receiver-health-resolved-pager');
+  navigation.setAttribute('aria-label', 'Recently resolved pagination');
+  navigation.dataset.receiverHealthFocus = 'resolved-pager';
+  navigation.tabIndex = -1;
+  const first = page.offset + 1;
+  const last = page.offset + page.rows.length;
+  navigation.append(node('span', 'muted',
+    `Resolved alerts ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
+      `Page ${number(page.page + 1)} of ${number(page.page_count)}`));
+  const previous = node('button', 'secondary', 'Previous');
+  previous.type = 'button';
+  previous.dataset.receiverHealthFocus = 'resolved-previous';
+  previous.disabled = page.page <= 0;
+  previous.addEventListener('click', () => onPage(page.page - 1));
+  const next = node('button', 'secondary', 'Next');
+  next.type = 'button';
+  next.dataset.receiverHealthFocus = 'resolved-next';
+  next.disabled = !page.has_more;
+  next.addEventListener('click', () => onPage(page.page + 1));
+  navigation.append(previous, next);
+  return navigation;
+}
+
 function receiverHealthResolvedSection(incidents) {
+  receiverHealthPruneExpandedResolvedIncidents(incidents);
   if (!incidents.length) {
-    return section('Recently resolved', receiverHealthIncidentList(incidents, true));
+    receiverHealthController.resolvedPage = 0;
+    return receiverHealthSection('resolved', 'Recently resolved', receiverHealthIncidentList(incidents, true));
   }
   const body = node('div');
   const sort = node('select');
   sort.setAttribute('aria-label', 'Sort resolved alerts');
+  sort.dataset.receiverHealthFocus = 'resolved-sort';
   [['recent', 'Newest resolved'], ['type', 'Alert type (A–Z)']].forEach(([value, label]) => {
     const option = node('option', '', label);
     option.value = value;
@@ -14946,13 +15001,56 @@ function receiverHealthResolvedSection(incidents) {
   });
   const control = node('label', 'receiver-health-resolved-sort');
   control.append(node('span', '', 'Sort'), sort);
-  const draw = () => body.replaceChildren(receiverHealthIncidentList(incidents, true));
+  const draw = (focusPager = false) => {
+    const page = receiverHealthResolvedPage(incidents, receiverHealthController.resolvedSort,
+      receiverHealthController.resolvedPage);
+    receiverHealthController.resolvedPage = page.page;
+    const paginator = receiverHealthResolvedPager(page, (nextPage) => {
+      receiverHealthController.resolvedPage = nextPage;
+      draw(true);
+    });
+    body.replaceChildren(receiverHealthIncidentList(page.rows, true), paginator);
+    if (focusPager) paginator.focus();
+  };
   sort.addEventListener('change', () => {
     receiverHealthController.resolvedSort = sort.value === 'type' ? 'type' : 'recent';
+    receiverHealthController.resolvedPage = 0;
     draw();
   });
   draw();
-  return section('Recently resolved', body, control);
+  return receiverHealthSection('resolved', 'Recently resolved', body, control);
+}
+
+let receiverHealthSectionSequence = 0;
+
+function receiverHealthSection(key, title, child, action = null) {
+  const wrapper = node('section', 'section receiver-health-section');
+  const titleBar = node('div', 'section-title');
+  const body = node('div', 'receiver-health-section-body');
+  body.id = `receiver-health-section-body-${++receiverHealthSectionSequence}`;
+  if (child) body.append(child);
+
+  const toggle = node('button', 'receiver-health-section-toggle', title);
+  toggle.type = 'button';
+  toggle.dataset.receiverHealthFocus = `section:${key}`;
+  toggle.setAttribute('aria-controls', body.id);
+  const applyExpanded = (expanded) => {
+    toggle.setAttribute('aria-expanded', String(expanded));
+    body.hidden = !expanded;
+    wrapper.classList.toggle('collapsed', !expanded);
+  };
+  applyExpanded(receiverHealthController.openHealthSections.has(key));
+  toggle.addEventListener('click', () => {
+    const expanded = body.hidden;
+    if (expanded) receiverHealthController.openHealthSections.add(key);
+    else receiverHealthController.openHealthSections.delete(key);
+    applyExpanded(expanded);
+  });
+
+  titleBar.append(toggle);
+  if (action) titleBar.append(action);
+  wrapper.append(titleBar, body);
+  return wrapper;
 }
 
 function receiverHealthMeasurementRow(row) {
@@ -14970,17 +15068,20 @@ function receiverHealthMeasurementRow(row) {
   return item;
 }
 
-function receiverHealthMeasurementGroup(group) {
+function receiverHealthMeasurementGroup(group, index) {
   const body = node('div', 'receiver-health-measurement-list');
   body.setAttribute('role', 'list');
   if (group.rows.length) body.append(...group.rows.map(receiverHealthMeasurementRow));
   else body.append(node('div', 'receiver-health-empty', 'No measurements were reported.'));
-  return section(receiverHealthText(group.title, receiverHealthText(group.id, 'Measurements')), body);
+  const title = receiverHealthText(group.title, receiverHealthText(group.id, 'Measurements'));
+  const key = `measurement:${receiverHealthText(group.id, `${title}:${index}`)}`;
+  return receiverHealthSection(key, title, body);
 }
 
 function receiverHealthRefreshButton() {
   const refresh = node('button', 'secondary', 'Refresh now');
   refresh.type = 'button';
+  refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
     refresh.disabled = true;
     await receiverHealthController.refresh();
@@ -15004,18 +15105,34 @@ function receiverHealthAccountSettingNotice(snapshot) {
       `${settings.active_count === 1 ? 'affects' : 'affect'} this account's header alert. ` +
       'Monitoring, measurements, and history always continue.';
   }
-  notice.append(node('span', '', message), anchor('Manage alert switches', href('admin', { tab: 'alerts' })));
+  const settingsLink = anchor('Manage alert switches', href('admin', { tab: 'alerts' }));
+  settingsLink.dataset.receiverHealthFocus = 'alert-settings';
+  notice.append(node('span', '', message), settingsLink);
   return notice;
 }
 
+function receiverHealthFocusedControl(host) {
+  const active = document.activeElement;
+  return active && host.contains(active) ? active.dataset.receiverHealthFocus || '' : '';
+}
+
+function receiverHealthRestoreFocus(host, key) {
+  if (!key) return;
+  const target = [...host.querySelectorAll('[data-receiver-health-focus]')]
+    .find((element) => element.dataset.receiverHealthFocus === key);
+  target?.focus({ preventScroll: true });
+}
+
 function renderReceiverHealthPage(host, snapshot, stale, lastError) {
+  const focusedControl = receiverHealthFocusedControl(host);
   host.replaceChildren();
   if (!snapshot) {
     const message = stale ? (lastError || 'Receiver health status is unavailable.') :
       'Loading receiver health status…';
     const body = node('div', 'admin-section-body');
     body.append(node('div', stale ? 'logging-notice warning' : 'receiver-health-loading-message', message));
-    host.append(section('Current status', body, receiverHealthRefreshButton()));
+    host.append(receiverHealthSection('current', 'Current status', body, receiverHealthRefreshButton()));
+    receiverHealthRestoreFocus(host, focusedControl);
     return;
   }
 
@@ -15044,16 +15161,17 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
     `Showing the last receiver health snapshot. ${lastError || 'The latest refresh failed.'}`));
 
-  host.append(section('Current status', overview, receiverHealthRefreshButton()),
+  host.append(receiverHealthSection('current', 'Current status', overview, receiverHealthRefreshButton()),
     receiverHealthAccountSettingNotice(snapshot),
-    section('Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
+    receiverHealthSection('active', 'Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
     receiverHealthResolvedSection(snapshot.resolved));
   if (snapshot.measurements.length) {
     host.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
   } else {
-    host.append(section('Measurements', node('div', 'receiver-health-empty',
+    host.append(receiverHealthSection('measurements', 'Measurements', node('div', 'receiver-health-empty',
       'No receiver health measurements were reported.')));
   }
+  receiverHealthRestoreFocus(host, focusedControl);
 }
 
 async function renderAdminHealth() {
