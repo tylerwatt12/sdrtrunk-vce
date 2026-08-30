@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -112,6 +112,12 @@ preferences while leaving every unrelated node and value intact. An unknown, inc
 preference document and an exhausted preference revision are refused rather than defaulted. Version-1 preferences
 that select more than the version-2 limit of 16 Scan Lists are also refused with instructions to reduce the selection
 in the previous build; the migrator never silently truncates a user's choices.
+
+The format 7-to-8 step upgrades every exact version-2 per-user browser preference document to version 3. It adds an
+empty bounded list of disabled receiver-health alert codes, so every existing and newly introduced alert remains on
+unless that account explicitly turns it off. Every existing personal preference is preserved and each affected
+preference revision is incremented. Unknown, incomplete, malformed, already-newer, or revision-exhausted preference
+documents are refused instead of repaired or defaulted.
 
 ## Replacement Boundary
 

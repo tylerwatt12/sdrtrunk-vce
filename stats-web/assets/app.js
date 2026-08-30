@@ -5,6 +5,11 @@ import * as tableLayouts from './core/table-layout.js';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
+import {
+  receiverHealthAlertGroups,
+  receiverHealthAlertIds,
+  isReceiverHealthAlertEnabled
+} from './core/receiver-health-alerts.js';
 import * as systemsDirectory from './features/systems-directory.js';
 import { WebCallPlayer } from './web-call-player.js';
 
@@ -345,6 +350,8 @@ function applyUserPreferenceSnapshot(snapshot) {
   const player = webCallPlayer;
   if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback);
   if (typeof scannerDetailMode !== 'undefined') scannerDetailMode = preferences.scanner.detail_mode;
+  receiverHealthController.updateIndicator();
+  receiverHealthController.updatePage();
 }
 
 async function synchronizeUserPreferences() {
@@ -6112,6 +6119,40 @@ function normalizeReceiverHealthSnapshot(value) {
   };
 }
 
+function receiverHealthAccountAlertSummary(snapshot, preferences) {
+  const active = Array.isArray(snapshot?.active) ? snapshot.active : [];
+  const summary = snapshot?.summary || {};
+  const activeCount = Math.max(receiverHealthCount(summary.active_count), active.length);
+  const disabled = active.filter((incident) =>
+    !isReceiverHealthAlertEnabled(preferences, incident.code));
+  const enabled = active.filter((incident) =>
+    isReceiverHealthAlertEnabled(preferences, incident.code));
+  const listedCritical = active.filter((incident) =>
+    receiverHealthSeverity(incident.severity) === 'critical').length;
+  const listedWarnings = active.filter((incident) =>
+    receiverHealthSeverity(incident.severity) === 'warning').length;
+  const criticalCount = enabled.filter((incident) =>
+    receiverHealthSeverity(incident.severity) === 'critical').length +
+    Math.max(0, receiverHealthCount(summary.critical_count) - listedCritical);
+  const warningCount = enabled.filter((incident) =>
+    receiverHealthSeverity(incident.severity) === 'warning').length +
+    Math.max(0, receiverHealthCount(summary.warning_count) - listedWarnings);
+  return {
+    active_count: activeCount,
+    enabled_count: Math.max(0, activeCount - disabled.length),
+    disabled_count: disabled.length,
+    critical_count: criticalCount,
+    warning_count: warningCount
+  };
+}
+
+function receiverHealthDisabledCodesForSave(preferences, controls) {
+  const unknownDisabledCodes = preferences?.health_alerts?.disabled_codes
+    ?.filter((code) => !controls.has(code)) || [];
+  const disabledKnownCodes = receiverHealthAlertIds.filter((id) => !controls.get(id)?.checked);
+  return [...unknownDisabledCodes, ...disabledKnownCodes];
+}
+
 class ReceiverHealthController {
   constructor() {
     this.snapshot = null;
@@ -6195,43 +6236,59 @@ class ReceiverHealthController {
     if (!visible) return;
 
     const summary = this.snapshot?.summary;
+    const accountAlerts = receiverHealthAccountAlertSummary(this.snapshot, activeUserPreferences());
     let className = 'loading';
     let label = 'Loading';
     let detail = 'Receiver health status is loading.';
     if (this.stale) {
       className = 'stale';
-      if (summary?.severity === 'critical') {
-        const count = summary.critical_count || summary.active_count;
+      if (accountAlerts.critical_count > 0) {
+        const count = accountAlerts.critical_count || accountAlerts.enabled_count;
         label = `Stale · Critical ${number(count)}`;
-      } else if (summary?.severity === 'warning') {
-        const count = summary.warning_count || summary.active_count;
+      } else if (accountAlerts.warning_count > 0) {
+        const count = accountAlerts.warning_count || accountAlerts.enabled_count;
         label = `Stale · Warning ${number(count)}`;
       } else {
         label = 'Stale';
       }
       detail = this.lastError || 'Receiver health status is stale.';
-    } else if (summary?.severity === 'critical') {
+    } else if (accountAlerts.critical_count > 0) {
       className = 'critical';
-      const count = summary.critical_count || summary.active_count;
+      const count = accountAlerts.critical_count || accountAlerts.enabled_count;
       label = `Critical ${number(count)}`;
-      detail = `${number(summary.active_count)} active incident${summary.active_count === 1 ? '' : 's'}, ` +
-        `${number(summary.critical_count)} critical.`;
-    } else if (summary?.severity === 'warning') {
+      detail = `${number(accountAlerts.enabled_count)} active alert${accountAlerts.enabled_count === 1 ? '' : 's'}, ` +
+        `${number(accountAlerts.critical_count)} critical.`;
+    } else if (accountAlerts.warning_count > 0) {
       className = 'warning';
-      const count = summary.warning_count || summary.active_count;
+      const count = accountAlerts.warning_count || accountAlerts.enabled_count;
       label = `Warning ${number(count)}`;
-      detail = `${number(summary.active_count)} active incident${summary.active_count === 1 ? '' : 's'}, ` +
-        `${number(summary.warning_count)} warning.`;
+      detail = `${number(accountAlerts.enabled_count)} active alert${accountAlerts.enabled_count === 1 ? '' : 's'}, ` +
+        `${number(accountAlerts.warning_count)} warning.`;
+    } else if (accountAlerts.enabled_count > 0) {
+      className = 'warning';
+      label = `Alert ${number(accountAlerts.enabled_count)}`;
+      detail = `${number(accountAlerts.enabled_count)} active receiver health alert` +
+        `${accountAlerts.enabled_count === 1 ? '' : 's'}.`;
+    } else if (accountAlerts.active_count > 0) {
+      className = 'neutral';
+      label = `${number(accountAlerts.disabled_count)} alert${accountAlerts.disabled_count === 1 ? '' : 's'} turned off`;
+      detail = `All ${number(accountAlerts.disabled_count)} active receiver health alert` +
+        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} turned off for this account. ` +
+        'Monitoring and history continue.';
     } else if (summary) {
       className = 'healthy';
       label = 'Healthy';
       detail = 'No active receiver health incidents.';
     }
+    if (!this.stale && accountAlerts.disabled_count > 0 && accountAlerts.enabled_count > 0) {
+      detail += ` ${number(accountAlerts.disabled_count)} alert` +
+        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} turned off for this account.`;
+    }
     if (this.snapshot?.generated_at_ms) {
       detail += ` Last update: ${exactDateTime(this.snapshot.generated_at_ms)}.`;
     }
     state.textContent = label;
-    ['healthy', 'warning', 'critical', 'stale', 'loading'].forEach((status) => {
+    ['healthy', 'warning', 'critical', 'neutral', 'stale', 'loading'].forEach((status) => {
       indicator.classList.remove(`receiver-health-${status}`);
     });
     indicator.classList.add(`receiver-health-${className}`);
@@ -14932,6 +14989,25 @@ function receiverHealthRefreshButton() {
   return refresh;
 }
 
+function receiverHealthAccountSettingNotice(snapshot) {
+  const settings = receiverHealthAccountAlertSummary(snapshot, activeUserPreferences());
+  const notice = node('aside', 'receiver-health-account-setting');
+  let message = 'Alert switches affect only this account\'s header indicator. Monitoring, measurements, and ' +
+    'history always continue.';
+  if (settings.disabled_count > 0) {
+    message = `${number(settings.disabled_count)} of ${number(settings.active_count)} active incident` +
+      `${settings.active_count === 1 ? ' is' : 's are'} turned off for this account's header alert. ` +
+      'They remain visible below because monitoring and history always continue.';
+  } else if (settings.active_count > 0) {
+    message = `All ${number(settings.active_count)} active incident` +
+      `${settings.active_count === 1 ? '' : 's'} currently ` +
+      `${settings.active_count === 1 ? 'affects' : 'affect'} this account's header alert. ` +
+      'Monitoring, measurements, and history always continue.';
+  }
+  notice.append(node('span', '', message), anchor('Manage alert switches', href('admin', { tab: 'alerts' })));
+  return notice;
+}
+
 function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   host.replaceChildren();
   if (!snapshot) {
@@ -14969,6 +15045,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     `Showing the last receiver health snapshot. ${lastError || 'The latest refresh failed.'}`));
 
   host.append(section('Current status', overview, receiverHealthRefreshButton()),
+    receiverHealthAccountSettingNotice(snapshot),
     section('Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
     receiverHealthResolvedSection(snapshot.resolved));
   if (snapshot.measurements.length) {
@@ -15032,6 +15109,83 @@ function settingsCardGrid(...cards) {
   const grid = node('div', 'settings-card-grid');
   grid.append(...cards);
   return grid;
+}
+
+async function renderAdminAlerts() {
+  const snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded) {
+    const unavailable = node('div', 'error', userPreferenceError?.message ||
+      'Alert settings could not be loaded for this account.');
+    const retry = node('button', 'button secondary', 'Retry');
+    retry.type = 'button';
+    retry.addEventListener('click', async () => {
+      retry.disabled = true;
+      await synchronizeUserPreferences();
+      void render();
+    });
+    content.append(section('Alert settings unavailable', unavailable, retry));
+    return;
+  }
+
+  const form = node('form', 'admin-form settings-page-form health-alert-settings-form');
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  const controls = new Map();
+  const apply = (preferences) => {
+    receiverHealthAlertIds.forEach((id) => {
+      const input = controls.get(id);
+      if (input) input.checked = isReceiverHealthAlertEnabled(preferences, id);
+    });
+  };
+  const cards = receiverHealthAlertGroups.map((group) => {
+    const toggles = group.alerts.map((alert) => {
+      const setting = preferenceCheckbox(`health-alert-${alert.id}`, alert.name, true, alert.description);
+      setting.input.dataset.alertCode = alert.id;
+      controls.set(alert.id, setting.input);
+      return setting.control;
+    });
+    const card = settingsCard(group.name, group.description, ...toggles);
+    card.classList.add('health-alert-settings-card');
+    return card;
+  });
+  apply(snapshot.preferences);
+
+  const save = node('button', '', 'Save Alert Settings');
+  save.type = 'submit';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(save);
+  const footer = node('div', 'settings-form-footer');
+  footer.append(message, actions);
+  form.append(node('p', 'health-alert-settings-intro',
+    'Choose which receiver-health incidents can change the health icon in this account\'s header. ' +
+    'Turning an alert off does not stop monitoring, remove measurements, or hide current and resolved incidents ' +
+    'from the Health page.'), settingsCardGrid(...cards), footer);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (save.disabled) return;
+    controls.forEach((input) => { input.disabled = true; });
+    save.disabled = true;
+    message.textContent = 'Saving alert settings…';
+    try {
+      await updateUserPreferences((preferences) => {
+        preferences.health_alerts.disabled_codes = receiverHealthDisabledCodesForSave(preferences, controls);
+      }, false);
+      message.textContent = 'Alert settings saved.';
+    } catch (error) {
+      if (error?.code === 'preference_conflict' && !error.reloadError) {
+        const current = userPreferenceController.snapshot();
+        if (current.loaded) apply(current.preferences);
+        message.textContent = 'These settings changed in another session. The current saved values were loaded.';
+      } else if (error?.code === 'preference_conflict') {
+        message.textContent = 'These settings changed in another session, but the current values could not be ' +
+          'reloaded. Try saving again or reload this page.';
+      } else message.textContent = error.message;
+    } finally {
+      controls.forEach((input) => { input.disabled = false; });
+      save.disabled = false;
+    }
+  });
+  content.append(section('Header alerts', form));
 }
 
 function openLivePresentationSettings(returnFocusSelector = null) {
@@ -15348,6 +15502,7 @@ async function renderAdmin() {
   const renderContext = captureRenderContext();
   const availableTabs = [
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
+    { id: 'alerts', label: 'Alerts', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'site-settings', label: 'Site Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
     { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
@@ -15364,6 +15519,10 @@ async function renderAdmin() {
     'Monitor receiver health and manage receiver-wide web settings'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active))) return;
   if (active === 'health') await renderAdminHealth();
+  else if (active === 'alerts') {
+    pageTitleController.update({ pageTitle: 'Health Alerts' });
+    await renderAdminAlerts();
+  }
   else if (active === 'site-settings') {
     pageTitleController.update({ pageTitle: 'Site Settings' });
     await renderSiteSettings();

@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 7;
+    public static final int CURRENT_VERSION = 8;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -45,6 +45,7 @@ public final class DatabaseFormatCatalog
         "cc4ab232780c6445865d86c69d4f04eb43f4f6064cf9e6770ff1405c4da32080";
     private static final String FORMAT_6_FINGERPRINT = FORMAT_5_FINGERPRINT;
     private static final String FORMAT_7_FINGERPRINT = FORMAT_6_FINGERPRINT;
+    private static final String FORMAT_8_FINGERPRINT = FORMAT_7_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -113,9 +114,18 @@ public final class DatabaseFormatCatalog
             "Add conversation grouping and its bounded burst limit to each complete user preference document",
             "Refuse version-1 selections above the version-2 limit of 16 scan lists instead of truncating them",
             "Drop the five retired global browser-audio capacity settings"));
+    private static final FormatDescriptor FORMAT_8 = descriptor(8, "web-user-health-alert-preferences-v3",
+        "Per-user receiver-health alert visibility preference format",
+        FORMAT_8_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
+        List.of("main format 8"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format8TestDatabase.java",
+        List.of(
+            "Preserve every account, credential, role, access policy, and version-2 browser preference",
+            "Add a bounded list of disabled stable receiver-health alert codes to each user preference document",
+            "Enable every receiver-health alert by default"));
 
     private static final List<FormatDescriptor> FORMATS =
-        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7);
+        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = Map.of(
         FORMAT_1.version(), FORMAT_1,
@@ -124,7 +134,8 @@ public final class DatabaseFormatCatalog
         FORMAT_4.version(), FORMAT_4,
         FORMAT_5.version(), FORMAT_5,
         FORMAT_6.version(), FORMAT_6,
-        FORMAT_7.version(), FORMAT_7);
+        FORMAT_7.version(), FORMAT_7,
+        FORMAT_8.version(), FORMAT_8);
     /* Several marker-bearing semantic formats may intentionally share one DDL fingerprint. */
     private static final Map<String,List<FormatDescriptor>> BY_FINGERPRINT = formatsByFingerprint();
 
@@ -237,7 +248,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_7;
+        return FORMAT_8;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -431,6 +442,7 @@ public final class DatabaseFormatCatalog
         {
             case 5, 6 -> 1;
             case 7 -> 2;
+            case 8 -> 3;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

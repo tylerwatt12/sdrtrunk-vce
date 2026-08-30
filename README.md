@@ -52,6 +52,8 @@ omit these newer features until they are deliberately included in that release l
   talkgroup discovery, and a RadioReference **Import All** action in JavaFX.
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
   FFT and waterfall with zoom, smoothing, frequency snapping, and channel flags.
+- **Receiver-health alerts are personal to each administrator:** every alert type can be turned on or off for that
+  account's header indicator while shared monitoring, measurements, and incident history continue unchanged.
 - **The Java receiver window is deliberately smaller:** Map (when enabled) and Tuners remain, while the old Systems
   workspace, embedded diagnostics, and receiver-local tuner Spectrum/Waterfall displays are removed. Both selected-
   channel and tuner-wide FFT/waterfall diagnostics remain available in the website.

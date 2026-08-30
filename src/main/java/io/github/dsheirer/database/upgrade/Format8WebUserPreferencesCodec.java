@@ -3,8 +3,17 @@
  * Copyright (C) 2026 Dennis Sheirer
  * ****************************************************************************
  */
-package io.github.dsheirer.web.settings;
+package io.github.dsheirer.database.upgrade;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,89 +23,130 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * Complete, versioned browser preference document owned by one signed-in user.
- */
-public record WebUserPreferences(int version, Appearance appearance, PageTitles pageTitles, Playback playback,
-                                 Scanner scanner, Presentation presentation, Tuner tuner,
-                                 HealthAlerts healthAlerts, Map<String,TableLayout> tables)
+/** Strict frozen codec for the version-3 preference document stored by database format 8. */
+final class Format8WebUserPreferencesCodec
 {
-    public static final int CURRENT_VERSION = 3;
-    public static final int MAXIMUM_JSON_BYTES = 131_072;
-    public static final int MAXIMUM_TABLES = 128;
-    public static final int MAXIMUM_COLUMNS_PER_TABLE = 128;
-    public static final int MAXIMUM_SELECTED_SCAN_LISTS = 16;
-    public static final int MINIMUM_LIVE_DETAIL_ROW_LIMIT = 25;
-    public static final int MAXIMUM_LIVE_DETAIL_ROW_LIMIT = 500;
-    public static final int DEFAULT_LIVE_DETAIL_ROW_LIMIT = 200;
-    public static final int MINIMUM_CONVERSATION_BURST_LIMIT = 1;
-    public static final int MAXIMUM_CONVERSATION_BURST_LIMIT = 20;
-    public static final int DEFAULT_CONVERSATION_BURST_LIMIT = 4;
-    public static final int MAXIMUM_DISABLED_HEALTH_ALERT_CODES = 128;
+    private static final int VERSION = 3;
+    private static final int MAXIMUM_JSON_BYTES = 131_072;
+    private static final int MAXIMUM_TABLES = 128;
+    private static final int MAXIMUM_COLUMNS_PER_TABLE = 128;
+    private static final int MAXIMUM_SELECTED_SCAN_LISTS = 16;
+    private static final int MINIMUM_CONVERSATION_BURST_LIMIT = 1;
+    private static final int MAXIMUM_CONVERSATION_BURST_LIMIT = 20;
+    private static final int MAXIMUM_DISABLED_HEALTH_ALERT_CODES = 128;
     private static final Pattern STABLE_ID = Pattern.compile("[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*");
+    private static final ObjectMapper MAPPER = new ObjectMapper(JsonFactory.builder()
+        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
+        .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_NULL_CREATOR_PROPERTIES)
+        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
-    public WebUserPreferences
+    private Format8WebUserPreferencesCodec()
     {
-        if(version != CURRENT_VERSION)
+    }
+
+    static void validate(String json) throws IOException
+    {
+        decode(json);
+    }
+
+    /** Converts one exact format-7 document into one exact format-8 document. */
+    static String migrateFromFormat7(String json) throws IOException
+    {
+        Format7WebUserPreferencesCodec.validate(json);
+        JsonNode parsed = MAPPER.readTree(json);
+        if(!(parsed instanceof ObjectNode target))
         {
-            throw new IllegalArgumentException("Unsupported web user preference version");
+            throw new IOException("Version-2 web user preferences are not a complete object");
         }
 
-        Objects.requireNonNull(appearance, "appearance is required");
-        Objects.requireNonNull(pageTitles, "page_titles is required");
-        Objects.requireNonNull(playback, "playback is required");
-        Objects.requireNonNull(scanner, "scanner is required");
-        Objects.requireNonNull(presentation, "presentation is required");
-        Objects.requireNonNull(tuner, "tuner is required");
-        Objects.requireNonNull(healthAlerts, "health_alerts is required");
-        Objects.requireNonNull(tables, "tables is required");
+        target.put("version", VERSION);
+        ObjectNode healthAlerts = target.putObject("health_alerts");
+        healthAlerts.putArray("disabled_codes");
+        return encode(decode(MAPPER.writeValueAsString(target)));
+    }
 
-        if(tables.size() > MAXIMUM_TABLES)
+    private static Document decode(String json) throws IOException
+    {
+        requireBounded(json);
+        try
         {
-            throw new IllegalArgumentException("Too many saved table layouts");
+            return MAPPER.readValue(json, Document.class);
         }
-
-        Map<String,TableLayout> canonicalTables = new LinkedHashMap<>();
-        tables.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
-            String id = requireStableId(entry.getKey(), "Table identifier");
-            canonicalTables.put(id, Objects.requireNonNull(entry.getValue(), "Table layout cannot be null"));
-        });
-        tables = Map.copyOf(canonicalTables);
+        catch(IllegalArgumentException exception)
+        {
+            throw new IOException("Version-3 web user preferences are invalid", exception);
+        }
     }
 
-    public static WebUserPreferences defaults()
+    private static String encode(Document preferences) throws IOException
     {
-        return defaults(true, true, true, "percentage",
-            DEFAULT_LIVE_DETAIL_ROW_LIMIT);
+        String json = MAPPER.writeValueAsString(preferences);
+        requireBounded(json);
+        return json;
     }
 
-    public static WebUserPreferences defaults(boolean showEncryptionDetails, boolean showControlDecodeQuality,
-                                               boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
-                                               int liveDetailRowLimit)
+    private static void requireBounded(String json) throws IOException
     {
-        return new WebUserPreferences(CURRENT_VERSION, new Appearance("light"), new PageTitles(false),
-            new Playback(1.0, List.of(), true, DEFAULT_CONVERSATION_BURST_LIMIT), new Scanner("normal"),
-            new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
-                decodeQualityDisplayMode, liveDetailRowLimit),
-            new Tuner(-140, 0, 1, true, true, false, "balanced"), new HealthAlerts(List.of()), Map.of());
+        if(json == null || json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_JSON_BYTES)
+        {
+            throw new IOException("Version-3 web user preferences are missing or exceed the storage bound");
+        }
     }
 
-    public record Appearance(String theme)
+    private record Document(int version, Appearance appearance, PageTitles pageTitles, Playback playback,
+                            Scanner scanner, Presentation presentation, Tuner tuner,
+                            HealthAlerts healthAlerts, Map<String,TableLayout> tables)
     {
-        public Appearance
+        private Document
+        {
+            if(version != VERSION)
+            {
+                throw new IllegalArgumentException("Unsupported version-3 web user preference version");
+            }
+
+            Objects.requireNonNull(appearance, "appearance is required");
+            Objects.requireNonNull(pageTitles, "page_titles is required");
+            Objects.requireNonNull(playback, "playback is required");
+            Objects.requireNonNull(scanner, "scanner is required");
+            Objects.requireNonNull(presentation, "presentation is required");
+            Objects.requireNonNull(tuner, "tuner is required");
+            Objects.requireNonNull(healthAlerts, "health_alerts is required");
+            Objects.requireNonNull(tables, "tables is required");
+
+            if(tables.size() > MAXIMUM_TABLES)
+            {
+                throw new IllegalArgumentException("Too many saved table layouts");
+            }
+
+            Map<String,TableLayout> canonicalTables = new LinkedHashMap<>();
+            tables.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+                String id = requireStableId(entry.getKey(), "Table identifier");
+                canonicalTables.put(id, Objects.requireNonNull(entry.getValue(), "Table layout cannot be null"));
+            });
+            tables = Map.copyOf(canonicalTables);
+        }
+    }
+
+    private record Appearance(String theme)
+    {
+        private Appearance
         {
             theme = requireOneOf(theme, "theme", Set.of("light", "dark"));
         }
     }
 
-    public record PageTitles(boolean prependPlayingCall)
+    private record PageTitles(boolean prependPlayingCall)
     {
     }
 
-    public record Playback(double volume, List<Long> selectedScanListIds, boolean conversationGrouping,
-                           int conversationBurstLimit)
+    private record Playback(double volume, List<Long> selectedScanListIds, boolean conversationGrouping,
+                            int conversationBurstLimit)
     {
-        public Playback
+        private Playback
         {
             if(!Double.isFinite(volume) || volume < 0.0 || volume > 1.0)
             {
@@ -104,7 +154,6 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             }
 
             Objects.requireNonNull(selectedScanListIds, "playback.selected_scan_list_ids is required");
-
             if(selectedScanListIds.size() > MAXIMUM_SELECTED_SCAN_LISTS)
             {
                 throw new IllegalArgumentException("playback.selected_scan_list_ids cannot contain more than " +
@@ -116,7 +165,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             {
                 if(id == null || id <= 0 || !unique.add(id))
                 {
-                    throw new IllegalArgumentException("Selected scan-list identifiers must be unique positive integers");
+                    throw new IllegalArgumentException(
+                        "Selected scan-list identifiers must be unique positive integers");
                 }
             }
 
@@ -126,64 +176,58 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                 throw new IllegalArgumentException("playback.conversation_burst_limit must be between " +
                     MINIMUM_CONVERSATION_BURST_LIMIT + " and " + MAXIMUM_CONVERSATION_BURST_LIMIT);
             }
-
             selectedScanListIds = List.copyOf(selectedScanListIds);
         }
     }
 
-    public record Scanner(String detailMode)
+    private record Scanner(String detailMode)
     {
-        public Scanner
+        private Scanner
         {
             detailMode = requireOneOf(detailMode, "scanner.detail_mode",
                 Set.of("simple", "normal", "advanced", "engineer"));
         }
     }
 
-    public record Presentation(boolean showEncryptionDetails, boolean showControlDecodeQuality,
-                               boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
-                               int liveDetailRowLimit)
+    private record Presentation(boolean showEncryptionDetails, boolean showControlDecodeQuality,
+                                boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
+                                int liveDetailRowLimit)
     {
-        public Presentation
+        private Presentation
         {
             decodeQualityDisplayMode = requireOneOf(decodeQualityDisplayMode,
                 "presentation.decode_quality_display_mode", Set.of("percentage", "detailed"));
-
-            if(liveDetailRowLimit < MINIMUM_LIVE_DETAIL_ROW_LIMIT ||
-                liveDetailRowLimit > MAXIMUM_LIVE_DETAIL_ROW_LIMIT)
+            if(liveDetailRowLimit < 25 || liveDetailRowLimit > 500)
             {
-                throw new IllegalArgumentException("presentation.live_detail_row_limit is outside the supported range");
+                throw new IllegalArgumentException(
+                    "presentation.live_detail_row_limit is outside the supported range");
             }
         }
     }
 
-    public record Tuner(int floorDb, int ceilingDb, double waterfallSpeed, boolean snapFrequency,
-                        boolean smoothFft, boolean highlightWaterfallChannels, String profile)
+    private record Tuner(int floorDb, int ceilingDb, double waterfallSpeed, boolean snapFrequency,
+                         boolean smoothFft, boolean highlightWaterfallChannels, String profile)
     {
-        public Tuner
+        private Tuner
         {
-            if(floorDb < -200 || floorDb > -5 || ceilingDb < -195 || ceilingDb > 0 ||
-                ceilingDb - floorDb < 5)
+            if(floorDb < -200 || floorDb > -5 || ceilingDb < -195 || ceilingDb > 0 || ceilingDb - floorDb < 5)
             {
                 throw new IllegalArgumentException("Tuner floor and ceiling are invalid");
             }
-
             if(!Double.isFinite(waterfallSpeed) || waterfallSpeed < 0.25 || waterfallSpeed > 4.0)
             {
                 throw new IllegalArgumentException("tuner.waterfall_speed must be between 0.25 and 4");
             }
-
             profile = requireOneOf(profile, "tuner.profile",
                 Set.of("efficient", "balanced", "high-detail", "maximum-detail"));
         }
     }
 
-    public record HealthAlerts(List<String> disabledCodes)
+    private record HealthAlerts(List<String> disabledCodes)
     {
-        public HealthAlerts
+        private HealthAlerts
         {
             Objects.requireNonNull(disabledCodes, "health_alerts.disabled_codes is required");
-
             if(disabledCodes.size() > MAXIMUM_DISABLED_HEALTH_ALERT_CODES)
             {
                 throw new IllegalArgumentException("health_alerts.disabled_codes cannot contain more than " +
@@ -207,19 +251,21 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         }
     }
 
-    public record TableLayout(List<String> schema, List<String> columnOrder, Map<String,Integer> columnWidths,
-                              List<String> hiddenColumns)
+    private record TableLayout(List<String> schema, List<String> columnOrder, Map<String,Integer> columnWidths,
+                               List<String> hiddenColumns)
     {
-        public TableLayout
+        private TableLayout
         {
             schema = canonicalIds(schema, "table.schema");
             columnOrder = canonicalIds(columnOrder, "table.column_order");
             hiddenColumns = canonicalIds(hiddenColumns, "table.hidden_columns");
             Objects.requireNonNull(columnWidths, "table.column_widths is required");
 
-            if(schema.size() > MAXIMUM_COLUMNS_PER_TABLE || !new HashSet<>(schema).equals(new HashSet<>(columnOrder)))
+            if(schema.size() > MAXIMUM_COLUMNS_PER_TABLE ||
+                !new HashSet<>(schema).equals(new HashSet<>(columnOrder)))
             {
-                throw new IllegalArgumentException("Table schema and column order must contain the same bounded columns");
+                throw new IllegalArgumentException(
+                    "Table schema and column order must contain the same bounded columns");
             }
 
             Set<String> schemaIds = Set.copyOf(schema);
@@ -227,7 +273,6 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             {
                 throw new IllegalArgumentException("Table widths and hidden columns must belong to its schema");
             }
-
             if(hiddenColumns.size() == schema.size())
             {
                 throw new IllegalArgumentException("A saved table layout must keep at least one column visible");
@@ -250,7 +295,6 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     private static List<String> canonicalIds(List<String> ids, String label)
     {
         Objects.requireNonNull(ids, label + " is required");
-
         if(ids.size() > MAXIMUM_COLUMNS_PER_TABLE)
         {
             throw new IllegalArgumentException(label + " exceeds the column bound");
@@ -291,4 +335,5 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         }
         return normalized;
     }
+
 }

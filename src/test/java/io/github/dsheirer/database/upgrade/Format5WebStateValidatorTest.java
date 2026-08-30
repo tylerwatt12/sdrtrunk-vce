@@ -38,10 +38,10 @@ class Format5WebStateValidatorTest
     @Test
     void acceptsFreshSetupStateAndPrimaryPlusMaximumOrdinaryUsers() throws Exception
     {
-        Path fresh = Format7TestDatabase.create(mTemporaryFolder.resolve("fresh.sqlite"));
+        Path fresh = Format8TestDatabase.create(mTemporaryFolder.resolve("fresh.sqlite"));
         assertAcceptedByBothPaths(fresh);
 
-        Path full = Format7TestDatabase.create(mTemporaryFolder.resolve("full.sqlite"));
+        Path full = Format8TestDatabase.create(mTemporaryFolder.resolve("full.sqlite"));
         try(Connection connection = open(full))
         {
             connection.setAutoCommit(false);
@@ -59,14 +59,14 @@ class Format5WebStateValidatorTest
     @Test
     void rejectsOrdinaryUsersAndPoliciesWithoutPrimaryAdministrator() throws Exception
     {
-        Path userWithoutPrimary = Format7TestDatabase.create(mTemporaryFolder.resolve("orphan-user.sqlite"));
+        Path userWithoutPrimary = Format8TestDatabase.create(mTemporaryFolder.resolve("orphan-user.sqlite"));
         try(Connection connection = open(userWithoutPrimary))
         {
             insertUser(connection, 1, "listener", "USER", false);
         }
         assertRejectedByBothPaths(userWithoutPrimary, "without the primary administrator");
 
-        Path policyWithoutPrimary = Format7TestDatabase.create(mTemporaryFolder.resolve("orphan-policy.sqlite"));
+        Path policyWithoutPrimary = Format8TestDatabase.create(mTemporaryFolder.resolve("orphan-policy.sqlite"));
         try(Connection connection = open(policyWithoutPrimary))
         {
             insertPolicy(connection, "dashboard", "USER");
@@ -77,7 +77,7 @@ class Format5WebStateValidatorTest
     @Test
     void rejectsMoreThanMaximumOrdinaryUsers() throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve("too-many-users.sqlite"));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("too-many-users.sqlite"));
         try(Connection connection = open(database))
         {
             connection.setAutoCommit(false);
@@ -95,7 +95,7 @@ class Format5WebStateValidatorTest
     @Test
     void rejectsRuntimeInvalidUsernameAndNonpositiveIdentifier() throws Exception
     {
-        Path username = Format7TestDatabase.create(mTemporaryFolder.resolve("invalid-username.sqlite"));
+        Path username = Format8TestDatabase.create(mTemporaryFolder.resolve("invalid-username.sqlite"));
         try(Connection connection = open(username))
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -103,7 +103,7 @@ class Format5WebStateValidatorTest
         }
         assertRejectedByBothPaths(username, "invalid username or tier");
 
-        Path identifier = Format7TestDatabase.create(mTemporaryFolder.resolve("invalid-id.sqlite"));
+        Path identifier = Format8TestDatabase.create(mTemporaryFolder.resolve("invalid-id.sqlite"));
         try(Connection connection = open(identifier))
         {
             insertUser(connection, -1, "admin", "ADMIN", true);
@@ -114,7 +114,7 @@ class Format5WebStateValidatorTest
     @Test
     void rejectsCredentialStorageThatSQLiteColumnChecksAdmit() throws Exception
     {
-        Path textSalt = Format7TestDatabase.create(mTemporaryFolder.resolve("text-salt.sqlite"));
+        Path textSalt = Format8TestDatabase.create(mTemporaryFolder.resolve("text-salt.sqlite"));
         try(Connection connection = open(textSalt); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -122,7 +122,7 @@ class Format5WebStateValidatorTest
         }
         assertRejectedByBothPaths(textSalt, "password salt must use SQLite blob storage");
 
-        Path fractionalIterations = Format7TestDatabase.create(mTemporaryFolder.resolve("fractional-iterations.sqlite"));
+        Path fractionalIterations = Format8TestDatabase.create(mTemporaryFolder.resolve("fractional-iterations.sqlite"));
         try(Connection connection = open(fractionalIterations); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -141,7 +141,7 @@ class Format5WebStateValidatorTest
         assertUserPositiveValueRejected("zero-updated-at.sqlite", "updated_at_ms",
             "account update time must be positive");
 
-        Path policy = Format7TestDatabase.create(mTemporaryFolder.resolve("zero-policy-updated-at.sqlite"));
+        Path policy = Format8TestDatabase.create(mTemporaryFolder.resolve("zero-policy-updated-at.sqlite"));
         try(Connection connection = open(policy); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -156,7 +156,7 @@ class Format5WebStateValidatorTest
     @Test
     void rejectsJsonThatDoesNotDecodeAsTypedPreferences() throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve("untyped-preferences.sqlite"));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("untyped-preferences.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -178,23 +178,34 @@ class Format5WebStateValidatorTest
                 assertDoesNotThrow(() -> DatabaseFormatCatalog.inspect(connection));
                 assertDoesNotThrow(() -> Format5WebStateValidator.validate(connection, 1));
                 assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 2));
+                assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 3));
             }
         }
 
         Path format7 = Format7TestDatabase.create(mTemporaryFolder.resolve("format-7-preferences.sqlite"));
         try(Connection connection = open(format7))
         {
-            insertUser(connection, 1, "admin", "ADMIN", true);
             assertDoesNotThrow(() -> DatabaseFormatCatalog.inspect(connection));
             assertDoesNotThrow(() -> Format5WebStateValidator.validate(connection, 2));
             assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 1));
+            assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 3));
+        }
+
+        Path format8 = Format8TestDatabase.create(mTemporaryFolder.resolve("format-8-preferences.sqlite"));
+        try(Connection connection = open(format8))
+        {
+            insertUser(connection, 1, "admin", "ADMIN", true);
+            assertDoesNotThrow(() -> DatabaseFormatCatalog.inspect(connection));
+            assertDoesNotThrow(() -> Format5WebStateValidator.validate(connection, 3));
+            assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 1));
+            assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 2));
         }
     }
 
     @Test
     void validatesStrictPortableSiteSettingsThroughStartupAndCatalogPaths() throws Exception
     {
-        Path valid = Format7TestDatabase.create(mTemporaryFolder.resolve("valid-site-settings.sqlite"));
+        Path valid = Format8TestDatabase.create(mTemporaryFolder.resolve("valid-site-settings.sqlite"));
         putPortablePreferences(valid, """
             {"user/io/github/dsheirer/preference/nowplaying":{
                 "site.settings.revision":"1",
@@ -232,7 +243,7 @@ class Format5WebStateValidatorTest
     @Test
     void rejectsExhaustedUserPreferenceRevision() throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve("exhausted-preference-revision.sqlite"));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("exhausted-preference-revision.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -253,7 +264,7 @@ class Format5WebStateValidatorTest
 
     private void assertPolicyRejected(String filename, String capability, String tier, String message) throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve(filename));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve(filename));
         try(Connection connection = open(database))
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -264,7 +275,7 @@ class Format5WebStateValidatorTest
 
     private void assertUserPositiveValueRejected(String filename, String column, String message) throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve(filename));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve(filename));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -277,7 +288,7 @@ class Format5WebStateValidatorTest
 
     private void assertPortablePreferencesRejected(String filename, String json, String message) throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve(filename));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve(filename));
         putPortablePreferences(database, json);
         assertRejectedByBothPaths(database, message);
     }

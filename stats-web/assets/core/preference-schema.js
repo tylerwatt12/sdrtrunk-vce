@@ -1,7 +1,7 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 2,
+    version: 3,
     appearance: Object.freeze({ theme: 'light' }),
     page_titles: Object.freeze({ prepend_playing_call: false }),
     playback: Object.freeze({
@@ -27,6 +27,7 @@
       highlight_waterfall_channels: false,
       profile: 'balanced'
     }),
+    health_alerts: Object.freeze({ disabled_codes: Object.freeze([]) }),
     tables: Object.freeze({})
   });
 
@@ -77,6 +78,19 @@
     return values;
   }
 
+  function alertCodes(value, name) {
+    if (!Array.isArray(value) || value.length > 128) throw invalid(`${name} is invalid.`);
+    const values = value.map((code) => {
+      if (typeof code !== 'string' || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(code) ||
+          code.length > 64) {
+        throw invalid(`${name} is invalid.`);
+      }
+      return code;
+    });
+    if (new Set(values).size !== values.length) throw invalid(`${name} contains duplicate alert codes.`);
+    return values;
+  }
+
   function table(value, name) {
     exact(value, ['schema', 'column_order', 'column_widths', 'hidden_columns'], name);
     const schema = columnIds(value.schema, `${name}.schema`);
@@ -102,9 +116,9 @@
   }
 
   function validate(value) {
-    exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner', 'tables'],
-      'preferences');
-    if (value.version !== 2) throw invalid('The user preference version is unsupported.');
+    exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
+      'health_alerts', 'tables'], 'preferences');
+    if (value.version !== 3) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
     exact(value.playback, ['volume', 'selected_scan_list_ids', 'conversation_grouping',
@@ -114,6 +128,7 @@
       'show_voice_decode_quality', 'decode_quality_display_mode', 'live_detail_row_limit'], 'presentation');
     exact(value.tuner, ['floor_db', 'ceiling_db', 'waterfall_speed', 'snap_frequency', 'smooth_fft',
       'highlight_waterfall_channels', 'profile'], 'tuner');
+    exact(value.health_alerts, ['disabled_codes'], 'health_alerts');
     const tables = plain(value.tables, 'tables');
     if (Object.keys(tables).length > 128) throw invalid('Too many table layouts are stored.');
     const decodedTables = Object.fromEntries(Object.entries(tables).map(([id, layout]) => {
@@ -130,7 +145,7 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 2,
+      version: 3,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme') },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
         'page_titles.prepend_playing_call') },
@@ -165,6 +180,9 @@
           'tuner.highlight_waterfall_channels'),
         profile: oneOf(value.tuner.profile,
           ['efficient', 'balanced', 'high-detail', 'maximum-detail'], 'tuner.profile')
+      },
+      health_alerts: {
+        disabled_codes: alertCodes(value.health_alerts.disabled_codes, 'health_alerts.disabled_codes')
       },
       tables: decodedTables
     };

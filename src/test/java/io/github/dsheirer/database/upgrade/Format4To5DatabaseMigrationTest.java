@@ -44,7 +44,7 @@ class Format4To5DatabaseMigrationTest
             Map<String,CredentialSnapshot> legacyCredentials = legacyCredentials(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(3, preflight.steps().size());
+            assertEquals(4, preflight.steps().size());
             assertEquals("format-4-to-5", preflight.steps().getFirst().id());
             assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "saved channel identity scalars", 2);
             assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired channel configurations", 2);
@@ -60,7 +60,7 @@ class Format4To5DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(4, report.source().version());
-                assertEquals(7, report.target().version());
+                assertEquals(8, report.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -101,13 +101,14 @@ class Format4To5DatabaseMigrationTest
                        json_extract(preferences_json, '$.presentation.live_detail_row_limit')
                 FROM web_user WHERE username='listener'
                 """));
-            assertEquals("2:light:normal:0:1:4", scalar(connection, """
+            assertEquals("3:light:normal:0:1:4:0", scalar(connection, """
                 SELECT json_extract(preferences_json, '$.version') || ':' ||
                        json_extract(preferences_json, '$.appearance.theme') || ':' ||
                        json_extract(preferences_json, '$.scanner.detail_mode') || ':' ||
                        json_array_length(json_extract(preferences_json, '$.playback.selected_scan_list_ids')) || ':' ||
                        json_extract(preferences_json, '$.playback.conversation_grouping') || ':' ||
-                       json_extract(preferences_json, '$.playback.conversation_burst_limit')
+                       json_extract(preferences_json, '$.playback.conversation_burst_limit') || ':' ||
+                       json_array_length(json_extract(preferences_json, '$.health_alerts.disabled_codes'))
                 FROM web_user WHERE username='admin'
                 """));
             assertEquals("true:false:1750:1:preserve-me", scalar(connection, """
@@ -168,8 +169,8 @@ class Format4To5DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport rolledBack = DatabaseMigrationChain.migrate(connection);
-                assertEquals(7, rolledBack.target().version());
-                assertEquals("7", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals(8, rolledBack.target().version());
+                assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
                 assertTrue(tableExists(connection, "web_user"));
                 connection.rollback();
             }
@@ -190,7 +191,7 @@ class Format4To5DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport retried = DatabaseMigrationChain.migrate(connection);
-                assertEquals(7, retried.target().version());
+                assertEquals(8, retried.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -203,7 +204,7 @@ class Format4To5DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(7, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(8, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM web_user"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM configuration_channel
@@ -290,7 +291,7 @@ class Format4To5DatabaseMigrationTest
             assertEquals("P25_PHASE1", scalar(connection,
                 "SELECT decoder_type FROM configuration_channel WHERE id=(SELECT min(id) " +
                     "FROM configuration_channel)"));
-            assertEquals("7", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertTrue(tableExists(connection, "web_user"));
         }
     }

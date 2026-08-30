@@ -541,7 +541,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 2,
+    version: 3,
     appearance: { theme: 'light' },
     page_titles: { prepend_playing_call: false },
     playback: {
@@ -556,6 +556,7 @@ async function main() {
       floor_db: -140, ceiling_db: 0, waterfall_speed: 1, snap_frequency: true, smooth_fft: true,
       highlight_waterfall_channels: false, profile: 'balanced'
     },
+    health_alerts: { disabled_codes: [] },
     tables: {}
   });
   assert.equal(decodedDefaults.scanner.detail_mode, 'normal');

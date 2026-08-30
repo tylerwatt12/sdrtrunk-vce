@@ -381,6 +381,12 @@ body[data-view="live"] .channel-diagnostic-readouts {
   border-color: #a75a66;
 }
 
+.receiver-health-indicator.receiver-health-neutral {
+  color: #d3dce4;
+  background: #303a43;
+  border-color: #66737e;
+}
+
 .receiver-health-indicator.receiver-health-stale,
 .receiver-health-indicator.receiver-health-loading {
   color: #d3dce4;
@@ -3790,6 +3796,36 @@ body.modal-open {
   min-width: 0;
 }
 
+.receiver-health-account-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 11px 13px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  line-height: 1.45;
+}
+
+.receiver-health-account-setting a {
+  flex: 0 0 auto;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.health-alert-settings-intro {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.health-alert-settings-card .settings-card-body {
+  align-content: start;
+}
+
 .receiver-health-overview {
   display: grid;
   grid-template-columns: minmax(190px, 0.7fr) minmax(360px, 1.5fr) minmax(240px, 0.8fr);
@@ -5861,6 +5897,11 @@ th.numeric {
   .settings-field-grid,
   .settings-form-footer {
     grid-template-columns: 1fr;
+  }
+
+  .receiver-health-account-setting {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .admin-settings-form {

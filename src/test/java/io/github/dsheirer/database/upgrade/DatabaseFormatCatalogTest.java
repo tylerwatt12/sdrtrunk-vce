@@ -60,8 +60,10 @@ class DatabaseFormatCatalogTest
 
         assertEquals(DatabaseFormatCatalog.requireVersion(DatabaseFormatCatalog.CURRENT_VERSION),
             DatabaseFormatCatalog.current());
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(7).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("limit of 16 scan lists")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("bounded list of disabled stable receiver-health alert codes")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -111,7 +113,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -269,7 +271,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixAndSevenAreSemanticallyAmbiguous() throws Exception
+    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixThroughEightAreSemanticallyAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -285,7 +287,8 @@ class DatabaseFormatCatalogTest
         {
             SQLException exception = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspect(connection));
-            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7]"), exception::getMessage);
+            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8]"),
+                exception::getMessage);
             assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
                 exception::getMessage);
         }

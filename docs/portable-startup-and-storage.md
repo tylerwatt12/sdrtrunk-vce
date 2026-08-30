@@ -61,12 +61,18 @@ receiver contexts from the former RadioResolve GUID key to the saved channel con
 row ID is retained, so linked activity history remains attached. Databases with conflicting, duplicated, malformed,
 or otherwise ambiguous context identities are refused instead of merged or repaired.
 
-Global database format 7 is the current format. Its format 6-to-7 step upgrades each exact per-user browser
+Global database format 7 adds Conversation Mode. Its format 6-to-7 step upgrades each exact per-user browser
 preference document to add Conversation Mode and the bounded calls-before-switching value. It preserves every other
 personal preference, increments that user's preference revision, and removes the five retired receiver-wide browser
 audio capacity keys. Unknown or incomplete preference documents and exhausted revisions are refused rather than
 defaulted. A version-1 user with more than 16 selected Scan Lists is refused rather than silently truncated; reduce
 that user's selection in the previous build and run the migration again.
+
+Global database format 8 is the current format. Its format 7-to-8 step upgrades each exact per-user browser
+preference document to add the bounded list of receiver-health alerts that account has turned off. The new list is
+empty for every migrated account, preserving the existing behavior where all alerts are on. Every other personal
+preference is preserved and the user's preference revision is incremented. Unknown or incomplete preference
+documents and exhausted revisions are refused rather than repaired or defaulted.
 
 Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
 the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS

@@ -55,14 +55,14 @@ public final class Format5WebStateValidator
 
     public static void validate(Connection connection) throws SQLException
     {
-        validate(connection, 2);
+        validate(connection, 3);
     }
 
     /** Validates one exact persisted preference-document generation for its owning database format. */
     public static void validate(Connection connection, int preferenceDocumentVersion) throws SQLException
     {
         Objects.requireNonNull(connection, "Database connection cannot be null");
-        if(preferenceDocumentVersion != 1 && preferenceDocumentVersion != 2)
+        if(preferenceDocumentVersion != 1 && preferenceDocumentVersion != 2 && preferenceDocumentVersion != 3)
         {
             throw invalid("unsupported preference-document version " + preferenceDocumentVersion);
         }
@@ -227,9 +227,18 @@ public final class Format5WebStateValidator
             {
                 Format6WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
             }
-            else
+            else if(preferenceDocumentVersion == 2)
             {
                 Format7WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+            }
+            else if(preferenceDocumentVersion == 3)
+            {
+                Format8WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+            }
+            else
+            {
+                throw new IOException("Unsupported web preference document version " +
+                    preferenceDocumentVersion);
             }
         }
         catch(IOException exception)
