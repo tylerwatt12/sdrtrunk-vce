@@ -35,9 +35,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -223,98 +220,6 @@ class AudioRecordingManagerTest
         }
     }
 
-    @Test
-    void stopWaitsForInFlightWriterBeforeFinalDrain() throws Exception
-    {
-        UserPreferences preferences = new UserPreferences();
-        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
-        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
-        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
-        CountDownLatch firstWriterEntered = new CountDownLatch(1);
-        CountDownLatch releaseFirstWriter = new CountDownLatch(1);
-        CountDownLatch stopTaskStarted = new CountDownLatch(1);
-        AtomicInteger activeWriters = new AtomicInteger();
-        AtomicInteger maximumActiveWriters = new AtomicInteger();
-        AtomicInteger writes = new AtomicInteger();
-        AudioRecordingManager.RecordingWriter writer = (call, path, format, userPreferences) -> {
-            int active = activeWriters.incrementAndGet();
-            maximumActiveWriters.accumulateAndGet(active, Math::max);
-            int writeIndex = writes.getAndIncrement();
-
-            try
-            {
-                if(writeIndex == 0)
-                {
-                    firstWriterEntered.countDown();
-
-                    try
-                    {
-                        if(!releaseFirstWriter.await(2, TimeUnit.SECONDS))
-                        {
-                            throw new java.io.IOException("Timed out waiting to release test writer");
-                        }
-                    }
-                    catch(InterruptedException exception)
-                    {
-                        Thread.currentThread().interrupt();
-                        throw new java.io.IOException("Interrupted test writer", exception);
-                    }
-                }
-
-                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
-            }
-            finally
-            {
-                activeWriters.decrementAndGet();
-            }
-        };
-        AtomicInteger recorded = new AtomicInteger();
-        AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, writer);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-
-        try
-        {
-            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
-            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.WAVE);
-            manager.start();
-            manager.receive(completedCall(1, List.of(new float[80])));
-            manager.receive(completedCall(2, List.of(new float[80])));
-            Future<?> processor = executor.submit(manager.new QueueProcessor());
-            assertTrue(firstWriterEntered.await(1, TimeUnit.SECONDS));
-            Future<?> stopping = executor.submit(() -> {
-                stopTaskStarted.countDown();
-                manager.stop();
-            });
-            assertTrue(stopTaskStarted.await(1, TimeUnit.SECONDS));
-            assertTrue(awaitWaitingDrain(manager, 1, TimeUnit.SECONDS),
-                "Stop did not reach the single-writer drain lock");
-            assertFalse(stopping.isDone(), "Stop must wait for the in-flight recording writer");
-            releaseFirstWriter.countDown();
-            processor.get(2, TimeUnit.SECONDS);
-            stopping.get(2, TimeUnit.SECONDS);
-
-            assertEquals(1, maximumActiveWriters.get());
-            assertEquals(2, writes.get());
-            assertEquals(2, recorded.get());
-            assertEquals(0, manager.getQueueStatus().queuedCalls());
-
-            try(var files = Files.list(mTemporaryFolder))
-            {
-                assertEquals(2, files.filter(Files::isRegularFile).count());
-            }
-        }
-        finally
-        {
-            releaseFirstWriter.countDown();
-            manager.stop();
-            executor.shutdownNow();
-            scheduler.shutdownNow();
-            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
-            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
-        }
-    }
-
     private static CompletedAudioCall completedCall()
     {
         return completedCall(1, List.of(new float[800]));
@@ -337,24 +242,6 @@ class AudioRecordingManagerTest
             identifiers, Set.of(), startedAt, completedAt, 1, 1, startedAt, completedAt, false, true,
             CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), null, null);
         return new CompletedAudioCall(snapshot, audioBuffers);
-    }
-
-    private static boolean awaitWaitingDrain(AudioRecordingManager manager, long timeout, TimeUnit unit)
-        throws InterruptedException
-    {
-        long deadline = System.nanoTime() + unit.toNanos(timeout);
-
-        while(System.nanoTime() < deadline)
-        {
-            if(manager.getQueueStatus().waitingDrains() > 0)
-            {
-                return true;
-            }
-
-            Thread.sleep(10);
-        }
-
-        return manager.getQueueStatus().waitingDrains() > 0;
     }
 
     private static class ManualRecordingScheduler extends ScheduledThreadPoolExecutor

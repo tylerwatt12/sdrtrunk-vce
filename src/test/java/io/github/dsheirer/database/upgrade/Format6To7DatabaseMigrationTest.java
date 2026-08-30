@@ -34,7 +34,7 @@ class Format6To7DatabaseMigrationTest
             String securityBefore = securityDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(2, preflight.steps().size());
+            assertEquals(3, preflight.steps().size());
             assertEquals("format-6-to-7", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "per-user browser preference documents", 3);
@@ -59,17 +59,17 @@ class Format6To7DatabaseMigrationTest
             }
 
             assertEquals(6, report.source().version());
-            assertEquals(8, report.target().version());
-            assertEquals(2, report.steps().size());
+            assertEquals(9, report.target().version());
+            assertEquals(3, report.steps().size());
             assertEquals("format-6-to-7", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=3
+                WHERE json_extract(preferences_json, '$.version')=4
                   AND json_extract(preferences_json, '$.playback.conversation_grouping')=1
                   AND json_extract(preferences_json, '$.playback.conversation_burst_limit')=4
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=3
+                  AND preferences_revision=4
                 """));
             assertEquals("1.0:0:1.0:0", scalar(connection, """
                 SELECT min(json_extract(preferences_json, '$.playback.volume')) || ':' ||
@@ -99,10 +99,10 @@ class Format6To7DatabaseMigrationTest
                 FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
             assertEquals(securityBefore, securityDigest(connection));
-            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(8, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -118,7 +118,7 @@ class Format6To7DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(8, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(9, DatabaseMigrationChain.migrate(connection).target().version());
                 assertEquals("0", retiredSettingCount(connection));
                 connection.rollback();
             }

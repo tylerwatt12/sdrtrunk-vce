@@ -464,6 +464,7 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         WebEntityRef.put(row, rowChannel != null ? rowChannel.entityRef() : null);
         row.put("status", boundedText(snapshot.status(), MAXIMUM_LIVE_TEXT_LENGTH));
+        row.put("activation_order", snapshot.activationOrder());
         putText(row, "role", snapshot.role(), MAXIMUM_LIVE_TEXT_LENGTH);
         List<String> tags = snapshot.tags() != null ? snapshot.tags().stream().filter(Objects::nonNull)
             .limit(MAXIMUM_LIVE_TAGS).map(tag -> boundedText(tag, MAXIMUM_LIVE_TAG_LENGTH)).toList() : List.of();

@@ -68,11 +68,17 @@ audio capacity keys. Unknown or incomplete preference documents and exhausted re
 defaulted. A version-1 user with more than 16 selected Scan Lists is refused rather than silently truncated; reduce
 that user's selection in the previous build and run the migration again.
 
-Global database format 8 is the current format. Its format 7-to-8 step upgrades each exact per-user browser
+Global database format 8 added per-user health-alert visibility. Its format 7-to-8 step upgrades each exact per-user browser
 preference document to add the bounded list of receiver-health alerts that account has turned off. The new list is
 empty for every migrated account, preserving the existing behavior where all alerts are on. Every other personal
 preference is preserved and the user's preference revision is incremented. Unknown or incomplete preference
 documents and exhausted revisions are refused rather than repaired or defaulted.
+
+Global database format 9 is the current format. Its format 8-to-9 step adds three per-user Live presentation choices.
+Active-trunked-channel filtering defaults off. Retaining the last call on idle rows and clearing idle voice quality
+inherit the previous receiver-wide values for every existing account, defaulting false when those shared values are
+absent. The two obsolete shared keys are removed while traffic-grant age-out, the site-settings revision, and every
+unrelated portable preference remain intact.
 
 Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
 the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS

@@ -63,7 +63,7 @@ class DatabaseFormatCatalogTest
         assertTrue(DatabaseFormatCatalog.requireVersion(7).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("limit of 16 scan lists")));
         assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
-            .anyMatch(policy -> policy.contains("bounded list of disabled stable receiver-health alert codes")));
+            .anyMatch(policy -> policy.contains("Seed both moved presentation choices")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -113,7 +113,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format9TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -271,7 +271,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixThroughEightAreSemanticallyAmbiguous() throws Exception
+    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixThroughNineAreSemanticallyAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -287,7 +287,7 @@ class DatabaseFormatCatalogTest
         {
             SQLException exception = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspect(connection));
-            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8]"),
+            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9]"),
                 exception::getMessage);
             assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
                 exception::getMessage);

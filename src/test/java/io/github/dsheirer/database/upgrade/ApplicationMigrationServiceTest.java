@@ -62,10 +62,10 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationPlan(format1Database);
         assertFormat(format1Plan.source(), 1, "alpha8-shared", false);
         assertEquals(DatabaseFormatCatalog.current(), format1Plan.target());
-        assertEquals(7, format1Plan.steps().size());
+        assertEquals(8, format1Plan.steps().size());
         assertEquals(1, format1Plan.steps().getFirst().sourceVersion());
         assertEquals(2, format1Plan.steps().getFirst().targetVersion());
-        assertEquals(7, format1Plan.steps().getLast().sourceVersion());
+        assertEquals(8, format1Plan.steps().getLast().sourceVersion());
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().getLast().targetVersion());
         assertTrue(format1Plan.steps().get(1).effects().stream()
             .anyMatch(effect -> "unassigned channel Alias Lists".equals(effect.subject())));
@@ -73,12 +73,14 @@ class ApplicationMigrationServiceTest
             .anyMatch(effect -> "physical receiver-leg call projections".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(3).effects().stream()
             .anyMatch(effect -> "web accounts".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(format1Plan.steps().size() - 3).effects().stream()
+        assertTrue(format1Plan.steps().get(format1Plan.steps().size() - 4).effects().stream()
             .anyMatch(effect -> "configured conventional receiver-context identities".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(format1Plan.steps().size() - 2).effects().stream()
+        assertTrue(format1Plan.steps().get(format1Plan.steps().size() - 3).effects().stream()
             .anyMatch(effect -> "per-user browser preference documents".equals(effect.subject())));
-        assertTrue(format1Plan.steps().getLast().effects().stream()
+        assertTrue(format1Plan.steps().get(format1Plan.steps().size() - 2).effects().stream()
             .anyMatch(effect -> "per-user receiver-health alert settings".equals(effect.subject())));
+        assertTrue(format1Plan.steps().getLast().effects().stream()
+            .anyMatch(effect -> "per-user Live presentation settings".equals(effect.subject())));
 
         Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
         SdrTrunkDatabaseStartup.createGlobalDatabase(currentDatabase);

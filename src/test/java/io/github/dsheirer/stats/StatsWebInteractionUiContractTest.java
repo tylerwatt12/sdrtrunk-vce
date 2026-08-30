@@ -284,7 +284,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"106\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"107\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -604,7 +604,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=88"));
+        assertTrue(html.contains("/assets/app.css?v=89"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1225,7 +1225,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(selection.contains("rowKey: resolvedRow?.key || null"));
         assertTrue(rowSelection.contains("tableValue?.control_active === true"));
         assertTrue(rowSelection.contains("liveCurrentControlRow(tableValue)"));
-        assertTrue(systems.contains("const currentControl = value.control_active ? liveCurrentControlRow(value) : null"));
+        assertTrue(systems.contains(
+            "const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null"));
         assertTrue(systems.contains("liveDetailRowSelection(value, row)"));
         assertTrue(systems.contains("onSelectionChange(selection)"));
         assertFalse(systems.contains("selectedRowKey"));
@@ -1233,11 +1234,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("type: 'live-systems'"));
         assertTrue(systems.contains("onRowClick: (row) =>"));
         assertTrue(systems.contains("liveTable.tableController.replaceRows"));
-        assertTrue(showTable.contains("value.control_active ? liveCurrentControlRow(value) : null"));
-        assertTrue(showTable.contains("selectRow(value, currentControl)"));
-        assertTrue(updateVisibleRows.contains("liveCurrentControlRow(value)"));
+        assertTrue(showTable.contains("displayed.control_active ? liveCurrentControlRow(displayed) : null"));
+        assertTrue(showTable.contains("selectRow(displayed, currentControl)"));
+        assertTrue(updateVisibleRows.contains("liveCurrentControlRow(displayed)"));
         assertTrue(updateVisibleRows.contains("selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
-        assertTrue(updateVisibleRows.contains("liveDetailSelection(value, controlIntent, null)"));
+        assertTrue(updateVisibleRows.contains("liveDetailSelection(displayed, controlIntent, null)"));
         assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)"));
         assertTrue(css.contains(".live-split.details-collapsed"));
         assertTrue(css.contains(".live-details.collapsed .live-details-body"));

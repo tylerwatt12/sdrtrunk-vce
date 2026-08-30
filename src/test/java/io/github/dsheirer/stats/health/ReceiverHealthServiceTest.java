@@ -342,7 +342,7 @@ class ReceiverHealthServiceTest
                                                          long droppedBits)
     {
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("control-" + frequencyHz, "Control",
-            null, "ACTIVE", List.of("CURRENT_CONTROL"), null, frequencyHz, null, -45.0,
+            null, "ACTIVE", List.of("CURRENT_CONTROL"), 1L, null, frequencyHz, null, -45.0,
             validFrames > 0 ? 98.0 : null, observedAtMs, validFrames, 0, 0, 0, droppedBits, lastValidDecodeMs,
             null, null, null, null, null, null, null, null, null, null, null, null, "P25_PHASE1", null, null,
             "CURRENT_CONTROL");

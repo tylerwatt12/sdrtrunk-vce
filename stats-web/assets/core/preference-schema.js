@@ -1,7 +1,7 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 3,
+    version: 4,
     appearance: Object.freeze({ theme: 'light' }),
     page_titles: Object.freeze({ prepend_playing_call: false }),
     playback: Object.freeze({
@@ -16,7 +16,10 @@
       show_control_decode_quality: true,
       show_voice_decode_quality: true,
       decode_quality_display_mode: 'percentage',
-      live_detail_row_limit: 200
+      live_detail_row_limit: 200,
+      show_only_active_trunked_channels: false,
+      retain_last_call_on_idle_rows: false,
+      clear_voice_quality_when_idle: false
     }),
     tuner: Object.freeze({
       floor_db: -140,
@@ -118,14 +121,16 @@
   function validate(value) {
     exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
       'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 3) throw invalid('The user preference version is unsupported.');
+    if (value.version !== 4) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
     exact(value.playback, ['volume', 'selected_scan_list_ids', 'conversation_grouping',
       'conversation_burst_limit'], 'playback');
     exact(value.scanner, ['detail_mode'], 'scanner');
     exact(value.presentation, ['show_encryption_details', 'show_control_decode_quality',
-      'show_voice_decode_quality', 'decode_quality_display_mode', 'live_detail_row_limit'], 'presentation');
+      'show_voice_decode_quality', 'decode_quality_display_mode', 'live_detail_row_limit',
+      'show_only_active_trunked_channels', 'retain_last_call_on_idle_rows',
+      'clear_voice_quality_when_idle'], 'presentation');
     exact(value.tuner, ['floor_db', 'ceiling_db', 'waterfall_speed', 'snap_frequency', 'smooth_fft',
       'highlight_waterfall_channels', 'profile'], 'tuner');
     exact(value.health_alerts, ['disabled_codes'], 'health_alerts');
@@ -145,7 +150,7 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 3,
+      version: 4,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme') },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
         'page_titles.prepend_playing_call') },
@@ -168,7 +173,13 @@
         decode_quality_display_mode: oneOf(value.presentation.decode_quality_display_mode,
           ['percentage', 'detailed'], 'presentation.decode_quality_display_mode'),
         live_detail_row_limit: number(value.presentation.live_detail_row_limit, 25, 500,
-          'presentation.live_detail_row_limit', true)
+          'presentation.live_detail_row_limit', true),
+        show_only_active_trunked_channels: bool(value.presentation.show_only_active_trunked_channels,
+          'presentation.show_only_active_trunked_channels'),
+        retain_last_call_on_idle_rows: bool(value.presentation.retain_last_call_on_idle_rows,
+          'presentation.retain_last_call_on_idle_rows'),
+        clear_voice_quality_when_idle: bool(value.presentation.clear_voice_quality_when_idle,
+          'presentation.clear_voice_quality_when_idle')
       },
       tuner: {
         floor_db: floor,

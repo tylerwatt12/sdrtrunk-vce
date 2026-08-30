@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -118,6 +118,14 @@ empty bounded list of disabled receiver-health alert codes, so every existing an
 unless that account explicitly turns it off. Every existing personal preference is preserved and each affected
 preference revision is incremented. Unknown, incomplete, malformed, already-newer, or revision-exhausted preference
 documents are refused instead of repaired or defaulted.
+
+The format 8-to-9 step upgrades every exact version-3 per-user browser preference document to version 4. It adds
+active-trunked-channel filtering, retain-last-call-on-idle-rows, and clear-voice-quality-when-idle choices. Filtering
+defaults off. The other two choices are copied from the former receiver-wide values into every existing account, or
+default false when the corresponding shared value is absent. The step then removes only those two obsolete shared
+keys from portable Java preferences while preserving traffic-grant age-out, the site-settings revision, and every
+unrelated value. Every affected user preference revision is incremented; malformed documents and exhausted revisions
+are refused.
 
 ## Replacement Boundary
 

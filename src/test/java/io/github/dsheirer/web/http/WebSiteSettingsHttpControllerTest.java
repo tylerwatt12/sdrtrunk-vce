@@ -6,7 +6,6 @@
 package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -29,7 +28,7 @@ class WebSiteSettingsHttpControllerTest
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Test
-    void readsAndAtomicallyUpdatesOnlySharedReceiverSettings() throws Exception
+    void readsAndAtomicallyUpdatesOnlySharedReceiverTiming() throws Exception
     {
         TestNowPlayingPreference nowPlaying = new TestNowPlayingPreference();
         WebSiteSettingsService service = new WebSiteSettingsService(nowPlaying);
@@ -46,14 +45,13 @@ class WebSiteSettingsHttpControllerTest
             JsonNode initial = data(initialResponse);
             assertEquals("\"1\"", initialResponse.headers().firstValue("ETag").orElseThrow());
             assertEquals(1, initial.path("revision").longValue());
-            assertFalse(initial.at("/settings/retain_idle_call_details").booleanValue());
-            assertFalse(initial.at("/settings/clear_voice_decode_quality_on_call_end").booleanValue());
+            assertEquals(1, initial.path("settings").size());
+            assertTrue(initial.at("/settings/retain_idle_call_details").isMissingNode());
+            assertTrue(initial.at("/settings/clear_voice_decode_quality_on_call_end").isMissingNode());
             assertEquals(1000, initial.at("/settings/traffic_grant_age_out_milliseconds").intValue());
 
             String update = """
                 {
-                  "retain_idle_call_details": true,
-                  "clear_voice_decode_quality_on_call_end": true,
                   "traffic_grant_age_out_milliseconds": 2400
                 }
                 """;
@@ -62,8 +60,6 @@ class WebSiteSettingsHttpControllerTest
             JsonNode updated = data(updatedResponse);
             assertEquals("\"2\"", updatedResponse.headers().firstValue("ETag").orElseThrow());
             assertEquals(2, updated.path("revision").longValue());
-            assertTrue(updated.at("/settings/retain_idle_call_details").booleanValue());
-            assertTrue(updated.at("/settings/clear_voice_decode_quality_on_call_end").booleanValue());
             assertEquals(2400, updated.at("/settings/traffic_grant_age_out_milliseconds").intValue());
             assertEquals(1, nowPlaying.mSaveCount);
 
@@ -82,6 +78,8 @@ class WebSiteSettingsHttpControllerTest
 
             assertEquals(422, send(client, jsonRequest(origin).header("If-Match", "\"2\"")
                 .PUT(HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+            assertEquals(422, send(client, jsonRequest(origin).header("If-Match", "\"2\"")
+                .PUT(HttpRequest.BodyPublishers.ofString("null"))).statusCode());
             assertEquals(422, send(client, jsonRequest(origin).header("If-Match", "\"2\"")
                 .PUT(HttpRequest.BodyPublishers.ofString(
                 update.replace("2400", "99")))).statusCode());
@@ -102,7 +100,7 @@ class WebSiteSettingsHttpControllerTest
             nowPlaying.mFailNextSave = true;
             HttpResponse<String> failed = send(client, jsonRequest(origin).header("If-Match", "\"2\"")
                 .PUT(HttpRequest.BodyPublishers.ofString(
-                    update.replace("true", "false").replace("2400", "1200"))));
+                    update.replace("2400", "1200"))));
             assertEquals(500, failed.statusCode());
             assertEquals(2, service.snapshot().revision());
             assertEquals(2400, service.snapshot().settings().trafficGrantAgeOutMilliseconds());
@@ -138,7 +136,7 @@ class WebSiteSettingsHttpControllerTest
     private static final class TestNowPlayingPreference extends NowPlayingPreference
     {
         private SiteSettingsSnapshot mSnapshot = new SiteSettingsSnapshot(1,
-            new SiteSettings(false, false, DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS));
+            new SiteSettings(DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS));
         private int mSaveCount;
         private boolean mFailNextSave;
 

@@ -15,7 +15,6 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
@@ -43,6 +42,13 @@ public final class Format5WebStateValidator
 {
     private static final String INVALID_PREFIX = "Invalid format-5 web state: ";
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
+    private static final String LEGACY_NOW_PLAYING_NODE = "user/io/github/dsheirer/preference/nowplaying";
+    private static final String SITE_SETTINGS_REVISION_KEY = "site.settings.revision";
+    private static final String RETAIN_IDLE_CALL_DETAILS_KEY = "retain.idle.call.details";
+    private static final String CLEAR_VOICE_QUALITY_KEY = "clear.voice.decode.quality.on.call.end";
+    private static final String TRAFFIC_GRANT_AGE_OUT_KEY = "traffic.grant.age.out.milliseconds";
+    private static final int MINIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
+    private static final int MAXIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15_000;
     private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
     private static final ObjectMapper STRICT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
@@ -55,21 +61,21 @@ public final class Format5WebStateValidator
 
     public static void validate(Connection connection) throws SQLException
     {
-        validate(connection, 3);
+        validate(connection, 4);
     }
 
     /** Validates one exact persisted preference-document generation for its owning database format. */
     public static void validate(Connection connection, int preferenceDocumentVersion) throws SQLException
     {
         Objects.requireNonNull(connection, "Database connection cannot be null");
-        if(preferenceDocumentVersion != 1 && preferenceDocumentVersion != 2 && preferenceDocumentVersion != 3)
+        if(preferenceDocumentVersion < 1 || preferenceDocumentVersion > 4)
         {
             throw invalid("unsupported preference-document version " + preferenceDocumentVersion);
         }
 
         UserCounts userCounts = validateUsers(connection, preferenceDocumentVersion);
         long policyCount = validatePolicies(connection);
-        validateSiteSettings(connection, preferenceDocumentVersion == 1);
+        validateSiteSettings(connection, preferenceDocumentVersion == 1, preferenceDocumentVersion < 4);
 
         if(userCounts.primary() > 1)
         {
@@ -235,6 +241,10 @@ public final class Format5WebStateValidator
             {
                 Format8WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
             }
+            else if(preferenceDocumentVersion == 4)
+            {
+                Format9WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+            }
             else
             {
                 throw new IOException("Unsupported web preference document version " +
@@ -312,7 +322,8 @@ public final class Format5WebStateValidator
      * Validates the bounded portable-preferences document and the receiver-wide site settings stored inside it.
      * Other Java preference nodes and keys remain application-owned and are accepted as opaque string values.
      */
-    private static void validateSiteSettings(Connection connection, boolean allowRetiredWebAudioSettings)
+    private static void validateSiteSettings(Connection connection, boolean allowRetiredWebAudioSettings,
+                                             boolean allowMovedPresentationSettings)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -334,12 +345,14 @@ public final class Format5WebStateValidator
                 requireStorage(resultSet, "settings_json_type", "text", "portable preference document");
                 requireStorage(resultSet, "updated_at_type", "integer", "portable preference update time");
                 requirePositive(resultSet, "updated_at_ms", "portable preference update time");
-                validatePortablePreferences(resultSet.getString("settings_json"), allowRetiredWebAudioSettings);
+                validatePortablePreferences(resultSet.getString("settings_json"), allowRetiredWebAudioSettings,
+                    allowMovedPresentationSettings);
             }
         }
     }
 
-    private static void validatePortablePreferences(String json, boolean allowRetiredWebAudioSettings)
+    private static void validatePortablePreferences(String json, boolean allowRetiredWebAudioSettings,
+                                                    boolean allowMovedPresentationSettings)
         throws SQLException
     {
         if(json == null || json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_PORTABLE_PREFERENCES_BYTES)
@@ -384,10 +397,10 @@ public final class Format5WebStateValidator
                 }
             }
 
-            JsonNode nowPlaying = root.get(NowPlayingPreference.PORTABLE_PREFERENCE_NODE);
+            JsonNode nowPlaying = root.get(LEGACY_NOW_PLAYING_NODE);
             if(nowPlaying != null)
             {
-                validateNowPlayingSiteSettings(nowPlaying);
+                validateNowPlayingSiteSettings(nowPlaying, allowMovedPresentationSettings);
             }
         }
         catch(IOException exception)
@@ -396,12 +409,17 @@ public final class Format5WebStateValidator
         }
     }
 
-    private static void validateNowPlayingSiteSettings(JsonNode nowPlaying) throws SQLException
+    private static void validateNowPlayingSiteSettings(JsonNode nowPlaying, boolean allowMovedPresentationSettings)
+        throws SQLException
     {
-        String revisionKey = NowPlayingPreference.PREFERENCE_KEY_SITE_SETTINGS_REVISION;
-        String retainKey = NowPlayingPreference.PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS;
-        String clearKey = NowPlayingPreference.PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END;
-        String ageOutKey = NowPlayingPreference.PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
+        String revisionKey = SITE_SETTINGS_REVISION_KEY;
+        String retainKey = RETAIN_IDLE_CALL_DETAILS_KEY;
+        String clearKey = CLEAR_VOICE_QUALITY_KEY;
+        String ageOutKey = TRAFFIC_GRANT_AGE_OUT_KEY;
+        if(!allowMovedPresentationSettings && (nowPlaying.has(retainKey) || nowPlaying.has(clearKey)))
+        {
+            throw invalid("obsolete shared Live presentation setting is still stored");
+        }
         boolean hasSiteSetting = nowPlaying.has(revisionKey) || nowPlaying.has(retainKey) || nowPlaying.has(clearKey) ||
             nowPlaying.has(ageOutKey);
 
@@ -425,8 +443,8 @@ public final class Format5WebStateValidator
         if(nowPlaying.has(ageOutKey))
         {
             long ageOut = parseCanonicalLong(nowPlaying.get(ageOutKey).textValue(), ageOutKey);
-            if(ageOut < NowPlayingPreference.MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS ||
-                ageOut > NowPlayingPreference.MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)
+            if(ageOut < MINIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS ||
+                ageOut > MAXIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)
             {
                 throw invalid("site setting is outside its supported range: " + ageOutKey);
             }

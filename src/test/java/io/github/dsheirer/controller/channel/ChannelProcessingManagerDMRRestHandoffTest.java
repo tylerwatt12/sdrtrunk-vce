@@ -212,12 +212,6 @@ class ChannelProcessingManagerDMRRestHandoffTest
             {
                 return MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
             }
-
-            @Override
-            public boolean isClearVoiceDecodeQualityOnCallEnd()
-            {
-                return true;
-            }
         };
         UserPreferences preferences = new UserPreferences()
         {
@@ -343,8 +337,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 false, 0L, 0L));
             assertTrue(awaitCondition(() -> {
                 ChannelActivitySnapshot.Row row = activityRow(manager, CURRENT_FREQUENCY, 1);
-                return row != null && row.voiceQuality() == null;
-            }, 5), "converted traffic activity row did not clear terminal voice quality");
+                return row != null && voiceQuality.equals(row.voiceQuality());
+            }, 5), "converted traffic activity row did not retain terminal voice quality");
         }
         finally
         {

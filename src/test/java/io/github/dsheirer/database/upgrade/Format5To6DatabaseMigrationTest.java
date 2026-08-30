@@ -51,7 +51,7 @@ class Format5To6DatabaseMigrationTest
             String historyBefore = historyDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(3, preflight.steps().size());
+            assertEquals(4, preflight.steps().size());
             assertEquals("format-5-to-6", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "configured conventional receiver-context identities", 1);
@@ -75,8 +75,8 @@ class Format5To6DatabaseMigrationTest
             }
 
             assertEquals(5, report.source().version());
-            assertEquals(8, report.target().version());
-            assertEquals(3, report.steps().size());
+            assertEquals(9, report.target().version());
+            assertEquals(4, report.steps().size());
             assertEquals("format-5-to-6", report.steps().getFirst().id());
             assertEquals(CANONICAL_KEY, scalar(connection,
                 "SELECT context_key FROM receiver_context WHERE id=900"));
@@ -89,10 +89,10 @@ class Format5To6DatabaseMigrationTest
             assertEquals("1", scalar(connection,
                 "SELECT COUNT(*) FROM conventional_call_identity_bucket WHERE context_id=900"));
             assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(8, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -114,7 +114,7 @@ class Format5To6DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(8, report.target().version());
+                assertEquals(9, report.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -131,8 +131,8 @@ class Format5To6DatabaseMigrationTest
                 "SELECT context_key FROM receiver_context WHERE id=900"));
             assertEquals(historyBefore, historyDigest(connection));
             assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals(8, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -149,11 +149,11 @@ class Format5To6DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(8, report.target().version());
+                assertEquals(9, report.target().version());
                 assertEquals(CANONICAL_KEY, scalar(connection,
                     "SELECT context_key FROM receiver_context WHERE id=900"));
                 assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-                assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
                 connection.rollback();
             }
             finally

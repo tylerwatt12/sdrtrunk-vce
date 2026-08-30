@@ -76,7 +76,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Session-only browser activity model that keeps stable rows independent from temporary traffic chains.
+ * Session-only browser activity model that keeps complete, stable rows independent from temporary traffic chains.
+ * User-specific display choices are applied after these shared rows are published.
  */
 public class ChannelActivityModel implements IChannelMetadataUpdateListener, AutoCloseable
 {
@@ -449,7 +450,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 if(row.getRole() == ChannelActivityRow.Role.TRAFFIC && table != null &&
                     table.getOwnerChannel() != null)
                 {
-                    clearVoiceQualityOnIdle(row);
                     reference.session().releaseTrafficChannel(channel, row);
                     row.setDecoder(getDecoder(table.getOwnerChannel()));
                     table.refresh(row);
@@ -460,7 +460,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 clearTrafficGrantAgeOut(row);
                 cancelPendingControlIdle(row);
                 row.clearControlQuality();
-                row.clearVoiceQuality();
 
                 if(table == mConventionalTable)
                 {
@@ -605,21 +604,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
             /*
-             * CALL_COMPLETED is also emitted for linked one-minute audio segment rollovers. Preserve the live value
-             * when a continuation is expected, and require exact ownership so a delayed completion cannot overwrite
-             * a newer call before that call's first sampled voice frame.
+             * CALL_COMPLETED is also emitted for linked one-minute audio segment rollovers. Require exact ownership
+             * so a delayed completion cannot overwrite a newer call, and retain the last observation when a terminal
+             * snapshot has no measurements of its own.
              */
         if(completed && !snapshot.callId().equals(row.getVoiceCallId()))
         {
             return;
         }
 
-        if(completed && !event.continuationExpected() &&
-            mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd())
-        {
-            row.clearVoiceQuality();
-        }
-        else if(hasMeasurements)
+        if(hasMeasurements)
         {
             row.setVoiceQuality(snapshot.callId(), quality);
         }
@@ -1192,7 +1186,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         row.setDecoder(decoderIdentifier != null ? decoderIdentifier.toString() : getDecoder(channel));
 
         State displayState = getStickyTrafficState(row, state, wasEncrypted);
-        boolean preserveIdleDetails = displayState == State.IDLE && retainIdleCallDetails();
+        boolean preserveIdleDetails = displayState == State.IDLE;
         ChannelMetadataField field = observation.field();
         boolean fullObservation = field == null || field == ChannelMetadataField.DECODER_STATE;
         boolean sourceObserved = fullObservation || field == ChannelMetadataField.USER_FROM;
@@ -1206,9 +1200,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         boolean sourceChanged = sourceObserved && source != null && row.getSource() != null &&
             !source.equals(row.getSource());
 
-        //Null identifier updates are normal call teardown.  They clear an idle row only when retention is disabled.
-        //Non-null observations may still complete a retained row after IDLE, but cannot replace a different retained
-        //source or target.
+        //Null identifier updates are normal call teardown. Non-null observations may still complete a retained row
+        //after IDLE, but cannot replace a different retained source or target.
         if(sourceObserved && source != null && (!preserveIdleDetails || sourceMatches))
         {
             row.setSource(source);
@@ -1270,16 +1263,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         row.setState(displayState);
-
-        if(row.getState() == State.IDLE)
-        {
-            clearVoiceQualityOnIdle(row);
-
-            if(!retainIdleCallDetails())
-            {
-                row.clearCallDetails();
-            }
-        }
     }
 
     private List<Alias> resolveAliases(Identifier<?> identifier, List<Alias> observedAliases, Channel channel)
@@ -1371,20 +1354,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private void setIdle(ChannelActivityRow row)
     {
         row.setState(State.IDLE);
-        clearVoiceQualityOnIdle(row);
-
-        if(!retainIdleCallDetails())
-        {
-            row.clearCallDetails();
-        }
-    }
-
-    private void clearVoiceQualityOnIdle(ChannelActivityRow row)
-    {
-        if(row != null && mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd())
-        {
-            row.clearVoiceQuality();
-        }
     }
 
     private long scheduleTrafficGrantAgeOut(ChannelActivityRow row)
@@ -2103,11 +2072,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         return null;
-    }
-
-    private boolean retainIdleCallDetails()
-    {
-        return mNowPlayingPreference != null && mNowPlayingPreference.isRetainIdleCallDetails();
     }
 
     private static <T> List<T> list(List<T> values)

@@ -20,7 +20,7 @@ function copy(value) {
 test('health alert preferences are versioned, bounded, and use stable unique codes', async () => {
   const schema = await loadModule('preference-schema');
   const defaults = schema.validate(copy(schema.defaults));
-  assert.equal(defaults.version, 3);
+  assert.equal(defaults.version, 4);
   assert.deepEqual(defaults.health_alerts, { disabled_codes: [] });
 
   const maximum = Array.from({ length: 128 }, (_unused, index) => `alert-${index}`);
@@ -40,7 +40,7 @@ test('health alert preferences are versioned, bounded, and use stable unique cod
     ...defaults,
     health_alerts: { disabled_codes: ['Receiver IQ drop'] }
   }), /health_alerts\.disabled_codes/);
-  assert.throws(() => schema.validate({ ...defaults, version: 2 }), /version is unsupported/);
+  assert.throws(() => schema.validate({ ...defaults, version: 3 }), /version is unsupported/);
   const { health_alerts: _removed, ...withoutHealthAlerts } = defaults;
   assert.throws(() => schema.validate(withoutHealthAlerts), /unknown or missing settings/);
 });

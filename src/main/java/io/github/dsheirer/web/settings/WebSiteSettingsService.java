@@ -9,7 +9,7 @@ import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import java.util.Objects;
 import java.util.prefs.BackingStoreException;
 
-/** Receiver-wide settings service over their sole authoritative preference owner. */
+/** Receiver-wide traffic-timing service over its sole authoritative preference owner. */
 public final class WebSiteSettingsService
 {
     private final NowPlayingPreference mNowPlaying;
@@ -60,25 +60,21 @@ public final class WebSiteSettingsService
         }
     }
 
-    public record Settings(boolean retainIdleCallDetails, boolean clearVoiceDecodeQualityOnCallEnd,
-                           int trafficGrantAgeOutMilliseconds)
+    public record Settings(int trafficGrantAgeOutMilliseconds)
     {
         public Settings
         {
-            new NowPlayingPreference.SiteSettings(retainIdleCallDetails, clearVoiceDecodeQualityOnCallEnd,
-                trafficGrantAgeOutMilliseconds);
+            new NowPlayingPreference.SiteSettings(trafficGrantAgeOutMilliseconds);
         }
 
         private static Settings from(NowPlayingPreference.SiteSettings settings)
         {
-            return new Settings(settings.retainIdleCallDetails(), settings.clearVoiceDecodeQualityOnCallEnd(),
-                settings.trafficGrantAgeOutMilliseconds());
+            return new Settings(settings.trafficGrantAgeOutMilliseconds());
         }
 
         private NowPlayingPreference.SiteSettings toPreference()
         {
-            return new NowPlayingPreference.SiteSettings(retainIdleCallDetails, clearVoiceDecodeQualityOnCallEnd,
-                trafficGrantAgeOutMilliseconds);
+            return new NowPlayingPreference.SiteSettings(trafficGrantAgeOutMilliseconds);
         }
     }
 }

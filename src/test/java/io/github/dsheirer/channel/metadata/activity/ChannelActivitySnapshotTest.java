@@ -6,8 +6,10 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -95,5 +97,39 @@ class ChannelActivitySnapshotTest
             navigation.targetAliases().getFirst());
         assertEquals(new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400),
             navigation.targetMatcher());
+    }
+
+    @Test
+    void assignsNewOrderWhenAControlChannelIsLostAndRegained()
+    {
+        ChannelActivityTableState table = new ChannelActivityTableState("Site", new Channel("Site"), null);
+        ChannelActivityRow control = table.getOrCreate("control", null,
+            ChannelActivityRow.Role.CURRENT_CONTROL, 851_012_500L, null);
+        ChannelActivityRow traffic = table.getOrCreate("traffic", null,
+            ChannelActivityRow.Role.TRAFFIC, 851_262_500L, null);
+
+        control.setState(State.CONTROL);
+        long firstControlOrder = control.getActivationOrder();
+        traffic.setState(State.CALL);
+        long trafficOrder = traffic.getActivationOrder();
+        traffic.setState(State.ENCRYPTED);
+
+        assertTrue(firstControlOrder > 0);
+        assertTrue(trafficOrder > firstControlOrder);
+        assertEquals(trafficOrder, traffic.getActivationOrder(),
+            "An active status change must keep the row in its original position");
+
+        control.setState(State.IDLE);
+        assertEquals(0, control.getActivationOrder());
+        control.setState(State.CONTROL);
+        assertTrue(control.getActivationOrder() > trafficOrder,
+            "A regained control channel must follow channels that remained active");
+
+        table.refresh(List.of(control, traffic));
+        ChannelActivitySnapshot snapshot = table.getLatestSnapshot();
+        assertEquals(control.getActivationOrder(), snapshot.rows().stream()
+            .filter(row -> "control".equals(row.key())).findFirst().orElseThrow().activationOrder());
+        assertEquals(trafficOrder, snapshot.rows().stream()
+            .filter(row -> "traffic".equals(row.key())).findFirst().orElseThrow().activationOrder());
     }
 }

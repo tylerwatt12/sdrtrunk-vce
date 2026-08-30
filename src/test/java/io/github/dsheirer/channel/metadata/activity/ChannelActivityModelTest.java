@@ -86,7 +86,7 @@ class ChannelActivityModelTest
         Alias targetAlias = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
         AliasModel aliasModel = new AliasModel();
         aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(sourceAlias, targetAlias));
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, retainingPreference());
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
             155_730_000L);
         channel.setAliasListName(definition.getName());
@@ -140,7 +140,7 @@ class ChannelActivityModelTest
         AliasListDefinition definition = p25AliasList("County", 1);
         AliasModel aliasModel = new AliasModel();
         aliasModel.replaceCommittedConfiguration(List.of(definition), List.of());
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, retainingPreference());
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
             155_730_000L);
         channel.setAliasListName(definition.getName());
@@ -203,7 +203,7 @@ class ChannelActivityModelTest
         Alias targetAlias = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
         AliasModel aliasModel = new AliasModel();
         aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(sourceAlias, targetAlias));
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, retainingPreference());
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel parent = trunkedChannel("Primary", "County", "North", new DecodeConfigP25Phase1(),
             851_012_500L);
         parent.setAliasListName(definition.getName());
@@ -218,6 +218,9 @@ class ChannelActivityModelTest
         ChannelActivityRow row = model.getTables().get(1).getRows().stream()
             .filter(candidate -> candidate.getRole() == ChannelActivityRow.Role.TRAFFIC)
             .findFirst().orElseThrow();
+        AudioCallId callId = new AudioCallId(1, 1, 1);
+        VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
+        row.setVoiceQuality(callId, voiceQuality);
         assertEquals(State.CALL, row.getState());
 
         run(model, () -> model.channelStopped(parent));
@@ -227,6 +230,8 @@ class ChannelActivityModelTest
         assertSame(talker, row.getTalkerAlias());
         assertSame(target, row.getTarget());
         assertEquals(List.of(targetAlias), row.getTargetAliases());
+        assertEquals(callId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
         model.close();
     }
 
@@ -234,15 +239,7 @@ class ChannelActivityModelTest
     void retainsOneCoherentCompletedCallAndClearsItForTheNextCall() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
-        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
-        {
-            @Override
-            public boolean isRetainIdleCallDetails()
-            {
-                return true;
-            }
-        };
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigAM(),
             155_730_000L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
@@ -301,42 +298,6 @@ class ChannelActivityModelTest
         assertTrue(row.getSourceAliases().isEmpty());
         assertSame(secondTalker, row.getTalkerAlias());
         assertSame(secondTarget, row.getTarget());
-        assertTrue(row.getTargetAliases().isEmpty());
-        model.close();
-    }
-
-    @Test
-    void clearsCompletedCallDetailsWhenIdleRetentionIsDisabled() throws Exception
-    {
-        AliasModel aliasModel = new AliasModel();
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {})
-        {
-            @Override
-            public boolean isRetainIdleCallDetails()
-            {
-                return false;
-            }
-        });
-        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigAM(),
-            155_730_000L);
-        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
-        run(model, () -> model.channelStarted(channel, List.of(metadata)));
-        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
-        row.setState(State.CALL);
-        row.setSource(APCO25RadioIdentifier.createFrom(1_201));
-        row.setSourceAliases(List.of(new Alias("Car 12")));
-        row.setTalkerAlias(P25TalkerAliasIdentifier.create("Portable 12"));
-        row.setTarget(APCO25Talkgroup.create(4_400));
-        row.setTargetAliases(List.of(new Alias("Dispatch")));
-
-        run(model, () -> model.updated(metadata,
-            io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE));
-
-        assertEquals(State.IDLE, row.getState());
-        assertNull(row.getSource());
-        assertTrue(row.getSourceAliases().isEmpty());
-        assertNull(row.getTalkerAlias());
-        assertNull(row.getTarget());
         assertTrue(row.getTargetAliases().isEmpty());
         model.close();
     }
@@ -768,15 +729,7 @@ class ChannelActivityModelTest
     void appliesVoiceQualityToMatchingConventionalTimeslot() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
-        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
-        {
-            @Override
-            public boolean isClearVoiceDecodeQualityOnCallEnd()
-            {
-                return false;
-            }
-        };
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         IdentifierCollection identifiers = new IdentifierCollection(
@@ -802,18 +755,10 @@ class ChannelActivityModelTest
     }
 
     @Test
-    void clearsTerminalVoiceQualityWithoutFlickeringAtSegmentCompletion() throws Exception
+    void retainsTerminalVoiceQualityWithoutFlickeringAtSegmentCompletion() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
-        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
-        {
-            @Override
-            public boolean isClearVoiceDecodeQualityOnCallEnd()
-            {
-                return true;
-            }
-        };
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         IdentifierCollection identifiers = new IdentifierCollection(
@@ -866,8 +811,8 @@ class ChannelActivityModelTest
         run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, null,
                 false, 0L, 0L)));
-        assertNull(row.getVoiceCallId());
-        assertNull(row.getVoiceCallQuality());
+        assertEquals(linkedCallId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
         assertEquals(95.0d, row.getDecodeQuality().controlPercent());
 
         model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
@@ -879,29 +824,22 @@ class ChannelActivityModelTest
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
         });
-        assertNull(row.getVoiceCallId());
-        assertNull(row.getVoiceCallQuality());
-        assertNull(ChannelActivitySnapshot.from(model.getConventionalTable()).rows().getFirst().voiceQuality());
+        assertEquals(currentCallId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
+        assertEquals(voiceQuality,
+            ChannelActivitySnapshot.from(model.getConventionalTable()).rows().getFirst().voiceQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null, false, 0L, 0L)));
-        assertNull(row.getVoiceCallId());
-        assertNull(row.getVoiceCallQuality());
+        assertEquals(currentCallId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
     }
 
     @Test
-    void clearsTrunkedVoiceQualityBeforeTrafficChannelRelease() throws Exception
+    void retainsTrunkedVoiceQualityAfterTrafficChannelRelease() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
-        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
-        {
-            @Override
-            public boolean isClearVoiceDecodeQualityOnCallEnd()
-            {
-                return true;
-            }
-        };
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
         Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         Channel trafficChannel = new Channel("T-2.2", ChannelType.TRAFFIC);
         trafficChannel.setSystem("Bus");
@@ -936,13 +874,13 @@ class ChannelActivityModelTest
 
         run(model, () -> model.channelStopped(trafficChannel));
         assertSame(parent, row.getChannel());
-        assertNull(row.getVoiceCallId());
-        assertNull(row.getVoiceCallQuality());
+        assertEquals(callId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(trafficChannel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, null, false, 0L, 0L)));
-        assertNull(row.getVoiceCallId());
-        assertNull(row.getVoiceCallQuality());
+        assertEquals(callId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
     }
 
     @Test
@@ -1042,18 +980,6 @@ class ChannelActivityModelTest
     {
         SwingUtilities.invokeAndWait(runnable);
         assertTrue(model.awaitIdle(5, TimeUnit.SECONDS), "channel activity worker did not become idle");
-    }
-
-    private static NowPlayingPreference retainingPreference()
-    {
-        return new NowPlayingPreference(type -> {})
-        {
-            @Override
-            public boolean isRetainIdleCallDetails()
-            {
-                return true;
-            }
-        };
     }
 
     private static AliasListDefinition p25AliasList(String name, long id)

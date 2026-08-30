@@ -21,7 +21,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  HealthAlerts healthAlerts, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 3;
+    public static final int CURRENT_VERSION = 4;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
     public static final int MAXIMUM_TABLES = 128;
     public static final int MAXIMUM_COLUMNS_PER_TABLE = 128;
@@ -77,7 +77,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light"), new PageTitles(false),
             new Playback(1.0, List.of(), true, DEFAULT_CONVERSATION_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
-                decodeQualityDisplayMode, liveDetailRowLimit),
+                decodeQualityDisplayMode, liveDetailRowLimit, false, false, false),
             new Tuner(-140, 0, 1, true, true, false, "balanced"), new HealthAlerts(List.of()), Map.of());
     }
 
@@ -142,7 +142,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
 
     public record Presentation(boolean showEncryptionDetails, boolean showControlDecodeQuality,
                                boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
-                               int liveDetailRowLimit)
+                               int liveDetailRowLimit, boolean showOnlyActiveTrunkedChannels,
+                               boolean retainLastCallOnIdleRows, boolean clearVoiceQualityWhenIdle)
     {
         public Presentation
         {

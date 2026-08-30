@@ -202,7 +202,7 @@ class StatsLiveServiceTest
     private static ChannelActivityEvent conventionalActivity(String status)
     {
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("channel-17:155730000:0",
-            "Dispatch", "configuration-17", status, List.of("CONVENTIONAL"), null, 155_730_000L, null,
+            "Dispatch", "configuration-17", status, List.of("CONVENTIONAL"), 0L, null, 155_730_000L, null,
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, null, null, "NBFM", null, null, "CONVENTIONAL");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
@@ -223,6 +223,7 @@ class StatsLiveServiceTest
         List<Map<String,Object>> rows = (List<Map<String,Object>>)table.get("rows");
         assertEquals("channel-17:155730000:0", rows.getFirst().get("key"));
         assertEquals(expectedStatus, rows.getFirst().get("status"));
+        assertEquals(0L, rows.getFirst().get("activation_order"));
         assertEquals("CONVENTIONAL", rows.getFirst().get("role"));
     }
 

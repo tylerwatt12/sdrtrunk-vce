@@ -17,10 +17,10 @@ import org.junit.jupiter.api.Test;
 class WebUserPreferencesCodecTest
 {
     private static final String DEFAULT_JSON = """
-        {"version":3,"appearance":{"theme":"light"},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"conversation_grouping":true,"conversation_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
+        {"version":4,"appearance":{"theme":"light"},"page_titles":{"prepend_playing_call":false},"playback":{"volume":1.0,"selected_scan_list_ids":[],"conversation_grouping":true,"conversation_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":false,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
 
     @Test
-    void defaultsHaveTheExactVersionThreeSnakeCaseWireShape() throws Exception
+    void defaultsHaveTheExactVersionFourSnakeCaseWireShape() throws Exception
     {
         assertEquals(DEFAULT_JSON, WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
         assertEquals(WebUserPreferences.defaults(), WebUserPreferencesCodec.decode(DEFAULT_JSON));
@@ -91,8 +91,8 @@ class WebUserPreferencesCodecTest
     void rejectsUnknownDuplicateAndNonIntegerFields()
     {
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":3",
-                "\"version\":3,\"unknown\":true")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":4",
+                "\"version\":4,\"unknown\":true")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"theme\":\"light\"",
                 "\"theme\":\"light\",\"theme\":\"dark\"")));
@@ -100,12 +100,15 @@ class WebUserPreferencesCodecTest
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"live_detail_row_limit\":200",
                 "\"live_detail_row_limit\":200.5")));
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":3", "\"version\":2")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":4", "\"version\":3")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
                 ",\"conversation_grouping\":true", "")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
                 ",\"health_alerts\":{\"disabled_codes\":[]}", "")));
+        assertThrows(java.io.IOException.class,
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
+                ",\"show_only_active_trunked_channels\":false", "")));
     }
 }

@@ -13,21 +13,16 @@ package io.github.dsheirer.preference.nowplaying;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
+import java.util.Objects;
 import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
-import java.util.Objects;
 
-/** Receiver-wide call-lifecycle preferences and optional Java desktop views. */
+/** Receiver-wide traffic timing and optional Java desktop views. */
 public class NowPlayingPreference extends Preference
 {
-    public static final String PORTABLE_PREFERENCE_NODE =
-        "user/io/github/dsheirer/preference/nowplaying";
-    public static final String PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS = "retain.idle.call.details";
-    public static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
+    private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
         "traffic.grant.age.out.milliseconds";
-    public static final String PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END =
-        "clear.voice.decode.quality.on.call.end";
-    public static final String PREFERENCE_KEY_SITE_SETTINGS_REVISION = "site.settings.revision";
+    private static final String PREFERENCE_KEY_SITE_SETTINGS_REVISION = "site.settings.revision";
 
     public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     public static final int MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15000;
@@ -58,9 +53,8 @@ public class NowPlayingPreference extends Preference
         }
     }
 
-    /** One coherent snapshot of the settings that change receiver behavior for everyone. */
-    public record SiteSettings(boolean retainIdleCallDetails, boolean clearVoiceDecodeQualityOnCallEnd,
-                               int trafficGrantAgeOutMilliseconds)
+    /** One coherent snapshot of the setting that changes receiver behavior for everyone. */
+    public record SiteSettings(int trafficGrantAgeOutMilliseconds)
     {
         public SiteSettings
         {
@@ -99,8 +93,6 @@ public class NowPlayingPreference extends Preference
         super(updateListener);
         long revision = Math.max(1, mPreferences.getLong(PREFERENCE_KEY_SITE_SETTINGS_REVISION, 1));
         mSiteSettings = new SiteSettingsSnapshot(revision, new SiteSettings(
-            mPreferences.getBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, false),
-            mPreferences.getBoolean(PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END, false),
             clamp(mPreferences.getInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
                 DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS), MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
                 MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)));
@@ -112,50 +104,9 @@ public class NowPlayingPreference extends Preference
         return PreferenceType.NOW_PLAYING;
     }
 
-    public boolean isRetainIdleCallDetails()
-    {
-        return mSiteSettings.settings().retainIdleCallDetails();
-    }
-
-    public synchronized void setRetainIdleCallDetails(boolean retain)
-    {
-        SiteSettings current = mSiteSettings.settings();
-        SiteSettings updated = new SiteSettings(retain, current.clearVoiceDecodeQualityOnCallEnd(),
-            current.trafficGrantAgeOutMilliseconds());
-        publishDesktopSiteSettings(updated);
-    }
-
-    public boolean isClearVoiceDecodeQualityOnCallEnd()
-    {
-        return mSiteSettings.settings().clearVoiceDecodeQualityOnCallEnd();
-    }
-
-    public synchronized void setClearVoiceDecodeQualityOnCallEnd(boolean clear)
-    {
-        SiteSettings current = mSiteSettings.settings();
-        SiteSettings updated = new SiteSettings(current.retainIdleCallDetails(), clear,
-            current.trafficGrantAgeOutMilliseconds());
-        publishDesktopSiteSettings(updated);
-    }
-
     public int getTrafficGrantAgeOutMilliseconds()
     {
         return mSiteSettings.settings().trafficGrantAgeOutMilliseconds();
-    }
-
-    public synchronized void setTrafficGrantAgeOutMilliseconds(int milliseconds)
-    {
-        SiteSettings current = mSiteSettings.settings();
-        int ageOut = clamp(milliseconds, MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
-            MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
-        SiteSettings updated = new SiteSettings(current.retainIdleCallDetails(),
-            current.clearVoiceDecodeQualityOnCallEnd(), ageOut);
-        publishDesktopSiteSettings(updated);
-    }
-
-    public SiteSettings getSiteSettings()
-    {
-        return mSiteSettings.settings();
     }
 
     public SiteSettingsSnapshot getSiteSettingsSnapshot()
@@ -202,20 +153,9 @@ public class NowPlayingPreference extends Preference
         }
     }
 
-    private void publishDesktopSiteSettings(SiteSettings settings)
-    {
-        SiteSettingsSnapshot updated = new SiteSettingsSnapshot(Math.incrementExact(mSiteSettings.revision()), settings);
-        writeSiteSettings(updated);
-        mSiteSettings = updated;
-        notifyPreferenceUpdated();
-    }
-
     private void writeSiteSettings(SiteSettingsSnapshot snapshot)
     {
         SiteSettings settings = snapshot.settings();
-        mPreferences.putBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, settings.retainIdleCallDetails());
-        mPreferences.putBoolean(PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END,
-            settings.clearVoiceDecodeQualityOnCallEnd());
         mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
             settings.trafficGrantAgeOutMilliseconds());
         mPreferences.putLong(PREFERENCE_KEY_SITE_SETTINGS_REVISION, snapshot.revision());

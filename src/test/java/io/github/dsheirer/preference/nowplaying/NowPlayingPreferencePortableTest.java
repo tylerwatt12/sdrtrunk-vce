@@ -47,7 +47,7 @@ class NowPlayingPreferencePortableTest
             try
             {
                 NowPlayingPreference preference = new NowPlayingPreference(ignored -> {});
-                SiteSettings expected = new SiteSettings(true, true, 1_250);
+                SiteSettings expected = new SiteSettings(1_250);
 
                 if("write".equals(args[1]))
                 {
@@ -58,7 +58,7 @@ class NowPlayingPreferencePortableTest
                         throw new AssertionError("Site-settings revision was not advanced");
                     }
                 }
-                else if(!expected.equals(preference.getSiteSettings()) ||
+                else if(!expected.equals(preference.getSiteSettingsSnapshot().settings()) ||
                     preference.getSiteSettingsSnapshot().revision() != 2)
                 {
                     throw new AssertionError("Unexpected persisted site settings: " +

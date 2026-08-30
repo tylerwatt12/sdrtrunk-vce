@@ -3157,25 +3157,7 @@ button.secondary {
 .table-layout-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-}
-
-.table-layout-trigger::after {
-  width: 6px;
-  height: 6px;
-  content: '';
-  border-right: 1.5px solid currentcolor;
-  border-bottom: 1.5px solid currentcolor;
-  transform: translateY(-2px) rotate(45deg);
-  transition: transform 120ms ease;
-}
-
-.table-layout-trigger[aria-expanded="true"]::after {
-  transform: translateY(2px) rotate(225deg);
-}
-
-.table-layout-menu-inline .table-layout-trigger::after {
-  display: none;
+  justify-content: center;
 }
 
 .table-layout-panel {
@@ -5193,8 +5175,15 @@ th.numeric {
   flex: 1 1 108px;
 }
 
-.alias-editor-filter-toolbar input[type="datetime-local"] {
+.alias-editor-filter-toolbar .alias-date-filter {
   min-width: 178px;
+  flex: 1 1 178px;
+}
+
+.alias-editor-filter-toolbar .alias-date-filter input[type="datetime-local"] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .alias-editor-table-section {
@@ -5507,7 +5496,8 @@ th.numeric {
 }
 
 .observed-talkgroup-system,
-.observed-talkgroup-match {
+.observed-talkgroup-match,
+.observed-talkgroup-identity {
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -5515,24 +5505,18 @@ th.numeric {
 
 .observed-talkgroup-system strong,
 .observed-talkgroup-match strong,
+.observed-talkgroup-identity strong,
 .observed-talkgroup-system small,
-.observed-talkgroup-match small {
+.observed-talkgroup-match small,
+.observed-talkgroup-identity small {
   overflow-wrap: anywhere;
 }
 
 .observed-talkgroup-system small,
-.observed-talkgroup-match small {
+.observed-talkgroup-match small,
+.observed-talkgroup-identity small {
   color: var(--muted);
   font-size: 11px;
-}
-
-.observed-talkgroup-counts {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 8px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .observed-talkgroup-create {

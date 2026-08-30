@@ -30,6 +30,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +38,8 @@ import java.util.stream.Collectors;
  */
 public class ChannelActivityRow
 {
+    private static final AtomicLong ACTIVATION_SEQUENCE = new AtomicLong();
+
     public enum Role
     {
         CONVENTIONAL,
@@ -62,6 +65,7 @@ public class ChannelActivityRow
     private final EnumSet<ChannelTag> mTags = EnumSet.noneOf(ChannelTag.class);
     private Origin mOrigin;
     private State mState = State.IDLE;
+    private long mActivationOrder;
     private String mLcn;
     private long mFrequency;
     private String mCallsign;
@@ -207,7 +211,31 @@ public class ChannelActivityRow
 
     public void setState(State state)
     {
-        mState = state != null ? state : State.IDLE;
+        State next = state != null ? state : State.IDLE;
+
+        if(isActive(next))
+        {
+            if(!isActive(mState))
+            {
+                mActivationOrder = ACTIVATION_SEQUENCE.incrementAndGet();
+            }
+        }
+        else
+        {
+            mActivationOrder = 0;
+        }
+
+        mState = next;
+    }
+
+    public long getActivationOrder()
+    {
+        return mActivationOrder;
+    }
+
+    private static boolean isActive(State state)
+    {
+        return State.SINGLE_CHANNEL_ACTIVE_STATES.contains(state);
     }
 
     public String getLcn()
@@ -482,6 +510,7 @@ public class ChannelActivityRow
         copy.mTags.addAll(mTags);
         copy.mOrigin = mOrigin;
         copy.mState = mState;
+        copy.mActivationOrder = mActivationOrder;
         copy.mLcn = mLcn;
         copy.mCallsign = mCallsign;
         copy.mSource = mSource;

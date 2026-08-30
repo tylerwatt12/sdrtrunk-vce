@@ -67,7 +67,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     }
 
     public record Row(String key, String channelName, String configurationId, String status, List<String> tags,
-                      String lcn, long frequencyHz, String callsign,
+                      long activationOrder, String lcn, long frequencyHz, String callsign,
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
                       long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
                       long controlSyncLossBits, long controlDroppedBits, long controlLastValidDecodeMs,
@@ -84,7 +84,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
             Channel channel = owner != null ? owner : row.getChannel();
             ChannelActivityDecodeQuality quality = row.getDecodeQuality();
             return new Row(row.getKey(), channelName, configurationId, row.getState().name(),
-                row.getTags().stream().map(Enum::name).toList(), row.getLcn(),
+                row.getTags().stream().map(Enum::name).toList(), row.getActivationOrder(), row.getLcn(),
                 row.getFrequency(), row.getCallsign(), row.getSignalDbfs(),
                 row.getDecodeHealthPercent(), row.getQualityObservedAt(),
                 quality != null ? quality.controlValidFrames() : 0,

@@ -211,6 +211,9 @@ async function main() {
   assert.match(livePresentationSource, /modal\.setBusy\(true\)/);
   assert.match(livePresentationSource, /const submitted = \{/);
   assert.match(livePresentationSource, /preferences\.presentation = submitted;/);
+  assert.match(livePresentationSource, /show_only_active_trunked_channels: activeOnly\.input\.checked/);
+  assert.match(livePresentationSource, /retain_last_call_on_idle_rows: retainLastCall\.input\.checked/);
+  assert.match(livePresentationSource, /clear_voice_quality_when_idle: clearIdleQuality\.input\.checked/);
   assert.doesNotMatch(livePresentationSource, /conversation_grouping|conversation_burst_limit|preferences\.playback/);
   assert.match(livePresentationSource, /if \(modal\.close\(\)\) void render\(\)/);
   assert.match(livePresentationSource, /error\?\.code === 'preference_session_changed'/);
@@ -244,6 +247,10 @@ async function main() {
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
+  assert.match(appSource, /trigger\.append\(iconGlyph\('icon-columns'\)\)/);
+  assert.match(appSource, /const displayLabel = byId\.get\(id\)\.fullLabel \|\| byId\.get\(id\)\.label \|\| id/);
+  assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} column`\)/);
+  assert.doesNotMatch(appSource, /inline \? '' : 'Columns'/);
   assert.match(appSource, /panel\.setAttribute\('popover', 'auto'\)/);
   assert.match(appSource, /bindAnchoredDropdown\(trigger, panel, activeRenderController\?\.signal\)/);
   const dropdownBinding = functionBinding(appSource, 'bindAnchoredDropdown');
@@ -299,23 +306,17 @@ async function main() {
   assert.deepEqual(JSON.parse(JSON.stringify(decodeSiteSettings({
     revision: 2,
     settings: {
-      retain_idle_call_details: false,
-      clear_voice_decode_quality_on_call_end: true,
       traffic_grant_age_out_milliseconds: 1000
     }
   }))), {
     revision: 2,
     settings: {
-      retain_idle_call_details: false,
-      clear_voice_decode_quality_on_call_end: true,
       traffic_grant_age_out_milliseconds: 1000
     }
   });
   assert.throws(() => decodeSiteSettings({
     revision: 0,
     settings: {
-      retain_idle_call_details: false,
-      clear_voice_decode_quality_on_call_end: true,
       traffic_grant_age_out_milliseconds: 1000
     }
   }), /invalid Site Settings/);
@@ -331,8 +332,6 @@ async function main() {
       }
     });
   const requestedSiteSettings = {
-    retain_idle_call_details: true,
-    clear_voice_decode_quality_on_call_end: false,
     traffic_grant_age_out_milliseconds: 1200
   };
   siteResponses.push(response(200, { revision: 4, settings: requestedSiteSettings }));
@@ -342,8 +341,6 @@ async function main() {
   assert.equal(siteRequests.at(-1)[1].headers['If-Match'], '"3"');
   assert.equal(siteRequests.at(-1)[1].body, JSON.stringify(requestedSiteSettings));
   const currentSiteSettings = {
-    retain_idle_call_details: false,
-    clear_voice_decode_quality_on_call_end: true,
     traffic_grant_age_out_milliseconds: 900
   };
   siteResponses.push(response(409, { revision: 5, settings: currentSiteSettings }));
@@ -367,7 +364,7 @@ async function main() {
     if (literal) assert.match(literal[1], stableId, `Invalid table type ${literal[1]}`);
   });
   [
-    'aliasCatalogCoreColumns', 'aliasCustomConfigurationColumns', 'aliasCatalogEnrichmentColumns',
+    'aliasCatalogCoreColumns', 'aliasCustomConfigurationColumns',
     'aliasEditorScopeBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'systemRadioColumns', 'p25SiteChannelColumns',
     'trunkedSiteChannelColumns', 'p25SiteNeighborColumns', 'trunkedSiteNeighborColumns',
@@ -541,7 +538,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 3,
+    version: 4,
     appearance: { theme: 'light' },
     page_titles: { prepend_playing_call: false },
     playback: {
@@ -550,7 +547,9 @@ async function main() {
     scanner: { detail_mode: 'normal' },
     presentation: {
       show_encryption_details: true, show_control_decode_quality: true,
-      show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200
+      show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
+      show_only_active_trunked_channels: false, retain_last_call_on_idle_rows: false,
+      clear_voice_quality_when_idle: false
     },
     tuner: {
       floor_db: -140, ceiling_db: 0, waterfall_speed: 1, snap_frequency: true, smooth_fft: true,

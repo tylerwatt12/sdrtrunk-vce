@@ -44,7 +44,7 @@ class Format4To5DatabaseMigrationTest
             Map<String,CredentialSnapshot> legacyCredentials = legacyCredentials(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(4, preflight.steps().size());
+            assertEquals(5, preflight.steps().size());
             assertEquals("format-4-to-5", preflight.steps().getFirst().id());
             assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "saved channel identity scalars", 2);
             assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired channel configurations", 2);
@@ -60,7 +60,7 @@ class Format4To5DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(4, report.source().version());
-                assertEquals(8, report.target().version());
+                assertEquals(9, report.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -101,7 +101,7 @@ class Format4To5DatabaseMigrationTest
                        json_extract(preferences_json, '$.presentation.live_detail_row_limit')
                 FROM web_user WHERE username='listener'
                 """));
-            assertEquals("3:light:normal:0:1:4:0", scalar(connection, """
+            assertEquals("4:light:normal:0:1:4:0", scalar(connection, """
                 SELECT json_extract(preferences_json, '$.version') || ':' ||
                        json_extract(preferences_json, '$.appearance.theme') || ':' ||
                        json_extract(preferences_json, '$.scanner.detail_mode') || ':' ||
@@ -111,17 +111,31 @@ class Format4To5DatabaseMigrationTest
                        json_array_length(json_extract(preferences_json, '$.health_alerts.disabled_codes'))
                 FROM web_user WHERE username='admin'
                 """));
-            assertEquals("true:false:1750:1:preserve-me", scalar(connection, """
+            assertEquals("0:1:0", scalar(connection, """
+                SELECT json_extract(preferences_json,
+                           '$.presentation.show_only_active_trunked_channels') || ':' ||
+                       json_extract(preferences_json,
+                           '$.presentation.retain_last_call_on_idle_rows') || ':' ||
+                       json_extract(preferences_json,
+                           '$.presentation.clear_voice_quality_when_idle')
+                FROM web_user WHERE username='admin'
+                """));
+            assertEquals("1750:1:preserve-me", scalar(connection, """
                 SELECT json_extract(settings_json,
-                           '$."user/io/github/dsheirer/preference/nowplaying"."retain.idle.call.details"') || ':' ||
-                       json_extract(settings_json,
-                           '$."user/io/github/dsheirer/preference/nowplaying"."clear.voice.decode.quality.on.call.end"') || ':' ||
-                       json_extract(settings_json,
                            '$."user/io/github/dsheirer/preference/nowplaying"."traffic.grant.age.out.milliseconds"') || ':' ||
                        json_extract(settings_json,
                            '$."user/io/github/dsheirer/preference/nowplaying"."site.settings.revision"') || ':' ||
                        json_extract(settings_json, '$."user/example".sentinel')
                 FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM application_settings
+                WHERE key='portable_java_preferences_v1' AND (
+                    json_type(settings_json,
+                        '$."user/io/github/dsheirer/preference/nowplaying"."retain.idle.call.details"') IS NOT NULL
+                    OR json_type(settings_json,
+                        '$."user/io/github/dsheirer/preference/nowplaying"."clear.voice.decode.quality.on.call.end"')
+                        IS NOT NULL)
                 """));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM application_settings
@@ -169,8 +183,8 @@ class Format4To5DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport rolledBack = DatabaseMigrationChain.migrate(connection);
-                assertEquals(8, rolledBack.target().version());
-                assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals(9, rolledBack.target().version());
+                assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
                 assertTrue(tableExists(connection, "web_user"));
                 connection.rollback();
             }
@@ -191,7 +205,7 @@ class Format4To5DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport retried = DatabaseMigrationChain.migrate(connection);
-                assertEquals(8, retried.target().version());
+                assertEquals(9, retried.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -204,7 +218,7 @@ class Format4To5DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(8, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM web_user"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM configuration_channel
@@ -291,7 +305,7 @@ class Format4To5DatabaseMigrationTest
             assertEquals("P25_PHASE1", scalar(connection,
                 "SELECT decoder_type FROM configuration_channel WHERE id=(SELECT min(id) " +
                     "FROM configuration_channel)"));
-            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertTrue(tableExists(connection, "web_user"));
         }
     }

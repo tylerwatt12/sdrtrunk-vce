@@ -63,7 +63,7 @@ class StatsLiveServiceBoundsTest
         TestChannelActivitySource source = new TestChannelActivitySource();
         StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
-            List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
+            List.of("VOICE"), 1L, "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 4_321L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
             "Engine 1 · TA: Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
             "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation("GUID:site-guid", "County",
@@ -84,6 +84,7 @@ class StatsLiveServiceBoundsTest
             Map<String,Object> projected = rows(table).getFirst();
             assertEquals("BEE00", identifiers.getFirst().get("value"));
             assertEquals("TRAFFIC", projected.get("role"));
+            assertEquals(1L, projected.get("activation_order"));
             assertEquals("RADIO", projected.get("source_form"));
             assertEquals("TALKGROUP", projected.get("target_form"));
             assertEquals("WPFF205", projected.get("callsign"));
@@ -412,7 +413,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
                                                             ChannelActivitySnapshot.Navigation navigation)
     {
-        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, "1",
+        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, 1L, "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
             null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL");
     }

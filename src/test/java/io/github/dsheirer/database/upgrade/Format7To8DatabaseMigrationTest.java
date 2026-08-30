@@ -35,7 +35,7 @@ class Format7To8DatabaseMigrationTest
             String existingPreferencesBefore = existingPreferenceDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(1, preflight.steps().size());
+            assertEquals(2, preflight.steps().size());
             assertEquals("format-7-to-8", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "per-user receiver-health alert settings", 3);
@@ -58,22 +58,22 @@ class Format7To8DatabaseMigrationTest
             }
 
             assertEquals(7, report.source().version());
-            assertEquals(8, report.target().version());
+            assertEquals(9, report.target().version());
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=3
+                WHERE json_extract(preferences_json, '$.version')=4
                   AND json_type(preferences_json, '$.health_alerts.disabled_codes')='array'
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=3
+                  AND preferences_revision=4
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));
-            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(8, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -88,7 +88,7 @@ class Format7To8DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(8, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(9, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -138,7 +138,6 @@ class Format7To8DatabaseMigrationTest
         Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("invalid-alert-code.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            insertUser(connection);
             statement.executeUpdate("""
                 UPDATE web_user
                 SET preferences_json=json_set(preferences_json,
@@ -148,24 +147,6 @@ class Format7To8DatabaseMigrationTest
             SQLException rejection = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.requireCurrent(connection));
             assertTrue(rejection.getMessage().contains("invalid typed preference document"), rejection.getMessage());
-        }
-    }
-
-    private static void insertUser(Connection connection) throws Exception
-    {
-        String preferences = io.github.dsheirer.web.settings.WebUserPreferencesCodec.encode(
-            io.github.dsheirer.web.settings.WebUserPreferences.defaults());
-        try(var statement = connection.prepareStatement("""
-            INSERT INTO web_user(id, username, tier, primary_admin, credential_version, password_algorithm,
-                password_iterations, password_derived_key_bits, password_salt, password_hash,
-                password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
-                created_at_ms, updated_at_ms)
-            VALUES(1, 'admin', 'ADMIN', 1, 1, 'PBKDF2WithHmacSHA256', 600000, 256,
-                randomblob(16), randomblob(32), 1000, 1, ?, 1, 1000, 1000)
-            """))
-        {
-            statement.setString(1, preferences);
-            statement.executeUpdate();
         }
     }
 

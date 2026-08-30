@@ -2133,6 +2133,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const body = node('tbody');
   let dataRows = [...(rows || [])];
   let clientSort = null;
+  let clientSortEnabled = typeof tableController.clientSortEnabled === 'boolean' ?
+    tableController.clientSortEnabled : options.sortable !== false;
+  const clientSortControls = [];
 
   const renderBody = () => {
     body.replaceChildren();
@@ -2182,13 +2185,16 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     } else if (!options.serverSort && options.sortable !== false) {
       const control = node('button', 'table-sort-control', column.label);
       control.type = 'button';
+      control.disabled = !clientSortEnabled;
       control.addEventListener('click', () => {
+        if (!clientSortEnabled) return;
         clientSort = clientSort?.column === column ?
           { column, direction: clientSort.direction === 'asc' ? 'desc' : 'asc' } :
           { column, direction: 'asc' };
         updateSortIndicators();
         renderBody();
       });
+      clientSortControls.push(control);
       header.append(control);
     } else {
       header.append(node('span', 'table-column-label', column.label));
@@ -2264,11 +2270,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     if (inline) chooser.classList.add('table-layout-menu-inline');
     chooser.dataset.tableType = tableType;
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
-    const trigger = node('button', inline ?
-      'button secondary icon-button section-title-icon table-layout-trigger' :
-      'button secondary table-layout-trigger', inline ? '' : 'Columns');
+    const trigger = node('button',
+      'button secondary icon-button section-title-icon table-layout-trigger');
     trigger.type = 'button';
-    if (inline) trigger.append(iconGlyph('icon-columns'));
+    trigger.append(iconGlyph('icon-columns'));
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
@@ -2294,10 +2299,11 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       visibility.checked = !layout.hidden_columns.includes(id);
       const visibleCount = layout.column_order.length - layout.hidden_columns.length;
       visibility.disabled = visibility.checked && visibleCount <= 1;
-      visibility.setAttribute('aria-label', `Show ${byId.get(id).label} column`);
+      const displayLabel = byId.get(id).fullLabel || byId.get(id).label || id;
+      visibility.setAttribute('aria-label', `Show ${displayLabel} column`);
       visibility.addEventListener('change', () => void replaceForLayout(
         tableLayouts.setHidden(layout, id, !visibility.checked)));
-      const label = node('span', '', byId.get(id).fullLabel || byId.get(id).label || id);
+      const label = node('span', '', displayLabel);
       const group = layout.groups[id] || '';
       const siblings = layout.column_order.filter((column) => (layout.groups[column] || '') === group);
       const position = siblings.indexOf(id);
@@ -2430,6 +2436,18 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     setEmptyText(value) {
       emptyText = String(value || 'No rows');
       renderBody();
+    },
+    setSortable(value) {
+      const enabled = Boolean(value);
+      tableController.clientSortEnabled = enabled;
+      if (clientSortEnabled === enabled) return;
+      clientSortEnabled = enabled;
+      clientSortControls.forEach((control) => { control.disabled = !enabled; });
+      if (!enabled && clientSort) {
+        clientSort = null;
+        updateSortIndicators();
+        renderBody();
+      }
     },
     rows: () => dataRows.slice(),
     render: renderBody
@@ -2994,12 +3012,12 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
     selectFilter('Calls', 'use', [['', 'Any'], ['used', 'Has calls'],
       ['unused', 'No calls observed']]),
     (() => {
-      const wrapper = node('label', 'alias-filter');
+      const wrapper = node('label', 'alias-filter alias-date-filter');
       wrapper.append(node('span', '', 'Seen after'), lastAfter);
       return wrapper;
     })(),
     (() => {
-      const wrapper = node('label', 'alias-filter');
+      const wrapper = node('label', 'alias-filter alias-date-filter');
       wrapper.append(node('span', '', 'Seen before'), lastBefore);
       return wrapper;
     })(),
@@ -4247,7 +4265,13 @@ function observedTalkgroupPromotionReason(row) {
 }
 
 function observedTalkgroupIdentity(row) {
-  return identityNumber(row, row.talkgroup_id);
+  const wrapper = node('div', 'observed-talkgroup-identity');
+  wrapper.append(node('strong', '', identityNumber(row, row.talkgroup_id)));
+  if (observedTalkgroupMatchKind(row) === 'range') {
+    wrapper.append(node('small', '', `Covered by range · ${row.matched_alias_name ||
+      `Alias ${identifierNumber(row.matched_alias_id)}`}`));
+  }
+  return wrapper;
 }
 
 function observedTalkgroupSystem(row) {
@@ -4266,14 +4290,6 @@ function observedTalkgroupMatch(row) {
   const wrapper = node('div', 'observed-talkgroup-match');
   wrapper.append(node('strong', '', row.matched_alias_name || `Alias ${identifierNumber(row.matched_alias_id)}`),
     node('small', '', kind === 'range' ? 'Covered by range' : 'Exact alias'));
-  return wrapper;
-}
-
-function observedTalkgroupCounts(definitions) {
-  const wrapper = node('div', 'observed-talkgroup-counts');
-  definitions.forEach(([label, value]) => {
-    wrapper.append(node('span', '', `${label} ${value === null || value === undefined ? '—' : number(value)}`));
-  });
   return wrapper;
 }
 
@@ -4496,35 +4512,33 @@ function observedTalkgroupToolbar(selectedList) {
 function renderObservedTalkgroups(main, page, selectedList) {
   const rows = (page.rows || []).filter((row) => observedTalkgroupMatchKind(row) !== 'exact');
   const columns = [
-    { id: 'talkgroup-id', label: 'TG', fullLabel: 'Talkgroup', sort: 'talkgroup', className: 'numeric',
+    { id: 'talkgroup-id', label: 'Identity', fullLabel: 'Talkgroup identity', sort: 'talkgroup',
       render: observedTalkgroupIdentity },
-    { id: 'system', label: 'System', sort: 'system', className: 'alias-cell', render: observedTalkgroupSystem },
-    { id: 'match', label: 'Alias Match', className: 'alias-cell', render: observedTalkgroupMatch },
-    { id: 'calls', label: 'Calls', sort: 'logical_call_count', render: (row) => observedTalkgroupCounts([
-      ['Logical', row.logical_call_count], ['Rec', row.recorded_logical_call_count],
-      ['Submitted', row.stream_submitted_logical_call_count], ['Enc', row.encrypted_logical_call_count]
-    ]) },
-    { id: 'signaling', label: 'Signaling', render: (row) => observedTalkgroupCounts([
-      ['Signal', row.signaling_observation_count]
-    ]) },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', sort: 'last_seen',
+    { id: 'system', label: 'System / Sites', sort: 'system', className: 'alias-cell',
+      render: observedTalkgroupSystem },
+    { id: 'calls', label: 'Calls', sort: 'logical_call_count', className: 'numeric',
+      render: (row) => aliasMetricValue(row, 'logical_call_count') },
+    { id: 'signaling', label: 'Signaling', className: 'numeric',
+      render: (row) => aliasMetricValue(row, 'signaling_observation_count') },
+    { id: 'last-seen', label: 'Last Seen', sort: 'last_seen',
       render: (row) => observedTalkgroupTime(row, row.last_seen_ms) },
     { id: 'action', label: '', render: (row) => observedTalkgroupCreateButton(row, selectedList) }
   ];
   const host = node('div', 'alias-catalog-table-host observed-talkgroup-table-host');
+  const actions = node('div', 'section-title-actions');
   const observedTable = table(rows, columns,
     'No observed talkgroups without an exact alias are available for this list', {
       type: 'alias-observed-talkgroups', serverSort: true, sortable: false,
       defaultSort: 'last_seen', defaultDirection: 'desc',
       rowKey: observedTalkgroupKey, rowClass: 'observed-talkgroup-row',
-      onRowClick: (row) => openObservedTalkgroupDetail(row, selectedList)
+      onRowClick: (row) => openObservedTalkgroupDetail(row, selectedList), layoutMenuHost: actions
     });
   host.append(observedTable);
-  const block = section('Observed Talkgroups', host);
+  const block = section('Observed Talkgroups', host, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'observed-talkgroup-section');
   block.append(node('p', 'metric-meaning-note alias-catalog-guide',
-    'This list contains talkgroups observed on its assigned systems that do not have an exact alias. Range matches ' +
-    'are shown so you can decide whether a dedicated alias is useful.'), pager({ ...page, rows }));
+    'This list contains talkgroups observed on its assigned systems that do not have an exact alias. Existing range ' +
+    'coverage appears beneath the identity.'), pager({ ...page, rows }));
   main.append(block);
 }
 
@@ -4574,10 +4588,12 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
     });
     bulkBar?.update();
   };
+  const actions = node('div', 'section-title-actions');
   const aliasTable = table(rows, scanListMemberColumns(rows, updateSelection),
     'No aliases belong to this scan list', {
       type: 'alias-scan-list-members', serverSort: true, sortable: false,
       defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
+      layoutMenuHost: actions,
       onRowClick: (row, _tableRow, event) => {
         const id = Number(row.alias_id);
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
@@ -4595,10 +4611,9 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
         }
         window.location.assign(aliasEditorRowHref(row));
       }
-    });
+  });
   tableHost.append(aliasTable);
 
-  const actions = node('div', 'section-title-actions');
   const selectPage = node('button', 'button secondary', 'Select This Page');
   selectPage.type = 'button';
   selectPage.addEventListener('click', () => {
@@ -4760,6 +4775,7 @@ async function renderAliases() {
 
   const definitions = [...aliasCustomConfigurationColumns(), ...aliasActivityColumns()];
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  const actions = node('div', 'section-title-actions');
   let bulkBar = null;
   const updateSelection = () => {
     tableHost.querySelectorAll('.alias-row-select').forEach((checkbox) => {
@@ -4777,6 +4793,7 @@ async function renderAliases() {
       defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
       defaultHiddenColumns: view === 'custom' ? definitions
         .map((column) => column.id).filter((id) => !ALIAS_CATALOG_DEFAULT_COLUMNS.includes(id)) : [],
+      layoutMenuHost: actions,
       onRowClick: (row, _tableRow, event) => {
         const id = Number(row.alias_id);
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
@@ -4799,7 +4816,6 @@ async function renderAliases() {
     updateSelection();
   };
 
-  const actions = node('div', 'section-title-actions');
   const selectPage = node('button', 'button secondary', 'Select This Page');
   selectPage.type = 'button';
   selectPage.addEventListener('click', () => {
@@ -12290,6 +12306,45 @@ function openLocalHref(target) {
   navigateTo(target);
 }
 
+const LIVE_IDLE_CALL_FIELDS = [
+  'source_id', 'source_form', 'source_alias', 'source_alias_description', 'source_alias_display',
+  'source_aliases', 'source_entity_ref', 'talker_alias', 'target_id', 'target_form', 'target_alias',
+  'target_alias_description', 'target_aliases', 'target_entity_ref', 'encryption_details'
+];
+const LIVE_VOICE_QUALITY_FIELDS = [
+  'vc_quality_pct', 'vc_decoded_frames', 'vc_repeated_frames', 'vc_concealed_frames',
+  'vc_missing_frames', 'vc_fec_errors', 'vc_fec_protected_bits'
+];
+
+function liveRowIsActive(row) {
+  const order = Number(row?.activation_order);
+  return Number.isSafeInteger(order) && order > 0;
+}
+
+function livePresentedRow(row, presentation) {
+  if (String(row?.status || '').toUpperCase() !== 'IDLE' ||
+      (presentation.retain_last_call_on_idle_rows && !presentation.clear_voice_quality_when_idle)) return row;
+  const displayed = { ...row };
+  if (!presentation.retain_last_call_on_idle_rows) {
+    LIVE_IDLE_CALL_FIELDS.forEach((field) => delete displayed[field]);
+  }
+  if (presentation.clear_voice_quality_when_idle) {
+    LIVE_VOICE_QUALITY_FIELDS.forEach((field) => delete displayed[field]);
+  }
+  return displayed;
+}
+
+function livePresentedTableRows(tableValue, presentation) {
+  const rows = Array.isArray(tableValue?.rows) ? tableValue.rows : [];
+  const tableId = String(tableValue?.table_id || '');
+  if (!presentation.show_only_active_trunked_channels || tableId === 'conventional') {
+    return rows.map((row) => livePresentedRow(row, presentation));
+  }
+  return rows.filter(liveRowIsActive).sort((left, right) => {
+    return Number(left.activation_order) - Number(right.activation_order);
+  }).map((row) => livePresentedRow(row, presentation));
+}
+
 function liveSystemsSection(onSelectionChange) {
   const tables = new Map();
   const tabNodes = new Map();
@@ -12428,8 +12483,10 @@ function liveSystemsSection(onSelectionChange) {
   let activeTableId = null;
   let selection = null;
   let selectRow = () => {};
-  const liveTable = table([], columns, 'No channels observed', {
+  const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
+    'No active channels observed' : 'No channels observed', {
     type: 'live-systems', rowKey: (row) => row.key,
+    sortable: true,
     rowClass: (row) => selection?.rowKey === row.key ? 'selected' : '',
     onRowClick: (row) => {
       const value = tables.get(activeTableId);
@@ -12462,33 +12519,39 @@ function liveSystemsSection(onSelectionChange) {
     if (!value) return;
     clearSelection();
     activeTableId = tableId;
-    liveTable.tableController.replaceRows(value.rows || []);
-    const currentControl = value.control_active ? liveCurrentControlRow(value) : null;
-    if (currentControl) selectRow(value, currentControl);
+    const activeFilter = presentation.show_only_active_trunked_channels && tableId !== 'conventional';
+    liveTable.tableController.setSortable(!activeFilter);
+    const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
+    liveTable.tableController.replaceRows(displayed.rows);
+    const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
+    if (currentControl) selectRow(displayed, currentControl);
     tabNodes.forEach((tab, id) => tab.classList.toggle('active', id === activeTableId));
   };
 
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
-    const incoming = new Map((value.rows || []).map((row) => [row.key, row]));
+    const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
+    const incoming = new Map(displayed.rows.map((row) => [row.key, row]));
+    const activeFilter = presentation.show_only_active_trunked_channels && value.table_id !== 'conventional';
+    if (activeFilter && selection && !incoming.has(selection.rowKey)) clearSelection();
     if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL) {
-      const currentControl = value.control_active ? liveCurrentControlRow(value) : null;
-      if (currentControl) selectRow(value, currentControl);
+      const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
+      if (currentControl) selectRow(displayed, currentControl);
       else {
-        const controlIntent = (value.rows || []).find((row) =>
+        const controlIntent = displayed.rows.find((row) =>
           LIVE_DETAIL_CONTROL_ROLES.has(String(row?.role || '').toUpperCase())) || {
           configuration_id: selection.configurationId,
           role: 'CURRENT_CONTROL'
         };
-        selection = liveDetailSelection(value, controlIntent, null);
+        selection = liveDetailSelection(displayed, controlIntent, null);
         onSelectionChange(selection);
       }
     } else if (selection) {
       const selectedRow = incoming.get(selection.rowKey);
-      if (selectedRow) selectRow(value, selectedRow);
+      if (selectedRow) selectRow(displayed, selectedRow);
       else clearSelection();
     }
-    liveTable.tableController.replaceRows(value.rows || []);
+    liveTable.tableController.replaceRows(displayed.rows);
   };
 
   const upsertTable = (value) => {
@@ -12598,7 +12661,12 @@ function liveSystemsSection(onSelectionChange) {
 
   subscribeLiveChannelActivity({
     snapshot: (snapshot) => {
-      (snapshot.tables || []).forEach(upsertTable);
+      const values = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
+      const tableIds = new Set(values.map((value) => String(value?.table_id || '')).filter(Boolean));
+      [...tables.keys()].forEach((tableId) => {
+        if (!tableIds.has(tableId)) removeTable(tableId);
+      });
+      values.forEach(upsertTable);
     },
     activityTable: (update) => {
       if (update.operation === 'remove') removeTable(update.table_id);
@@ -13542,10 +13610,11 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   if (!renderIsCurrent(renderContext)) return;
   const columns = activityColumns();
   const initialRows = withoutGrantActions(data.rows);
+  const titleActions = node('div', 'section-title-actions');
   const activityTable = table(initialRows, columns, 'No activity recorded',
-    { type: 'activity', rowKey: (row) => row.id });
+    { type: 'activity', rowKey: (row) => row.id, layoutMenuHost: titleActions });
   activityTable.setAttribute('aria-live', 'off');
-  const block = section(title, activityTable);
+  const block = section(title, activityTable, titleActions);
   const controls = node('div', 'pager');
   let newestControl = null;
   let olderControl = null;
@@ -13578,7 +13647,6 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   content.append(block);
 
   if (!route.get('before_id')) {
-    const titleBar = block.querySelector('.section-title');
     const refreshControls = node('div', 'section-title-actions activity-refresh-controls');
     const countdown = node('span', 'activity-refresh-countdown');
     countdown.setAttribute('role', 'timer');
@@ -13590,7 +13658,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     pause.type = 'button';
     pause.setAttribute('aria-pressed', 'false');
     refreshControls.append(countdown, pause, announcement);
-    titleBar.append(refreshControls);
+    titleActions.prepend(refreshControls);
     let paused = false;
     let refreshInFlight = false;
     let refreshFailed = false;
@@ -14680,10 +14748,7 @@ function decodeSiteSettingsEnvelope(value) {
       !Number.isInteger(value.revision) || value.revision < 1 ||
       !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings) ||
       Object.keys(value).sort().join('|') !== 'revision|settings' ||
-      Object.keys(value.settings).sort().join('|') !==
-        'clear_voice_decode_quality_on_call_end|retain_idle_call_details|traffic_grant_age_out_milliseconds' ||
-      typeof value.settings.retain_idle_call_details !== 'boolean' ||
-      typeof value.settings.clear_voice_decode_quality_on_call_end !== 'boolean' ||
+      Object.keys(value.settings).sort().join('|') !== 'traffic_grant_age_out_milliseconds' ||
       !Number.isInteger(value.settings.traffic_grant_age_out_milliseconds) ||
       value.settings.traffic_grant_age_out_milliseconds < 100 ||
       value.settings.traffic_grant_age_out_milliseconds > 15000) {
@@ -14727,10 +14792,6 @@ async function requestSiteSettings(method = 'GET', settings = null, revision = n
 async function renderAdminSiteBehaviorSettings() {
   const body = node('div', 'admin-section-body site-settings');
   const form = node('form', 'admin-form settings-page-form site-settings-form');
-  const retainIdle = preferenceCheckbox('retain-idle-details', 'Retain the last call on idle rows', false,
-    'This changes the shared Live state delivered to every listener.');
-  const clearVoice = preferenceCheckbox('clear-voice-quality', 'Clear voice quality when a call ends', false,
-    'This changes the shared Live state delivered to every listener.');
   const grantAge = node('input');
   grantAge.type = 'number';
   grantAge.min = '100';
@@ -14744,9 +14805,8 @@ async function renderAdminSiteBehaviorSettings() {
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  const group = settingsCard('Shared Live behavior',
-    'These controls affect everyone using this receiver. Personal Live display choices are on the Live page.',
-    retainIdle.control, clearVoice.control,
+  const group = settingsCard('Traffic grant timing',
+    'This receiver-wide timing controls when inactive traffic grants become idle.',
     formField('Idle grant retention (milliseconds)', grantAge,
       'How long inactive traffic grants remain in the shared Live state.'));
   const footer = node('div', 'settings-form-footer');
@@ -14759,13 +14819,9 @@ async function renderAdminSiteBehaviorSettings() {
   const apply = (envelope) => {
     confirmed = envelope;
     const value = envelope.settings;
-    retainIdle.input.checked = value.retain_idle_call_details;
-    clearVoice.input.checked = value.clear_voice_decode_quality_on_call_end;
     grantAge.value = String(value.traffic_grant_age_out_milliseconds);
   };
   const disable = (value) => {
-    retainIdle.input.disabled = value;
-    clearVoice.input.disabled = value;
     grantAge.disabled = value;
     save.disabled = value;
   };
@@ -14776,8 +14832,6 @@ async function renderAdminSiteBehaviorSettings() {
     message.textContent = 'Saving Site Settings…';
     try {
       const next = await requestSiteSettings('PUT', {
-        retain_idle_call_details: retainIdle.input.checked,
-        clear_voice_decode_quality_on_call_end: clearVoice.input.checked,
         traffic_grant_age_out_milliseconds: Number(grantAge.value)
       }, confirmed?.revision);
       apply(next);
@@ -15322,6 +15376,15 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   const voiceQuality = preferenceCheckbox('show-voice-quality', 'Show voice-channel decode quality',
     current.show_voice_decode_quality,
     'Add call-level voice quality when enough frames have been received.');
+  const activeOnly = preferenceCheckbox('show-only-active-trunked', 'Show only active trunked channels',
+    current.show_only_active_trunked_channels,
+    'Hide inactive trunked rows. Conventional channels are always shown.');
+  const retainLastCall = preferenceCheckbox('retain-last-call-on-idle', 'Retain the last call on idle rows',
+    current.retain_last_call_on_idle_rows,
+    'Keep the last source, target, alias, talker, and encryption details visible after a row becomes idle.');
+  const clearIdleQuality = preferenceCheckbox('clear-idle-voice-quality',
+    'Clear voice quality when a row becomes idle', current.clear_voice_quality_when_idle,
+    'Hide the completed call\'s voice-quality result after its row becomes idle.');
   const qualityMode = preferenceSelect('quality-mode', [['percentage', 'Percentage'], ['detailed', 'Detailed counters']],
     current.decode_quality_display_mode);
   const rowLimit = node('input');
@@ -15335,6 +15398,9 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     encryption.input.checked = presentation.show_encryption_details;
     controlQuality.input.checked = presentation.show_control_decode_quality;
     voiceQuality.input.checked = presentation.show_voice_decode_quality;
+    activeOnly.input.checked = presentation.show_only_active_trunked_channels;
+    retainLastCall.input.checked = presentation.retain_last_call_on_idle_rows;
+    clearIdleQuality.input.checked = presentation.clear_voice_quality_when_idle;
     qualityMode.value = presentation.decode_quality_display_mode;
     rowLimit.value = String(presentation.live_detail_row_limit);
   };
@@ -15350,6 +15416,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   footer.append(message, actions);
   const presentationCard = settingsCard('Live details',
     'Choose how decoded activity is shown on the Live page.',
+    activeOnly.control, retainLastCall.control, clearIdleQuality.control,
     encryption.control, controlQuality.control, voiceQuality.control, fields);
   form.append(node('p', 'live-presentation-intro',
     'These choices affect only this signed-in user.'),
@@ -15367,9 +15434,13 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       show_control_decode_quality: controlQuality.input.checked,
       show_voice_decode_quality: voiceQuality.input.checked,
       decode_quality_display_mode: qualityMode.value,
-      live_detail_row_limit: Number(rowLimit.value)
+      live_detail_row_limit: Number(rowLimit.value),
+      show_only_active_trunked_channels: activeOnly.input.checked,
+      retain_last_call_on_idle_rows: retainLastCall.input.checked,
+      clear_voice_quality_when_idle: clearIdleQuality.input.checked
     };
-    const controls = [encryption.input, controlQuality.input, voiceQuality.input, qualityMode, rowLimit, save];
+    const controls = [activeOnly.input, retainLastCall.input, clearIdleQuality.input, encryption.input,
+      controlQuality.input, voiceQuality.input, qualityMode, rowLimit, save];
     controls.forEach((control) => { control.disabled = true; });
     save.disabled = true;
     modal.setBusy(true);

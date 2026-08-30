@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Administrator-only endpoint for the three settings that change receiver behavior for everyone. */
+/** Administrator-only endpoint for the traffic timing that changes receiver behavior for everyone. */
 public final class WebSiteSettingsHttpController
 {
     public static final String PATH = "/api/v1/admin/site-settings";
@@ -181,7 +181,15 @@ public final class WebSiteSettingsHttpController
             }
             try
             {
-                return MAPPER.readValue(body, WebSiteSettingsService.Settings.class);
+                WebSiteSettingsService.Settings settings =
+                    MAPPER.readValue(body, WebSiteSettingsService.Settings.class);
+
+                if(settings == null)
+                {
+                    throw new RequestException(422, "invalid_site_settings", "Site settings are invalid");
+                }
+
+                return settings;
             }
             catch(IOException exception)
             {

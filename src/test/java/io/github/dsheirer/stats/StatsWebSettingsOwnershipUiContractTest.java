@@ -17,7 +17,7 @@ class StatsWebSettingsOwnershipUiContractTest
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
 
     @Test
-    void separatesThreeSharedSiteSettingsFromPersonalPreferences() throws Exception
+    void separatesSharedTrafficTimingFromPersonalLivePresentation() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String site = function(source, "async function renderAdminSiteBehaviorSettings()");
@@ -33,8 +33,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(site.contains("confirmed?.revision"));
         assertTrue(site.contains("error?.code === 'site_settings_conflict'"));
         assertTrue(site.contains("Current server values were reloaded"));
-        assertTrue(site.contains("retain_idle_call_details"));
-        assertTrue(site.contains("clear_voice_decode_quality_on_call_end"));
+        assertFalse(site.contains("retain_idle_call_details"));
+        assertFalse(site.contains("clear_voice_decode_quality_on_call_end"));
         assertTrue(site.contains("traffic_grant_age_out_milliseconds"));
         assertFalse(site.contains("show_encryption_details"));
         assertFalse(site.contains("show_control_decode_quality"));
@@ -66,6 +66,9 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(livePresentation.contains("show_voice_decode_quality"));
         assertTrue(livePresentation.contains("decode_quality_display_mode"));
         assertTrue(livePresentation.contains("live_detail_row_limit"));
+        assertTrue(livePresentation.contains("show_only_active_trunked_channels"));
+        assertTrue(livePresentation.contains("retain_last_call_on_idle_rows"));
+        assertTrue(livePresentation.contains("clear_voice_quality_when_idle"));
         assertTrue(livePresentation.contains("preferences.presentation ="));
         assertFalse(livePresentation.contains("conversation_grouping"));
         assertFalse(livePresentation.contains("conversation_burst_limit"));
