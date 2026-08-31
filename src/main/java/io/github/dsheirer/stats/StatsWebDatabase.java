@@ -17,6 +17,10 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideBand;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideProfile;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
@@ -590,19 +594,29 @@ class StatsWebDatabase
 
     private final UserPreferences mUserPreferences;
     private final Path mDatabasePath;
+    private final P25BandplanOverrideRegistry mP25BandplanOverrides;
     private final StatsAliasResolver mAliasResolver = new StatsAliasResolver();
     private final StatsAliasCatalog mAliasCatalog = new StatsAliasCatalog(mAliasResolver);
     private final WebConfiguredEntityRepository mConfiguredEntities = new WebConfiguredEntityRepository();
 
     StatsWebDatabase(UserPreferences userPreferences)
     {
-        this(userPreferences, SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        this(userPreferences, SdrTrunkDatabasePath.getDatabasePath(userPreferences),
+            userPreferences.getP25BandplanOverrideRegistry());
     }
 
     StatsWebDatabase(UserPreferences userPreferences, Path databasePath)
     {
+        this(userPreferences, databasePath,
+            new P25BandplanOverrideRegistry(new ApplicationSettingsStore(databasePath)));
+    }
+
+    private StatsWebDatabase(UserPreferences userPreferences, Path databasePath,
+                             P25BandplanOverrideRegistry p25BandplanOverrides)
+    {
         mUserPreferences = userPreferences;
         mDatabasePath = databasePath;
+        mP25BandplanOverrides = p25BandplanOverrides;
     }
 
     /**
@@ -2856,18 +2870,75 @@ class StatsWebDatabase
 
             long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
             Map<String,Object> response = new LinkedHashMap<>();
-            response.put("rows", queryRows(connection, """
-                SELECT current.band, current.tdma, current.base_hz, current.bandwidth AS bandwidth_hz,
-                    current.spacing_hz,
-                    current.transmit_offset_hz, current.timeslots, current.confirmed_at_ms,
-                    summary.first_seen_ms, summary.last_seen_ms, summary.observation_count,
-                    CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
-                        THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
-                FROM p25_site_frequency_band current
-                LEFT JOIN p25_site_frequency_band_summary summary
-                  ON summary.guid = current.guid AND summary.band = current.band
-                WHERE current.guid = ? ORDER BY current.band
-                """, currentSince, guid));
+            List<Map<String,Object>> identityRows = queryRows(connection, """
+                SELECT json_extract(config.config_json,
+                           '$.decodeConfiguration.useP25BandplanOverride') = 1 AS override_enabled,
+                    coalesce(system.wacn,
+                        json_extract(config.config_json, '$.p25SiteIdentity.wacn')) AS wacn,
+                    coalesce(system.system_id, snapshot.system_id,
+                        json_extract(config.config_json, '$.p25SiteIdentity.system')) AS system_id,
+                    coalesce(snapshot.rfss,
+                        json_extract(config.config_json, '$.p25SiteIdentity.rfss')) AS rfss,
+                    coalesce(snapshot.site,
+                        json_extract(config.config_json, '$.p25SiteIdentity.site')) AS site_id
+                FROM configuration_channel config
+                LEFT JOIN p25_site_snapshot snapshot ON snapshot.guid = config.radres_guid
+                LEFT JOIN p25_system system ON system.system_key = snapshot.system_key
+                WHERE config.id = ?
+                """, configured.rowId());
+            P25BandplanOverrideProfile override = null;
+
+            if(!identityRows.isEmpty() && number(identityRows.getFirst().get("override_enabled")) == 1)
+            {
+                Map<String,Object> identity = identityRows.getFirst();
+                Long wacn = nullableNumber(identity.get("wacn"));
+                Long system = nullableNumber(identity.get("system_id"));
+                Long rfss = nullableNumber(identity.get("rfss"));
+                Long site = nullableNumber(identity.get("site_id"));
+
+                if(wacn != null && system != null)
+                {
+                    override = mP25BandplanOverrides.find(wacn.intValue(), system.intValue(),
+                        rfss != null ? rfss.intValue() : null, site != null ? site.intValue() : null).orElse(null);
+                }
+            }
+
+            if(override != null)
+            {
+                List<Map<String,Object>> rows = new ArrayList<>();
+
+                for(P25BandplanOverrideBand band: override.bands())
+                {
+                    Map<String,Object> row = new LinkedHashMap<>();
+                    row.put("band", band.identifier());
+                    row.put("tdma", band.type().getTimeslotCount() == 2);
+                    row.put("base_hz", band.baseFrequency());
+                    row.put("bandwidth_hz", band.bandwidth());
+                    row.put("spacing_hz", band.channelSpacing());
+                    row.put("transmit_offset_hz", band.transmitOffset());
+                    row.put("timeslots", band.type().getTimeslotCount());
+                    rows.add(row);
+                }
+
+                response.put("rows", rows);
+                response.put("band_source", "P25_OVERRIDE");
+            }
+            else
+            {
+                response.put("rows", queryRows(connection, """
+                    SELECT current.band, current.tdma, current.base_hz, current.bandwidth AS bandwidth_hz,
+                        current.spacing_hz,
+                        current.transmit_offset_hz, current.timeslots, current.confirmed_at_ms,
+                        summary.first_seen_ms, summary.last_seen_ms, summary.observation_count,
+                        CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
+                            THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                    FROM p25_site_frequency_band current
+                    LEFT JOIN p25_site_frequency_band_summary summary
+                      ON summary.guid = current.guid AND summary.band = current.band
+                    WHERE current.guid = ? ORDER BY current.band
+                    """, currentSince, guid));
+                response.put("band_source", "OTA");
+            }
             List<Map<String,Object>> foreignRows = queryRows(connection, """
                 SELECT summary.foreign_wacn, summary.foreign_system_id, summary.band,
                     coalesce(current.channel_type, summary.channel_type) AS channel_type_code,
@@ -5405,6 +5476,11 @@ class StatsWebDatabase
     private static long number(Object value)
     {
         return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private static Long nullableNumber(Object value)
+    {
+        return value instanceof Number number ? number.longValue() : null;
     }
 
     /**

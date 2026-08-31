@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -126,6 +126,11 @@ default false when the corresponding shared value is absent. The step then remov
 keys from portable Java preferences while preserving traffic-grant age-out, the site-settings revision, and every
 unrelated value. Every affected user preference revision is incremented; malformed documents and exhausted revisions
 are refused.
+
+The format 9-to-10 step introduces optional P25 bandplan override profiles and a saved-channel opt-in setting without
+rewriting existing configuration. Existing channels remain opted out because an absent setting means disabled, and no
+override profile is created until an administrator saves one. Every saved channel, application setting, and received
+per-site P25 band observation is preserved unchanged.
 
 ## Replacement Boundary
 

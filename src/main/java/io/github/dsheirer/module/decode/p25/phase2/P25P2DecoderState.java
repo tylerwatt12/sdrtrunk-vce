@@ -95,6 +95,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStru
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MessageUpdateAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MessageUpdateExtendedLCCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MessageUpdateExtendedVCH;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PowerControlSignalQuality;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
@@ -104,6 +105,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RadioUn
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RadioUnitMonitorCommandExtendedVCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RadioUnitMonitorEnhancedCommandAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RadioUnitMonitorEnhancedCommandExtended;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RfssStatusBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RfssStatusBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RoamingAddressCommand;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RoamingAddressUpdate;
@@ -346,6 +348,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
         mNetworkConfigurationStabilizer.observe(observation, timestamp);
+
+        if(mChannel.isStandardChannel() && observation != null &&
+            (observation.network() != null || observation.currentSite() != null))
+        {
+            mTrafficChannelManager.processNetworkConfigurationIdentity(
+                mNetworkConfigurationStabilizer.getStableSiteIdentity());
+        }
+
         mSiteMetadataPublisher.publish(timestamp);
     }
 
@@ -1471,6 +1481,26 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private void processNetwork(MacMessage message, MacStructure mac)
     {
         // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — do not downgrade.
+        if(mChannel.isStandardChannel())
+        {
+            if(mac instanceof NetworkStatusBroadcastImplicit status)
+            {
+                mTrafficChannelManager.resolveControlChannel(status.getChannel());
+            }
+            else if(mac instanceof NetworkStatusBroadcastExplicit status)
+            {
+                mTrafficChannelManager.resolveControlChannel(status.getChannel());
+            }
+            else if(mac instanceof RfssStatusBroadcastImplicit status)
+            {
+                mTrafficChannelManager.resolveControlChannel(status.getChannel());
+            }
+            else if(mac instanceof RfssStatusBroadcastExplicit status)
+            {
+                mTrafficChannelManager.resolveControlChannel(status.getChannel());
+            }
+        }
+
         observeNetworkConfiguration(mNetworkConfigurationMonitor.processMacMessage(message), message.getTimestamp());
 
         if(mac instanceof NetworkStatusBroadcastImplicit nsbi &&

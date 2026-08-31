@@ -226,7 +226,8 @@ public class DecoderFactory
 
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
-            p25TrafficChannelManager = new P25TrafficChannelManager(channel);
+            p25TrafficChannelManager = new P25TrafficChannelManager(channel,
+                userPreferences.getP25BandplanOverrideRegistry());
         }
         else if(trafficChannelManager instanceof P25TrafficChannelManager p25)
         {
@@ -234,7 +235,8 @@ public class DecoderFactory
         }
         else
         {
-            p25TrafficChannelManager = new P25TrafficChannelManager(channel);
+            p25TrafficChannelManager = new P25TrafficChannelManager(channel,
+                userPreferences.getP25BandplanOverrideRegistry());
         }
 
         p25TrafficChannelManager.setChannelActivityModel(channelActivityModel);
@@ -311,7 +313,8 @@ public class DecoderFactory
 
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
-            P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel);
+            P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel,
+                userPreferences.getP25BandplanOverrideRegistry());
             primaryTCM.setChannelActivityModel(channelActivityModel);
             modules.add(primaryTCM);
             modules.add(new P25P1DecoderState(channel, primaryTCM));
@@ -730,6 +733,7 @@ public class DecoderFactory
                     copyP25.setLearnAnnouncedControlChannels(originalP25.getLearnAnnouncedControlChannels());
                     copyP25.setModulation(originalP25.getModulation());
                     copyP25.setTrafficChannelPoolSize(originalP25.getTrafficChannelPoolSize());
+                    copyP25.setUseP25BandplanOverride(originalP25.getUseP25BandplanOverride());
                     return copyP25;
                 case P25_CONVENTIONAL:
                     DecodeConfigP25Conventional originalConventional = (DecodeConfigP25Conventional)config;
@@ -743,6 +747,7 @@ public class DecoderFactory
                     copyP25P2.setLearnAnnouncedControlChannels(
                         originalP25P2.getLearnAnnouncedControlChannels());
                     copyP25P2.setTrafficChannelPoolSize(originalP25P2.getTrafficChannelPoolSize());
+                    copyP25P2.setUseP25BandplanOverride(originalP25P2.getUseP25BandplanOverride());
 
                     if(originalP25P2.getScrambleParameters() != null)
                     {

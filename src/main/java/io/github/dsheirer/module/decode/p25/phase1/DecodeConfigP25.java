@@ -39,6 +39,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
     private boolean mLearnAnnouncedControlChannels = false;
+    private boolean mUseP25BandplanOverride = false;
     private List<Long> mLearnedControlFrequencies = new CopyOnWriteArrayList<>();
 
     protected DecodeConfigP25()
@@ -107,6 +108,16 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     public boolean removeLearnedControlFrequency(long frequency)
     {
         return mLearnedControlFrequencies.remove(frequency);
+    }
+
+    public boolean getUseP25BandplanOverride()
+    {
+        return mUseP25BandplanOverride;
+    }
+
+    public void setUseP25BandplanOverride(boolean useP25BandplanOverride)
+    {
+        mUseP25BandplanOverride = useP25BandplanOverride;
     }
 
 

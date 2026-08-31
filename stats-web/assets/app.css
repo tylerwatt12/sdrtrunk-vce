@@ -3460,6 +3460,64 @@ body.modal-open {
   min-height: 20px;
 }
 
+.p25-overrides-intro {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.p25-override-profile-list,
+.p25-override-bands {
+  display: grid;
+  gap: 14px;
+}
+
+.p25-override-profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.p25-override-identity {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.p25-override-bands-title {
+  margin: 4px 0 0;
+}
+
+.p25-override-band-row {
+  display: grid;
+  grid-template-columns: 90px minmax(150px, .9fr) repeat(4, minmax(130px, 1fr)) max-content;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.p25-override-remove {
+  margin-bottom: 1px;
+}
+
+@media (max-width: 1180px) {
+  .p25-override-identity,
+  .p25-override-band-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .p25-override-identity,
+  .p25-override-band-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .read-only-modal.live-presentation-modal {
   width: min(680px, 96vw);
 }

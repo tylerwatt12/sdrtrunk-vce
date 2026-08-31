@@ -22,14 +22,20 @@ class StatsWebSettingsOwnershipUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String site = function(source, "async function renderAdminSiteBehaviorSettings()");
         String request = function(source, "async function requestSiteSettings(method = 'GET', settings = null, revision = null)");
+        String bandplanRequest = function(source,
+            "async function requestP25BandplanOverrides(method = 'GET', profiles = null)");
         String personal = function(source, "async function renderSettings()");
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
         String scannerPlayback = function(source, "function openScannerPlaybackSettings(returnFocusSelector = null)");
         String admin = function(source, "async function renderAdmin()");
 
         assertTrue(admin.contains("id: 'site-settings', label: 'Site Settings'"));
+        assertTrue(admin.contains("id: 'p25-bandplans', label: 'P25 Bandplan Overrides'"));
+        assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
         assertTrue(request.contains("'/api/v1/admin/site-settings'"));
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
+        assertTrue(bandplanRequest.contains("jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides'"));
+        assertFalse(bandplanRequest.contains("requestJson("));
         assertTrue(site.contains("confirmed?.revision"));
         assertTrue(site.contains("error?.code === 'site_settings_conflict'"));
         assertTrue(site.contains("Current server values were reloaded"));
@@ -97,6 +103,7 @@ class StatsWebSettingsOwnershipUiContractTest
         String service = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer",
             "stats", "StatsWebServerService.java"));
         assertTrue(service.contains("WebSiteSettingsHttpController.PATH"));
+        assertTrue(service.contains("P25BandplanOverrideHttpController.PATH"));
         assertTrue(service.contains("WebUserPreferencesHttpController.PATH"));
         assertTrue(service.contains("WebCapability.USER_SETTINGS"));
         assertFalse(service.contains("WebDisplaySettings"));

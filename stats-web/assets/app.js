@@ -13878,18 +13878,25 @@ async function renderSite() {
     await renderSiteNeighbors(site, renderContext);
   } else if (tab === 'band-plan') {
     const data = await api(siteApiPath(guid, 'frequency-bands'));
-    content.append(tableSection('Home System Band Plan', data.home_bands || [], [
+    const overrideActive = data.band_source === 'P25_OVERRIDE';
+    const homeBandColumns = [
       { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
       { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
       { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
       { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
       { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
       { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
-      { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
+      { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' }
+    ];
+    if (!overrideActive) homeBandColumns.push(
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
       { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ], 'No home-system band plan recorded', { type: 'site-bands' }));
+    );
+    const bandSource = badge(overrideActive ? 'P25 Override' : 'OTA Bandplan',
+      overrideActive ? 'state-current' : '');
+    content.append(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
+      'No home-system band plan recorded', { type: 'site-bands' }, null, bandSource));
     content.append(tableSection('ISSI Advertised Band Plans', data.foreign_bands || [], [
       { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
       { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
@@ -15382,6 +15389,198 @@ async function renderAdminSiteBehaviorSettings() {
   }
 }
 
+function p25OverrideInput(label, field, value = '', options = {}) {
+  const input = node('input');
+  input.dataset.p25OverrideField = field;
+  input.type = options.type || 'text';
+  input.value = value;
+  if (options.required) input.required = true;
+  if (options.pattern) input.pattern = options.pattern;
+  if (options.placeholder) input.placeholder = options.placeholder;
+  if (options.min !== undefined) input.min = String(options.min);
+  if (options.max !== undefined) input.max = String(options.max);
+  if (options.step !== undefined) input.step = String(options.step);
+  return formField(label, input, options.detail || '');
+}
+
+function p25OverrideNumber(value, divisor) {
+  if (!Number.isFinite(Number(value))) return '';
+  return String(Number((Number(value) / divisor).toFixed(6)));
+}
+
+function p25OverrideBandRow(band = null) {
+  const row = node('div', 'p25-override-band-row');
+  const type = node('select');
+  type.dataset.p25OverrideField = 'type';
+  [['FDMA', 'FDMA'], ['TDMA', 'P25 2-slot TDMA']].forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    type.append(option);
+  });
+  type.value = band?.type === 'TDMA' ? 'TDMA' : 'FDMA';
+  const remove = node('button', 'button danger p25-override-remove', 'Remove band');
+  remove.type = 'button';
+  remove.addEventListener('click', () => row.remove());
+  row.append(
+    p25OverrideInput('Band ID', 'identifier', band?.identifier ?? '',
+      { type: 'number', required: true, min: 0, max: 15, step: 1 }),
+    formField('Type', type),
+    p25OverrideInput('Base frequency (MHz)', 'base_frequency',
+      p25OverrideNumber(band?.base_frequency, 1_000_000),
+      { type: 'number', required: true, min: 0, step: 0.000001 }),
+    p25OverrideInput('Bandwidth (kHz)', 'bandwidth', p25OverrideNumber(band?.bandwidth, 1_000),
+      { type: 'number', required: true, min: 0.001, step: 0.001 }),
+    p25OverrideInput('Spacing (kHz)', 'channel_spacing',
+      p25OverrideNumber(band?.channel_spacing, 1_000),
+      { type: 'number', required: true, min: 0.001, step: 0.001 }),
+    p25OverrideInput('Offset (MHz)', 'transmit_offset',
+      p25OverrideNumber(band?.transmit_offset, 1_000_000),
+      { type: 'number', required: true, step: 0.000001 }),
+    remove
+  );
+  return row;
+}
+
+function p25OverrideProfileCard(profile = null) {
+  const card = node('section', 'settings-card p25-override-profile');
+  const header = node('div', 'settings-card-header p25-override-profile-header');
+  const title = node('h3', 'settings-card-title', 'New P25 override');
+  const remove = node('button', 'button danger', 'Delete profile');
+  remove.type = 'button';
+  remove.addEventListener('click', () => card.remove());
+  header.append(title, remove);
+  const body = node('div', 'settings-card-body');
+  const identity = node('div', 'p25-override-identity');
+  const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '';
+  identity.append(
+    p25OverrideInput('WACN (hex)', 'wacn', hex(profile?.wacn, 5),
+      { required: true, pattern: '[0-9A-Fa-f]{1,5}', placeholder: 'BEE00' }),
+    p25OverrideInput('System ID (hex)', 'system', hex(profile?.system, 3),
+      { required: true, pattern: '[0-9A-Fa-f]{1,3}', placeholder: '49F' }),
+    p25OverrideInput('RFSS (hex, optional)', 'rfss', hex(profile?.rfss, 2),
+      { pattern: '[0-9A-Fa-f]{1,2}', placeholder: '01' }),
+    p25OverrideInput('Site ID (hex, optional)', 'site', hex(profile?.site, 2),
+      { pattern: '[0-9A-Fa-f]{1,2}', placeholder: '01' })
+  );
+  const bands = node('div', 'p25-override-bands');
+  (profile?.bands || [null]).forEach((band) => bands.append(p25OverrideBandRow(band)));
+  const addBand = node('button', 'button secondary', 'Add band');
+  addBand.type = 'button';
+  addBand.addEventListener('click', () => bands.append(p25OverrideBandRow()));
+  body.append(identity, node('h4', 'p25-override-bands-title', 'Replacement bands'), bands, addBand);
+  card.append(header, body);
+
+  const updateTitle = () => {
+    const wacn = card.querySelector('[data-p25-override-field="wacn"]')?.value.trim().toUpperCase();
+    const system = card.querySelector('[data-p25-override-field="system"]')?.value.trim().toUpperCase();
+    const rfss = card.querySelector('[data-p25-override-field="rfss"]')?.value.trim().toUpperCase();
+    const site = card.querySelector('[data-p25-override-field="site"]')?.value.trim().toUpperCase();
+    title.textContent = wacn && system ? `${wacn}-${system}${rfss && site ? ` · ${rfss}-${site}` : ''}` :
+      'New P25 override';
+  };
+  identity.addEventListener('input', updateTitle);
+  updateTitle();
+  return card;
+}
+
+function p25OverrideProfilesFromForm(list) {
+  const value = (host, field) => host.querySelector(`[data-p25-override-field="${field}"]`)?.value.trim() || '';
+  const integer = (host, field, multiplier = 1) => Math.round(Number(value(host, field)) * multiplier);
+  return [...list.querySelectorAll(':scope > .p25-override-profile')].map((profile) => {
+    const rfss = value(profile, 'rfss');
+    const site = value(profile, 'site');
+    if (Boolean(rfss) !== Boolean(site)) throw new Error('RFSS and Site ID must both be filled in or both be blank.');
+    const bands = [...profile.querySelectorAll('.p25-override-band-row')].map((band) => ({
+      identifier: integer(band, 'identifier'),
+      type: value(band, 'type'),
+      base_frequency: integer(band, 'base_frequency', 1_000_000),
+      bandwidth: integer(band, 'bandwidth', 1_000),
+      channel_spacing: integer(band, 'channel_spacing', 1_000),
+      transmit_offset: integer(band, 'transmit_offset', 1_000_000)
+    }));
+    if (!bands.length) throw new Error('Each P25 override must contain at least one band.');
+    return {
+      wacn: parseInt(value(profile, 'wacn'), 16),
+      system: parseInt(value(profile, 'system'), 16),
+      rfss: rfss ? parseInt(rfss, 16) : null,
+      site: site ? parseInt(site, 16) : null,
+      bands
+    };
+  });
+}
+
+async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
+  const headers = { Accept: 'application/json' };
+  const options = { method, headers };
+  if (method === 'PUT') {
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify({ profiles });
+  }
+  const response = await jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides', options);
+  let documentValue = null;
+  try { documentValue = await response.json(); } catch (_) { }
+  if (!response.ok) {
+    const failure = documentValue?.error && typeof documentValue.error === 'object' ? documentValue.error : null;
+    throw new Error(failure?.message || 'P25 bandplan overrides could not be saved.');
+  }
+  if (!documentValue || !Array.isArray(documentValue.profiles)) {
+    throw new Error('The server returned invalid P25 bandplan overrides.');
+  }
+  return documentValue;
+}
+
+async function renderAdminP25BandplanOverrides() {
+  const body = node('div', 'admin-section-body');
+  const form = node('form', 'admin-form settings-page-form p25-overrides-form');
+  const intro = node('p', 'p25-overrides-intro',
+    'A matching profile replaces the complete over-the-air band plan only for P25 channels that have the override enabled. Site-specific profiles take priority over system-wide profiles.');
+  const list = node('div', 'p25-override-profile-list');
+  const message = node('div', 'admin-form-message', 'Loading P25 bandplan overrides…');
+  message.setAttribute('role', 'status');
+  const add = node('button', 'button secondary', 'Add P25 override');
+  add.type = 'button';
+  add.disabled = true;
+  add.addEventListener('click', () => list.append(p25OverrideProfileCard()));
+  const save = node('button', '', 'Save P25 Bandplan Overrides');
+  save.type = 'submit';
+  save.disabled = true;
+  const actions = node('div', 'admin-form-actions');
+  actions.append(add, save);
+  const footer = node('div', 'settings-form-footer');
+  footer.append(message, actions);
+  form.append(intro, list, footer);
+  body.append(form);
+  content.append(section('P25 Bandplan Overrides', body));
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || save.disabled) return;
+    add.disabled = true;
+    save.disabled = true;
+    message.textContent = 'Saving P25 bandplan overrides…';
+    try {
+      const documentValue = await requestP25BandplanOverrides('PUT', p25OverrideProfilesFromForm(list));
+      list.replaceChildren(...(documentValue?.profiles || []).map(p25OverrideProfileCard));
+      message.textContent = 'P25 bandplan overrides saved.';
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      add.disabled = false;
+      save.disabled = false;
+    }
+  });
+
+  try {
+    const documentValue = await requestP25BandplanOverrides();
+    list.append(...documentValue.profiles.map(p25OverrideProfileCard));
+    message.textContent = '';
+    add.disabled = false;
+    save.disabled = false;
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
 function adminStatusBytes(value) {
   const numeric = typeof value === 'number' ? value : Number.NaN;
   if (!Number.isFinite(numeric) || numeric < 0) return '—';
@@ -16218,6 +16417,7 @@ async function renderAdmin() {
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'alerts', label: 'Alerts', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'site-settings', label: 'Site Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
+    { id: 'p25-bandplans', label: 'P25 Bandplan Overrides', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
     { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
     { id: 'system', label: 'System', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
@@ -16240,6 +16440,10 @@ async function renderAdmin() {
   else if (active === 'site-settings') {
     pageTitleController.update({ pageTitle: 'Site Settings' });
     await renderSiteSettings();
+  }
+  else if (active === 'p25-bandplans') {
+    pageTitleController.update({ pageTitle: 'P25 Bandplan Overrides' });
+    await renderAdminP25BandplanOverrides();
   }
   else if (active === 'access') await renderAdminAccess();
   else if (active === 'system') renderAdminSystem();

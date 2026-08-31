@@ -19,13 +19,16 @@
 
 package io.github.dsheirer.preference;
 
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
+import io.github.dsheirer.preference.call.CallManagementPreference;
 import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
 import io.github.dsheirer.preference.decoder.VoiceDecryptionModulePreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.preference.call.CallManagementPreference;
 import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.event.DecodeEventPreference;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
@@ -70,6 +73,7 @@ public class UserPreferences implements Listener<PreferenceType>
     private TalkgroupFormatPreference mTalkgroupFormatPreference;
     private TunerPreference mTunerPreference;
     private VectorCalibrationPreference mVectorCalibrationPreference;
+    private P25BandplanOverrideRegistry mP25BandplanOverrideRegistry;
 
     private SwingPreference mSwingPreference = new SwingPreference();
     private JavaFxPreferences mJavaFxPreferences = new JavaFxPreferences();
@@ -210,6 +214,20 @@ public class UserPreferences implements Listener<PreferenceType>
     public CallManagementPreference getCallManagementPreference()
     {
         return mCallManagementPreference;
+    }
+
+    /**
+     * Receiver-wide manually configured P25 bandplan overrides.
+     */
+    public synchronized P25BandplanOverrideRegistry getP25BandplanOverrideRegistry()
+    {
+        if(mP25BandplanOverrideRegistry == null)
+        {
+            mP25BandplanOverrideRegistry = new P25BandplanOverrideRegistry(
+                new ApplicationSettingsStore(SdrTrunkDatabasePath.getDatabasePath(this)));
+        }
+
+        return mP25BandplanOverrideRegistry;
     }
 
     /**

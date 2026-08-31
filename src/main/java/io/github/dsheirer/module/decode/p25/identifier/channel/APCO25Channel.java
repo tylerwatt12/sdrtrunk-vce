@@ -71,6 +71,11 @@ public class APCO25Channel extends Identifier<P25Channel> implements IChannelDes
         getValue().setFrequencyBand(bandIdentifier);
     }
 
+    public void clearFrequencyBands()
+    {
+        getValue().clearFrequencyBands();
+    }
+
     /**
      * Downlink frequency for this channel.
      *

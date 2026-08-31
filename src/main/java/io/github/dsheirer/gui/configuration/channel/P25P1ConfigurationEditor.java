@@ -77,6 +77,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     private ToggleButton mC4FMToggleButton;
     private ToggleButton mLSMToggleButton;
     private P25SiteIdentityView mP25SiteIdentityView;
+    private P25BandplanOverrideControl mP25BandplanOverrideControl;
 
     /**
      * Constructs an instance
@@ -105,12 +106,14 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     {
         super.setItem(channel);
         getP25SiteIdentityView().setChannel(channel);
+        getP25BandplanOverrideControl().setChannel(channel);
     }
 
     @Override
     public void dispose()
     {
         getP25SiteIdentityView().dispose();
+        getP25BandplanOverrideControl().dispose();
         super.dispose();
     }
 
@@ -168,8 +171,11 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getP25SiteIdentityView(), 0, 2, 6, 1);
             gridPane.getChildren().add(getP25SiteIdentityView());
 
+            GridPane.setConstraints(getP25BandplanOverrideControl(), 1, 3, 5, 1);
+            gridPane.getChildren().add(getP25BandplanOverrideControl());
+
             Label modulationHelpLabel = new Label("C4FM: non-simulcast.  LSM: simulcast.");
-            GridPane.setConstraints(modulationHelpLabel, 0, 3, 6, 1);
+            GridPane.setConstraints(modulationHelpLabel, 0, 4, 6, 1);
             gridPane.getChildren().add(modulationHelpLabel);
 
             mDecoderPane.setContent(gridPane);
@@ -186,6 +192,17 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mP25SiteIdentityView;
+    }
+
+    private P25BandplanOverrideControl getP25BandplanOverrideControl()
+    {
+        if(mP25BandplanOverrideControl == null)
+        {
+            mP25BandplanOverrideControl = new P25BandplanOverrideControl(
+                mUserPreferences.getP25BandplanOverrideRegistry(), () -> modifiedProperty().set(true));
+        }
+
+        return mP25BandplanOverrideControl;
     }
 
     private TitledPane getEventLogPane()
@@ -375,6 +392,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         getIgnoreDataCallsButton().setDisable(config == null);
         getLearnAnnouncedControlChannelsCheckBox().setDisable(config == null);
         getTrafficChannelPoolSizeSpinner().setDisable(config == null);
+        getP25BandplanOverrideControl().setControlDisabled(config == null);
 
         if(config instanceof DecodeConfigP25Phase1)
         {
@@ -382,6 +400,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
             getLearnAnnouncedControlChannelsCheckBox().setSelected(decodeConfig.getLearnAnnouncedControlChannels());
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
+            getP25BandplanOverrideControl().setSelected(decodeConfig.getUseP25BandplanOverride());
             if(decodeConfig.getModulation() == Modulation.C4FM)
             {
                 getC4FMToggleButton().setSelected(true);
@@ -396,6 +415,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             getIgnoreDataCallsButton().setSelected(false);
             getLearnAnnouncedControlChannelsCheckBox().setSelected(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(0);
+            getP25BandplanOverrideControl().setSelected(false);
         }
     }
 
@@ -416,6 +436,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
         config.setLearnAnnouncedControlChannels(getLearnAnnouncedControlChannelsCheckBox().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
+        config.setUseP25BandplanOverride(getP25BandplanOverrideControl().isSelected());
         config.setModulation(getC4FMToggleButton().isSelected() ? Modulation.C4FM : Modulation.CQPSK);
         getItem().setDecodeConfiguration(config);
     }

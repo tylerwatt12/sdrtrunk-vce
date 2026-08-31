@@ -35,7 +35,7 @@ class Format8To9DatabaseMigrationTest
             String preferencesBefore = existingPreferenceDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(1, preflight.steps().size());
+            assertEquals(2, preflight.steps().size());
             assertEquals("format-8-to-9", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "per-user Live presentation settings", 3);
@@ -60,7 +60,7 @@ class Format8To9DatabaseMigrationTest
             }
 
             assertEquals(8, report.source().version());
-            assertEquals(9, report.target().version());
+            assertEquals(10, report.target().version());
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
@@ -94,10 +94,10 @@ class Format8To9DatabaseMigrationTest
                         '$."user/io/github/dsheirer/preference/nowplaying"."clear.voice.decode.quality.on.call.end"')
                         IS NOT NULL)
                 """));
-            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(10, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -122,7 +122,7 @@ class Format8To9DatabaseMigrationTest
                 DatabaseFormatCatalog.inspect(connection));
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DROP,
                 "obsolete shared Live presentation settings", 0);
-            assertEquals(9, DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(10, DatabaseMigrationChain.migrate(connection).target().version());
 
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
@@ -152,7 +152,7 @@ class Format8To9DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(9, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(10, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally

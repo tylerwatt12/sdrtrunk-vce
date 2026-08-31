@@ -14,6 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanChannelType;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideBand;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideProfile;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
@@ -60,6 +65,76 @@ class StatsWebDatabaseTest
     {
         assertEquals("Motorola (0x90)", StatsWebDatabase.mfidDisplay(0x90));
         assertEquals("0xAB", StatsWebDatabase.mfidDisplay(0xAB));
+    }
+
+    @Test
+    void displaysTheEffectiveWholeP25OverrideWithoutWritingOtaObservationFacts() throws Exception
+    {
+        P25BandplanOverrideProfile system = overrideProfile(null, null, 851_000_000L);
+        P25BandplanOverrideProfile site = overrideProfile(1, 1, 762_000_000L);
+        P25BandplanOverrideRegistry registry = new P25BandplanOverrideRegistry(
+            new ApplicationSettingsStore(mDatabasePath));
+        registry.setProfiles(List.of(system, site));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET config_json = '{"decodeConfiguration":{"useP25BandplanOverride":true}}'
+                WHERE radres_guid = '00000000-0000-0000-0000-000000000001'
+                """);
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        Map<String,Object> siteSpecific = mDatabase.siteBands(request("/api/site/bands?guid=" + GUID));
+        assertEquals("P25_OVERRIDE", siteSpecific.get("band_source"));
+        Map<String,Object> effective = rows(siteSpecific).getFirst();
+        assertEquals(762_000_000L, number(effective.get("base_hz")));
+        assertFalse(effective.containsKey("observation_count"));
+        assertFalse(effective.containsKey("last_seen_ms"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_snapshot SET rfss = NULL, site = NULL WHERE guid = '" +
+                GUID + "'");
+        }
+
+        Map<String,Object> systemWide = mDatabase.siteBands(request("/api/site/bands?guid=" + GUID));
+        assertEquals("P25_OVERRIDE", systemWide.get("band_source"));
+        assertEquals(851_000_000L, number(rows(systemWide).getFirst().get("base_hz")));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET config_json = '{"decodeConfiguration":{"useP25BandplanOverride":false}}'
+                WHERE radres_guid = '00000000-0000-0000-0000-000000000001'
+                """);
+        }
+
+        Map<String,Object> ota = mDatabase.siteBands(request("/api/site/bands?guid=" + GUID));
+        assertEquals("OTA", ota.get("band_source"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT count(*) FROM p25_site_frequency_band
+                WHERE base_hz IN (762000000, 851000000)
+                """);
+            ResultSet resultSet = statement.executeQuery())
+        {
+            assertTrue(resultSet.next());
+            assertEquals(0, resultSet.getInt(1));
+        }
+    }
+
+    private static P25BandplanOverrideProfile overrideProfile(Integer rfss, Integer site, long baseFrequency)
+    {
+        return new P25BandplanOverrideProfile(WACN, SYSTEM, rfss, site, List.of(
+            new P25BandplanOverrideBand(0, P25BandplanChannelType.FDMA, baseFrequency, 12_500,
+                6_250L, -45_000_000L)));
     }
 
     @BeforeEach

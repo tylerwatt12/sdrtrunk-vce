@@ -74,6 +74,7 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     private CheckBox mLearnAnnouncedControlChannelsCheckBox;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
     private P25SiteIdentityView mP25SiteIdentityView;
+    private P25BandplanOverrideControl mP25BandplanOverrideControl;
 
     /**
      * Constructs an instance
@@ -101,12 +102,14 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     {
         super.setItem(channel);
         getP25SiteIdentityView().setChannel(channel);
+        getP25BandplanOverrideControl().setChannel(channel);
     }
 
     @Override
     public void dispose()
     {
         getP25SiteIdentityView().dispose();
+        getP25BandplanOverrideControl().dispose();
         super.dispose();
     }
 
@@ -182,6 +185,9 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getP25SiteIdentityView(), 0, ++row, 6, 1);
             gridPane.getChildren().add(getP25SiteIdentityView());
 
+            GridPane.setConstraints(getP25BandplanOverrideControl(), 1, ++row, 5, 1);
+            gridPane.getChildren().add(getP25BandplanOverrideControl());
+
             Label noteLabel = new Label("Note: WACN/System/NAC values are auto-detected (ie not required) from " +
                     "the control channel and are only required when decoding individual traffic channels");
             GridPane.setHalignment(noteLabel, HPos.LEFT);
@@ -203,6 +209,17 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mP25SiteIdentityView;
+    }
+
+    private P25BandplanOverrideControl getP25BandplanOverrideControl()
+    {
+        if(mP25BandplanOverrideControl == null)
+        {
+            mP25BandplanOverrideControl = new P25BandplanOverrideControl(
+                mUserPreferences.getP25BandplanOverrideRegistry(), () -> modifiedProperty().set(true));
+        }
+
+        return mP25BandplanOverrideControl;
     }
 
     private TitledPane getEventLogPane()
@@ -401,6 +418,8 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
             getLearnAnnouncedControlChannelsCheckBox().setSelected(decodeConfig.getLearnAnnouncedControlChannels());
             getTrafficChannelPoolSizeSpinner().setDisable(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
+            getP25BandplanOverrideControl().setControlDisabled(false);
+            getP25BandplanOverrideControl().setSelected(decodeConfig.getUseP25BandplanOverride());
         }
         else
         {
@@ -414,6 +433,8 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
             getLearnAnnouncedControlChannelsCheckBox().setDisable(true);
             getLearnAnnouncedControlChannelsCheckBox().setSelected(false);
             getTrafficChannelPoolSizeSpinner().setDisable(true);
+            getP25BandplanOverrideControl().setControlDisabled(true);
+            getP25BandplanOverrideControl().setSelected(false);
         }
     }
 
@@ -439,6 +460,7 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
         config.setLearnAnnouncedControlChannels(getLearnAnnouncedControlChannelsCheckBox().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
+        config.setUseP25BandplanOverride(getP25BandplanOverrideControl().isSelected());
 
         getItem().setDecodeConfiguration(config);
     }

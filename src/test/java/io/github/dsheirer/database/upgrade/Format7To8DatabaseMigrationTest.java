@@ -35,7 +35,7 @@ class Format7To8DatabaseMigrationTest
             String existingPreferencesBefore = existingPreferenceDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(2, preflight.steps().size());
+            assertEquals(3, preflight.steps().size());
             assertEquals("format-7-to-8", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "per-user receiver-health alert settings", 3);
@@ -58,7 +58,7 @@ class Format7To8DatabaseMigrationTest
             }
 
             assertEquals(7, report.source().version());
-            assertEquals(9, report.target().version());
+            assertEquals(10, report.target().version());
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
@@ -70,10 +70,10 @@ class Format7To8DatabaseMigrationTest
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));
-            assertEquals("9", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(9, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(10, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -88,7 +88,7 @@ class Format7To8DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(9, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(10, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally

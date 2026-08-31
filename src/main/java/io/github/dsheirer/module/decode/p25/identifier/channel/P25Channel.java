@@ -141,6 +141,12 @@ public class P25Channel implements IChannelDescriptor
         }
     }
 
+    /** Removes frequency information previously attached by another bandplan source. */
+    public void clearFrequencyBands()
+    {
+        mFrequencyBand = null;
+    }
+
     @Override
     public int getTimeslotCount()
     {

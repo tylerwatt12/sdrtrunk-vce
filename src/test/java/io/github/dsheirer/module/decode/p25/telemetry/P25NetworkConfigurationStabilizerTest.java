@@ -14,6 +14,7 @@ package io.github.dsheirer.module.decode.p25.telemetry;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
@@ -46,6 +47,7 @@ public class P25NetworkConfigurationStabilizerTest
         assertNotNull(stable.network());
         assertEquals(0xBEE00, stable.network().wacn());
         assertNotNull(stable.currentSite());
+        assertEquals(new P25SiteIdentity(0xBEE00, 0x348, 2, 1), stabilizer.getStableSiteIdentity());
         assertEquals(2, stable.channels().size());
         assertTrue(hasChannel(stable, "primary_control", 856137500L));
         assertTrue(hasChannel(stable, "secondary_control", 855987500L));

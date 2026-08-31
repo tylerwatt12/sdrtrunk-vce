@@ -65,6 +65,7 @@ import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.WebSiteSettingsHttpController;
+import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
@@ -687,6 +688,11 @@ public class StatsWebServerService implements AutoCloseable
             new WebSiteSettingsHttpController(mWebSiteSettingsService);
         server.createContext(WebSiteSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, siteSettingsController::handle));
+
+        P25BandplanOverrideHttpController bandplanOverrideController =
+            new P25BandplanOverrideHttpController(mUserPreferences.getP25BandplanOverrideRegistry());
+        server.createContext(P25BandplanOverrideHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, bandplanOverrideController::handle));
 
         WebUserPreferencesHttpController userPreferencesController = new WebUserPreferencesHttpController(
             mWebRequestSecurity, new WebUserPreferencesService(mWebAccessDatabasePath));

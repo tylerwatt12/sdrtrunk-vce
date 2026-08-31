@@ -67,7 +67,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/sites/{guid}/channels` | Paged observed channels. |
 | `GET /api/v1/sites/{guid}/group-identities` | Bounded leading group identities for a time range. |
 | `GET /api/v1/sites/{guid}/quality` | Bounded current and historical site quality. |
-| `GET /api/v1/sites/{guid}/frequency-bands` | P25 home bands plus paged foreign-system bands. |
+| `GET /api/v1/sites/{guid}/frequency-bands` | The effective P25 home bandplan plus paged foreign-system bands. `meta.band_source` is `P25_OVERRIDE` or `OTA`. |
 | `GET /api/v1/sites/{guid}/neighbors` | Paged neighbors. |
 | `GET /api/v1/sites/{guid}/patch-groups` | Paged P25 patch groups with bounded members. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
@@ -335,12 +335,20 @@ Central administration uses:
 - `PUT, DELETE /api/v1/admin/users/{username}`
 - `GET, PUT /api/v1/admin/access`
 - `GET, PUT /api/v1/admin/site-settings`
+- `GET, PUT /api/v1/admin/p25-bandplan-overrides`
 
 The site-settings document contains only the receiver-wide traffic-grant age-out value in milliseconds. Retaining the
 last call on an idle Live row and clearing idle voice quality are per-user Live presentation preferences, not shared
 site settings. `GET` returns the complete document with a quoted positive `ETag`. `PUT` replaces the age-out value and
 requires the exact quoted revision in `If-Match`; a stale revision returns `409` with the current complete document
 and `ETag`.
+
+The P25 bandplan-override document contains the complete receiver-wide profile list. Each profile is keyed by WACN
+and System ID and can optionally include both RFSS and Site ID; an exact site profile takes priority over a
+system-wide profile. Each band supplies its ID, FDMA or two-slot TDMA type, base frequency, bandwidth, channel
+spacing, and signed transmit offset in Hertz. `PUT` replaces the whole document. A matching profile replaces the
+complete OTA bandplan only for a trunked P25 channel whose **Use P25 bandplan override** setting is enabled; missing
+profiles fall back to the complete OTA plan, while missing band IDs in an active override are not filled from OTA.
 
 Scan-list administration uses:
 

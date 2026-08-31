@@ -54,6 +54,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventDuplicateDetector;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25Channel;
@@ -61,6 +62,7 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.P25ExplicitChanne
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1NACPreloadDataContent;
@@ -141,6 +143,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Map<Integer, IFrequencyBand> mFrequencyBandMap = new ConcurrentHashMap<>();
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
         new P25FrequencyBandConfirmationTracker();
+    private final P25BandplanOverrideRegistry mBandplanOverrideRegistry;
+    private final boolean mUseBandplanOverride;
+    private volatile P25SiteIdentity mStabilizedOverrideIdentity;
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -159,7 +164,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public P25TrafficChannelManager(Channel parentChannel)
     {
+        this(parentChannel, P25BandplanOverrideRegistry.empty());
+    }
+
+    /**
+     * Constructs an instance.
+     * @param parentChannel control channel that owns this traffic channel manager
+     * @param bandplanOverrideRegistry shared receiver-wide manual P25 bandplans
+     */
+    public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry)
+    {
         mParentChannel = parentChannel;
+        mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
+            P25BandplanOverrideRegistry.empty();
+        mUseBandplanOverride = parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25 p25 &&
+            p25.getUseP25BandplanOverride();
 
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 phase1)
         {
@@ -428,15 +447,50 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return false;
         }
 
-        IFrequencyBand frequencyBand = mFrequencyBandMap.get(channel.getValue().getDownlinkBandIdentifier());
+        Map<Integer,IFrequencyBand> frequencyBands = getEffectiveFrequencyBands();
+        channel.clearFrequencyBands();
+        IFrequencyBand frequencyBand = frequencyBands.get(channel.getValue().getDownlinkBandIdentifier());
 
         if(frequencyBand == null)
         {
             return false;
         }
 
-        channel.setFrequencyBand(frequencyBand);
+        P25FrequencyBandValidator.applyFrequencyBands(channel, frequencyBands);
         return P25FrequencyBandValidator.isResolvedChannel(channel);
+    }
+
+    /**
+     * Uses one complete matching manual plan when the channel opted in. Otherwise, uses the plan learned from the
+     * current control channel. The manual plan lives outside control-source state and therefore survives rotation.
+     */
+    private Map<Integer,IFrequencyBand> getEffectiveFrequencyBands()
+    {
+        if(mUseBandplanOverride)
+        {
+            P25SiteIdentity identity = mParentChannel.getP25SiteIdentity() != null ?
+                mParentChannel.getP25SiteIdentity() : mStabilizedOverrideIdentity;
+            Map<Integer,IFrequencyBand> override = mBandplanOverrideRegistry.getFrequencyBands(identity);
+
+            if(!override.isEmpty())
+            {
+                return override;
+            }
+        }
+
+        return mFrequencyBandMap;
+    }
+
+    /**
+     * Makes a complete, stabilized site identity available for override lookup before the existing site learner has
+     * verified and persisted it. This does not bind or change the channel identity.
+     */
+    public void processNetworkConfigurationIdentity(P25SiteIdentity identity)
+    {
+        if(mUseBandplanOverride && mParentChannel.getP25SiteIdentity() == null)
+        {
+            mStabilizedOverrideIdentity = identity;
+        }
     }
 
     /**
@@ -1750,7 +1804,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return false;
         }
 
-        IFrequencyBand band = mFrequencyBandMap.get(channel.getValue().getDownlinkBandIdentifier());
+        IFrequencyBand band = getEffectiveFrequencyBands().get(channel.getValue().getDownlinkBandIdentifier());
         return band != null && channel.getDownlinkFrequency() > 0 &&
             band.getDownlinkFrequency(channel.getValue().getDownlinkChannelNumber()) == channel.getDownlinkFrequency();
     }
@@ -1867,7 +1921,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             ChannelStartProcessingRequest startChannelRequest = new ChannelStartProcessingRequest(trafficChannel,
                     apco25Channel, identifierCollection, this);
             startChannelRequest.addPreloadDataContent(new PatchGroupPreLoadDataContent(identifierCollection, timestamp));
-            startChannelRequest.addPreloadDataContent(new P25FrequencyBandPreloadDataContent(mFrequencyBandMap.values()));
+            startChannelRequest.addPreloadDataContent(
+                new P25FrequencyBandPreloadDataContent(getEffectiveFrequencyBands().values()));
 
             if(nacPreloadData != null)
             {
@@ -2385,6 +2440,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mFrequencyBandMap.clear();
             mFrequencyBandConfirmationTracker.reset();
+            mStabilizedOverrideIdentity = null;
 
             if(mPhase2ScrambleParameters != null)
             {

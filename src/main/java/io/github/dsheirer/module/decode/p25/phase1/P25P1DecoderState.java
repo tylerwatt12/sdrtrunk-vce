@@ -456,6 +456,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
         mNetworkConfigurationStabilizer.observe(observation, timestamp);
+
+        if(isTrunkedControlChannel() && observation != null &&
+            (observation.network() != null || observation.currentSite() != null))
+        {
+            mTrafficChannelManager.processNetworkConfigurationIdentity(
+                mNetworkConfigurationStabilizer.getStableSiteIdentity());
+        }
+
         publishSiteMetadata(timestamp);
     }
 

@@ -37,13 +37,19 @@ public record P25SiteIdentity(int wacn, int system, int rfss, int site)
      */
     public static P25SiteIdentity from(P25NetworkConfigurationSnapshot snapshot)
     {
-        if(snapshot == null || snapshot.network() == null || snapshot.currentSite() == null)
+        return snapshot != null ? from(snapshot.network(), snapshot.currentSite()) : null;
+    }
+
+    /**
+     * Extracts a complete, internally consistent identity from stabilized network and current-site facts.
+     */
+    public static P25SiteIdentity from(P25NetworkConfigurationSnapshot.Network network,
+                                       P25NetworkConfigurationSnapshot.CurrentSite currentSite)
+    {
+        if(network == null || currentSite == null)
         {
             return null;
         }
-
-        P25NetworkConfigurationSnapshot.Network network = snapshot.network();
-        P25NetworkConfigurationSnapshot.CurrentSite currentSite = snapshot.currentSite();
 
         if(network.wacn() == null || network.system() == null || currentSite.system() == null ||
             currentSite.rfss() == null || currentSite.site() == null ||

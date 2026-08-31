@@ -159,6 +159,19 @@ class StatsWebSiteUiContractTest
         assertTrue(site.contains("if (!renderIsCurrent(renderContext)) return"));
     }
 
+    @Test
+    void labelsTheOneEffectiveP25BandplanWithoutInventingOverrideObservations() throws Exception
+    {
+        String site = function(source(), "async function renderSite()");
+
+        assertTrue(site.contains("data.band_source === 'P25_OVERRIDE'"));
+        assertTrue(site.contains("overrideActive ? 'P25 Override' : 'OTA Bandplan'"));
+        assertTrue(site.contains("if (!overrideActive) homeBandColumns.push("));
+        assertTrue(site.contains("label: 'Obs'"));
+        assertTrue(site.contains("label: 'Seen'"));
+        assertFalse(site.contains("label: 'Source'"));
+    }
+
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());

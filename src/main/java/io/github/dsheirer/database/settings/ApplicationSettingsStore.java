@@ -30,6 +30,7 @@ public class ApplicationSettingsStore
 {
     public static final String UI_SETTINGS = "ui.settings";
     public static final String TUNER_SETTINGS = "tuner.settings";
+    public static final String P25_BANDPLAN_OVERRIDES = "p25.bandplan.overrides";
     private static final Logger mLog = LoggerFactory.getLogger(ApplicationSettingsStore.class);
     private static final Map<PendingKey,String> PENDING_WRITES = new ConcurrentHashMap<>();
     private static final AtomicBoolean SAVE_PENDING = new AtomicBoolean();

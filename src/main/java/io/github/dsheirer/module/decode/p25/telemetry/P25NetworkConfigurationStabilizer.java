@@ -18,6 +18,7 @@ import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
 import io.github.dsheirer.metadata.site.StableFactTracker;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -308,6 +309,14 @@ public class P25NetworkConfigurationStabilizer
             stableValues(mChannels), stableValues(mNeighborSites), stableValues(mFrequencyBands),
             stableValues(mPatchGroups), stableValues(mTalkerAliases), mSiteStatus.getStableValue(),
             stableValues(mForeignSystemBands));
+    }
+
+    /**
+     * Complete identity from the already-stabilized network and current-site facts, without copying snapshot lists.
+     */
+    public synchronized P25SiteIdentity getStableSiteIdentity()
+    {
+        return P25SiteIdentity.from(mNetwork.getStableValue(), mCurrentSite.getStableValue());
     }
 
     private <T> void observeIdentity(StableFactTracker<T,T> tracker, T value, long timestamp)

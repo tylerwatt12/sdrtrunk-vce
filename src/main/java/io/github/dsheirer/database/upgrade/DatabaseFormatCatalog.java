@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 9;
+    public static final int CURRENT_VERSION = 10;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -47,6 +47,7 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_7_FINGERPRINT = FORMAT_6_FINGERPRINT;
     private static final String FORMAT_8_FINGERPRINT = FORMAT_7_FINGERPRINT;
     private static final String FORMAT_9_FINGERPRINT = FORMAT_8_FINGERPRINT;
+    private static final String FORMAT_10_FINGERPRINT = FORMAT_9_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -134,9 +135,19 @@ public final class DatabaseFormatCatalog
             "Add per-user active-trunked-channel filtering and completed-call presentation choices",
             "Seed both moved presentation choices from the former receiver-wide settings for every account",
             "Remove the two obsolete shared presentation keys while preserving traffic-grant age-out and revision"));
+    private static final FormatDescriptor FORMAT_10 = descriptor(10, "p25-bandplan-overrides-v1",
+        "Optional P25 bandplan override profile and saved-channel opt-in configuration format",
+        FORMAT_10_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
+        List.of("main format 10"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format10TestDatabase.java",
+        List.of(
+            "Preserve every saved channel, application setting, and received per-site P25 band observation",
+            "Treat the absent saved-channel P25 override opt-in setting as disabled",
+            "Keep override profiles absent until an administrator creates one"));
 
     private static final List<FormatDescriptor> FORMATS =
-        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9);
+        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
+            FORMAT_10);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = Map.of(
         FORMAT_1.version(), FORMAT_1,
@@ -147,7 +158,8 @@ public final class DatabaseFormatCatalog
         FORMAT_6.version(), FORMAT_6,
         FORMAT_7.version(), FORMAT_7,
         FORMAT_8.version(), FORMAT_8,
-        FORMAT_9.version(), FORMAT_9);
+        FORMAT_9.version(), FORMAT_9,
+        FORMAT_10.version(), FORMAT_10);
     /* Several marker-bearing semantic formats may intentionally share one DDL fingerprint. */
     private static final Map<String,List<FormatDescriptor>> BY_FINGERPRINT = formatsByFingerprint();
 
@@ -260,7 +272,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_9;
+        return FORMAT_10;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -455,7 +467,7 @@ public final class DatabaseFormatCatalog
             case 5, 6 -> 1;
             case 7 -> 2;
             case 8 -> 3;
-            case 9 -> 4;
+            case 9, 10 -> 4;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

@@ -56,4 +56,36 @@ class P25SiteIdentityUiContractTest
         assertTrue(view.contains("Learned Site Identity"));
         assertTrue(view.contains("p25SiteIdentityProperty().addListener"));
     }
+
+    @Test
+    void bandplanOverrideControlIsSharedOnlyByTheTwoP25TrunkedEditors() throws Exception
+    {
+        try(var files = Files.list(EDITORS))
+        {
+            Set<String> overrideEditors = files
+                .filter(path -> path.getFileName().toString().endsWith("ConfigurationEditor.java"))
+                .filter(path -> {
+                    try
+                    {
+                        return Files.readString(path).contains("new P25BandplanOverrideControl(");
+                    }
+                    catch(Exception exception)
+                    {
+                        throw new RuntimeException(exception);
+                    }
+                })
+                .map(path -> path.getFileName().toString())
+                .collect(Collectors.toSet());
+
+            assertEquals(Set.of("P25P1ConfigurationEditor.java", "P25P2ConfigurationEditor.java"),
+                overrideEditors);
+        }
+
+        String control = Files.readString(EDITORS.resolve("P25BandplanOverrideControl.java"));
+        assertTrue(control.contains("Use P25 bandplan override"));
+        assertTrue(control.contains("Override found and in use"));
+        assertTrue(control.contains("No override found, falling back to OTA bandplan"));
+        assertTrue(control.contains("mStatus.setManaged(visible)"));
+        assertTrue(control.contains("mStatus.setVisible(visible)"));
+    }
 }

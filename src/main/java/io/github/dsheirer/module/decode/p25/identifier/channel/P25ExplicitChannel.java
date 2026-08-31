@@ -83,6 +83,13 @@ public class P25ExplicitChannel extends P25Channel implements Comparable<P25Chan
     }
 
     @Override
+    public void clearFrequencyBands()
+    {
+        mUplinkFrequencyBand = null;
+        super.clearFrequencyBands();
+    }
+
+    @Override
     public int compareTo(P25Channel other)
     {
         //Ignores the uplink channel ... for ordering we'll simply order by the downlink channel
