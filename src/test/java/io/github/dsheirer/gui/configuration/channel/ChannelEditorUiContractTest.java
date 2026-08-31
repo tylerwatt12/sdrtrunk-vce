@@ -84,6 +84,8 @@ class ChannelEditorUiContractTest
         assertTrue(adjuster.contains("mController.setNoiseThreshold(open, close)"));
         assertTrue(adjuster.contains("mController.setHysteresisThreshold(open, close)"));
         assertTrue(adjuster.contains("mConfigurationManager.scheduleConfigurationSave()"));
+        assertTrue(adjuster.contains("statusPane.setRight(hysteresisStatus)"));
+        assertTrue(adjuster.contains("getChildren().addAll(statusPane, controls, getActivityChart())"));
     }
 
     @Test

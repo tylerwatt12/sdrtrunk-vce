@@ -45,7 +45,9 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Slider;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import org.slf4j.Logger;
@@ -120,63 +122,56 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
      */
     private void init()
     {
-        GridPane gridPane = new GridPane();
-        gridPane.setHgap(8);
-        gridPane.setVgap(4);
-        gridPane.setPadding(new Insets(5));
-        gridPane.setMaxWidth(Double.MAX_VALUE);
-
+        HBox leftStatus = new HBox(8);
         Label squelchHeaderLabel = new Label("Audio Squelch:");
-        GridPane.setHalignment(squelchHeaderLabel, HPos.CENTER);
-        gridPane.add(squelchHeaderLabel, 0, 0);
-        gridPane.add(getSquelchStateLabel(), 1, 0);
-
         Label noiseHeaderLabel = new Label("Noise:");
-        GridPane.setHalignment(noiseHeaderLabel, HPos.RIGHT);
-        gridPane.add(noiseHeaderLabel, 2, 0);
-
-        GridPane.setHgrow(getNoiseValueLabel(), Priority.ALWAYS);
-        GridPane.setHalignment(getNoiseValueLabel(), HPos.LEFT);
-        gridPane.add(getNoiseValueLabel(), 3, 0);
-
+        leftStatus.getChildren().addAll(squelchHeaderLabel, getSquelchStateLabel(), noiseHeaderLabel,
+            getNoiseValueLabel());
+        HBox hysteresisStatus = new HBox(8);
         Label hysteresisHeaderLabel = new Label("Hysteresis:");
-        GridPane.setHalignment(hysteresisHeaderLabel, HPos.RIGHT);
-        gridPane.add(hysteresisHeaderLabel, 4, 0);
+        hysteresisStatus.getChildren().addAll(hysteresisHeaderLabel, getHysteresisValueLabel());
+        BorderPane statusPane = new BorderPane();
+        statusPane.setPadding(new Insets(5));
+        statusPane.setLeft(leftStatus);
+        statusPane.setRight(hysteresisStatus);
 
-        GridPane.setHgrow(getHysteresisValueLabel(), Priority.ALWAYS);
-        GridPane.setHalignment(getHysteresisValueLabel(), HPos.LEFT);
-        gridPane.add(getHysteresisValueLabel(), 5, 0);
+        GridPane controls = new GridPane();
+        controls.setHgap(8);
+        controls.setVgap(4);
+        controls.setPadding(new Insets(0, 5, 5, 5));
+        controls.setMaxWidth(Double.MAX_VALUE);
 
         Label noiseOpenLabel = new Label("Noise Open:");
         GridPane.setHalignment(noiseOpenLabel, HPos.RIGHT);
-        gridPane.add(noiseOpenLabel, 0, 1);
+        controls.add(noiseOpenLabel, 0, 0);
         GridPane.setHgrow(getNoiseOpenSlider(), Priority.ALWAYS);
-        gridPane.add(getNoiseOpenSlider(), 1, 1, 2, 1);
+        controls.add(getNoiseOpenSlider(), 1, 0);
 
         Label noiseCloseLabel = new Label("Noise Close:");
         GridPane.setHalignment(noiseCloseLabel, HPos.RIGHT);
-        gridPane.add(noiseCloseLabel, 3, 1);
+        controls.add(noiseCloseLabel, 2, 0);
         GridPane.setHgrow(getNoiseCloseSlider(), Priority.ALWAYS);
-        gridPane.add(getNoiseCloseSlider(), 4, 1, 2, 1);
+        controls.add(getNoiseCloseSlider(), 3, 0);
 
         Label hysteresisOpenLabel = new Label("Hysteresis Open:");
         GridPane.setHalignment(hysteresisOpenLabel, HPos.RIGHT);
-        gridPane.add(hysteresisOpenLabel, 0, 2);
+        controls.add(hysteresisOpenLabel, 0, 1);
         GridPane.setHgrow(getHysteresisOpenSlider(), Priority.ALWAYS);
-        gridPane.add(getHysteresisOpenSlider(), 1, 2, 2, 1);
+        controls.add(getHysteresisOpenSlider(), 1, 1);
 
         Label hysteresisCloseLabel = new Label("Hysteresis Close:");
         GridPane.setHalignment(hysteresisCloseLabel, HPos.RIGHT);
-        gridPane.add(hysteresisCloseLabel, 3, 2);
+        controls.add(hysteresisCloseLabel, 2, 1);
         GridPane.setHgrow(getHysteresisCloseSlider(), Priority.ALWAYS);
-        gridPane.add(getHysteresisCloseSlider(), 4, 2, 2, 1);
+        controls.add(getHysteresisCloseSlider(), 3, 1);
 
-        gridPane.add(getSquelchOverrideButton(), 0, 3);
-        gridPane.add(getDefaultsButton(), 1, 3);
+        controls.add(getSquelchOverrideButton(), 0, 2);
+        controls.add(getDefaultsButton(), 1, 2);
 
-        VBox.setVgrow(gridPane, Priority.NEVER);
+        VBox.setVgrow(statusPane, Priority.NEVER);
+        VBox.setVgrow(controls, Priority.NEVER);
         VBox.setVgrow(getActivityChart(), Priority.ALWAYS);
-        getChildren().addAll(gridPane, getActivityChart());
+        getChildren().addAll(statusPane, controls, getActivityChart());
     }
 
     /**
