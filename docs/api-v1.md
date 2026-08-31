@@ -238,7 +238,7 @@ available, `cc_last_valid_decode_ms` carries the last-valid-decode epoch-millise
 activity snapshot.
 Channel diagnostic state keeps the normalized `protocol` separate from the human-readable `decoder_profile`, which
 may include the currently selected demodulator profile for an automatic decoder. Selected-channel diagnostics carry
-a shared 512-bin signal FFT at five frames per second and bounded batches of demodulated symbols when the decoder
+a shared 512-bin signal FFT at ten frames per second and bounded batches of demodulated symbols when the decoder
 supports them. At most one selected-channel diagnostic producer runs globally; additional viewers of that channel
 share it, while a different channel waits for capacity.
 

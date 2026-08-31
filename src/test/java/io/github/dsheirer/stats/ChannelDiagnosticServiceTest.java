@@ -225,7 +225,7 @@ class ChannelDiagnosticServiceTest
             CONFIGURATION_ID, 0, null));
         assertEquals(1, ChannelDiagnosticService.MAXIMUM_PRODUCERS);
         assertEquals(512, ChannelDiagnosticService.MAXIMUM_FFT_SIZE);
-        assertEquals(5, ChannelDiagnosticService.SIGNAL_FRAMES_PER_SECOND);
+        assertEquals(10, ChannelDiagnosticService.SIGNAL_FRAMES_PER_SECOND);
     }
 
     @Test

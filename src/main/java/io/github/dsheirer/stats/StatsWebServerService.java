@@ -1461,7 +1461,7 @@ public class StatsWebServerService implements AutoCloseable
         }
         else
         {
-            output.offerLatest(topic, encoded);
+            output.offerLatest(topic, frame.type(), encoded);
         }
     }
 
@@ -2225,7 +2225,7 @@ public class StatsWebServerService implements AutoCloseable
 
     /**
      * Bounded per-document writer. Each metadata topic has its own count- and byte-bounded FIFO so a burst in one
-     * feature cannot evict another feature's events. Dense diagnostics use one latest-value slot per topic, while
+     * feature cannot evict another feature's events. Each dense diagnostic type has its own latest-value slot, while
      * authoritative recovery and diagnostic state use priority coalesced slots. Closing stops new work immediately;
      * connection capacity remains charged until a blocked network writer actually terminates. Receiver and diagnostic
      * producers never call this object directly.
@@ -2235,6 +2235,9 @@ public class StatsWebServerService implements AutoCloseable
         private static final int EVENT_CAPACITY_PER_TOPIC = 64;
         static final int EVENT_BYTE_CAPACITY_PER_TOPIC = 256 * 1024;
         private static final long MAXIMUM_EVENT_DROPS = 64;
+        private static final int LATEST_LANES_PER_TOPIC = 2;
+        private static final int LATEST_PRIMARY_LANE = 0;
+        private static final int LATEST_CHANNEL_SYMBOL_LANE = 1;
         private final OutputStream mOutputStream;
         private final long mWriteStallNanos;
         private final boolean mCloseStreamOnClose;
@@ -2244,7 +2247,8 @@ public class StatsWebServerService implements AutoCloseable
         private final AtomicReferenceArray<ArrayBlockingQueue<byte[]>> mEvents =
             new AtomicReferenceArray<>(TOPIC_MAXIMUM + 1);
         private final AtomicReferenceArray<byte[]> mStates = new AtomicReferenceArray<>(TOPIC_MAXIMUM + 1);
-        private final AtomicReferenceArray<byte[]> mLatest = new AtomicReferenceArray<>(TOPIC_MAXIMUM + 1);
+        private final AtomicReferenceArray<byte[]> mLatest =
+            new AtomicReferenceArray<>((TOPIC_MAXIMUM + 1) * LATEST_LANES_PER_TOPIC);
         private final AtomicBoolean mOutputClosed = new AtomicBoolean();
         private final AtomicBoolean mFailed = new AtomicBoolean();
         private final AtomicBoolean mWriterStarted = new AtomicBoolean();
@@ -2257,7 +2261,7 @@ public class StatsWebServerService implements AutoCloseable
         private final long[] mPendingEventBytes = new long[TOPIC_MAXIMUM + 1];
         private int mNextStateTopic = TOPIC_CHANNEL_ACTIVITY;
         private int mNextEventTopic = TOPIC_CONTROL;
-        private int mNextTopic = TOPIC_CHANNEL_ACTIVITY;
+        private int mNextLatestSlot = TOPIC_CHANNEL_ACTIVITY * LATEST_LANES_PER_TOPIC;
         private boolean mPreferLatest;
         private Thread mWriter;
 
@@ -2399,20 +2403,22 @@ public class StatsWebServerService implements AutoCloseable
                 {
                     clearEventsLocked(topic);
                     mStates.set(topic, null);
-                    mLatest.set(topic, null);
+                    clearLatestLocked(topic);
                 }
             }
         }
 
-        void offerLatest(int topic, byte[] envelope)
+        void offerLatest(int topic, int frameType, byte[] envelope)
         {
-            if(!mOutputClosed.get() && topic >= 0 && topic < mLatest.length())
+            if(!mOutputClosed.get() && validTopic(topic) &&
+                frameType >= DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL &&
+                frameType <= DiagnosticStreamFrame.TYPE_TUNER_FFT)
             {
                 synchronized(mPendingLock)
                 {
                     if(!mOutputClosed.get())
                     {
-                        mLatest.set(topic, envelope);
+                        mLatest.set(latestSlot(topic, latestLane(frameType)), envelope);
                     }
                 }
             }
@@ -2436,7 +2442,7 @@ public class StatsWebServerService implements AutoCloseable
         {
             //A state frame changes the meaning/layout of dense frames. Discard any prior-layout latest frame and
             //coalesce state independently from lossy metadata so viewport acknowledgement cannot be evicted.
-            mLatest.set(topic, null);
+            clearLatestLocked(topic);
             mStates.set(topic, envelope);
         }
 
@@ -2626,21 +2632,18 @@ public class StatsWebServerService implements AutoCloseable
 
         private byte[] pollLatest()
         {
-            for(int count = TOPIC_CHANNEL_ACTIVITY; count < mLatest.length(); count++)
+            int firstSlot = TOPIC_CHANNEL_ACTIVITY * LATEST_LANES_PER_TOPIC;
+
+            for(int count = firstSlot; count < mLatest.length(); count++)
             {
-                int topic = mNextTopic++;
+                int slot = mNextLatestSlot++;
 
-                if(mNextTopic >= mLatest.length())
+                if(mNextLatestSlot >= mLatest.length())
                 {
-                    mNextTopic = TOPIC_CHANNEL_ACTIVITY;
+                    mNextLatestSlot = firstSlot;
                 }
 
-                if(topic >= mLatest.length())
-                {
-                    continue;
-                }
-
-                byte[] envelope = mLatest.getAndSet(topic, null);
+                byte[] envelope = mLatest.getAndSet(slot, null);
 
                 if(envelope != null)
                 {
@@ -2676,6 +2679,25 @@ public class StatsWebServerService implements AutoCloseable
             mPendingEventBytes[topic] = 0;
         }
 
+        private static int latestSlot(int topic, int lane)
+        {
+            return topic * LATEST_LANES_PER_TOPIC + lane;
+        }
+
+        private static int latestLane(int frameType)
+        {
+            return frameType == DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS ?
+                LATEST_CHANNEL_SYMBOL_LANE : LATEST_PRIMARY_LANE;
+        }
+
+        private void clearLatestLocked(int topic)
+        {
+            for(int lane = 0; lane < LATEST_LANES_PER_TOPIC; lane++)
+            {
+                mLatest.set(latestSlot(topic, lane), null);
+            }
+        }
+
         @Override
         public void close()
         {
@@ -2686,11 +2708,11 @@ public class StatsWebServerService implements AutoCloseable
 
             synchronized(mPendingLock)
             {
-                for(int topic = 0; topic < mLatest.length(); topic++)
+                for(int topic = 0; topic < mEvents.length(); topic++)
                 {
                     clearEventsLocked(topic);
                     mStates.set(topic, null);
-                    mLatest.set(topic, null);
+                    clearLatestLocked(topic);
                 }
             }
 

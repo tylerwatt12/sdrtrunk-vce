@@ -131,16 +131,58 @@ class StatsWebMultiplexOutputTest
             output.offerEvent(2, new byte[]{1});
         }
 
-        output.offerLatest(5, new byte[]{2});
+        output.offerLatest(5, DiagnosticStreamFrame.TYPE_TUNER_FFT, new byte[]{2});
+        output.offerLatest(5, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{5});
         output.offerState(5, new byte[]{3});
-        output.offerLatest(5, new byte[]{4});
+        output.offerLatest(5, DiagnosticStreamFrame.TYPE_TUNER_FFT, new byte[]{4});
         output.start();
 
         assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
         output.close();
         assertEquals(List.of((byte)3), bytes(recording.mEnvelopes.getFirst()));
         assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope.length == 1 && envelope[0] == 2));
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope.length == 1 && envelope[0] == 5));
         assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope.length == 1 && envelope[0] == 4));
+    }
+
+    @Test
+    void keepsLatestChannelSignalAndSymbolsIndependently() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(2);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{2});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{3});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{4});
+        output.start();
+
+        assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+        output.close();
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 1));
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 3));
+        assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 2));
+        assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 4));
+    }
+
+    @Test
+    void authoritativeStateClearsBothChannelDiagnosticLanes() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(3);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{2});
+        output.offerState(4, new byte[]{3});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{4});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{5});
+        output.start();
+
+        assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+        output.close();
+        assertEquals(List.of((byte)3), bytes(recording.mEnvelopes.getFirst()));
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 1));
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 2));
+        assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 4));
+        assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 5));
     }
 
     @Test
@@ -148,7 +190,7 @@ class StatsWebMultiplexOutputTest
     {
         RecordingOutputStream recording = new RecordingOutputStream(2);
         StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
-        output.offerLatest(1, new byte[]{1});
+        output.offerLatest(1, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.offerState(5, new byte[]{6});
         output.start();
 
@@ -164,7 +206,7 @@ class StatsWebMultiplexOutputTest
         RecordingOutputStream recording = new RecordingOutputStream(2);
         StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
         output.offerEvent(3, new byte[]{9});
-        output.offerLatest(1, new byte[]{1});
+        output.offerLatest(1, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.start();
 
         assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
@@ -471,7 +513,8 @@ class StatsWebMultiplexOutputTest
         output.offerEvent(2, new byte[]{2});
         output.offerEvent(5, new byte[100]);
         output.offerState(5, new byte[]{6});
-        output.offerLatest(5, new byte[]{7});
+        output.offerLatest(5, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{8});
+        output.offerLatest(5, DiagnosticStreamFrame.TYPE_TUNER_FFT, new byte[]{7});
         assertEquals(100, output.pendingEventBytes(5));
         output.clearTopic(5);
         assertEquals(0, output.pendingEventBytes(5));
