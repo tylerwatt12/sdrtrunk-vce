@@ -3460,6 +3460,69 @@ body.modal-open {
   min-height: 20px;
 }
 
+.settings-summary {
+  margin: 0;
+}
+
+.settings-summary dt,
+.settings-summary dd {
+  margin: 0;
+  padding: 9px 0;
+  line-height: 1.4;
+}
+
+.settings-summary dt {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-summary dd {
+  padding-top: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-summary dd:not(:last-child) {
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-table-layouts {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-table-layout {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.settings-table-layout > summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.settings-table-layout > .settings-summary {
+  padding: 0 12px 6px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-summary-footer {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-dark);
+}
+
+.settings-summary-footer p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .p25-overrides-intro {
   margin: 0;
   color: var(--muted);
@@ -6118,6 +6181,11 @@ th.numeric {
   .settings-field-grid,
   .settings-form-footer {
     grid-template-columns: 1fr;
+  }
+
+  .settings-summary-footer {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .receiver-health-account-setting {

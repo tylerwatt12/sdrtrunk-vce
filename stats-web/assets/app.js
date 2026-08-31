@@ -8291,16 +8291,15 @@ function renderScanner() {
   page.append(chassis, scanPanel);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
-  const playbackSettings = node('button',
-    'button secondary icon-button section-title-icon scanner-playback-settings');
-  playbackSettings.type = 'button';
-  playbackSettings.id = 'scanner-playback-settings';
-  playbackSettings.title = 'Scanner playback settings';
-  playbackSettings.setAttribute('aria-label', 'Scanner playback settings');
-  playbackSettings.append(iconGlyph('icon-live-presentation'));
-  playbackSettings.addEventListener('click', () =>
-    openScannerPlaybackSettings('#scanner-playback-settings'));
-  headingActions.append(modeBar, playbackSettings);
+  const scannerSettings = node('button',
+    'button secondary icon-button section-title-icon scanner-settings');
+  scannerSettings.type = 'button';
+  scannerSettings.id = 'scanner-settings';
+  scannerSettings.title = 'Scanner settings';
+  scannerSettings.setAttribute('aria-label', 'Scanner settings');
+  scannerSettings.append(iconGlyph('icon-live-presentation'));
+  scannerSettings.addEventListener('click', () => openScannerSettings('#scanner-settings'));
+  headingActions.append(modeBar, scannerSettings);
   heading.append(headingActions);
   const host = node('div', 'scanner-player-host');
   host.append(page);
@@ -16143,6 +16142,94 @@ function settingsCardGrid(...cards) {
   return grid;
 }
 
+function settingsSummary(rows) {
+  const summary = node('dl', 'settings-summary');
+  rows.forEach(([label, value]) => {
+    summary.append(node('dt', '', label), node('dd', '', value));
+  });
+  return summary;
+}
+
+function settingsEnabled(value) {
+  return value === true ? 'On' : 'Off';
+}
+
+function selectedScanListSummary(ids) {
+  if (!ids.length) return 'None';
+  const names = new Map((webCallPlayer?.viewState()?.scanLists || [])
+    .map((scanList) => [Number(scanList.id), scanList.name]));
+  return ids.map((id) => names.get(id) || `Scan list ${id}`).join(', ');
+}
+
+function disabledHealthAlertSummary(codes) {
+  if (!codes.length) return 'None';
+  const names = new Map(receiverHealthAlertGroups.flatMap((group) => group.alerts)
+    .map((alert) => [alert.id, alert.name]));
+  return codes.map((code) => names.has(code) ? `${names.get(code)} — ${code}` : code).join(', ');
+}
+
+function tableLayoutSummary(tables) {
+  const entries = Object.entries(tables);
+  if (!entries.length) return node('div', 'muted', 'No customized table layouts.');
+  const list = node('div', 'settings-table-layouts');
+  entries.forEach(([tableId, layout]) => {
+    const details = node('details', 'settings-table-layout');
+    details.append(node('summary', '', semanticLabel(tableId)), settingsSummary([
+      ['Available columns', layout.schema.map(semanticLabel).join(', ')],
+      ['Column order', layout.column_order.map(semanticLabel).join(', ')],
+      ['Hidden columns', layout.hidden_columns.length ? layout.hidden_columns.map(semanticLabel).join(', ') : 'None'],
+      ['Custom widths', Object.entries(layout.column_widths)
+        .map(([column, width]) => `${semanticLabel(column)} ${number(width)} px`).join(', ') || 'Defaults']
+    ]));
+    list.append(details);
+  });
+  return list;
+}
+
+function userPreferenceSummaryCards(preferences) {
+  const disabledAlerts = preferences.health_alerts.disabled_codes;
+  const knownDisabledAlerts = receiverHealthAlertIds.filter((id) => disabledAlerts.includes(id)).length;
+  return settingsCardGrid(
+    settingsCard('Appearance', 'Changed with the theme button in the header.', settingsSummary([
+      ['Theme', semanticLabel(preferences.appearance.theme)]
+    ])),
+    settingsCard('Scanner', 'Changed on the Scanner page.', settingsSummary([
+      ['Playing call in every page title', settingsEnabled(preferences.page_titles.prepend_playing_call)],
+      ['Playback volume', `${Math.round(preferences.playback.volume * 100)}%`],
+      ['Selected scan lists', selectedScanListSummary(preferences.playback.selected_scan_list_ids)],
+      ['Conversation Mode', settingsEnabled(preferences.playback.conversation_grouping)],
+      ['Calls before switching', number(preferences.playback.conversation_burst_limit)],
+      ['Detail level', semanticLabel(preferences.scanner.detail_mode)]
+    ])),
+    settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
+      ['Show only active trunked channels', settingsEnabled(preferences.presentation.show_only_active_trunked_channels)],
+      ['Retain the last call on idle rows', settingsEnabled(preferences.presentation.retain_last_call_on_idle_rows)],
+      ['Clear voice quality on idle rows', settingsEnabled(preferences.presentation.clear_voice_quality_when_idle)],
+      ['Show encryption details', settingsEnabled(preferences.presentation.show_encryption_details)],
+      ['Show control-channel quality', settingsEnabled(preferences.presentation.show_control_decode_quality)],
+      ['Show voice-channel quality', settingsEnabled(preferences.presentation.show_voice_decode_quality)],
+      ['Decode quality format', semanticLabel(preferences.presentation.decode_quality_display_mode)],
+      ['Matching rows shown', number(preferences.presentation.live_detail_row_limit)]
+    ])),
+    settingsCard('Tuner spectrum', 'Changed from a tuner Spectrum view.', settingsSummary([
+      ['Display floor', `${number(preferences.tuner.floor_db)} dB`],
+      ['Display ceiling', `${number(preferences.tuner.ceiling_db)} dB`],
+      ['Waterfall speed', `${number(preferences.tuner.waterfall_speed)}×`],
+      ['Snap frequency', settingsEnabled(preferences.tuner.snap_frequency)],
+      ['Smooth FFT', settingsEnabled(preferences.tuner.smooth_fft)],
+      ['Highlight channels', settingsEnabled(preferences.tuner.highlight_waterfall_channels)],
+      ['Performance profile', semanticLabel(preferences.tuner.profile)]
+    ])),
+    settingsCard('Health alerts', 'Changed from Administration > Alerts.', settingsSummary([
+      ['Header alerts enabled', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
+        number(receiverHealthAlertIds.length)],
+      ['Disabled alerts', disabledHealthAlertSummary(disabledAlerts)]
+    ])),
+    settingsCard('Table layouts', 'Changed with the Columns control on each table.',
+      tableLayoutSummary(preferences.tables))
+  );
+}
+
 async function renderAdminAlerts() {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
@@ -16336,26 +16423,30 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   });
 }
 
-function openScannerPlaybackSettings(returnFocusSelector = null) {
+function openScannerSettings(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) return;
-  const current = snapshot.preferences.playback;
-  const form = node('form', 'admin-form scanner-playback-form');
+  const current = snapshot.preferences;
+  const form = node('form', 'admin-form scanner-settings-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
   const conversationGrouping = preferenceCheckbox('conversation-grouping', 'Conversation Mode',
-    current.conversation_grouping,
+    current.playback.conversation_grouping,
     'When calls are waiting, keep a conversation together before switching to another target.');
+  const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
+    current.page_titles.prepend_playing_call,
+    'The Scanner title always shows the audible target. Turn this on to add it to other pages too.');
   const conversationBurstLimit = node('input');
   conversationBurstLimit.type = 'number';
   conversationBurstLimit.name = 'conversation-burst-limit';
   conversationBurstLimit.min = '1';
   conversationBurstLimit.max = '20';
   conversationBurstLimit.required = true;
-  conversationBurstLimit.value = String(current.conversation_burst_limit);
-  const apply = (playback) => {
-    conversationGrouping.input.checked = playback.conversation_grouping;
-    conversationBurstLimit.value = String(playback.conversation_burst_limit);
+  conversationBurstLimit.value = String(current.playback.conversation_burst_limit);
+  const apply = (preferences) => {
+    conversationGrouping.input.checked = preferences.playback.conversation_grouping;
+    conversationBurstLimit.value = String(preferences.playback.conversation_burst_limit);
+    prependTitle.input.checked = preferences.page_titles.prepend_playing_call;
   };
   const fields = node('div', 'settings-field-grid');
   fields.append(formField('Calls before switching', conversationBurstLimit,
@@ -16363,6 +16454,8 @@ function openScannerPlaybackSettings(returnFocusSelector = null) {
   const card = settingsCard('Conversation playback',
     'These choices affect only calls that have already built up in this browser queue.',
     conversationGrouping.control, fields);
+  const titleCard = settingsCard('Page titles',
+    'Choose whether Scanner playback also appears in the title of other pages.', prependTitle.control);
   const save = node('button', '', 'Save Scanner Settings');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
@@ -16370,9 +16463,9 @@ function openScannerPlaybackSettings(returnFocusSelector = null) {
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(node('p', 'live-presentation-intro',
-    'These choices affect only this signed-in user.'), settingsCardGrid(card), footer);
-  const modal = openReadOnlyModal('Scanner playback', form, {
-    id: 'scanner-playback-settings-modal', className: 'scanner-playback-modal', returnFocusSelector
+    'These choices affect only this signed-in user.'), settingsCardGrid(card, titleCard), footer);
+  const modal = openReadOnlyModal('Scanner settings', form, {
+    id: 'scanner-settings-modal', className: 'scanner-settings-modal', returnFocusSelector
   });
   if (!modal) return;
   form.addEventListener('input', () => modal.setDirty(true));
@@ -16381,9 +16474,10 @@ function openScannerPlaybackSettings(returnFocusSelector = null) {
     if (!form.reportValidity() || save.disabled) return;
     const submitted = {
       conversation_grouping: conversationGrouping.input.checked,
-      conversation_burst_limit: Number(conversationBurstLimit.value)
+      conversation_burst_limit: Number(conversationBurstLimit.value),
+      prepend_playing_call: prependTitle.input.checked
     };
-    const controls = [conversationGrouping.input, conversationBurstLimit, save];
+    const controls = [conversationGrouping.input, conversationBurstLimit, prependTitle.input, save];
     controls.forEach((control) => { control.disabled = true; });
     modal.setBusy(true);
     message.textContent = 'Saving Scanner settings…';
@@ -16391,6 +16485,7 @@ function openScannerPlaybackSettings(returnFocusSelector = null) {
       await updateUserPreferences((preferences) => {
         preferences.playback.conversation_grouping = submitted.conversation_grouping;
         preferences.playback.conversation_burst_limit = submitted.conversation_burst_limit;
+        preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
       }, false);
       modal.setDirty(false);
       modal.setBusy(false);
@@ -16407,7 +16502,7 @@ function openScannerPlaybackSettings(returnFocusSelector = null) {
             'reloaded. Try saving again or reopen this panel.';
         } else {
           const latest = userPreferenceController.snapshot();
-          if (latest.loaded) apply(latest.preferences.playback);
+          if (latest.loaded) apply(latest.preferences);
           modal.setDirty(false);
           message.textContent = 'These settings changed in another session. The current saved values were loaded.';
         }
@@ -16419,10 +16514,60 @@ function openScannerPlaybackSettings(returnFocusSelector = null) {
   });
 }
 
+function openResetUserPreferences(returnFocusSelector = null) {
+  const body = node('div', 'admin-confirmation');
+  body.append(node('p', '', 'Reset every personal preference for this account to its default value?'),
+    node('p', 'muted', 'This resets the theme, Scanner and Live choices, volume and scan-list subscriptions, ' +
+      'tuner display, health alert switches, and saved table layouts. It does not change the username, password, ' +
+      'access, receiver configuration, or other users.'));
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  const cancel = node('button', 'secondary', 'Cancel');
+  cancel.type = 'button';
+  const reset = node('button', 'danger', 'Reset All Personal Preferences');
+  reset.type = 'button';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(cancel, reset);
+  body.append(message, actions);
+  const modal = openReadOnlyModal('Reset personal preferences', body, {
+    id: 'reset-user-preferences', className: 'admin-modal', returnFocusSelector
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  reset.addEventListener('click', async () => {
+    if (reset.disabled) return;
+    cancel.disabled = true;
+    reset.disabled = true;
+    modal.setBusy(true);
+    message.textContent = 'Resetting personal preferences…';
+    try {
+      await updateUserPreferences(() => preferenceSchema.defaults, false);
+      modal.setBusy(false);
+      if (modal.close()) void render();
+    } catch (error) {
+      modal.setBusy(false);
+      if (error?.code === 'preference_session_changed') {
+        if (modal.close()) void render();
+        return;
+      }
+      if (error?.code === 'preference_conflict' && !error.reloadError) {
+        if (modal.close()) void render();
+        return;
+      }
+      message.textContent = error?.code === 'preference_conflict' ?
+        'These preferences changed in another session, but the current values could not be reloaded. Close this ' +
+          'panel and reload the page before trying again.' :
+        (error.message || 'Personal preferences could not be reset.');
+      cancel.disabled = false;
+      reset.disabled = false;
+    }
+  });
+}
+
 async function renderSettings() {
   const renderContext = captureRenderContext();
   if (!beginPage(renderContext, pageHeader('My Settings',
-    'Personal choices that do not have a control on their own page'))) return;
+    'A read-only overview of every personal preference for this account'))) return;
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message || 'My Settings could not be loaded.');
@@ -16438,56 +16583,17 @@ async function renderSettings() {
   }
 
   const current = snapshot.preferences;
-  const form = node('form', 'admin-form settings-page-form user-settings-form');
-  const message = node('div', 'admin-form-message');
-  message.setAttribute('role', 'status');
-  const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
-    current.page_titles.prepend_playing_call,
-    'The Scanner title always shows the audible target. This option adds it to other pages too.');
-  const groups = settingsCardGrid(settingsCard('Page titles',
-    'Control the extra context shown in tabs for pages other than Scanner.', prependTitle.control));
-
-  const save = node('button', '', 'Save My Settings');
-  save.type = 'submit';
-  const footer = node('div', 'settings-form-footer');
+  const overview = node('div', 'settings-page-form user-settings-summary');
+  const reset = node('button', 'button danger-outline', 'Reset All Personal Preferences');
+  reset.type = 'button';
+  reset.id = 'reset-user-preferences';
+  reset.addEventListener('click', () => openResetUserPreferences('#reset-user-preferences'));
+  const footer = node('div', 'settings-summary-footer');
   const actions = node('div', 'admin-form-actions');
-  actions.append(save);
-  footer.append(message, actions);
-  form.append(groups, footer);
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
-    const latest = userPreferenceController.snapshot();
-    if (!latest.loaded) {
-      message.textContent = 'My Settings must be reloaded before they can be saved.';
-      return;
-    }
-    const submitted = prependTitle.input.checked;
-    prependTitle.input.disabled = true;
-    save.disabled = true;
-    message.textContent = 'Saving My Settings…';
-    try {
-      await updateUserPreferences((preferences) => {
-        preferences.page_titles.prepend_playing_call = submitted;
-      }, false);
-      message.textContent = 'My Settings saved.';
-    } catch (error) {
-      if (error?.code === 'preference_conflict' && !error.reloadError) {
-        const currentSnapshot = userPreferenceController.snapshot();
-        if (currentSnapshot.loaded) {
-          prependTitle.input.checked = currentSnapshot.preferences.page_titles.prepend_playing_call;
-        }
-        message.textContent = 'These settings changed in another session. The current saved values were reloaded.';
-      } else if (error?.code === 'preference_conflict') {
-        message.textContent = 'These settings changed in another session, but the current values could not be ' +
-          'reloaded. Try saving again or reload this page.';
-      } else message.textContent = error.message;
-    } finally {
-      prependTitle.input.disabled = false;
-      save.disabled = false;
-    }
-  });
-  content.append(section('Personal preferences', form));
+  actions.append(reset);
+  footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
+  overview.append(userPreferenceSummaryCards(current), footer);
+  content.append(section('Personal preferences', overview));
 }
 
 async function renderConfiguration() {

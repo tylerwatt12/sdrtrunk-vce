@@ -196,14 +196,24 @@ async function main() {
   assert.match(indexSource, /id="global-status" class="visually-hidden"/);
   assert.match(appCssSource, /\.preference-status \{/);
   const settingsSource = functionBinding(appSource, 'renderSettings');
-  assert.match(settingsSource, /const latest = userPreferenceController\.snapshot\(\)/);
-  assert.match(settingsSource, /await updateUserPreferences\(\(preferences\) =>/);
-  assert.match(settingsSource, /preferences\.page_titles\.prepend_playing_call = submitted;\s*\}, false\)/);
-  assert.match(settingsSource, /prependTitle\.input\.checked = currentSnapshot\.preferences\.page_titles/);
-  assert.match(settingsSource, /settingsCard\('Page titles'/);
-  assert.doesNotMatch(settingsSource, /Live presentation|preferences\.presentation|show_encryption_details/);
-  assert.doesNotMatch(settingsSource,
-    /appearance\.theme|playback\.volume|selected_scan_list_ids|conversation_grouping|conversation_burst_limit|scanner\.detail_mode|preferences\.tuner|preferences\.tables/);
+  assert.match(settingsSource, /A read-only overview of every personal preference/);
+  assert.match(settingsSource, /userPreferenceSummaryCards\(current\)/);
+  assert.match(settingsSource, /Reset All Personal Preferences/);
+  assert.match(settingsSource, /openResetUserPreferences/);
+  assert.doesNotMatch(settingsSource, /preferenceCheckbox\(|updateUserPreferences\(/);
+  const summarySource = functionBinding(appSource, 'userPreferenceSummaryCards');
+  assert.match(summarySource,
+    /appearance\.theme|page_titles\.prepend_playing_call|playback\.volume|selected_scan_list_ids/);
+  assert.match(summarySource,
+    /conversation_grouping|conversation_burst_limit|scanner\.detail_mode|preferences\.presentation/);
+  assert.match(summarySource,
+    /preferences\.tuner|health_alerts\.disabled_codes|preferences\.tables/);
+  const resetSource = functionBinding(appSource, 'openResetUserPreferences');
+  assert.match(resetSource, /updateUserPreferences\(\(\) => preferenceSchema\.defaults, false\)/);
+  assert.match(resetSource, /does not change the username, password/);
+  assert.match(resetSource, /error\?\.code === 'preference_conflict'/);
+  assert.match(resetSource, /if \(modal\.close\(\)\) void render\(\)/);
+  assert.doesNotMatch(resetSource, /reset\.focus\(\)/);
   assert.doesNotMatch(settingsSource, /userPreferenceController\.replace\(/);
   const livePresentationSource = functionBinding(appSource, 'openLivePresentationSettings');
   assert.match(livePresentationSource, /openReadOnlyModal\('Live presentation'/);
@@ -219,13 +229,14 @@ async function main() {
   assert.match(livePresentationSource, /error\?\.code === 'preference_session_changed'/);
   assert.match(livePresentationSource, /void render\(\)/);
   assert.match(livePresentationSource, /apply\(latest\.preferences\.presentation\)/);
-  const scannerPlaybackSource = functionBinding(appSource, 'openScannerPlaybackSettings');
-  assert.match(scannerPlaybackSource, /openReadOnlyModal\('Scanner playback'/);
+  const scannerPlaybackSource = functionBinding(appSource, 'openScannerSettings');
+  assert.match(scannerPlaybackSource, /openReadOnlyModal\('Scanner settings'/);
   assert.match(scannerPlaybackSource, /preferences\.playback\.conversation_grouping =/);
   assert.match(scannerPlaybackSource, /preferences\.playback\.conversation_burst_limit =/);
+  assert.match(scannerPlaybackSource, /preferences\.page_titles\.prepend_playing_call =/);
   assert.doesNotMatch(scannerPlaybackSource, /preferences\.presentation/);
-  assert.match(appSource, /id = 'scanner-playback-settings'/);
-  assert.match(appSource, /openScannerPlaybackSettings\('#scanner-playback-settings'\)/);
+  assert.match(appSource, /id = 'scanner-settings'/);
+  assert.match(appSource, /openScannerSettings\('#scanner-settings'\)/);
   const liveSystemsSource = functionBinding(appSource, 'liveSystemsSection');
   assert.match(liveSystemsSource, /layoutMenuHost: titleActions/);
   assert.match(liveSystemsSource, /iconGlyph\('icon-live-presentation'\)/);
@@ -351,7 +362,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 28, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 16, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -734,12 +745,21 @@ async function main() {
   assert.ok(controller.snapshot().preferences.tables.sample);
   assert.equal(controller.snapshot().preferences.presentation.show_voice_decode_quality, false);
 
+  queuedResponses.push((_url, options) => {
+    const submitted = JSON.parse(options.body);
+    assert.equal(options.headers['If-Match'], '"8"');
+    assert.deepEqual(submitted, decodedDefaults);
+    return response(200, { revision: 9, preferences: submitted });
+  });
+  await controller.update(() => preferenceSchema.defaults);
+  assert.deepEqual(controller.snapshot().preferences, decodedDefaults);
+
   const serverCurrent = { ...decodedDefaults, scanner: { detail_mode: 'engineer' } };
   queuedResponses.push(response(409, { error: 'stale' }),
-    response(200, { revision: 8, preferences: serverCurrent }));
+    response(200, { revision: 10, preferences: serverCurrent }));
   await assert.rejects(controller.update((profile) => { profile.scanner.detail_mode = 'normal'; }),
     (error) => error.code === 'preference_conflict');
-  assert.equal(controller.snapshot().revision, 8);
+  assert.equal(controller.snapshot().revision, 10);
   assert.equal(controller.snapshot().preferences.scanner.detail_mode, 'engineer');
 
   const slow = deferred();
