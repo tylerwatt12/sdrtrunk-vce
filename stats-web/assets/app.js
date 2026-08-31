@@ -219,6 +219,29 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'time': 166,
   'wacn': 108
 };
+const TABLE_DEFAULT_COLUMN_WIDTHS = Object.freeze({
+  'dashboard-receivers': Object.freeze({
+    name: 442,
+    mode: 180,
+    context: 315,
+    frequency: 237,
+    'last-seen': 419
+  }),
+  'live-events': Object.freeze({
+    time: 92,
+    duration: 78,
+    event: 181,
+    from: 96,
+    to: 164,
+    channel: 92,
+    details: 864
+  }),
+  'live-messages': Object.freeze({
+    time: 95,
+    context: 110,
+    message: 1200
+  })
+});
 const SERVER_TABLE_DEFAULT_SORTS = {
   systems: 'last_seen',
   sites: 'last_seen',
@@ -2116,12 +2139,16 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   cleanupTableLayoutMenu(tableController);
   const declaredColumns = columns.slice();
   const defaultSchema = tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
+  const defaultColumnWidths = Object.fromEntries(Object.entries(TABLE_DEFAULT_COLUMN_WIDTHS[tableType] || {})
+    .filter(([id]) => defaultSchema.includes(id)));
+  const defaultHiddenColumns = Array.isArray(options.defaultHiddenColumns) ?
+    options.defaultHiddenColumns.filter((id) => defaultSchema.includes(id)) : [];
   const storedLayout = options.layout || activeUserPreferences().tables[tableType] ||
-    (Array.isArray(options.defaultHiddenColumns) ? {
+    (Array.isArray(options.defaultHiddenColumns) || Object.keys(defaultColumnWidths).length ? {
       schema: defaultSchema,
       column_order: defaultSchema,
-      column_widths: {},
-      hidden_columns: options.defaultHiddenColumns.filter((id) => defaultSchema.includes(id))
+      column_widths: defaultColumnWidths,
+      hidden_columns: defaultHiddenColumns
     } : null);
   let layout = tableLayouts.normalize(declaredColumns, storedLayout);
   if (layout.reset) removeResetTableLayout(tableType);

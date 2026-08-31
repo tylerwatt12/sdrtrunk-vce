@@ -81,6 +81,23 @@ class StatsWebPresentationUiContractTest
     }
 
     @Test
+    void usesTheEstablishedReceiverAndLiveDetailColumnRatiosAsDefaults() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+
+        assertTrue(source.contains("const TABLE_DEFAULT_COLUMN_WIDTHS = Object.freeze({"));
+        assertTrue(source.contains("'dashboard-receivers': Object.freeze({"));
+        assertTrue(source.contains("name: 442"));
+        assertTrue(source.contains("'live-events': Object.freeze({"));
+        assertTrue(source.contains("details: 864"));
+        assertTrue(source.contains("'live-messages': Object.freeze({"));
+        assertTrue(source.contains("message: 1200"));
+        assertTrue(source.contains("const storedLayout = options.layout || " +
+            "activeUserPreferences().tables[tableType] ||"));
+        assertTrue(source.contains("column_widths: defaultColumnWidths"));
+    }
+
+    @Test
     void keepsDiscoverColumnsAtomicAndDateInputsInsideTheirFilters() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
