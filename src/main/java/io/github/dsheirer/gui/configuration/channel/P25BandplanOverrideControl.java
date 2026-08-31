@@ -55,10 +55,11 @@ final class P25BandplanOverrideControl extends HBox
         mCreate.setTooltip(new Tooltip("Create a site-scoped override in the web editor"));
         mCreate.setOnAction(event -> {
             P25SiteIdentity identity = mChannel != null ? mChannel.getP25SiteIdentity() : null;
+            String siteGuid = mChannel != null ? mChannel.radresGuidProperty().get() : null;
 
-            if(identity != null)
+            if(identity != null && siteGuid != null)
             {
-                MyEventBus.getGlobalEventBus().post(new ViewWebP25BandplanOverrideRequest(identity));
+                MyEventBus.getGlobalEventBus().post(new ViewWebP25BandplanOverrideRequest(identity, siteGuid));
             }
         });
         mRegistry.addChangeListener(mRegistryListener);
@@ -117,7 +118,8 @@ final class P25BandplanOverrideControl extends HBox
             boolean createVisible = visible && !matched;
             mCreate.setManaged(createVisible);
             mCreate.setVisible(createVisible);
-            mCreate.setDisable(mChannel == null || mChannel.getP25SiteIdentity() == null);
+            mCreate.setDisable(mChannel == null || mChannel.getP25SiteIdentity() == null ||
+                mChannel.radresGuidProperty().get() == null);
 
             if(visible)
             {

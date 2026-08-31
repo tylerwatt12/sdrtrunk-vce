@@ -1012,9 +1012,10 @@ public class StatsWebServerService implements AutoCloseable
     /**
      * Arms the one-use local administrator sign-in and opens a site-scoped P25 bandplan override draft.
      */
-    public synchronized URI createDesktopAdministratorP25BandplanOverrideHandoffUri(P25SiteIdentity identity)
+    public synchronized URI createDesktopAdministratorP25BandplanOverrideHandoffUri(P25SiteIdentity identity,
+                                                                                     String siteGuid)
     {
-        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity);
+        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity, siteGuid);
         StatsWebNavigationState navigation = getNavigationState();
 
         if(!navigation.running() || mWebAuthenticationService == null ||

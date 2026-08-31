@@ -110,9 +110,11 @@ class StatsWebServerServiceLifecycleTest
             assertNull(handoffUri.getQuery());
             assertNull(handoffUri.getFragment());
             P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
-            URI p25HandoffUri = service.createDesktopAdministratorP25BandplanOverrideHandoffUri(p25Site);
+            String p25SiteGuid = "00000000-0000-0000-0000-000000000001";
+            URI p25HandoffUri = service.createDesktopAdministratorP25BandplanOverrideHandoffUri(p25Site,
+                p25SiteGuid);
             assertEquals(initialOrigin.resolve(
-                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site)), p25HandoffUri);
+                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, p25SiteGuid)), p25HandoffUri);
             assertNull(p25HandoffUri.getQuery());
             assertNull(p25HandoffUri.getFragment());
             HttpResponse<String> handoff = client.send(HttpRequest.newBuilder(handoffUri)

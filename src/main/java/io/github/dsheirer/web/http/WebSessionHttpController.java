@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -308,11 +309,11 @@ public final class WebSessionHttpController
     }
 
     /** Fixed desktop handoff path for creating one site-scoped P25 bandplan override. */
-    public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity)
+    public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity, String siteGuid)
     {
         Objects.requireNonNull(identity, "P25 site identity cannot be null");
-        return DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + String.format(Locale.ROOT, "/%05X/%03X/%02X/%02X",
-            identity.wacn(), identity.system(), identity.rfss(), identity.site());
+        return DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + String.format(Locale.ROOT, "/%05X/%03X/%02X/%02X/%s",
+            identity.wacn(), identity.system(), identity.rfss(), identity.site(), requireCanonicalSiteGuid(siteGuid));
     }
 
     private static String desktopHandoffRedirectLocation(String rawPath)
@@ -331,7 +332,7 @@ public final class WebSessionHttpController
         if(rawPath != null && rawPath.startsWith(p25Prefix))
         {
             String[] segments = rawPath.substring(p25Prefix.length()).split("/", -1);
-            if(segments.length != 4 || !isFixedHex(segments[0], 5) || !isFixedHex(segments[1], 3) ||
+            if(segments.length != 5 || !isFixedHex(segments[0], 5) || !isFixedHex(segments[1], 3) ||
                 !isFixedHex(segments[2], 2) || !isFixedHex(segments[3], 2))
             {
                 return null;
@@ -342,9 +343,10 @@ public final class WebSessionHttpController
                 P25SiteIdentity identity = new P25SiteIdentity(Integer.parseInt(segments[0], 16),
                     Integer.parseInt(segments[1], 16), Integer.parseInt(segments[2], 16),
                     Integer.parseInt(segments[3], 16));
+                String siteGuid = requireCanonicalSiteGuid(segments[4]);
                 return String.format(Locale.ROOT,
-                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X",
-                    identity.wacn(), identity.system(), identity.rfss(), identity.site());
+                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&guid=%s",
+                    identity.wacn(), identity.system(), identity.rfss(), identity.site(), siteGuid);
             }
             catch(IllegalArgumentException exception)
             {
@@ -400,6 +402,25 @@ public final class WebSessionHttpController
         }
 
         return true;
+    }
+
+    private static String requireCanonicalSiteGuid(String siteGuid)
+    {
+        try
+        {
+            String canonical = UUID.fromString(siteGuid).toString();
+
+            if(canonical.equals(siteGuid))
+            {
+                return canonical;
+            }
+        }
+        catch(IllegalArgumentException | NullPointerException exception)
+        {
+            //Report one stable validation error below.
+        }
+
+        throw new IllegalArgumentException("P25 site GUID must be a canonical lowercase UUID");
     }
 
     private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,

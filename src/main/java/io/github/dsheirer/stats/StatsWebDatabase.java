@@ -2886,11 +2886,15 @@ class StatsWebDatabase
                 LEFT JOIN p25_system system ON system.system_key = snapshot.system_key
                 WHERE config.id = ?
                 """, configured.rowId());
+            Map<String,Object> identity = identityRows.isEmpty() ? Map.of() : identityRows.getFirst();
+            response.put("wacn", identity.get("wacn"));
+            response.put("system_id", identity.get("system_id"));
+            response.put("rfss", identity.get("rfss"));
+            response.put("site_id", identity.get("site_id"));
             P25BandplanOverrideProfile override = null;
 
             if(!identityRows.isEmpty() && number(identityRows.getFirst().get("override_enabled")) == 1)
             {
-                Map<String,Object> identity = identityRows.getFirst();
                 Long wacn = nullableNumber(identity.get("wacn"));
                 Long system = nullableNumber(identity.get("system_id"));
                 Long rfss = nullableNumber(identity.get("rfss"));

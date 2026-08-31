@@ -70,7 +70,7 @@ public final class WebAdministratorNavigator
     }
 
     /** Opens a new site-scoped P25 bandplan override draft. */
-    public void openP25BandplanOverride(Window owner, P25SiteIdentity identity)
+    public void openP25BandplanOverride(Window owner, P25SiteIdentity identity, String siteGuid)
     {
         if(identity == null)
         {
@@ -78,9 +78,10 @@ public final class WebAdministratorNavigator
         }
 
         open(owner, "P25 bandplan override editor", navigation -> navigation.baseUri().resolve(String.format(
-                Locale.ROOT, "?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X",
-                identity.wacn(), identity.system(), identity.rfss(), identity.site())),
-            () -> mStatsWebServerService.createDesktopAdministratorP25BandplanOverrideHandoffUri(identity));
+                Locale.ROOT, "?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&guid=%s",
+                identity.wacn(), identity.system(), identity.rfss(), identity.site(), siteGuid)),
+            () -> mStatsWebServerService.createDesktopAdministratorP25BandplanOverrideHandoffUri(identity,
+                siteGuid));
     }
 
     private void open(Window owner, String editorName, Function<StatsWebNavigationState,URI> editorUriFactory,

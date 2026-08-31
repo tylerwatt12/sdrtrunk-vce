@@ -89,6 +89,10 @@ class StatsWebDatabaseTest
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
         Map<String,Object> siteSpecific = mDatabase.siteBands(request("/api/site/bands?guid=" + GUID));
         assertEquals("P25_OVERRIDE", siteSpecific.get("band_source"));
+        assertEquals(WACN, number(siteSpecific.get("wacn")));
+        assertEquals(SYSTEM, number(siteSpecific.get("system_id")));
+        assertEquals(1, number(siteSpecific.get("rfss")));
+        assertEquals(1, number(siteSpecific.get("site_id")));
         Map<String,Object> effective = rows(siteSpecific).getFirst();
         assertEquals(762_000_000L, number(effective.get("base_hz")));
         assertFalse(effective.containsKey("observation_count"));

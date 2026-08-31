@@ -20,7 +20,7 @@ const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
   'createAlias', 'createListName', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
 ]);
 const P25_OVERRIDE_CREATE_ROUTE_KEYS = Object.freeze([
-  'createP25Override', 'wacn', 'system', 'rfss', 'site'
+  'createP25Override', 'wacn', 'system', 'rfss', 'site', 'guid'
 ]);
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
@@ -15429,6 +15429,37 @@ function p25OverrideCreateRouteProfile(parameters) {
   return Object.values(profile).every((value) => value !== null) ? profile : null;
 }
 
+function p25OverrideCreateRouteGuid(parameters) {
+  if (!parameters || typeof parameters.get !== 'function' || parameters.get('createP25Override') !== '1') {
+    return null;
+  }
+  const value = String(parameters.get('guid') || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
+}
+
+function p25OverrideDetectedBands(documentValue, requestedProfile) {
+  const detectedProfile = {
+    wacn: documentValue?.wacn,
+    system: documentValue?.system_id,
+    rfss: documentValue?.rfss,
+    site: documentValue?.site_id
+  };
+  if (documentValue?.band_source !== 'OTA' || !p25OverrideSameScope(detectedProfile, requestedProfile) ||
+      !Array.isArray(documentValue.home_bands)) return [];
+  const bands = documentValue.home_bands.map((row) => ({
+    identifier: row?.band,
+    type: row?.tdma === true || row?.tdma === 1 ? 'TDMA' : 'FDMA',
+    base_frequency: row?.base_hz,
+    bandwidth: row?.bandwidth_hz,
+    channel_spacing: row?.spacing_hz,
+    transmit_offset: row?.transmit_offset_hz
+  }));
+  const valid = bands.every((band) => [band.identifier, band.base_frequency, band.bandwidth,
+    band.channel_spacing, band.transmit_offset].every(Number.isSafeInteger));
+  const unique = new Set(bands.map((band) => band.identifier)).size === bands.length;
+  return valid && unique ? bands : [];
+}
+
 function p25OverrideSameScope(left, right) {
   if (!left || !right) return false;
   return ['wacn', 'system', 'rfss', 'site'].every((field) =>
@@ -15562,6 +15593,7 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
 }
 
 async function renderAdminP25BandplanOverrides() {
+  const renderRoute = route.toString();
   const body = node('div', 'admin-section-body');
   const form = node('form', 'admin-form settings-page-form p25-overrides-form');
   const intro = node('p', 'p25-overrides-intro',
@@ -15604,8 +15636,10 @@ async function renderAdminP25BandplanOverrides() {
 
   try {
     const documentValue = await requestP25BandplanOverrides();
+    if (route.toString() !== renderRoute) return;
     const createRequested = route.has('createP25Override');
     const requestedProfile = p25OverrideCreateRouteProfile(route);
+    const requestedGuid = p25OverrideCreateRouteGuid(route);
     let requestedCard = null;
     const cards = documentValue.profiles.map((profile) => {
       const card = p25OverrideProfileCard(profile);
@@ -15614,11 +15648,27 @@ async function renderAdminP25BandplanOverrides() {
     });
     list.append(...cards);
     if (createRequested) {
-      if (requestedProfile) {
+      if (requestedProfile && requestedGuid) {
         if (!requestedCard) {
-          requestedCard = p25OverrideProfileCard(requestedProfile);
+          let detectedBands = [];
+          let detectedBandsLoaded = true;
+          try {
+            const detected = await api(siteApiPath(requestedGuid, 'frequency-bands'));
+            detectedBands = p25OverrideDetectedBands(detected, requestedProfile);
+          } catch (_) {
+            detectedBandsLoaded = false;
+          }
+          if (route.toString() !== renderRoute) return;
+          const draft = detectedBands.length ? { ...requestedProfile, bands: detectedBands } : requestedProfile;
+          requestedCard = p25OverrideProfileCard(draft);
           list.prepend(requestedCard);
-          message.textContent = 'Site override prepared. Enter its replacement bands, then save.';
+          if (detectedBands.length) {
+            message.textContent = `Site override prepared with ${detectedBands.length} currently detected OTA band${detectedBands.length === 1 ? '' : 's'}. Review them before saving; the receiver may not have learned every band yet.`;
+          } else if (detectedBandsLoaded) {
+            message.textContent = 'Site override prepared, but no usable detected OTA bands were available for this site. Enter its replacement bands, then save.';
+          } else {
+            message.textContent = 'Site override prepared, but its detected OTA bands could not be loaded. Enter its replacement bands, then save.';
+          }
         } else {
           message.textContent = 'This site already has an override. Review its replacement bands before saving.';
         }

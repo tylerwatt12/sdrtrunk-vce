@@ -20,7 +20,7 @@ Successful collections place the rows in `data` and bounded paging or result inf
 {"data": [], "meta": {"limit": 100, "offset": 0, "has_more": false}}
 ```
 
-Compound resources name each result set inside `data` and keep only limits, cursors, and truncation state in `meta`.
+Compound resources name each result set inside `data` and keep paging, source, identity, and truncation state in `meta`.
 For example, frequency bands use `data.home_bands` and `data.foreign_bands`; patch groups use `data.groups`,
 `data.talkgroups`, and `data.radios`.
 
@@ -67,7 +67,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/sites/{guid}/channels` | Paged observed channels. |
 | `GET /api/v1/sites/{guid}/group-identities` | Bounded leading group identities for a time range. |
 | `GET /api/v1/sites/{guid}/quality` | Bounded current and historical site quality. |
-| `GET /api/v1/sites/{guid}/frequency-bands` | The effective P25 home bandplan plus paged foreign-system bands. `meta.band_source` is `P25_OVERRIDE` or `OTA`. |
+| `GET /api/v1/sites/{guid}/frequency-bands` | The effective P25 home bandplan plus paged foreign-system bands. `meta.band_source` is `P25_OVERRIDE` or `OTA`; `meta.wacn`, `meta.system_id`, `meta.rfss`, and `meta.site_id` identify the matched P25 site. |
 | `GET /api/v1/sites/{guid}/neighbors` | Paged neighbors. |
 | `GET /api/v1/sites/{guid}/patch-groups` | Paged P25 patch groups with bounded members. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
