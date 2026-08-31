@@ -188,7 +188,17 @@ public class AliasModel
             publishedAliases.add(published);
         }
 
-        reconcilePublishedAliases(publishedAliases);
+        //Preserve narrow UI list changes while rebuilding cached decoder lookup indexes once.
+        mReconcilingAliasLists = true;
+        try
+        {
+            reconcilePublishedAliases(publishedAliases);
+        }
+        finally
+        {
+            reconcileCachedAliasLists();
+        }
+
         mAliasListMap.keySet().removeIf(name -> getAliasListDefinition(name) == null);
     }
 
@@ -617,29 +627,28 @@ public class AliasModel
 
     private List<Alias> replacementSnapshot(List<Alias> replacements)
     {
-        Set<Long> replacementIds = new HashSet<>();
-        replacements.stream().map(Alias::getId).filter(id -> id > Alias.UNASSIGNED_ID)
-            .forEach(replacementIds::add);
-        Set<Long> retainedIds = new HashSet<>();
+        Map<Long,Alias> replacementsById = new HashMap<>();
+        replacements.forEach(alias -> replacementsById.put(alias.getId(), alias));
+        Set<Long> installedIds = new HashSet<>();
         List<Alias> rebuilt = new ArrayList<>(mAliases.size() + replacements.size());
 
         for(Alias existing: mAliases)
         {
             long id = existing.getId();
-            if(!replacementIds.contains(id) || retainedIds.add(id))
+            Alias replacement = replacementsById.get(id);
+            if(replacement == null)
             {
                 rebuilt.add(existing);
+            }
+            else if(installedIds.add(id))
+            {
+                rebuilt.add(replacement);
             }
         }
 
         for(Alias alias: replacements)
         {
-            int existingIndex = indexOfSameIdentity(rebuilt, alias);
-            if(existingIndex >= 0)
-            {
-                rebuilt.set(existingIndex, alias);
-            }
-            else
+            if(installedIds.add(alias.getId()))
             {
                 rebuilt.add(alias);
             }
@@ -873,20 +882,25 @@ public class AliasModel
 
             if(changed)
             {
-                mReconcilingAliasLists = true;
-                try
-                {
-                    List<Alias> orderedAliases = List.copyOf(mAliases);
-                    for(AliasList aliasList: List.copyOf(mAliasListMap.values()))
-                    {
-                        aliasList.reconcileAliases(orderedAliases);
-                    }
-                }
-                finally
-                {
-                    mReconcilingAliasLists = false;
-                }
+                reconcileCachedAliasLists();
             }
+        }
+    }
+
+    private void reconcileCachedAliasLists()
+    {
+        mReconcilingAliasLists = true;
+        try
+        {
+            List<Alias> orderedAliases = List.copyOf(mAliases);
+            for(AliasList aliasList: List.copyOf(mAliasListMap.values()))
+            {
+                aliasList.reconcileAliases(orderedAliases);
+            }
+        }
+        finally
+        {
+            mReconcilingAliasLists = false;
         }
     }
 }

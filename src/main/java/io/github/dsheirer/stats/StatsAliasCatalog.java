@@ -41,7 +41,8 @@ final class StatsAliasCatalog
     static final int MAX_COVERAGE_ROWS = 500;
     static final int MAX_COVERAGE_PAIRS = 10_000;
     static final int MAX_EVIDENCE_ROWS = 10_000;
-    static final int MAX_METRIC_QUERY_ALIASES = StatsCsvExport.MAX_ROWS;
+    static final int MAX_MATCHING_ALIAS_IDS = StatsCsvExport.MAX_ROWS;
+    static final int MAX_METRIC_QUERY_ALIASES = MAX_MATCHING_ALIAS_IDS;
     static final int MAX_TARGET_ALIAS_LISTS = 256;
     static final int MAX_TARGET_RANGES = 500;
     private static final int MAX_METRIC_ENRICH_BATCH_ALIASES =
@@ -172,10 +173,13 @@ final class StatsAliasCatalog
 
     Map<String,Object> aliases(Connection connection, StatsRequest request) throws SQLException
     {
-        if(metricSortField(request) != null || hasMetricFilters(request))
+        boolean metricSort = metricSortField(request) != null;
+        boolean includeActivity = request.booleanValue("include_activity", true);
+
+        if(metricSort || hasMetricFilters(request))
         {
             List<Map<String,Object>> allRows = queryAliasRows(connection, request,
-                MAX_METRIC_QUERY_ALIASES + 1, 0, null, false);
+                MAX_METRIC_QUERY_ALIASES + 1, 0, null, false, metricSort);
 
             if(allRows.size() > MAX_METRIC_QUERY_ALIASES)
             {
@@ -202,11 +206,16 @@ final class StatsAliasCatalog
         }
 
         List<Map<String,Object>> queried = queryAliasRows(connection, request, request.limit() + 1,
-            request.offset(), null, true);
+            request.offset(), null, true, false);
         boolean hasMore = queried.size() > request.limit();
         List<Map<String,Object>> rows = hasMore ?
             new ArrayList<>(queried.subList(0, request.limit())) : queried;
-        enrich(connection, rows, false);
+
+        if(includeActivity)
+        {
+            enrich(connection, rows, false);
+        }
+
         applyConfigurationDiagnostics(connection, rows);
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("rows", rows);
@@ -217,6 +226,39 @@ final class StatsAliasCatalog
         return response;
     }
 
+    /**
+     * Returns every alias identifier matching the catalog filters without applying presentation sorting or paging.
+     * Configuration-only selections use a one-column query; activity filters retain the catalog's bounded enrichment
+     * semantics so selection and visible results cannot disagree.
+     */
+    List<Long> matchingAliasIds(Connection connection, StatsRequest request) throws SQLException
+    {
+        boolean metricFilters = hasMetricFilters(request);
+
+        if(!metricFilters)
+        {
+            List<Long> aliasIds = queryAliasIds(connection, request, MAX_MATCHING_ALIAS_IDS + 1);
+            requireCompleteAliasSelection(aliasIds.size());
+            return List.copyOf(aliasIds);
+        }
+
+        List<Map<String,Object>> rows = queryAliasRows(connection, request, MAX_MATCHING_ALIAS_IDS + 1,
+            0, null, false, true);
+        requireCompleteAliasSelection(rows.size());
+        enrichBatches(connection, rows);
+        applyMetricFilters(rows, request);
+        return rows.stream().map(row -> number(row.get("alias_id"))).toList();
+    }
+
+    private static void requireCompleteAliasSelection(int candidateCount)
+    {
+        if(candidateCount > MAX_MATCHING_ALIAS_IDS)
+        {
+            throw new StatsApiException(413, "alias_selection_too_large",
+                "Matching alias selection exceeds the " + MAX_MATCHING_ALIAS_IDS + " row limit");
+        }
+    }
+
     Map<String,Object> alias(Connection connection, long aliasId) throws SQLException
     {
         if(aliasId <= 0)
@@ -225,7 +267,7 @@ final class StatsAliasCatalog
         }
 
         List<Map<String,Object>> rows = queryAliasRows(connection, new StatsRequest(Map.of()), 1, 0, aliasId,
-            true);
+            true, false);
 
         if(rows.isEmpty())
         {
@@ -243,9 +285,11 @@ final class StatsAliasCatalog
     List<Map<String,Object>> exportRows(Connection connection, StatsRequest request, int maximumRows)
         throws SQLException
     {
-        boolean metricProcessing = metricSortField(request) != null || hasMetricFilters(request);
+        boolean metricSort = metricSortField(request) != null;
+        boolean metricProcessing = metricSort || hasMetricFilters(request);
         int queryLimit = metricProcessing ? Math.min(maximumRows, MAX_METRIC_QUERY_ALIASES) + 1 : maximumRows + 1;
-        List<Map<String,Object>> rows = queryAliasRows(connection, request, queryLimit, 0, null, true);
+        List<Map<String,Object>> rows = queryAliasRows(connection, request, queryLimit, 0, null, true,
+            metricSort);
 
         if(metricProcessing && rows.size() > MAX_METRIC_QUERY_ALIASES)
         {
@@ -373,7 +417,8 @@ final class StatsAliasCatalog
 
     private static List<Map<String,Object>> queryAliasRows(Connection connection, StatsRequest request, int limit,
                                                             int offset, Long aliasId,
-                                                            boolean includeConfigurationCollections)
+                                                            boolean includeConfigurationCollections,
+                                                            boolean stableIdentifierOrder)
         throws SQLException
     {
         StringBuilder sql = new StringBuilder("""
@@ -405,23 +450,30 @@ final class StatsAliasCatalog
             addFilters(sql, parameters, request);
         }
 
-        String requestedSort = request.sort("name");
-        String sort = SORT_COLUMNS.get(requestedSort);
-
-        if(sort == null)
+        if(stableIdentifierOrder)
         {
-            if(metricSortField(request) != null)
-            {
-                sort = SORT_COLUMNS.get("name");
-            }
-            else
-            {
-                throw new StatsApiException(400, "invalid_parameter", "sort is not supported", "sort");
-            }
+            sql.append(" ORDER BY alias.id ASC LIMIT ? OFFSET ?");
         }
+        else
+        {
+            String requestedSort = request.sort("name");
+            String sort = SORT_COLUMNS.get(requestedSort);
 
-        String direction = request.descending(false) ? " DESC" : " ASC";
-        sql.append(" ORDER BY ").append(sort).append(direction).append(", alias.id ASC LIMIT ? OFFSET ?");
+            if(sort == null)
+            {
+                if(metricSortField(request) != null)
+                {
+                    sort = SORT_COLUMNS.get("name");
+                }
+                else
+                {
+                    throw new StatsApiException(400, "invalid_parameter", "sort is not supported", "sort");
+                }
+            }
+
+            String direction = request.descending(false) ? " DESC" : " ASC";
+            sql.append(" ORDER BY ").append(sort).append(direction).append(", alias.id ASC LIMIT ? OFFSET ?");
+        }
         parameters.add(limit);
         parameters.add(offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -437,6 +489,40 @@ final class StatsAliasCatalog
         }
 
         return rows;
+    }
+
+    private static List<Long> queryAliasIds(Connection connection, StatsRequest request, int limit)
+        throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
+            SELECT alias.id AS alias_id
+            FROM alias
+            JOIN alias_list ON alias_list.id = alias.alias_list_id
+            WHERE 1=1
+            """);
+        List<Object> parameters = new ArrayList<>();
+        addFilters(sql, parameters, request);
+        sql.append(" ORDER BY alias.id ASC LIMIT ?");
+        parameters.add(limit);
+        List<Long> aliasIds = new ArrayList<>();
+
+        try(PreparedStatement statement = connection.prepareStatement(sql.toString()))
+        {
+            for(int index = 0; index < parameters.size(); index++)
+            {
+                statement.setObject(index + 1, parameters.get(index));
+            }
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    aliasIds.add(resultSet.getLong("alias_id"));
+                }
+            }
+        }
+
+        return aliasIds;
     }
 
     private static void attachConfigurationCollections(Connection connection, List<Map<String,Object>> aliases)
@@ -850,11 +936,31 @@ final class StatsAliasCatalog
         }
 
         ENRICHMENT_ADMISSION.execute(() -> {
+            IdentityTargets sharedTargets = IdentityTargets.singleCoverageTarget(aliases);
+            List<CoverageScope> sharedScopes = null;
+
+            if(sharedTargets != null)
+            {
+                if(sharedTargets.isEmpty())
+                {
+                    applyNoCoverageMetrics(aliases, false);
+                    return null;
+                }
+
+                sharedScopes = loadCoverageScopes(connection, sharedTargets);
+
+                if(sharedScopes.isEmpty())
+                {
+                    applyNoCoverageMetrics(aliases, false);
+                    return null;
+                }
+            }
+
             for(int start = 0; start < aliases.size(); start += MAX_METRIC_ENRICH_BATCH_ALIASES)
             {
                 List<Map<String,Object>> batch = aliases.subList(start,
                     Math.min(start + MAX_METRIC_ENRICH_BATCH_ALIASES, aliases.size()));
-                enrichAdmitted(connection, batch, false);
+                enrichAdmitted(connection, batch, false, sharedScopes);
             }
 
             return null;
@@ -865,9 +971,34 @@ final class StatsAliasCatalog
                                                                List<Map<String,Object>> aliases,
                                                                boolean includeBreakdown) throws SQLException
     {
+        return enrichAdmitted(connection, aliases, includeBreakdown, null);
+    }
+
+    private Map<Long,List<Map<String,Object>>> enrichAdmitted(Connection connection,
+                                                               List<Map<String,Object>> aliases,
+                                                               boolean includeBreakdown,
+                                                               List<CoverageScope> preloadedScopes) throws SQLException
+    {
         Map<Long,Map<String,MetricAccumulator>> metrics = new LinkedHashMap<>();
-        IdentityTargets targets = IdentityTargets.from(aliases);
-        List<CoverageScope> scopes = loadCoverageScopes(connection, targets);
+        List<CoverageScope> scopes = preloadedScopes;
+
+        if(scopes == null)
+        {
+            IdentityTargets targets = IdentityTargets.from(aliases);
+
+            if(targets.isEmpty())
+            {
+                return applyNoCoverageMetrics(aliases, includeBreakdown);
+            }
+
+            scopes = loadCoverageScopes(connection, targets);
+        }
+
+        if(scopes.isEmpty())
+        {
+            return applyNoCoverageMetrics(aliases, includeBreakdown);
+        }
+
         Map<Long,Map<String,CoverageScope>> coverage = new LinkedHashMap<>();
         int coveragePairs = 0;
 
@@ -964,6 +1095,28 @@ final class StatsAliasCatalog
             if(includeBreakdown)
             {
                 breakdown.put(aliasId, detailRows);
+            }
+        }
+
+        return breakdown;
+    }
+
+    private static Map<Long,List<Map<String,Object>>> applyNoCoverageMetrics(List<Map<String,Object>> aliases,
+                                                                              boolean includeBreakdown)
+    {
+        Map<Long,List<Map<String,Object>>> breakdown = new LinkedHashMap<>();
+
+        for(Map<String,Object> alias: aliases)
+        {
+            long aliasId = number(alias.get("alias_id"));
+            alias.put("coverage_scope_count", 0);
+            alias.put("observed_scope_count", 0);
+            alias.put("metrics_state", isSupportedIdentity(alias) ? "not_collected" : "unsupported");
+            aggregate(alias, List.of());
+
+            if(includeBreakdown)
+            {
+                breakdown.put(aliasId, List.of());
             }
         }
 
@@ -1871,6 +2024,49 @@ final class StatsAliasCatalog
             }
 
             return new IdentityTargets(aliasLists);
+        }
+
+        /**
+         * A catalog request for one Alias List normally spans many bounded metric batches.  When every supported
+         * identity has the same protocol and Alias List, its receiver coverage is identical for every batch and can
+         * be loaded once without changing the coverage row bound.  Mixed selections retain the existing per-batch
+         * behavior.
+         */
+        private static IdentityTargets singleCoverageTarget(List<Map<String,Object>> aliases)
+        {
+            Map<Integer,Set<String>> aliasLists = new LinkedHashMap<>();
+            int targetCount = 0;
+
+            for(Map<String,Object> alias: aliases)
+            {
+                if(!isSupportedIdentity(alias))
+                {
+                    continue;
+                }
+
+                String aliasList = lower(text(alias.get("alias_list_name")));
+
+                if(aliasList == null)
+                {
+                    continue;
+                }
+
+                int protocol = protocolCode(text(alias.get("protocol")));
+                Set<String> protocolLists = aliasLists.computeIfAbsent(protocol,
+                    ignored -> new LinkedHashSet<>());
+
+                if(protocolLists.add(aliasList) && ++targetCount > 1)
+                {
+                    return null;
+                }
+            }
+
+            return new IdentityTargets(aliasLists);
+        }
+
+        private boolean isEmpty()
+        {
+            return mAliasLists.isEmpty();
         }
 
         private static void addRange(Map<TargetKey,List<IdentityRange>> ranges, TargetKey key,

@@ -32,7 +32,9 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import javafx.collections.ListChangeListener;
@@ -341,6 +343,49 @@ class AliasOneToOneTest
         assertEquals(List.of(existing, created), visible);
         assertSame(existing, model.getAlias(existing.getId()));
         assertSame(created, model.getAlias(created.getId()));
+    }
+
+    @Test
+    void committedBulkReplacementReconcilesCachedRuntimeListOnce()
+    {
+        int changedAliasCount = 501;
+        AliasListDefinition definition = definition(12);
+        List<Alias> liveAliases = new ArrayList<>();
+        liveAliases.add(alias(100, definition, "Unchanged", 1_000));
+
+        for(int index = 0; index < changedAliasCount; index++)
+        {
+            liveAliases.add(alias(101L + index, definition, "Alias " + index, 1_001 + index));
+        }
+
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        model.addAliases(liveAliases);
+        AliasList cached = model.getAliasList(definition);
+        int[] runtimeListChanges = {0};
+        cached.aliases().addListener((ListChangeListener<Alias>)change -> runtimeListChanges[0]++);
+
+        AliasListDefinition committedDefinition = definition(12);
+        List<Alias> committedAliases = new ArrayList<>();
+        committedAliases.add(alias(100, committedDefinition, "Unchanged database copy", 1_000));
+        Set<Long> changedIds = new HashSet<>();
+
+        for(int index = 0; index < changedAliasCount; index++)
+        {
+            long aliasId = 101L + index;
+            committedAliases.add(alias(aliasId, committedDefinition, "Updated " + index, 10_001 + index));
+            changedIds.add(aliasId);
+        }
+
+        model.publishCommittedConfiguration(List.of(committedDefinition), committedAliases, changedIds, false);
+
+        assertEquals(1, runtimeListChanges[0],
+            "One committed publication should rebuild each cached runtime list once");
+        assertSame(liveAliases.getFirst(), model.getAlias(100),
+            "Unchanged committed rows must retain their live instances");
+        assertSame(committedAliases.getLast(),
+            cached.getAliases(APCO25Talkgroup.create(10_001 + changedAliasCount - 1)).getFirst());
+        assertTrue(cached.getAliases(APCO25Talkgroup.create(1_001 + changedAliasCount - 1)).isEmpty());
     }
 
     @Test

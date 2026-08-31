@@ -132,6 +132,44 @@ class AliasAdministrationServiceTest
     }
 
     @Test
+    void maximumBulkEditUsesOneCommit() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("large-bulk-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            List<Alias> aliases = new ArrayList<>();
+            for(int index = 1; index <= AliasAdministrationService.MAX_BULK_ALIASES; index++)
+            {
+                aliases.add(alias("Alias " + index, aliasListId, index));
+            }
+            AliasAdministrationService.MutationResult created = service.saveAliases(aliases);
+            int commitsBeforeBulk = manager.commitCount();
+
+            AliasAdministrationService.MutationResult changed = service.bulkEdit(
+                new AliasAdministrationService.BulkEdit(created.aliasIds(), null, null, null, true,
+                    null, null, null, null, false), created.revision());
+
+            assertEquals(commitsBeforeBulk + 1, manager.commitCount());
+            assertEquals(AliasAdministrationService.MAX_BULK_ALIASES, changed.affected());
+            assertEquals(AliasAdministrationService.MAX_BULK_ALIASES, changed.aliasIds().size());
+            assertEquals(AliasAdministrationService.MAX_BULK_ALIASES,
+                manager.getAliasModel().getAliases().stream().filter(Alias::isRecordable).count());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
     void conflictLookupIsSameListExactAndResponseBounded() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("conflict-data");

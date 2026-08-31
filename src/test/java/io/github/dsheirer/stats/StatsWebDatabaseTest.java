@@ -22,6 +22,8 @@ import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -33,6 +35,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -687,6 +690,144 @@ class StatsWebDatabaseTest
         assertEquals(List.of("Bulk Alias 6626"),
             rows(filtered).stream().map(row -> row.get("name")).toList());
         assertFalse((Boolean)filtered.get("hasMore"));
+    }
+
+    @Test
+    void omitsActivityOnlyForAnExplicitNonMetricCatalogRequest()
+    {
+        Map<String,Object> configuration = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&include_activity=false&limit=1"));
+        Map<String,Object> configurationRow = rows(configuration).getFirst();
+        assertFalse(configurationRow.containsKey("metrics_state"));
+        assertFalse(configurationRow.containsKey("logical_call_count"));
+
+        Map<String,Object> defaultResponse = mDatabase.aliases(request("/api/v1/aliases?list=1&limit=1"));
+        assertTrue(rows(defaultResponse).getFirst().containsKey("metrics_state"));
+
+        Map<String,Object> metricSort = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&include_activity=false&sort=logical_call_count&limit=1"));
+        assertTrue(rows(metricSort).getFirst().containsKey("metrics_state"),
+            "Metric sorting still requires complete activity enrichment");
+
+        StatsApiException invalid = assertThrows(StatsApiException.class, () -> mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&include_activity=sometimes")));
+        assertEquals(400, invalid.status());
+        assertEquals("include_activity", invalid.field());
+    }
+
+    @Test
+    void returnsTenThousandMatchingAliasIdsAndRejectsTheNextCandidate() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES(990, 'Selection', 'P25')");
+            statement.executeUpdate("""
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT value + 1 FROM sequence WHERE value < 10000
+                )
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                SELECT 900000 + value, 990, printf('Selectable %05d', value),
+                       'TALKGROUP', 'APCO25', 200000 + value
+                FROM sequence
+                """);
+        }
+
+        String query = "/api/v1/aliases/ids?list=990&family=p25&type=talkgroup&matcher=talkgroup&q=Selectable";
+        List<Long> ids = mDatabase.matchingAliasIds(request(query));
+        assertEquals(StatsAliasCatalog.MAX_MATCHING_ALIAS_IDS, ids.size());
+        assertEquals(900001L, ids.getFirst());
+        assertEquals(910000L, ids.getLast());
+        assertTrue(ids.size() > StatsRequest.MAX_LIMIT,
+            "Selection is complete rather than restricted to one catalog page");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES(999999, 990, 'Selectable overflow', 'TALKGROUP', 'APCO25', 999999)
+                """);
+        }
+
+        StatsApiException overflow = assertThrows(StatsApiException.class,
+            () -> mDatabase.matchingAliasIds(request(query)));
+        assertEquals(413, overflow.status());
+        assertEquals("alias_selection_too_large", overflow.code());
+    }
+
+    @Test
+    void loadsOneAliasListCoverageOnceAndUsesIdentifierOrderForMetricPreload() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES(991, 'Uncovered', 'P25')");
+            statement.executeUpdate("""
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT value + 1 FROM sequence WHERE value < 600
+                )
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                SELECT 920000 + value, 991, printf('Uncovered %03d', 601 - value),
+                       'TALKGROUP', 'APCO25', 300000 + value
+                FROM sequence
+                """);
+        }
+
+        AtomicInteger coverageQueries = new AtomicInteger();
+        AtomicInteger evidenceQueries = new AtomicInteger();
+        AtomicReference<String> aliasQuery = new AtomicReference<>();
+
+        try(Connection delegate = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            Connection observed = (Connection)Proxy.newProxyInstance(StatsWebDatabaseTest.class.getClassLoader(),
+                new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
+                    if("prepareStatement".equals(method.getName()) && arguments != null && arguments.length > 0 &&
+                        arguments[0] instanceof String sql)
+                    {
+                        if(sql.contains("SELECT alias.id AS alias_id, alias.alias_list_id"))
+                        {
+                            aliasQuery.compareAndSet(null, sql);
+                        }
+
+                        if(sql.contains("FROM trunked_identity_scope scope") ||
+                            sql.contains("FROM receiver_context context") && sql.contains("context.kind_code <> 1"))
+                        {
+                            coverageQueries.incrementAndGet();
+                        }
+
+                        if(sql.contains("requested_identity"))
+                        {
+                            evidenceQueries.incrementAndGet();
+                        }
+                    }
+
+                    try
+                    {
+                        return method.invoke(delegate, arguments);
+                    }
+                    catch(InvocationTargetException exception)
+                    {
+                        throw exception.getCause();
+                    }
+                });
+            StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
+            Map<String,Object> response = catalog.aliases(observed, request(
+                "/api/v1/aliases?list=991&sort=logical_call_count&direction=desc&limit=10"));
+            assertEquals(10, rows(response).size());
+            assertTrue(rows(response).stream().allMatch(row -> "not_collected".equals(row.get("metrics_state"))));
+        }
+
+        assertEquals(2, coverageQueries.get(),
+            "One trunked and one conventional coverage query serve every metric batch");
+        assertEquals(0, evidenceQueries.get(), "No evidence query is useful without receiver coverage");
+        assertNotNull(aliasQuery.get());
+        assertTrue(aliasQuery.get().contains("ORDER BY alias.id ASC LIMIT ? OFFSET ?"));
+        assertFalse(aliasQuery.get().contains("ORDER BY lower(coalesce(alias.name"));
     }
 
     @Test
@@ -1722,9 +1863,12 @@ class StatsWebDatabaseTest
                 """);
         }
 
-        List<Map<String,Object>> configured = rows(mDatabase.aliases(request(
-            "/api/aliases?list=1&group=operations&scan_list_id=1&record=enabled&stream=present")));
+        String configuredQuery = "/api/aliases?list=1&family=p25&type=talkgroup&matcher=talkgroup" +
+            "&group=operations&scan_list_id=1&record=enabled&stream=present&q=dispatch";
+        List<Map<String,Object>> configured = rows(mDatabase.aliases(request(configuredQuery)));
         assertEquals(List.of("Dispatch"), configured.stream().map(row -> row.get("name")).toList());
+        assertEquals(configured.stream().map(row -> number(row.get("alias_id"))).sorted().toList(),
+            mDatabase.matchingAliasIds(request(configuredQuery.replace("/api/aliases", "/api/aliases/ids"))));
         assertEquals(List.of(1L), configured.getFirst().get("scan_list_ids"));
         assertEquals(List.of("Default"), configured.getFirst().get("scan_lists"));
         assertEquals(true, configured.getFirst().get("overlap"));
@@ -1741,17 +1885,22 @@ class StatsWebDatabaseTest
         assertThrows(StatsApiException.class, () -> mDatabase.aliases(request(
             "/api/v1/aliases?list=1&evidence=OBSERVED")));
 
-        Map<String,Object> observedResponse = mDatabase.aliases(request(
-            "/api/v1/aliases?list=1&type=talkgroup&evidence=observed&use=used&last_activity_after=2000&limit=1"));
+        String observedQuery = "/api/v1/aliases?list=1&type=talkgroup&evidence=observed&use=used" +
+            "&last_activity_after=2000";
+        Map<String,Object> observedResponse = mDatabase.aliases(request(observedQuery + "&limit=1"));
         List<Map<String,Object>> observed = rows(observedResponse);
         assertEquals(List.of("Dispatch Duplicate"), observed.stream().map(row -> row.get("name")).toList(),
             "Catalog evidence must follow the same later-exact-alias precedence as runtime");
+        assertEquals(observed.stream().map(row -> number(row.get("alias_id"))).sorted().toList(),
+            mDatabase.matchingAliasIds(request(observedQuery.replace("/api/v1/aliases", "/api/v1/aliases/ids"))));
         assertFalse((Boolean)observedResponse.get("hasMore"));
 
-        List<Map<String,Object>> noCalls = rows(mDatabase.aliases(request(
-            "/api/aliases?list=1&type=talkgroup&evidence=covered_no_evidence&use=unused&limit=10")));
+        String noCallsQuery = "/api/aliases?list=1&type=talkgroup&evidence=covered_no_evidence&use=unused";
+        List<Map<String,Object>> noCalls = rows(mDatabase.aliases(request(noCallsQuery + "&limit=10")));
         assertEquals(List.of("AAA No Calls", "Dispatch", "Range A", "Range B"),
             noCalls.stream().map(row -> row.get("name")).toList());
+        assertEquals(noCalls.stream().map(row -> number(row.get("alias_id"))).sorted().toList(),
+            mDatabase.matchingAliasIds(request(noCallsQuery.replace("/api/aliases", "/api/aliases/ids"))));
 
         assertTrue(rows(mDatabase.aliases(request(
             "/api/v1/aliases?list=1&evidence=observed&last_activity_before=1999"))).isEmpty());

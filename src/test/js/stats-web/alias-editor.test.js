@@ -46,7 +46,8 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(`
-  const ALIAS_BULK_SELECTION_LIMIT = 500;
+  const ALIAS_BULK_SELECTION_LIMIT = 10_000;
+  const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
   let aliasEditorSelection = new Set();
   let aliasEditorSelectionScope = null;
   let aliasEditorSelectionRequest = 0;
@@ -60,9 +61,9 @@ vm.runInContext(`
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
   ${functionSource('function aliasSelectionScopeKey(kind, filters = {})')}
-  ${functionSource('function completeAliasSelection(page, maximum = 500)')}
-  ${functionSource('function extendedAliasSelection(selection, additions, maximum = 500)')}
-  ${functionSource('function validatedAliasSelectionIds(selection, maximum = 500)')}
+  ${functionSource('function completeAliasSelection(response, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
+  ${functionSource('function extendedAliasSelection(selection, additions, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
+  ${functionSource('function validatedAliasSelectionIds(selection, maximum = ALIAS_BULK_SELECTION_LIMIT)')}
   ${functionSource('function resetAliasEditorSelection(scope = null)')}
   ${functionSource('function synchronizeAliasEditorSelectionScope(scope)')}
   ${functionSource('function clearInactiveAliasSelection(activeTable)')}
@@ -175,23 +176,22 @@ assert.notEqual(selectionScope, context.selectionScopeKey('alias-list', { ...sel
 assert.notEqual(selectionScope, context.selectionScopeKey('scan-list-members', selectionFilters));
 
 assert.deepEqual(Array.from(context.completeSelection({
-  rows: [{ alias_id: 11 }, { alias_id: 12 }], has_more: false
+  alias_ids: [11, 12], count: 2
 })), [11, 12]);
-assert.throws(() => context.completeSelection({ rows: [{ alias_id: 11 }], has_more: true }),
-  /More than 500 aliases match/);
 assert.throws(() => context.completeSelection({
-  rows: [{ alias_id: 11 }, { alias_id: 11 }], has_more: false
+  alias_ids: [11, 11], count: 2
 }), /invalid or duplicate Alias IDs/);
 assert.throws(() => context.completeSelection({
-  rows: Array.from({ length: 501 }, (_, index) => ({ alias_id: index + 1 })), has_more: false
-}), /limited to 500 aliases/);
+  alias_ids: Array.from({ length: 10_001 }, (_, index) => index + 1), count: 10_001
+}), /limited to 10000 aliases/);
+assert.throws(() => context.completeSelection({ alias_ids: [11], count: 2 }), /invalid selection response/);
 assert.deepEqual(Array.from(context.validatedSelectionIds(new Set([21, 22]))), [21, 22]);
-assert.throws(() => context.validatedSelectionIds(new Set(Array.from({ length: 501 }, (_, index) => index + 1))),
-  /no more than 500 aliases/);
+assert.throws(() => context.validatedSelectionIds(
+  new Set(Array.from({ length: 10_001 }, (_, index) => index + 1))), /no more than 10000 aliases/);
 
 const priorSelection = new Set([1, 2]);
 assert.throws(() => context.extendSelection(priorSelection,
-  Array.from({ length: 499 }, (_, index) => index + 3)), /previous selection was kept/);
+  Array.from({ length: 9_999 }, (_, index) => index + 3)), /previous selection was kept/);
 assert.deepEqual([...priorSelection], [1, 2], 'An overflowing page add must leave the previous selection unchanged.');
 
 context.seedSelection([31, 32], selectionScope, 4);
@@ -219,28 +219,36 @@ assert.deepEqual(Array.from(context.selectionState().ids), [],
 async function verifyAsyncSelectionLifecycle() {
   const button = () => ({ textContent: 'Select All Matching', disabled: false, isConnected: true });
   const messages = [];
+  let selectionRequest;
   context.seedSelection([99], selectionScope, 0);
-  context.apiPage = async () => ({ rows: [{ alias_id: 11 }, { alias_id: 12 }], has_more: false });
+  context.api = async (path, parameters, options) => {
+    selectionRequest = { path, parameters, options };
+    return { alias_ids: [11, 12], count: 2 };
+  };
   await context.selectAllMatching(selectionFilters, selectionScope, button(), (...message) => messages.push(message));
   assert.deepEqual(Array.from(context.selectionState().ids), [11, 12]);
   assert.match(messages.at(-1)[0], /Selected all 2 matching aliases/);
+  assert.equal(selectionRequest.path, '/api/v1/aliases/ids');
+  assert.deepEqual(JSON.parse(JSON.stringify(selectionRequest.parameters)), selectionFilters,
+    'Select All must send only the filters defining the visible result set.');
+  assert.equal(selectionRequest.options.timeoutMs, 60_000);
 
   messages.length = 0;
   context.seedSelection([99], selectionScope, 0);
-  context.apiPage = async () => ({ rows: [{ alias_id: 11 }], has_more: true });
+  context.api = async () => { throw new Error('More than 10000 aliases match. Narrow the filters, then try again.'); };
   await context.selectAllMatching(selectionFilters, selectionScope, button(), (...message) => messages.push(message));
   assert.deepEqual(Array.from(context.selectionState().ids), [99],
     'An overflowing Select All response must preserve the prior selection.');
-  assert.match(messages.at(-1)[0], /More than 500 aliases match/);
+  assert.match(messages.at(-1)[0], /More than 10000 aliases match/);
 
   messages.length = 0;
-  let resolvePage;
+  let resolveSelection;
   context.seedSelection([88], selectionScope, 0);
-  context.apiPage = () => new Promise((resolve) => { resolvePage = resolve; });
+  context.api = () => new Promise((resolve) => { resolveSelection = resolve; });
   const pending = context.selectAllMatching(selectionFilters, selectionScope, button(),
     (...message) => messages.push(message));
   context.resetSelection(selectionScope);
-  resolvePage({ rows: [{ alias_id: 77 }], has_more: false });
+  resolveSelection({ alias_ids: [77], count: 1 });
   await pending;
   assert.deepEqual(Array.from(context.selectionState().ids), [],
     'A late response must not replace a selection cleared while it was loading.');

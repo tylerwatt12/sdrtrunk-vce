@@ -60,6 +60,7 @@ class WebAccessControllersTest
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String ADMIN_PASSWORD = "admin-password-2026";
     private static final String USER_PASSWORD = "listener-password-2026";
+    private static final String ADMIN_ALIASES_PATH = AliasAdminHttpController.BULK_PATH;
 
     @TempDir
     Path mTemporaryDirectory;
@@ -120,15 +121,16 @@ class WebAccessControllersTest
                 outputStream.write(body);
             }
         }));
-        server.createContext("/admin-api", requestSecurity.protectApi(WebCapability.ADMIN_ALIASES, exchange -> {
-            byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, body.length);
+        server.createContext(ADMIN_ALIASES_PATH,
+            requestSecurity.protectApi(WebCapability.ADMIN_ALIASES, exchange -> {
+                byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
 
-            try(OutputStream outputStream = exchange.getResponseBody())
-            {
-                outputStream.write(body);
-            }
-        }));
+                try(OutputStream outputStream = exchange.getResponseBody())
+                {
+                    outputStream.write(body);
+                }
+            }));
         server.start();
 
         try
@@ -165,7 +167,7 @@ class WebAccessControllersTest
                 .contains("radioreference.com"));
             assertEquals("camera=(), microphone=(), geolocation=(self)",
                 anonymousProtected.headers().firstValue("Permissions-Policy").orElseThrow());
-            assertEquals(401, send(client, request(origin, "/admin-api")
+            assertEquals(401, send(client, request(origin, ADMIN_ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             Login admin = login(client, origin, "admin", ADMIN_PASSWORD);
@@ -178,7 +180,7 @@ class WebAccessControllersTest
 
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
-            assertEquals(200, send(client, request(origin, "/admin-api")
+            assertEquals(200, send(client, request(origin, ADMIN_ALIASES_PATH)
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
             HttpResponse<String> usersResponse = send(client, request(origin, "/api/v1/admin/users")
                 .header("Cookie", admin.cookieHeader()).GET());
@@ -195,16 +197,16 @@ class WebAccessControllersTest
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
             assertEquals(403, missingCsrf.statusCode());
             assertEquals("request_rejected", json(missingCsrf).at("/error/code").textValue());
-            assertEquals(403, send(client, request(origin, "/admin-api")
+            assertEquals(403, send(client, request(origin, ADMIN_ALIASES_PATH)
                 .header("Origin", origin.toString())
                 .header("Cookie", admin.cookieHeader())
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
-            assertEquals(403, send(client, request(origin, "/admin-api")
+            assertEquals(403, send(client, request(origin, ADMIN_ALIASES_PATH)
                 .header("Origin", "http://example.invalid")
                 .header("Cookie", admin.cookieHeader())
                 .header(WebRequestSecurity.CSRF_HEADER_NAME, admin.csrfToken())
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
-            assertEquals(200, send(client, mutation(origin, "/admin-api", admin)
+            assertEquals(200, send(client, mutation(origin, ADMIN_ALIASES_PATH, admin)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             HttpResponse<String> created = send(client, mutation(origin, "/api/v1/admin/users", admin)
@@ -231,7 +233,7 @@ class WebAccessControllersTest
             assertEquals("user", listener.body().get("tier").textValue());
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
-            assertEquals(403, send(client, mutation(origin, "/admin-api", listener)
+            assertEquals(403, send(client, mutation(origin, ADMIN_ALIASES_PATH, listener)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             String requireSiteLogin = OBJECT_MAPPER.writeValueAsString(

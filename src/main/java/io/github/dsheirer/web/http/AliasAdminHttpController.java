@@ -65,7 +65,8 @@ public final class AliasAdminHttpController
     public static final String OPTIONS_PATH = ALIASES_PATH + "/options";
     public static final String BULK_PATH = ALIASES_PATH + "/bulk";
     private static final Logger mLog = LoggerFactory.getLogger(AliasAdminHttpController.class);
-    private static final int MAXIMUM_JSON_BODY_BYTES = 16 * 1024;
+    /** Accommodates 10,000 unique 64-bit Alias IDs plus worst-case escaped bounded edit fields. */
+    private static final int MAXIMUM_JSON_BODY_BYTES = 512 * 1024;
     private static final int MAXIMUM_TEXT_CHARACTERS = 256;
     private static final int MAXIMUM_DESCRIPTION_CHARACTERS = 4096;
     private static final int MAXIMUM_TONES = 64;
@@ -432,7 +433,8 @@ public final class AliasAdminHttpController
             else
             {
                 result = mService.updateScanListMemberships(scanListId,
-                    request.aliasIds() != null ? boundedIds(request.aliasIds(), "alias_ids") : null,
+                    request.aliasIds() != null ? boundedIds(request.aliasIds(), "alias_ids",
+                        AliasAdministrationService.MAX_BULK_ALIASES) : null,
                     request.unmatchedAliasListIds() != null ?
                         boundedIds(request.unmatchedAliasListIds(), "unmatched_alias_list_ids") : null,
                     operation, requiredRevision(request.revision()));
@@ -1053,24 +1055,21 @@ public final class AliasAdminHttpController
 
     private static List<Long> requiredIds(List<Long> ids) throws RequestException
     {
-        if(ids == null || ids.isEmpty() || ids.size() > AliasAdministrationService.MAX_BULK_ALIASES)
+        if(ids == null || ids.isEmpty())
         {
             throw invalid("alias_ids is invalid");
         }
-        Set<Long> unique = new HashSet<>();
-        for(Long id: ids)
-        {
-            if(id == null || id <= 0 || !unique.add(id))
-            {
-                throw invalid("alias_ids must be positive and unique");
-            }
-        }
-        return List.copyOf(ids);
+        return boundedIds(ids, "alias_ids", AliasAdministrationService.MAX_BULK_ALIASES);
     }
 
     private static List<Long> boundedIds(List<Long> ids, String field) throws RequestException
     {
-        if(ids == null || ids.size() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
+        return boundedIds(ids, field, MAXIMUM_ADMIN_COLLECTION_ITEMS);
+    }
+
+    private static List<Long> boundedIds(List<Long> ids, String field, int maximum) throws RequestException
+    {
+        if(ids == null || ids.size() > maximum)
         {
             throw invalid(field + " is invalid");
         }

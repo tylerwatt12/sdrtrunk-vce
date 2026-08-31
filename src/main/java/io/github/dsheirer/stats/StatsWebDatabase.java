@@ -844,6 +844,11 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
+    List<Long> matchingAliasIds(StatsRequest request)
+    {
+        return readSnapshot(connection -> mAliasCatalog.matchingAliasIds(connection, request));
+    }
+
     Map<String,Object> alias(StatsRequest request)
     {
         return readSnapshot(connection -> mAliasCatalog.alias(connection, request.requiredIdentifier("id")));

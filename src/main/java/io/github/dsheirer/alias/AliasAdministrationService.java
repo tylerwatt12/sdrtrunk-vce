@@ -33,6 +33,7 @@ import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -56,7 +57,7 @@ import javafx.application.Platform;
  */
 public final class AliasAdministrationService
 {
-    public static final int MAX_BULK_ALIASES = 500;
+    public static final int MAX_BULK_ALIASES = 10_000;
     public static final int MAX_ALIAS_LIST_NAME_LENGTH = 25;
     public static final int MAX_BROADCAST_CHANNELS = 64;
     public static final int MAX_BROADCAST_CHANNEL_NAME_LENGTH = 256;
@@ -970,6 +971,10 @@ public final class AliasAdministrationService
         }
 
         aliasModel().addAliases(prepared);
+        if(mMutationWorkspace != null)
+        {
+            prepared.forEach(alias -> mMutationWorkspace.aliasesById().put(alias.getId(), alias));
+        }
         return new MutationTarget(null, List.of(), prepared.size(), prepared, PublicationMode.ALIASES, null);
     }
 
@@ -984,6 +989,10 @@ public final class AliasAdministrationService
     private MutationTarget deleteAliasesTarget(List<Long> aliasIds, List<Alias> aliases)
     {
         aliasModel().removeAliases(aliases);
+        if(mMutationWorkspace != null)
+        {
+            aliasIds.forEach(mMutationWorkspace.aliasesById()::remove);
+        }
         aliasIds.forEach(scanListModel()::removeAlias);
         return new MutationTarget(null, aliasIds, aliases.size(), PublicationMode.ALIASES_THEN_SCAN_LISTS);
     }
@@ -1661,7 +1670,8 @@ public final class AliasAdministrationService
     private Alias requireAlias(long aliasId)
     {
         requirePositiveId(aliasId, "Alias ID");
-        Alias alias = aliasModel().getAlias(aliasId);
+        Alias alias = mMutationWorkspace != null ? mMutationWorkspace.aliasesById().get(aliasId) :
+            aliasModel().getAlias(aliasId);
         if(alias == null)
         {
             throw new NotFoundException("Alias [" + aliasId + "] was not found");
@@ -1686,9 +1696,11 @@ public final class AliasAdministrationService
         AliasModel aliases = new AliasModel();
         aliases.setAliasListDefinitions(snapshot.definitions());
         aliases.addAliases(snapshot.aliases());
+        Map<Long,Alias> aliasesById = new HashMap<>();
+        aliases.getAliases().forEach(alias -> aliasesById.put(alias.getId(), alias));
         ScanListModel scanLists = new ScanListModel();
         scanLists.replaceConfiguration(snapshot.scanLists());
-        return new MutationWorkspace(aliases, scanLists);
+        return new MutationWorkspace(aliases, scanLists, aliasesById);
     }
 
     private MutationWorkspace beginMutationWorkspace()
@@ -2162,7 +2174,7 @@ public final class AliasAdministrationService
         }
     }
 
-    private record MutationWorkspace(AliasModel aliasModel, ScanListModel scanListModel)
+    private record MutationWorkspace(AliasModel aliasModel, ScanListModel scanListModel, Map<Long,Alias> aliasesById)
     {
         private AliasConfigurationSnapshot snapshot()
         {

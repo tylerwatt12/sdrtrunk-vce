@@ -178,8 +178,15 @@ final class StatsApiV1Controller
         {
             request.requireOnly("family", "type", "matcher", "list", "group", "scan_list_id", "record",
                 "stream", "q", "sort", "direction", "evidence", "use", "last_activity_after",
-                "last_activity_before", "limit", "offset");
+                "last_activity_before", "include_activity", "limit", "offset");
             return page(mDatabase.aliases(request));
+        }
+        else if(segments.size() == 1 && "ids".equals(segments.getFirst()))
+        {
+            request.requireOnly("family", "type", "matcher", "list", "group", "scan_list_id", "record",
+                "stream", "q", "evidence", "use", "last_activity_after", "last_activity_before");
+            List<Long> ids = mDatabase.matchingAliasIds(request);
+            return Map.of("alias_ids", ids, "count", ids.size());
         }
         else if(segments.size() == 1)
         {

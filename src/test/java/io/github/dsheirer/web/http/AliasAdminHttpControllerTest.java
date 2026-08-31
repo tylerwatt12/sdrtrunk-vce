@@ -31,6 +31,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -471,6 +472,67 @@ class AliasAdminHttpControllerTest
             assertEquals(boundedOptions.get("icon_names").size(),
                 boundedOptions.get("icon_names_total").intValue());
             assertFalse(boundedOptions.get("icon_names_truncated").booleanValue());
+        }
+        finally
+        {
+            server.stop(0);
+            closeConfigurationManager(manager);
+        }
+    }
+
+    @Test
+    void acceptsTenThousandExplicitAliasIdsAndRejectsAnyLargerCollection() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("large-bulk-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        AliasAdminHttpController controller = new AliasAdminHttpController(service);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(AliasAdminHttpController.ALIASES_PATH, controller::handle);
+        server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, controller::handle);
+        server.start();
+
+        try(HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build())
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            List<Long> maximumIds = new ArrayList<>(AliasAdministrationService.MAX_BULK_ALIASES);
+            for(int index = 0; index < AliasAdministrationService.MAX_BULK_ALIASES; index++)
+            {
+                maximumIds.add(Long.MAX_VALUE - index);
+            }
+
+            String maximumBody = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "revision", service.currentRevision(), "alias_ids", maximumIds, "recordable", true));
+            assertTrue(maximumBody.getBytes(StandardCharsets.UTF_8).length > 16 * 1024,
+                "The accepted request must exercise the enlarged HTTP body boundary");
+            HttpResponse<String> acceptedBulk = send(client, jsonRequest(origin, AliasAdminHttpController.BULK_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(maximumBody)));
+            assertEquals(404, acceptedBulk.statusCode(), acceptedBulk.body());
+            assertEquals("not_found", root(acceptedBulk).at("/error/code").textValue(),
+                "The complete 10,000-ID request must reach the atomic service command");
+
+            long scanListId = service.scanListCatalog().scanLists().getFirst().scanList().getId();
+            String maximumMembershipBody = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "revision", service.currentRevision(), "operation", "add", "alias_ids", maximumIds));
+            HttpResponse<String> acceptedMembership = send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + scanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(maximumMembershipBody)));
+            assertEquals(404, acceptedMembership.statusCode(), acceptedMembership.body());
+            assertEquals("not_found", root(acceptedMembership).at("/error/code").textValue(),
+                "Scan-list membership must use the same explicit Alias-ID ceiling");
+
+            maximumIds.add(Long.MAX_VALUE - AliasAdministrationService.MAX_BULK_ALIASES);
+            String oversizedBody = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "revision", service.currentRevision(), "alias_ids", maximumIds, "recordable", true));
+            HttpResponse<String> rejected = send(client, jsonRequest(origin, AliasAdminHttpController.BULK_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(oversizedBody)));
+            assertEquals(400, rejected.statusCode(), rejected.body());
+            assertEquals("invalid_request", root(rejected).at("/error/code").textValue());
         }
         finally
         {

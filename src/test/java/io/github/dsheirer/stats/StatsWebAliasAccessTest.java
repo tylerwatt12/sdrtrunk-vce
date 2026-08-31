@@ -86,16 +86,23 @@ class StatsWebAliasAccessTest
 
             assertEquals(401, get(client, origin, StatsApiV1.ALIAS_LISTS, null).statusCode());
             assertEquals(401, get(client, origin, StatsApiV1.ALIASES, null).statusCode());
+            assertEquals(401, get(client, origin, StatsApiV1.ALIASES + "/ids", null).statusCode());
             assertEquals(403,
                 get(client, origin, StatsApiV1.EXPORTS + "/aliases.csv", null).statusCode());
 
             String listener = login(client, origin, "listener", "alias-user-password");
             assertEquals(403, get(client, origin, StatsApiV1.ALIAS_LISTS, listener).statusCode());
+            assertEquals(403, get(client, origin, StatsApiV1.ALIASES, listener).statusCode());
+            assertEquals(403, get(client, origin, StatsApiV1.ALIASES + "/ids", listener).statusCode());
             assertEquals(403, get(client, origin, StatsApiV1.EXPORTS + "/aliases.csv", listener).statusCode());
 
             String admin = login(client, origin, "admin", "alias-admin-password");
             assertEquals(200, get(client, origin, StatsApiV1.ALIAS_LISTS, admin).statusCode());
             assertEquals(200, get(client, origin, StatsApiV1.ALIASES, admin).statusCode());
+            HttpResponse<String> ids = get(client, origin, StatsApiV1.ALIASES + "/ids?list=1", admin);
+            assertEquals(200, ids.statusCode());
+            assertEquals(1, OBJECT_MAPPER.readTree(ids.body()).at("/data/count").asInt());
+            assertEquals(1, OBJECT_MAPPER.readTree(ids.body()).at("/data/alias_ids/0").asInt());
             assertEquals(200, get(client, origin, StatsApiV1.EXPORTS + "/aliases.csv", admin).statusCode());
             HttpResponse<String> detail = get(client, origin, StatsApiV1.ALIASES + "/1", admin);
             assertEquals(200, detail.statusCode());

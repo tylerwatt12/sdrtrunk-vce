@@ -30,11 +30,12 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("apiPage('/api/v1/alias-lists')"));
         assertTrue(renderer.contains("if (!selectedList)"));
         assertTrue(renderer.indexOf("if (!selectedList)") <
-            renderer.indexOf("apiPage('/api/v1/aliases', pageParameters(filters))"));
+            renderer.indexOf("apiPage('/api/v1/aliases'"));
         assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
         assertFalse(renderer.contains("All alias lists"));
         assertTrue(function(source, "function aliasListRail(lists, selectedList)")
             .contains("href('aliases', { list: id"));
+        assertTrue(renderer.contains("view === 'configure' ? { include_activity: false }"));
     }
 
     @Test
@@ -214,7 +215,8 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String bulk = function(source, "function openAliasBulkModal(kind)");
         String columns = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
-        String selectedIds = function(source, "function validatedAliasSelectionIds(selection, maximum = 500)");
+        String selectedIds = function(source,
+            "function validatedAliasSelectionIds(selection, maximum = ALIAS_BULK_SELECTION_LIMIT)");
 
         assertTrue(bulk.contains("aliasMutationSelectionIds()"));
         assertTrue(bulk.contains("selected aliases"));
@@ -246,7 +248,7 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
-    void selectsEveryBoundedMatchAcrossPagesWithoutChangingFilterMeaning() throws Exception
+    void selectsEverySupportedMatchAcrossPagesWithoutChangingFilterMeaning() throws Exception
     {
         String source = source();
         String renderer = function(source, "async function renderAliases()");
@@ -254,18 +256,22 @@ class StatsWebAliasCatalogUiContractTest
             "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
         String selectAll = function(source,
             "async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)");
-        String complete = function(source, "function completeAliasSelection(page, maximum = 500)");
-        String extend = function(source, "function extendedAliasSelection(selection, additions, maximum = 500)");
+        String complete = function(source,
+            "function completeAliasSelection(response, maximum = ALIAS_BULK_SELECTION_LIMIT)");
+        String extend = function(source,
+            "function extendedAliasSelection(selection, additions, maximum = ALIAS_BULK_SELECTION_LIMIT)");
         String scope = function(source, "function aliasSelectionScopeKey(kind, filters = {})");
         String applicationRender = function(source, "async function render()");
         String inactive = function(source, "function clearInactiveAliasSelection(activeTable)");
         String leave = function(source, "function clearAliasSelectionOutsideEditor(view)");
 
-        assertTrue(selectAll.contains("apiPage('/api/v1/aliases'"));
-        assertTrue(selectAll.contains("offset: 0, limit: ALIAS_BULK_SELECTION_LIMIT"));
+        assertTrue(source.contains("const ALIAS_BULK_SELECTION_LIMIT = 10_000"));
+        assertTrue(selectAll.contains("api('/api/v1/aliases/ids', filters"));
+        assertFalse(selectAll.contains("offset"));
+        assertFalse(selectAll.contains("sort"));
         assertTrue(selectAll.contains("request !== aliasEditorSelectionRequest"));
-        assertTrue(complete.contains("page.has_more"));
-        assertTrue(complete.contains("More than ${maximum} aliases match"));
+        assertTrue(complete.contains("response.alias_ids"));
+        assertTrue(complete.contains("Number(response.count) !== response.alias_ids.length"));
         assertTrue(complete.contains("new Set(ids).size !== ids.length"));
         assertTrue(extend.contains("const next = new Set(selection)"));
         assertTrue(extend.contains("The previous selection was kept"));

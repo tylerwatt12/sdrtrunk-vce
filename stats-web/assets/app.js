@@ -261,7 +261,8 @@ const SERVICE_STATUS_RETRY_DELAY_MS = 500;
 const ALIAS_CATALOG_DEFAULT_COLUMNS = Object.freeze([
   'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'signaling', 'last-seen'
 ]);
-const ALIAS_BULK_SELECTION_LIMIT = 500;
+const ALIAS_BULK_SELECTION_LIMIT = 10_000;
+const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
 let serviceStatus = null;
 let serviceStatusRequestPending = false;
 let serviceStatusConsecutiveFailures = 0;
@@ -4150,24 +4151,22 @@ function clearAliasSelectionOutsideEditor(view) {
   clearInactiveAliasSelection(view === 'aliases');
 }
 
-function completeAliasSelection(page, maximum = 500) {
-  if (!page || !Array.isArray(page.rows) || typeof page.has_more !== 'boolean') {
+function completeAliasSelection(response, maximum = ALIAS_BULK_SELECTION_LIMIT) {
+  if (!response || !Array.isArray(response.alias_ids) ||
+      Number(response.count) !== response.alias_ids.length) {
     throw new Error('The Alias list returned an invalid selection response.');
   }
-  if (page.has_more) {
-    throw new Error(`More than ${maximum} aliases match. Narrow the filters, then try again.`);
-  }
-  if (page.rows.length > maximum) {
+  if (response.alias_ids.length > maximum) {
     throw new Error(`Alias selections are limited to ${maximum} aliases.`);
   }
-  const ids = page.rows.map((row) => Number(row?.alias_id));
+  const ids = response.alias_ids.map(Number);
   if (ids.some((id) => !Number.isInteger(id) || id <= 0) || new Set(ids).size !== ids.length) {
     throw new Error('The Alias list returned invalid or duplicate Alias IDs.');
   }
   return ids;
 }
 
-function extendedAliasSelection(selection, additions, maximum = 500) {
+function extendedAliasSelection(selection, additions, maximum = ALIAS_BULK_SELECTION_LIMIT) {
   const next = new Set(selection);
   for (const value of additions) {
     const id = Number(value);
@@ -4180,7 +4179,7 @@ function extendedAliasSelection(selection, additions, maximum = 500) {
   return next;
 }
 
-function validatedAliasSelectionIds(selection, maximum = 500) {
+function validatedAliasSelectionIds(selection, maximum = ALIAS_BULK_SELECTION_LIMIT) {
   const ids = [...selection].map(Number);
   if (ids.some((id) => !Number.isInteger(id) || id <= 0) || new Set(ids).size !== ids.length) {
     throw new Error('The Alias selection contains invalid Alias IDs.');
@@ -4197,11 +4196,11 @@ async function selectAllMatchingAliases(filters, scope, button, onSelectionChang
   button.disabled = true;
   button.textContent = 'Selecting…';
   try {
-    const page = await apiPage('/api/v1/aliases', {
-      ...filters, offset: 0, limit: ALIAS_BULK_SELECTION_LIMIT
+    const response = await api('/api/v1/aliases/ids', filters, {
+      timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
     });
     if (request !== aliasEditorSelectionRequest || aliasEditorSelectionScope !== scope) return;
-    const ids = completeAliasSelection(page, ALIAS_BULK_SELECTION_LIMIT);
+    const ids = completeAliasSelection(response, ALIAS_BULK_SELECTION_LIMIT);
     aliasEditorSelection = new Set(ids);
     aliasEditorLastSelectionIndex = null;
     onSelectionChange(ids.length ? `Selected all ${number(ids.length)} matching aliases.` :
@@ -4431,12 +4430,12 @@ function openAliasBulkModal(kind) {
             revision: payload.revision,
             operation: change.operation,
             alias_ids: ids
-          }
+          }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
         });
       } else {
         Object.assign(payload, change);
         result = await requestJson('/api/v1/admin/aliases/bulk', {
-          method: 'POST', body: payload
+          method: 'POST', body: payload, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
         });
       }
       await finishAliasMutation(modal, result, kind === 'move' ? { list: payload.alias_list_id } : {});
@@ -4497,7 +4496,7 @@ function openScanListMemberRemoveModal(scanList) {
       const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? 0), operation: 'remove', alias_ids: ids
-        }
+        }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
       });
       await finishAliasMutation(modal, result);
     } catch (error) {
@@ -5015,7 +5014,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
     evidence: route.get('evidence'), use: route.get('use'),
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
-  const page = await apiPage('/api/v1/aliases', pageParameters(filters));
+  const page = await apiPage('/api/v1/aliases', pageParameters({ ...filters, include_activity: false }));
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   const options = {
     scan_lists: scanListCatalog.scan_lists || [], scan_list_scope: true
@@ -5216,7 +5215,8 @@ async function renderAliases() {
   };
   const pagePromise = view === 'discover' ?
     apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`,
-      pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases', pageParameters(filters));
+      pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases',
+      pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}) }));
   const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
