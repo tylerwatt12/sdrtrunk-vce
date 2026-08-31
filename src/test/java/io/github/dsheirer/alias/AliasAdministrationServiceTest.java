@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
@@ -33,6 +34,9 @@ import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.tone.AmbeTone;
+import io.github.dsheirer.identifier.tone.Tone;
+import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.preference.UserPreferences;
@@ -120,6 +124,62 @@ class AliasAdministrationServiceTest
             AliasDatabaseStore store = new AliasDatabaseStore(database);
             List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
             assertEquals(1, store.loadAliases(definitions).size());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void conflictLookupIsSameListExactAndResponseBounded() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("conflict-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long countyListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long metroListId = service.createAliasList("Metro P25", AliasListFamily.P25).aliasListId();
+            long sourceId = service.createAlias(alias("Source", countyListId, 101)).aliasIds().getFirst();
+            Alias phaseTwo = alias("Phase Two", countyListId, 101);
+            phaseTwo.setMatchIdentifier(new Talkgroup(Protocol.APCO25_PHASE2, 101));
+            long phaseTwoId = service.createAlias(phaseTwo).aliasIds().getFirst();
+            service.createAlias(alias("Second Conflict", countyListId, 101));
+            service.createAlias(alias("Other List", metroListId, "Metro P25", 101));
+
+            AliasAdministrationService.AliasConflictEntry conflicts = service.getAliasConflicts(sourceId, 1);
+            assertEquals(sourceId, conflicts.alias().getId());
+            assertEquals(2, conflicts.conflictCount());
+            assertEquals(1, conflicts.conflicts().size());
+            assertTrue(conflicts.truncated());
+            assertEquals(phaseTwoId, conflicts.conflicts().getFirst().getId(),
+                "P25 Phase 1 and Phase 2 use the same runtime lookup domain");
+            assertTrue(conflicts.conflicts().stream()
+                .allMatch(alias -> alias.getAliasListId() == countyListId && alias.getId() != sourceId));
+
+            AliasAdministrationService.AliasConflictEntry allConflicts = service.getAliasConflicts(sourceId, 10);
+            assertEquals(2, allConflicts.conflicts().size());
+            assertFalse(allConflicts.truncated());
+
+            long toneSourceId = service.createAlias(toneAlias("Tone Source", countyListId, 2))
+                .aliasIds().getFirst();
+            service.createAlias(toneAlias("Different Duration", countyListId, 3));
+            assertEquals(0, service.getAliasConflicts(toneSourceId, 10).conflictCount(),
+                "Persisted tone overlap includes duration");
+            long exactToneId = service.createAlias(toneAlias("Exact Tone", countyListId, 2))
+                .aliasIds().getFirst();
+            AliasAdministrationService.AliasConflictEntry toneConflicts =
+                service.getAliasConflicts(toneSourceId, 10);
+            assertEquals(1, toneConflicts.conflictCount());
+            assertEquals(exactToneId, toneConflicts.conflicts().getFirst().getId());
+            assertThrows(IllegalArgumentException.class, () -> service.getAliasConflicts(sourceId, -1));
         }
         finally
         {
@@ -351,10 +411,26 @@ class AliasAdministrationServiceTest
                 initialDefault.getId(), service.currentRevision());
             assertNull(manager.getScanListModel().scanList(initialDefault.getId()));
 
+            AliasAdministrationService.ScanListMutationResult countyScoped =
+                service.updateScanListMembershipsByScope(southwestId, countyListId,
+                    AliasAdministrationService.MembershipOperation.ADD, oldDefaultDeleted.revision());
+            assertEquals(2, countyScoped.affected(),
+                "Alias-list scope must add every Alias from that source list");
+            assertEquals(Set.of(dispatchId, operationsId), service.getScanList(southwestId).aliasIds());
+            AliasAdministrationService.ScanListMutationResult allScopedRemoved =
+                service.updateScanListMembershipsByScope(southwestId, null,
+                    AliasAdministrationService.MembershipOperation.REMOVE, countyScoped.revision());
+            assertEquals(2, allScopedRemoved.affected(),
+                "An omitted Alias-list scope must remove every current Alias member");
+            assertTrue(service.getScanList(southwestId).aliasIds().isEmpty());
+            assertThrows(IllegalArgumentException.class, () ->
+                service.updateScanListMembershipsByScope(southwestId, null,
+                    AliasAdministrationService.MembershipOperation.REPLACE, allScopedRemoved.revision()));
+
             AliasAdministrationService.ScanListMutationResult southwestAdded = service.updateScanListMemberships(
                 southwestId, List.of(dispatchId, operationsId),
                 List.of(countyListId),
-                AliasAdministrationService.MembershipOperation.ADD, oldDefaultDeleted.revision());
+                AliasAdministrationService.MembershipOperation.ADD, allScopedRemoved.revision());
             assertEquals(Set.of(dispatchId, operationsId), service.getScanList(southwestId).aliasIds());
             assertEquals(Set.of(countyListId), service.getScanList(southwestId).unmatchedAliasListIds());
 
@@ -686,6 +762,9 @@ class AliasAdministrationServiceTest
             long beforeChannelAssignment = service.catalog().revision();
             manager.getChannelModel().addChannel(channel);
             assertNotEquals(beforeChannelAssignment, service.catalog().revision());
+            AliasAdministrationService.Catalog countedCatalog = service.catalog();
+            assertEquals(2, countedCatalog.aliasCounts().get(aliasListId).intValue());
+            assertEquals(1, countedCatalog.assignedChannelCounts().get(aliasListId).intValue());
             manager.flushConfiguration();
 
             long beforeBulk = service.catalog().revision();
@@ -753,6 +832,13 @@ class AliasAdministrationServiceTest
         alias.setAliasListId(aliasListId);
         alias.setAliasListName(aliasListName);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
+        return alias;
+    }
+
+    private static Alias toneAlias(String name, long aliasListId, int duration)
+    {
+        Alias alias = alias(name, aliasListId, 1);
+        alias.setMatchIdentifier(new TonesID(new ToneSequence(List.of(new Tone(AmbeTone.DTMF_1, duration)))));
         return alias;
     }
 

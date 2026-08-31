@@ -9,7 +9,7 @@
  * *****************************************************************************
  */
 
-package io.github.dsheirer.gui.configuration.alias;
+package io.github.dsheirer.gui.configuration;
 
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -21,9 +21,7 @@ import javafx.scene.control.ButtonType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Shared JavaFX presentation for Alias command failures.
- */
+/** Shared JavaFX presentation for Alias command failures in retained configuration tools. */
 public final class AliasMutationUi
 {
     private static final Logger mLog = LoggerFactory.getLogger(AliasMutationUi.class);
@@ -32,9 +30,7 @@ public final class AliasMutationUi
     {
     }
 
-    /**
-     * Runs an Alias command and presents a concise error when it cannot be applied.
-     */
+    /** Runs an Alias command and presents a concise error when it cannot be applied. */
     public static <T> Optional<T> execute(Node owner, String title, Supplier<T> command)
     {
         try

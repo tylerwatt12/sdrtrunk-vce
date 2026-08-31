@@ -35,6 +35,7 @@ public final class WebSessionHttpController
     public static final String LOGIN_PATH = "/api/v1/auth/login";
     public static final String LOGOUT_PATH = "/api/v1/auth/logout";
     public static final String DESKTOP_HANDOFF_PATH = "/api/v1/auth/desktop-handoff";
+    private static final String DESKTOP_ALIAS_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/aliases";
     private static final Logger mLog = LoggerFactory.getLogger(WebSessionHttpController.class);
 
     private final WebAccessService mAccessService;
@@ -195,7 +196,8 @@ public final class WebSessionHttpController
     private void handleDesktopHandoff(HttpExchange exchange) throws IOException
     {
         WebRequestSecurity.prepareSecurityHeaders(exchange);
-        if(!WebHttpSupport.hasExactPath(exchange, DESKTOP_HANDOFF_PATH))
+        String redirectLocation = desktopHandoffRedirectLocation(exchange.getRequestURI().getRawPath());
+        if(redirectLocation == null)
         {
             WebHttpSupport.notFound(exchange);
             return;
@@ -223,30 +225,32 @@ public final class WebSessionHttpController
 
         if(session.isEmpty())
         {
-            redirectHome(exchange);
+            //Keep the validated same-origin destination so an expired or already-consumed handoff can continue
+            //through the ordinary administrator sign-in without losing the requested Alias.
+            redirect(exchange, redirectLocation);
             return;
         }
 
-        deliverSessionResponse(exchange, session.get(), existingSessionId, true);
+        deliverSessionResponse(exchange, session.get(), existingSessionId, redirectLocation);
     }
 
     /** Retires the prior session only after the replacement session reaches the browser. */
     void deliverLoginResponse(HttpExchange exchange, WebAccessSession created, String existingSessionId)
         throws IOException
     {
-        deliverSessionResponse(exchange, created, existingSessionId, false);
+        deliverSessionResponse(exchange, created, existingSessionId, null);
     }
 
     private void deliverSessionResponse(HttpExchange exchange, WebAccessSession created, String existingSessionId,
-                                        boolean redirect) throws IOException
+                                        String redirectLocation) throws IOException
     {
         boolean delivered = false;
         try
         {
             WebRequestSecurity.setSessionCookie(exchange, created.sessionId());
-            if(redirect)
+            if(redirectLocation != null)
             {
-                redirectHome(exchange);
+                redirect(exchange, redirectLocation);
             }
             else
             {
@@ -270,13 +274,73 @@ public final class WebSessionHttpController
         }
     }
 
-    private static void redirectHome(HttpExchange exchange) throws IOException
+    private static void redirect(HttpExchange exchange, String location) throws IOException
     {
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
-        exchange.getResponseHeaders().set("Location", "/");
+        exchange.getResponseHeaders().set("Location", location);
         exchange.getResponseHeaders().set("Vary", "Cookie");
         exchange.sendResponseHeaders(303, -1);
         exchange.close();
+    }
+
+    /**
+     * Fixed desktop handoff path for one persisted Alias.  Only numeric database identities cross the handoff;
+     * the server constructs the same-origin destination and never accepts an arbitrary redirect URL.
+     */
+    public static String desktopAliasHandoffPath(long aliasListId, long aliasId)
+    {
+        if(aliasListId <= 0 || aliasId <= 0)
+        {
+            throw new IllegalArgumentException("Alias List and Alias IDs must be positive");
+        }
+
+        return DESKTOP_ALIAS_HANDOFF_PATH + "/" + aliasListId + "/" + aliasId;
+    }
+
+    /** Fixed desktop handoff path for the Alias catalog. */
+    public static String desktopAliasHandoffPath()
+    {
+        return DESKTOP_ALIAS_HANDOFF_PATH;
+    }
+
+    private static String desktopHandoffRedirectLocation(String rawPath)
+    {
+        if(DESKTOP_HANDOFF_PATH.equals(rawPath))
+        {
+            return "/";
+        }
+
+        if(DESKTOP_ALIAS_HANDOFF_PATH.equals(rawPath))
+        {
+            return "/?view=aliases";
+        }
+
+        String prefix = DESKTOP_ALIAS_HANDOFF_PATH + "/";
+        if(rawPath == null || !rawPath.startsWith(prefix))
+        {
+            return null;
+        }
+
+        String[] segments = rawPath.substring(prefix.length()).split("/", -1);
+        if(segments.length != 2)
+        {
+            return null;
+        }
+
+        try
+        {
+            long aliasListId = Long.parseLong(segments[0]);
+            long aliasId = Long.parseLong(segments[1]);
+            if(aliasListId <= 0 || aliasId <= 0)
+            {
+                return null;
+            }
+            return "/?view=aliases&list=" + aliasListId + "&alias=" + aliasId;
+        }
+        catch(NumberFormatException exception)
+        {
+            return null;
+        }
     }
 
     private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,

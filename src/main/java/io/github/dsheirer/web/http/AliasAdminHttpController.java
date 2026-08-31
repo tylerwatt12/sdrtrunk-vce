@@ -70,6 +70,7 @@ public final class AliasAdminHttpController
     private static final int MAXIMUM_DESCRIPTION_CHARACTERS = 4096;
     private static final int MAXIMUM_TONES = 64;
     private static final int MAXIMUM_ADMIN_COLLECTION_ITEMS = 500;
+    private static final int MAXIMUM_ALIAS_CONFLICTS = 100;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -92,9 +93,9 @@ public final class AliasAdminHttpController
         this(service, aliasChanged, new AliasListDeletion()
         {
             @Override
-            public AliasAdministrationService.DeleteImpact impact(long aliasListId, int maximumCount)
+            public AliasAdministrationService.DeleteImpact impact(long aliasListId)
             {
-                return service.aliasListDeleteImpact(aliasListId, maximumCount);
+                return service.aliasListDeleteImpact(aliasListId);
             }
 
             @Override
@@ -212,9 +213,11 @@ public final class AliasAdminHttpController
                     requireNoBody(exchange);
                     AliasAdministrationService.Catalog catalog = mService.catalog();
                     sendData(exchange, 200, Map.of("revision", catalog.revision(), "aliasLists",
-                        boundedCollection(catalog.aliasLists(), "alias_lists").stream()
-                            .map(definition -> aliasListView(definition,
-                                catalog.unmatchedAliasListMemberships().getOrDefault(definition.getId(), Set.of())))
+                        catalog.aliasLists().stream()
+                            .map(definition -> aliasListCatalogView(definition,
+                                catalog.unmatchedAliasListMemberships().getOrDefault(definition.getId(), Set.of()),
+                                catalog.aliasCounts().getOrDefault(definition.getId(), 0),
+                                catalog.assignedChannelCounts().getOrDefault(definition.getId(), 0)))
                             .toList(), "scanLists", catalog.scanLists().stream()
                             .map(AliasAdminHttpController::scanListView).toList()));
                 }
@@ -251,10 +254,7 @@ public final class AliasAdminHttpController
         {
             requireMethod(exchange, "GET");
             requireNoBody(exchange);
-            AliasAdministrationService.DeleteImpact deleteImpact =
-                mAliasListDeletion.impact(aliasListId, MAXIMUM_ADMIN_COLLECTION_ITEMS);
-            requireBoundedDeleteImpact(deleteImpact);
-            sendData(exchange, 200, deleteImpact);
+            sendData(exchange, 200, mAliasListDeletion.impact(aliasListId));
             return;
         }
 
@@ -277,14 +277,13 @@ public final class AliasAdminHttpController
                 long revision = requiredRevision(request.revision());
                 boolean confirmed = required(request.confirmed(), "confirmed");
                 AliasAdministrationService.DeleteImpact deleteImpact =
-                    mAliasListDeletion.impact(aliasListId, MAXIMUM_ADMIN_COLLECTION_ITEMS);
+                    mAliasListDeletion.impact(aliasListId);
 
                 if(deleteImpact.revision() != revision)
                 {
                     throw new AliasAdministrationService.StaleRevisionException(revision, deleteImpact.revision());
                 }
 
-                requireBoundedDeleteImpact(deleteImpact);
                 AliasAdministrationService.MutationResult result = changed(
                     mAliasListDeletion.delete(aliasListId, revision, confirmed));
                 sendData(exchange, 200, mutationResponse(result));
@@ -322,7 +321,27 @@ public final class AliasAdminHttpController
         }
 
         requireNoQuery(exchange);
-        long aliasId = requiredItemId(path, ALIASES_PATH);
+        String conflictsSuffix = "/conflicts";
+        boolean conflicts = path.endsWith(conflictsSuffix);
+        String itemPath = conflicts ? path.substring(0, path.length() - conflictsSuffix.length()) : path;
+        long aliasId = requiredItemId(itemPath, ALIASES_PATH);
+
+        if(conflicts)
+        {
+            requireMethod(exchange, "GET");
+            requireNoBody(exchange);
+            AliasAdministrationService.AliasConflictEntry entry =
+                mService.getAliasConflicts(aliasId, MAXIMUM_ALIAS_CONFLICTS);
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("revision", entry.revision());
+            response.put("alias", conflictAliasView(entry.alias()));
+            response.put("conflicts", entry.conflicts().stream()
+                .map(AliasAdminHttpController::conflictAliasView).toList());
+            response.put("conflictsTotal", entry.conflictCount());
+            response.put("conflictsTruncated", entry.truncated());
+            sendData(exchange, 200, response);
+            return;
+        }
 
         switch(exchange.getRequestMethod())
         {
@@ -393,12 +412,31 @@ public final class AliasAdminHttpController
         {
             requireMethod(exchange, "PUT");
             ScanListMembershipRequest request = readJson(exchange, ScanListMembershipRequest.class);
-            AliasAdministrationService.ScanListMutationResult result = mService.updateScanListMemberships(
-                scanListId, request.aliasIds() != null ? boundedIds(request.aliasIds(), "alias_ids") : null,
-                request.unmatchedAliasListIds() != null ?
-                    boundedIds(request.unmatchedAliasListIds(), "unmatched_alias_list_ids") : null,
-                membershipOperation(requiredText(request.operation(), "operation", 16)),
-                requiredRevision(request.revision()));
+            AliasAdministrationService.MembershipOperation operation =
+                membershipOperation(requiredText(request.operation(), "operation", 16));
+            AliasAdministrationService.ScanListMutationResult result;
+            if(request.aliasScope() != null)
+            {
+                if(request.aliasIds() != null || request.unmatchedAliasListIds() != null)
+                {
+                    throw invalid("alias_scope cannot be combined with explicit owner IDs");
+                }
+                if(operation == AliasAdministrationService.MembershipOperation.REPLACE)
+                {
+                    throw invalid("alias_scope supports only add or remove");
+                }
+                result = mService.updateScanListMembershipsByScope(scanListId,
+                    optionalPositive(request.aliasScope().aliasListId(), "alias_scope.alias_list_id"), operation,
+                    requiredRevision(request.revision()));
+            }
+            else
+            {
+                result = mService.updateScanListMemberships(scanListId,
+                    request.aliasIds() != null ? boundedIds(request.aliasIds(), "alias_ids") : null,
+                    request.unmatchedAliasListIds() != null ?
+                        boundedIds(request.unmatchedAliasListIds(), "unmatched_alias_list_ids") : null,
+                    operation, requiredRevision(request.revision()));
+            }
             mAliasChanged.run();
             sendData(exchange, 200, scanListMutationResponse(result));
             return;
@@ -445,9 +483,9 @@ public final class AliasAdminHttpController
         response.put("aliasList", aliasListView(options.aliasList(), options.unmatchedScanListIds()));
         response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
             .map(descriptor -> matcherOption(descriptor, options.aliasList())).toList());
-        response.put("iconNames", boundedCollection(options.iconNames(), "icon_names"));
-        response.put("streamNames", boundedCollection(options.streamNames(), "stream_names"));
-        response.put("groupNames", boundedCollection(options.groupNames(), "group_names"));
+        putBoundedOptions(response, "iconNames", options.iconNames());
+        putBoundedOptions(response, "streamNames", options.streamNames());
+        putBoundedOptions(response, "groupNames", options.groupNames());
         response.put("scanLists", options.scanLists().stream().map(AliasAdminHttpController::scanListView).toList());
 
         if(options.matchers().stream().anyMatch(descriptor -> descriptor.type() == AliasIDType.DCS))
@@ -706,6 +744,27 @@ public final class AliasAdminHttpController
         response.put("family", familyName(definition.getFamily()));
         response.put("unmatchedTalkgroupPolicy", unmatchedTalkgroupPolicyView(
             definition.getUnmatchedTalkgroupPolicy(), unmatchedScanListIds));
+        return response;
+    }
+
+    private static Map<String,Object> aliasListCatalogView(AliasListDefinition definition,
+                                                            Set<Long> unmatchedScanListIds, int aliasCount,
+                                                            int assignedChannelCount)
+    {
+        Map<String,Object> response = aliasListView(definition, unmatchedScanListIds);
+        response.put("aliasCount", aliasCount);
+        response.put("assignedChannelCount", assignedChannelCount);
+        return response;
+    }
+
+    private static Map<String,Object> conflictAliasView(Alias alias)
+    {
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("aliasId", alias.getId());
+        response.put("aliasListId", alias.getAliasListId());
+        response.put("aliasListName", alias.getAliasListName());
+        response.put("name", alias.getName());
+        response.put("matcher", matcherView(alias.getMatchIdentifier()));
         return response;
     }
 
@@ -1257,21 +1316,13 @@ public final class AliasAdminHttpController
         return values;
     }
 
-    private static void requireBoundedDeleteImpact(AliasAdministrationService.DeleteImpact impact)
-        throws RequestException
+    private static <T> void putBoundedOptions(Map<String,Object> response, String field, List<T> values)
     {
-        if(impact.aliasCount() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
-        {
-            throw error(413, "alias_list_delete_too_large",
-                "alias_count exceeds the maximum deletable alias-list size of " +
-                    MAXIMUM_ADMIN_COLLECTION_ITEMS, "alias_count");
-        }
-        if(impact.channelCount() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
-        {
-            throw error(413, "alias_list_delete_too_large",
-                "channel_count exceeds the maximum deletable alias-list size of " +
-                    MAXIMUM_ADMIN_COLLECTION_ITEMS, "channel_count");
-        }
+        List<T> safeValues = values != null ? values : List.of();
+        int returned = Math.min(safeValues.size(), MAXIMUM_ADMIN_COLLECTION_ITEMS);
+        response.put(field, List.copyOf(safeValues.subList(0, returned)));
+        response.put(field + "Total", safeValues.size());
+        response.put(field + "Truncated", returned < safeValues.size());
     }
 
     private static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException
@@ -1335,7 +1386,8 @@ public final class AliasAdminHttpController
     private record ScanListPayload(Integer sortOrder, String name, String description, Boolean published,
                                    @JsonProperty("default") Boolean defaultScanList) {}
     private record ScanListMembershipRequest(Long revision, String operation, List<Long> aliasIds,
-                                             List<Long> unmatchedAliasListIds) {}
+                                             List<Long> unmatchedAliasListIds, AliasScopePayload aliasScope) {}
+    private record AliasScopePayload(Long aliasListId) {}
     private record TonePayload(String tone, Integer duration) {}
 
     private record MatcherPayload(String type, String protocol, String variant, Integer value, Integer minimum,
@@ -1374,7 +1426,7 @@ public final class AliasAdminHttpController
 
     interface AliasListDeletion
     {
-        AliasAdministrationService.DeleteImpact impact(long aliasListId, int maximumCount);
+        AliasAdministrationService.DeleteImpact impact(long aliasListId);
 
         AliasAdministrationService.MutationResult delete(long aliasListId, long revision, boolean confirmed);
     }

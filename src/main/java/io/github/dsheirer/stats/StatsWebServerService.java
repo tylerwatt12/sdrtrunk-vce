@@ -972,6 +972,36 @@ public class StatsWebServerService implements AutoCloseable
         return navigation.baseUri().resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH);
     }
 
+    /** Arms the one-use local administrator sign-in and sends the browser to the Alias catalog after sign-in. */
+    public synchronized URI createDesktopAdministratorAliasHandoffUri()
+    {
+        StatsWebNavigationState navigation = getNavigationState();
+
+        if(!navigation.running() || mWebAuthenticationService == null ||
+            !mWebAuthenticationService.armDesktopAdministratorHandoff())
+        {
+            return null;
+        }
+
+        return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath());
+    }
+
+    /**
+     * Arms the one-use local administrator sign-in and sends the browser to one persisted Alias after sign-in.
+     */
+    public synchronized URI createDesktopAdministratorAliasHandoffUri(long aliasListId, long aliasId)
+    {
+        StatsWebNavigationState navigation = getNavigationState();
+
+        if(!navigation.running() || mWebAuthenticationService == null ||
+            !mWebAuthenticationService.armDesktopAdministratorHandoff())
+        {
+            return null;
+        }
+
+        return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath(aliasListId, aliasId));
+    }
+
     public synchronized void cancelDesktopAdministratorHandoff()
     {
         if(mWebAuthenticationService != null)

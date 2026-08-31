@@ -43,6 +43,32 @@ import org.junit.jupiter.api.Test;
 class AliasOneToOneTest
 {
     @Test
+    void retiredReceiverPlaybackPriorityIsNotPartOfTheSharedAliasModel()
+    {
+        assertThrows(NoSuchMethodException.class, () -> Alias.class.getMethod("getPlaybackPriority"));
+        assertThrows(NoSuchMethodException.class, () -> Alias.class.getMethod("setCallPriority", int.class));
+    }
+
+    @Test
+    void groupNamesAreUniqueAndSorted()
+    {
+        AliasListDefinition definition = definition(12);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        Alias zulu = alias(41, definition, "Zulu Alias", 100);
+        zulu.setGroup("Zulu");
+        Alias alpha = alias(42, definition, "Alpha Alias", 101);
+        alpha.setGroup("Alpha");
+        Alias duplicate = alias(43, definition, "Duplicate", 102);
+        duplicate.setGroup("Zulu");
+        model.addAlias(zulu);
+        model.addAlias(alpha);
+        model.addAlias(duplicate);
+
+        assertEquals(List.of("Alpha", "Zulu"), model.getGroupNames());
+    }
+
+    @Test
     void copyGetsNewIdentityAndDeepCopiesMatcherAndBehavior()
     {
         Alias original = new Alias("Dispatch");

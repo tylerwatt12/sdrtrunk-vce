@@ -23,7 +23,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.gui.configuration.Editor;
-import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
+import io.github.dsheirer.gui.configuration.AliasMutationUi;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;

@@ -19,20 +19,18 @@
 
 package io.github.dsheirer.gui.configuration;
 
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
-import io.github.dsheirer.gui.configuration.alias.AliasEditor;
-import io.github.dsheirer.gui.configuration.alias.AliasTabRequest;
+import io.github.dsheirer.gui.ViewWebAliasRequest;
 import io.github.dsheirer.gui.configuration.channel.ChannelEditor;
 import io.github.dsheirer.gui.configuration.channel.ChannelTabRequest;
 import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceEditor;
 import io.github.dsheirer.gui.configuration.streaming.StreamingEditor;
+import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import javafx.embed.swing.SwingFXUtils;
@@ -58,7 +56,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 /**
- * JavaFX channels, aliases, streaming, and radioreference.com import editor.
+ * JavaFX channels, streaming, and radioreference.com import editor.
  */
 public class ConfigurationEditor extends BorderPane
 {
@@ -67,14 +65,11 @@ public class ConfigurationEditor extends BorderPane
     private ConfigurationManager mConfigurationManager;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
-    private StatsWebServerService mStatsWebServerService;
     private MenuBar mMenuBar;
     private TabPane mTabPane;
     private Tab mChannelsTab;
-    private Tab mAliasesTab;
     private Tab mRadioReferenceTab;
     private Tab mStreamingTab;
-    private AliasEditor mAliasEditor;
     private ChannelEditor mChannelEditor;
 
     /**
@@ -86,23 +81,9 @@ public class ConfigurationEditor extends BorderPane
     public ConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
                                UserPreferences userPreferences)
     {
-        this(configurationManager, tunerManager, userPreferences, null);
-    }
-
-    /**
-     * Constructs an instance with access to the embedded web interface.
-     * @param configurationManager for alias and channel models
-     * @param tunerManager for tuners
-     * @param userPreferences for settings
-     * @param statsWebServerService for web-interface navigation, or null in standalone editor testing
-     */
-    public ConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
-                               UserPreferences userPreferences, StatsWebServerService statsWebServerService)
-    {
         mConfigurationManager = configurationManager;
         mTunerManager = tunerManager;
         mUserPreferences = userPreferences;
-        mStatsWebServerService = statsWebServerService;
 
         //The window manager constructs this editor only after its lightweight loading shell is visible.  Finish the
         //entire initial node tree before replacing that shell so an empty editor root is never presented.
@@ -111,20 +92,7 @@ public class ConfigurationEditor extends BorderPane
     }
 
     /**
-     * Connects the editor to the embedded web interface when it becomes available after construction.
-     */
-    public void setStatsWebServerService(StatsWebServerService statsWebServerService)
-    {
-        mStatsWebServerService = statsWebServerService;
-
-        if(mAliasEditor != null)
-        {
-            mAliasEditor.setStatsWebServerService(statsWebServerService);
-        }
-    }
-
-    /**
-     * Process requests for sub-editor actions like view an alias or view a channel.
+     * Process requests for retained configuration-editor actions such as viewing a channel.
      *
      * Note: this method must be invoked on the JavaFX platform thread
      * @param request to process
@@ -133,13 +101,6 @@ public class ConfigurationEditor extends BorderPane
     {
         switch(request.getTabName())
         {
-            case ALIAS:
-                if(request instanceof AliasTabRequest)
-                {
-                    getTabPane().getSelectionModel().select(getAliasesTab());
-                    getAliasEditor().process((AliasTabRequest)request);
-                }
-                break;
             case CHANNEL:
                 if(request instanceof ChannelTabRequest)
                 {
@@ -186,6 +147,11 @@ public class ConfigurationEditor extends BorderPane
                 .post(new ViewUserPreferenceEditorRequest(PreferenceEditorType.TALKGROUP_FORMAT)));
             viewMenu.getItems().add(userPreferenceItem);
 
+            MenuItem aliasEditorItem = new MenuItem("_Alias Editor (Web)");
+            aliasEditorItem.setOnAction(event ->
+                MyEventBus.getGlobalEventBus().post(new ViewWebAliasRequest()));
+            viewMenu.getItems().add(aliasEditorItem);
+
             mMenuBar.getMenus().add(viewMenu);
 
             Menu screenShot = new Menu("_Screenshot");
@@ -226,38 +192,10 @@ public class ConfigurationEditor extends BorderPane
         {
             mTabPane = new TabPane();
             mTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-            mTabPane.getTabs().addAll(getChannelsTab(), getAliasesTab(), getStreamingTab(),
-                getRadioReferenceTab());
+            mTabPane.getTabs().addAll(getChannelsTab(), getStreamingTab(), getRadioReferenceTab());
         }
 
         return mTabPane;
-    }
-
-    private Tab getAliasesTab()
-    {
-        if(mAliasesTab == null)
-        {
-            mAliasesTab = new Tab("Aliases");
-            mAliasesTab.setContent(getAliasEditor());
-            mAliasesTab.selectedProperty().addListener((observable, oldValue, selected) -> {
-                if(selected)
-                {
-                    getAliasEditor().showRetirementNotice();
-                }
-            });
-        }
-
-        return mAliasesTab;
-    }
-
-    private AliasEditor getAliasEditor()
-    {
-        if(mAliasEditor == null)
-        {
-            mAliasEditor = new AliasEditor(mConfigurationManager, mUserPreferences, mStatsWebServerService);
-        }
-
-        return mAliasEditor;
     }
 
     private Tab getChannelsTab()

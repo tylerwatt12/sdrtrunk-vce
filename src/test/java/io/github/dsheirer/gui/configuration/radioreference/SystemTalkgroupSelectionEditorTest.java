@@ -201,6 +201,11 @@ class SystemTalkgroupSelectionEditorTest
         assertTrue(itemEditor.contains("Alias currentAlias = resolveCurrentAlias()"));
         assertTrue(itemEditor.contains("Alias alias = resolveCurrentAlias()"));
         assertTrue(itemEditor.contains(".createAlias(alias, revision)"));
+        assertFalse(bulkEditor.contains("RadioReferenceAliasPlaybackPolicy.apply("));
+        assertFalse(itemEditor.contains("RadioReferenceAliasPlaybackPolicy.apply("));
+        assertFalse(bulkEditor.contains("Set Encrypted Talkgroups To Muted"));
+        assertFalse(bulkEditor.contains("isEncryptedTalkgroupDoNotMonitor()"));
+        assertFalse(bulkEditor.contains("setEncryptedTalkgroupDoNotMonitor("));
     }
 
     @Test

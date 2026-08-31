@@ -38,6 +38,25 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
+    void usesTheCompleteAdministratorListCatalogAndLabelsBoundedOptionSuggestions() throws Exception
+    {
+        String source = source();
+        String merge = function(source, "function mergedAliasLists(publicRows, adminRows = [])");
+        String limits = function(source, "function aliasOptionLimit(options, name)");
+
+        assertTrue(merge.contains("return (adminRows || []).map"));
+        assertFalse(merge.contains("return (publicRows || []).map"));
+        assertTrue(merge.contains("publicRow?.alias_count"));
+        assertTrue(merge.contains("publicRow?.assigned_channel_count"));
+        assertFalse(merge.contains("...publicRow"));
+        assertTrue(limits.contains("`${name}_total`"));
+        assertTrue(limits.contains("`${name}_truncated`"));
+        assertTrue(source.contains("aliasOptionLimitNotice(options, 'group_names'"));
+        assertTrue(source.contains("aliasOptionLimitNotice(options, 'icon_names'"));
+        assertTrue(source.contains("aliasOptionLimitNotice(options, 'stream_names'"));
+    }
+
+    @Test
     void labelsTheSharedAmNbfmAliasFamilyWithoutChangingItsApiValue() throws Exception
     {
         String source = source();
@@ -138,13 +157,21 @@ class StatsWebAliasCatalogUiContractTest
         }
         assertTrue(fields.contains("duration.min = '1'"));
         assertTrue(fields.contains("duration.max = '50'"));
+        assertTrue(fields.contains("alias-tone-up"));
+        assertTrue(fields.contains("alias-tone-down"));
+        assertTrue(fields.contains("reorderedAliasToneRows(rows, index, direction)"));
+        assertTrue(fields.contains("aria-label', 'Move tone up"));
+        assertTrue(fields.contains("aria-label', 'Move tone down"));
+        assertTrue(fields.contains("button.disabled ? fallback : button"));
         assertTrue(source.contains("value: aliasMatcherKey(entry), label: entry.label"));
         assertTrue(source.contains("source.matcher?.type, source.matcher?.protocol"));
         assertTrue(payload.contains("selector.dataset.originalProtocol"));
         assertTrue(editorPayload.contains("descriptor.minimum"));
         assertTrue(editorPayload.contains("descriptor.maximum"));
         assertTrue(source.contains("options.dcs_codes?.[0] || 'n023'"));
-        assertTrue(source.contains("Missing: ${source.icon_name}"));
+        assertTrue(source.contains("Current (outside suggestion limit)"));
+        assertTrue(source.contains("aliasCloneOptionValue(source.icon_name"));
+        assertTrue(source.contains("aliasStreamOptionSelected(selectedStreams.has(streamName)"));
         assertTrue(source.contains("Missing: ${streamName}"));
         assertTrue(source.contains("error.code = failure?.code"));
         assertTrue(source.contains("color: aliasEditorColorValue(form.elements.color)"));
@@ -246,6 +273,46 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(remove.contains("operation: 'remove'"));
         assertTrue(remove.contains("alias_ids: ids"));
         assertTrue(remove.contains("aliases and their other scan-list memberships will be preserved"));
+        String fullSet = function(source,
+            "function openFullScanListMembershipModal(scanList, operation)");
+        String fullSetRequest = function(source,
+            "function fullScanListMembershipRequest(revision, operation, aliasListId = null)");
+        assertTrue(members.contains("'Add All from Alias List'"));
+        assertTrue(members.contains("'Remove All Members'"));
+        assertTrue(fullSet.contains("fullScanListMembershipRequest"));
+        assertTrue(fullSet.contains("Add All Aliases"));
+        assertTrue(fullSetRequest.contains("alias_scope"));
+        assertTrue(fullSetRequest.contains("alias_list_id: id"));
+        assertFalse(fullSetRequest.contains("alias_ids"));
+    }
+
+    @Test
+    void drillsIntoIdentifierConflictsWithoutLoadingEveryAlias() throws Exception
+    {
+        String source = source();
+        String button = function(source,
+            "function aliasConflictButton(row, label = 'Conflict', detailsHost = null)");
+        String modal = function(source, "async function openAliasConflictModal(aliasId, aliasName = '')");
+        String detail = function(source, "function aliasConflictDetail(response, aliasId, aliasName = '')");
+        String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
+        String editor = function(source,
+            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+
+        assertTrue(button.contains("openAliasConflictModal(id, row.name)"));
+        assertTrue(button.contains("detailsHost.replaceChildren(aliasConflictDetail("));
+        assertTrue(button.contains("event.stopPropagation()"));
+        assertTrue(modal.contains("`/api/v1/admin/aliases/${id}/conflicts`"));
+        assertTrue(modal.contains("aliasConflictDetail(response, id, aliasName)"));
+        assertTrue(detail.contains("response?.conflicts_total"));
+        assertTrue(detail.contains("response?.conflicts_truncated"));
+        assertTrue(detail.contains("conflicts.map(aliasConflictSummary)"));
+        assertTrue(columns.contains("render: aliasConflictButton"));
+        assertTrue(editor.contains("const conflictDetails = node('div', 'alias-conflict-inline')"));
+        assertTrue(editor.contains("'Show conflicts', conflictDetails"));
+        String summary = function(source, "function aliasConflictSummary(row)");
+        assertTrue(summary.contains("aliasTab: 'configure', alias: id"));
+        assertTrue(summary.contains(
+            "openAliasEditorModal('edit', id, { alias_list_id: Number(row?.alias_list_id) })"));
     }
 
     @Test
@@ -372,7 +439,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(prefill.contains("stream_as_talkgroup: null"));
         assertFalse(prefill.contains("copy_actions_from_alias_id"));
         assertFalse(editor.contains("rangeActionsPromise"));
-        assertTrue(editor.contains("selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName))"));
+        assertTrue(editor.contains("aliasStreamOptionSelected(selectedStreams.has(streamName)"));
     }
 
     @Test
@@ -382,6 +449,7 @@ class StatsWebAliasCatalogUiContractTest
         for(String selector: new String[]{".alias-editor-workspace", ".alias-list-rail", ".alias-list-mobile",
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
             ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",
+            ".alias-tone-actions", ".alias-conflict-list",
             ".alias-scan-list-option", ".observed-talkgroup-table-host", ".observed-talkgroup-detail",
             ".alias-policy-modal"})
         {

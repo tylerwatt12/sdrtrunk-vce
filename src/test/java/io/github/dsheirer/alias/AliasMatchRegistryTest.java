@@ -33,6 +33,13 @@ import org.junit.jupiter.api.Test;
 class AliasMatchRegistryTest
 {
     @Test
+    void conventionalFamilyKeepsItsOperatorLabelAndStablePersistedName()
+    {
+        assertEquals("Conventional Analog (AM/NBFM)", AliasListFamily.NBFM.toString());
+        assertEquals("NBFM", AliasListFamily.NBFM.name());
+    }
+
+    @Test
     void protocolFamiliesRejectCrossFamilyMatchers()
     {
         AliasListDefinition p25 = definition(AliasListFamily.P25);

@@ -334,10 +334,21 @@ class WebAccessControllersTest
             assertFalse(WebRequestSecurity.isLoopbackHost("attacker.example:" + server.getAddress().getPort(),
                 server.getAddress().getPort()));
 
+            assertThrows(IllegalArgumentException.class,
+                () -> WebSessionHttpController.desktopAliasHandoffPath(0, 41));
+            HttpResponse<String> arbitraryRedirect = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
+                    "?target=https%3A%2F%2Fattacker.example").GET());
+            assertEquals(400, arbitraryRedirect.statusCode());
+            HttpResponse<String> malformedAliasTarget = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH + "/aliases/12/41/extra").GET());
+            assertEquals(404, malformedAliasTarget.statusCode());
+
             HttpResponse<String> handoff = send(client,
-                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());
+                request(origin, WebSessionHttpController.desktopAliasHandoffPath()).GET());
             assertEquals(303, handoff.statusCode());
-            assertEquals("/", handoff.headers().firstValue("Location").orElseThrow());
+            assertEquals("/?view=aliases",
+                handoff.headers().firstValue("Location").orElseThrow());
             String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
             assertTrue(setCookie.contains("HttpOnly"));
             assertTrue(setCookie.contains("SameSite=Strict"));
@@ -347,6 +358,23 @@ class WebAccessControllersTest
                 .header("Cookie", cookie).GET()));
             assertTrue(session.get("authenticated").booleanValue());
             assertTrue(session.get("primary").booleanValue());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            HttpResponse<String> exactHandoff = send(client,
+                request(origin, WebSessionHttpController.desktopAliasHandoffPath(12, 41))
+                    .header("Cookie", cookie).GET());
+            assertEquals(303, exactHandoff.statusCode());
+            assertEquals("/?view=aliases&list=12&alias=41",
+                exactHandoff.headers().firstValue("Location").orElseThrow());
+
+            HttpResponse<String> expiredExactHandoff = send(client,
+                request(origin, WebSessionHttpController.desktopAliasHandoffPath(12, 41))
+                    .header("Cookie", cookie).GET());
+            assertEquals(303, expiredExactHandoff.statusCode());
+            assertEquals("/?view=aliases&list=12&alias=41",
+                expiredExactHandoff.headers().firstValue("Location").orElseThrow(),
+                "An expired handoff must preserve the Alias route for ordinary sign-in");
+            assertTrue(expiredExactHandoff.headers().firstValue("Set-Cookie").isEmpty());
 
             HttpResponse<String> replay = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());

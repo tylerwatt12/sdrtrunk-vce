@@ -163,16 +163,6 @@ public class JavaFxWindowManager extends Application
     {
         mStatsWebServerService = statsWebServerService;
 
-        if(mConfigurationEditor != null)
-        {
-            execute(() -> {
-                if(mConfigurationEditor != null)
-                {
-                    mConfigurationEditor.setStatsWebServerService(statsWebServerService);
-                }
-            });
-        }
-
         if(mUserPreferencesEditor != null)
         {
             execute(() -> {
@@ -429,8 +419,7 @@ public class JavaFxWindowManager extends Application
     {
         if(mConfigurationEditor == null)
         {
-            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences,
-                mStatsWebServerService);
+            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences);
         }
 
         return mConfigurationEditor;
@@ -483,6 +472,23 @@ public class JavaFxWindowManager extends Application
             catch(Throwable t)
             {
                 mLog.error("Error processing show configuration editor request", t);
+            }
+        });
+    }
+
+    /** Opens the Alias catalog or an exact Alias without constructing the retired Java UI. */
+    @Subscribe
+    public void process(ViewWebAliasRequest request)
+    {
+        execute(() -> {
+            WebAliasNavigator navigator = new WebAliasNavigator(mUserPreferences, mStatsWebServerService);
+            if(request.hasAlias())
+            {
+                navigator.open(mConfigurationStage, request.getAliasListId(), request.getAliasId());
+            }
+            else
+            {
+                navigator.open(mConfigurationStage);
             }
         });
     }

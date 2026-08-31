@@ -23,8 +23,8 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
-import io.github.dsheirer.gui.configuration.alias.ViewAliasRequest;
+import io.github.dsheirer.gui.ViewWebAliasRequest;
+import io.github.dsheirer.gui.configuration.AliasMutationUi;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
@@ -334,7 +334,8 @@ public class TalkgroupEditor extends GridPane
                     {
                         setTalkgroup(mTalkgroup, mSystem, mRadioReferenceDecoder, currentAlias, mAliasListName,
                             mTalkgroupCategory, currentStatus);
-                        MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(currentAlias));
+                        MyEventBus.getGlobalEventBus().post(new ViewWebAliasRequest(
+                            currentAlias.getAliasListId(), currentAlias.getId()));
                         return;
                     }
 
@@ -449,7 +450,8 @@ public class TalkgroupEditor extends GridPane
                     }
                     else
                     {
-                        MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(alias));
+                        MyEventBus.getGlobalEventBus().post(new ViewWebAliasRequest(
+                            alias.getAliasListId(), alias.getId()));
                     }
                 }
             });

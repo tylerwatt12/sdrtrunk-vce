@@ -26,7 +26,7 @@ import io.github.dsheirer.gui.JavaFxWindowRequest;
  */
 public abstract class ConfigurationEditorRequest extends JavaFxWindowRequest
 {
-    public enum TabName {ALIAS, CHANNEL, CONFIGURATION, RADIOREFERENCE, STREAM}
+    public enum TabName {CHANNEL, CONFIGURATION, RADIOREFERENCE, STREAM}
 
     public abstract TabName getTabName();
 }

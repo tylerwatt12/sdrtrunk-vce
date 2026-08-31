@@ -14,6 +14,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
@@ -32,6 +34,8 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -217,6 +221,65 @@ class AliasAdminHttpControllerTest
             assertEquals(400, send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/+" + aliasId).GET()).statusCode());
 
+            Map<String,Object> duplicatePayload = new java.util.LinkedHashMap<>(
+                alias(aliasListId, "Dispatch Duplicate", false));
+            JsonNode duplicateCreated = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH).POST(HttpRequest.BodyPublishers.ofString(
+                OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "alias", duplicatePayload))))));
+            long duplicateId = duplicateCreated.at("/alias_ids/0").longValue();
+            revision = duplicateCreated.get("revision").longValue();
+            JsonNode conflicts = json(send(client, request(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + aliasId + "/conflicts").GET()));
+            assertEquals(aliasId, conflicts.at("/alias/alias_id").longValue());
+            assertEquals(aliasListId, conflicts.at("/alias/alias_list_id").longValue());
+            assertEquals("talkgroup", conflicts.at("/alias/matcher/type").textValue());
+            assertEquals(1, conflicts.get("conflicts_total").intValue());
+            assertFalse(conflicts.get("conflicts_truncated").booleanValue());
+            assertEquals(duplicateId, conflicts.at("/conflicts/0/alias_id").longValue());
+            assertEquals("Dispatch Duplicate", conflicts.at("/conflicts/0/name").textValue());
+            JsonNode duplicateDeleted = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + duplicateId)
+                .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision))))));
+            revision = duplicateDeleted.get("revision").longValue();
+
+            JsonNode scopeAdded = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "operation", "add",
+                    "alias_scope", Map.of("alias_list_id", aliasListId)))))));
+            assertEquals(1, scopeAdded.get("affected").intValue(),
+                "Only the radio range lacks the inherited Cleveland membership");
+            revision = scopeAdded.get("revision").longValue();
+            clevelandDetail = json(send(client, request(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId).GET()));
+            assertEquals(3, clevelandDetail.get("alias_ids_total").intValue());
+
+            String removeAllPayload = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "revision", revision, "operation", "remove", "alias_scope", Map.of()));
+            JsonNode allMembersRemoved = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(removeAllPayload))));
+            assertEquals(3, allMembersRemoved.get("affected").intValue());
+            revision = allMembersRemoved.get("revision").longValue();
+            clevelandDetail = json(send(client, request(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId).GET()));
+            assertEquals(0, clevelandDetail.get("alias_ids_total").intValue());
+            assertEquals(1, clevelandDetail.get("unmatched_alias_list_ids_total").intValue(),
+                "Removing every Alias member must preserve unmatched-talkgroup routing");
+
+            JsonNode countedCatalog = json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
+            JsonNode countedList = aliasList(countedCatalog, aliasListId);
+            assertEquals(3, countedList.get("alias_count").intValue());
+            assertEquals(0, countedList.get("assigned_channel_count").intValue());
+
+            assertEquals(400, send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "operation", "add", "alias_ids", java.util.List.of(aliasId),
+                    "alias_scope", Map.of()))))).statusCode());
+
             Map<String,Object> camelAlias = new java.util.LinkedHashMap<>(alias(aliasListId,
                 "Rejected Camel Case", false));
             camelAlias.put("aliasListId", camelAlias.remove("alias_list_id"));
@@ -385,6 +448,22 @@ class AliasAdminHttpControllerTest
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "alias", invalidTone))))).statusCode());
+
+            for(int index = 0; index <= 500; index++)
+            {
+                BroadcastifyCallConfiguration configuration =
+                    new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+                configuration.setName("Stream " + String.format("%03d", index));
+                manager.getBroadcastModel().addBroadcastConfiguration(configuration);
+            }
+            JsonNode boundedOptions = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + nbfmListId).GET()));
+            assertEquals(500, boundedOptions.get("stream_names").size());
+            assertEquals(502, boundedOptions.get("stream_names_total").intValue());
+            assertTrue(boundedOptions.get("stream_names_truncated").booleanValue());
+            assertEquals(boundedOptions.get("icon_names").size(),
+                boundedOptions.get("icon_names_total").intValue());
+            assertFalse(boundedOptions.get("icon_names_truncated").booleanValue());
         }
         finally
         {
@@ -394,7 +473,7 @@ class AliasAdminHttpControllerTest
     }
 
     @Test
-    void rejectsOversizedAliasListBeforeInvokingDeleteMutation() throws Exception
+    void confirmedAliasListDeletionAllowsLargeListsAndBoundsTheResponse() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("oversized-delete-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -403,6 +482,14 @@ class AliasAdminHttpControllerTest
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
         manager.init();
+        List<AliasListDefinition> legacyDefinitions = new ArrayList<>();
+        for(int index = 1; index <= 501; index++)
+        {
+            AliasListDefinition definition = new AliasListDefinition("Legacy " + index, AliasListFamily.P25);
+            definition.setId(index);
+            legacyDefinitions.add(definition);
+        }
+        manager.getAliasModel().replaceCommittedConfiguration(legacyDefinitions, List.of());
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
         AtomicInteger impactCalls = new AtomicInteger();
         AtomicInteger deleteMutationCalls = new AtomicInteger();
@@ -411,12 +498,11 @@ class AliasAdminHttpControllerTest
         AliasAdminHttpController.AliasListDeletion deletion = new AliasAdminHttpController.AliasListDeletion()
         {
             @Override
-            public AliasAdministrationService.DeleteImpact impact(long requestedAliasListId, int maximumCount)
+            public AliasAdministrationService.DeleteImpact impact(long requestedAliasListId)
             {
                 impactCalls.incrementAndGet();
                 assertEquals(aliasListId, requestedAliasListId);
-                return new AliasAdministrationService.DeleteImpact(revision, aliasListId, "Oversized",
-                    maximumCount + 1, 0);
+                return new AliasAdministrationService.DeleteImpact(revision, aliasListId, "Large", 501, 0);
             }
 
             @Override
@@ -424,7 +510,11 @@ class AliasAdminHttpControllerTest
                                                                      long requestedRevision, boolean confirmed)
             {
                 deleteMutationCalls.incrementAndGet();
-                throw new AssertionError("Oversized deletion must not reach the mutating service operation");
+                assertEquals(aliasListId, requestedAliasListId);
+                assertEquals(revision, requestedRevision);
+                assertTrue(confirmed);
+                return new AliasAdministrationService.MutationResult(revision + 1, aliasListId,
+                    java.util.stream.LongStream.rangeClosed(1, 501).boxed().toList(), 501);
             }
         };
         AliasAdminHttpController controller = new AliasAdminHttpController(service, () -> {}, deletion);
@@ -435,17 +525,23 @@ class AliasAdminHttpControllerTest
         try(HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build())
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            JsonNode completeCatalog = json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
+            assertEquals(501, completeCatalog.get("alias_lists").size(),
+                "Existing imported catalogs must remain editable beyond the web creation limit");
             HttpResponse<String> response = send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId)
                 .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "confirmed", true)))));
 
-            assertEquals(413, response.statusCode());
-            JsonNode error = root(response).get("error");
-            assertEquals("alias_list_delete_too_large", error.get("code").textValue());
-            assertEquals("alias_count", error.get("field").textValue());
+            assertEquals(200, response.statusCode());
+            JsonNode deleted = json(response);
+            assertEquals(501, deleted.get("affected").intValue());
+            assertEquals(500, deleted.get("alias_ids").size());
+            assertEquals(501, deleted.get("alias_ids_total").intValue());
+            assertTrue(deleted.get("alias_ids_truncated").booleanValue());
             assertEquals(1, impactCalls.get());
-            assertEquals(0, deleteMutationCalls.get());
+            assertEquals(1, deleteMutationCalls.get());
         }
         finally
         {

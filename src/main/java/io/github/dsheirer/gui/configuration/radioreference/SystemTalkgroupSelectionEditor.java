@@ -28,7 +28,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
+import io.github.dsheirer.gui.configuration.AliasMutationUi;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.DecoderType;

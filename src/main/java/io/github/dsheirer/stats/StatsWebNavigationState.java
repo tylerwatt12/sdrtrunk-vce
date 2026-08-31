@@ -34,4 +34,20 @@ public record StatsWebNavigationState(boolean running, int port, boolean https, 
     {
         return baseUri().resolve("?view=aliases");
     }
+
+    /**
+     * Loopback address for editing one persisted Alias.
+     *
+     * @param aliasListId persisted Alias List identity
+     * @param aliasId persisted Alias identity
+     */
+    public URI aliasEditorUri(long aliasListId, long aliasId)
+    {
+        if(aliasListId <= 0 || aliasId <= 0)
+        {
+            throw new IllegalArgumentException("Alias List and Alias IDs must be positive");
+        }
+
+        return baseUri().resolve("?view=aliases&list=" + aliasListId + "&alias=" + aliasId);
+    }
 }

@@ -100,13 +100,19 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(service.isPrimaryAdminConfigured());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             URI initialOrigin = origin(initial.port());
-            URI handoffUri = service.createDesktopAdministratorHandoffUri();
-            assertEquals(initialOrigin.resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH), handoffUri);
+            URI aliasCatalogHandoff = service.createDesktopAdministratorAliasHandoffUri();
+            assertEquals(initialOrigin.resolve(WebSessionHttpController.desktopAliasHandoffPath()),
+                aliasCatalogHandoff);
+            URI handoffUri = service.createDesktopAdministratorAliasHandoffUri(aliasListId, 41L);
+            assertEquals(initialOrigin.resolve(
+                WebSessionHttpController.desktopAliasHandoffPath(aliasListId, 41L)), handoffUri);
             assertNull(handoffUri.getQuery());
             assertNull(handoffUri.getFragment());
             HttpResponse<String> handoff = client.send(HttpRequest.newBuilder(handoffUri)
                 .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(303, handoff.statusCode());
+            assertEquals("/?view=aliases&list=" + aliasListId + "&alias=41",
+                handoff.headers().firstValue("Location").orElseThrow());
             String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
             String cookie = setCookie.substring(0, setCookie.indexOf(';'));
             assertAuthenticated(client, initialOrigin, cookie, true);

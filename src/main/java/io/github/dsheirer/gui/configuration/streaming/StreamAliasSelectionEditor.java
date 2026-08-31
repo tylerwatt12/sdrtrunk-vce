@@ -26,7 +26,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
-import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
+import io.github.dsheirer.gui.configuration.AliasMutationUi;
 import javafx.collections.ListChangeListener;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;

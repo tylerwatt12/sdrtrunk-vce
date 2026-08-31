@@ -13,11 +13,19 @@ package io.github.dsheirer.alias;
 
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.dcs.Dcs;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
+import io.github.dsheirer.alias.id.status.UnitStatusID;
+import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.configuration.ConfigurationIdentityAllocator;
+import io.github.dsheirer.identifier.tone.Tone;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -29,6 +37,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -98,6 +107,43 @@ public final class AliasAdministrationService
             Alias alias = requireAlias(aliasId);
             return new AliasEntry(revision(), copyAlias(alias),
                 scanListModel().scanListIdsForAlias(alias.getId()));
+        });
+    }
+
+    /**
+     * Returns a bounded list of aliases whose matchers collide with the selected Alias under the same rules used by
+     * the runtime Alias-list index. The exact total is retained so an administrator can tell when the display list
+     * was truncated without materializing an unbounded HTTP response.
+     */
+    public AliasConflictEntry getAliasConflicts(long aliasId, int maximumConflicts)
+    {
+        if(maximumConflicts < 0)
+        {
+            throw new IllegalArgumentException("Maximum conflict count cannot be negative");
+        }
+
+        return onConfigurationThread(() ->
+        {
+            Alias source = requireAlias(aliasId);
+            AliasID sourceMatcher = source.getMatchIdentifier();
+            List<Alias> conflicts = new ArrayList<>(Math.min(maximumConflicts, 32));
+            int conflictCount = 0;
+
+            for(Alias candidate : aliasModel().getAliases())
+            {
+                if(candidate.getId() != source.getId() && candidate.getAliasListId() == source.getAliasListId() &&
+                    matchersConflict(sourceMatcher, candidate.getMatchIdentifier()))
+                {
+                    conflictCount++;
+                    if(conflicts.size() < maximumConflicts)
+                    {
+                        conflicts.add(copyAlias(candidate));
+                    }
+                }
+            }
+
+            return new AliasConflictEntry(revision(), copyAlias(source), conflicts, conflictCount,
+                conflictCount > conflicts.size());
         });
     }
 
@@ -279,6 +325,34 @@ public final class AliasAdministrationService
             scanListModel().replaceConfiguration(new ScanListConfiguration(current.scanLists(), aliasMemberships,
                 current.unmatchedAliasListMemberships()));
             return new ScanListMutation(scanList, aliases.size());
+        });
+    }
+
+    /**
+     * Adds or removes every Alias in one optional Alias-list scope without requiring the browser to submit a large
+     * ID collection. A null Alias-list ID means every Alias. In particular, REMOVE with a null scope removes every
+     * current Alias member of the target scan list while leaving unmatched-talkgroup owners unchanged.
+     */
+    public ScanListMutationResult updateScanListMembershipsByScope(long scanListId, Long aliasListId,
+                                                                    MembershipOperation operation,
+                                                                    long expectedRevision)
+    {
+        Objects.requireNonNull(operation, "Membership operation cannot be null");
+        if(operation == MembershipOperation.REPLACE)
+        {
+            throw new IllegalArgumentException("Scoped scan-list membership supports only add or remove");
+        }
+
+        return mutateScanLists(expectedRevision, () ->
+        {
+            ScanList scanList = requireScanList(scanListId);
+            AliasListDefinition definition = aliasListId != null ? requireAliasList(aliasListId) : null;
+            ScanListConfiguration current = scanListModel().configuration();
+            Map<Long,Set<Long>> aliasMemberships = mutableMemberships(current.aliasMemberships());
+            int affected = applyScopedMembershipOperation(aliasMemberships, scanListId, definition, operation);
+            scanListModel().replaceConfiguration(new ScanListConfiguration(current.scanLists(), aliasMemberships,
+                current.unmatchedAliasListMemberships()));
+            return new ScanListMutation(scanList, affected);
         });
     }
 
@@ -978,9 +1052,35 @@ public final class AliasAdministrationService
     {
         List<AliasListDefinition> definitions = aliasModel().aliasListDefinitions().stream()
             .map(AliasAdministrationService::copyDefinition).toList();
+        Map<Long,Integer> aliasCounts = new LinkedHashMap<>();
+        Map<Long,Integer> channelCounts = new LinkedHashMap<>();
+        Map<String,Long> aliasListIdsByName = new java.util.HashMap<>();
+        for(AliasListDefinition definition : definitions)
+        {
+            aliasCounts.put(definition.getId(), 0);
+            channelCounts.put(definition.getId(), 0);
+            aliasListIdsByName.put(definition.getName().toLowerCase(Locale.ROOT), definition.getId());
+        }
+        for(Alias alias : aliasModel().getAliases())
+        {
+            if(aliasCounts.containsKey(alias.getAliasListId()))
+            {
+                aliasCounts.merge(alias.getAliasListId(), 1, Integer::sum);
+            }
+        }
+        for(Channel channel : mConfigurationManager.getChannelModel().getChannels())
+        {
+            String aliasListName = channel != null ? channel.getAliasListName() : null;
+            Long aliasListId = aliasListName != null ?
+                aliasListIdsByName.get(aliasListName.toLowerCase(Locale.ROOT)) : null;
+            if(aliasListId != null)
+            {
+                channelCounts.merge(aliasListId, 1, Integer::sum);
+            }
+        }
         ScanListConfiguration scanListConfiguration = scanListModel().configuration();
         return new Catalog(revision(), definitions, scanListConfiguration.scanLists(),
-            scanListConfiguration.unmatchedAliasListMemberships());
+            scanListConfiguration.unmatchedAliasListMemberships(), aliasCounts, channelCounts);
     }
 
     private DeleteImpact deleteImpact(AliasListDefinition definition)
@@ -1393,6 +1493,129 @@ public final class AliasAdministrationService
         }
     }
 
+    private int applyScopedMembershipOperation(Map<Long,Set<Long>> memberships, long scanListId,
+                                                AliasListDefinition definition, MembershipOperation operation)
+    {
+        int affected = 0;
+
+        if(operation == MembershipOperation.REMOVE && definition == null)
+        {
+            for(var iterator = memberships.entrySet().iterator(); iterator.hasNext();)
+            {
+                Map.Entry<Long,Set<Long>> entry = iterator.next();
+                if(entry.getValue().remove(scanListId))
+                {
+                    affected++;
+                    if(entry.getValue().isEmpty())
+                    {
+                        iterator.remove();
+                    }
+                }
+            }
+            return affected;
+        }
+
+        for(Alias alias : aliasModel().getAliases())
+        {
+            if(definition != null && !alias.belongsTo(definition))
+            {
+                continue;
+            }
+
+            if(operation == MembershipOperation.ADD)
+            {
+                if(memberships.computeIfAbsent(alias.getId(), ignored -> new LinkedHashSet<>()).add(scanListId))
+                {
+                    affected++;
+                }
+            }
+            else
+            {
+                Set<Long> scanListIds = memberships.get(alias.getId());
+                if(scanListIds != null && scanListIds.remove(scanListId))
+                {
+                    affected++;
+                    if(scanListIds.isEmpty())
+                    {
+                        memberships.remove(alias.getId());
+                    }
+                }
+            }
+        }
+
+        return affected;
+    }
+
+    private static boolean matchersConflict(AliasID first, AliasID second)
+    {
+        if(first == null || second == null || first.getType() != second.getType())
+        {
+            return false;
+        }
+
+        return switch(first.getType())
+        {
+            case TALKGROUP -> first instanceof Talkgroup firstTalkgroup && second instanceof Talkgroup secondTalkgroup &&
+                lookupProtocol(firstTalkgroup.getProtocol()) == lookupProtocol(secondTalkgroup.getProtocol()) &&
+                firstTalkgroup.getValue() == secondTalkgroup.getValue();
+            case TALKGROUP_RANGE -> first instanceof TalkgroupRange firstRange &&
+                second instanceof TalkgroupRange secondRange &&
+                lookupProtocol(firstRange.getProtocol()) == lookupProtocol(secondRange.getProtocol()) &&
+                firstRange.getMinTalkgroup() <= secondRange.getMaxTalkgroup() &&
+                secondRange.getMinTalkgroup() <= firstRange.getMaxTalkgroup();
+            case RADIO_ID -> first instanceof Radio firstRadio && second instanceof Radio secondRadio &&
+                lookupProtocol(firstRadio.getProtocol()) == lookupProtocol(secondRadio.getProtocol()) &&
+                firstRadio.getValue() == secondRadio.getValue();
+            case RADIO_ID_RANGE -> first instanceof RadioRange firstRange && second instanceof RadioRange secondRange &&
+                lookupProtocol(firstRange.getProtocol()) == lookupProtocol(secondRange.getProtocol()) &&
+                firstRange.getMinRadio() <= secondRange.getMaxRadio() &&
+                secondRange.getMinRadio() <= firstRange.getMaxRadio();
+            case STATUS -> first instanceof UserStatusID firstStatus && second instanceof UserStatusID secondStatus &&
+                firstStatus.getStatus() == secondStatus.getStatus();
+            case UNIT_STATUS -> first instanceof UnitStatusID firstStatus &&
+                second instanceof UnitStatusID secondStatus && firstStatus.getStatus() == secondStatus.getStatus();
+            case DCS -> first instanceof Dcs firstDcs && second instanceof Dcs secondDcs && firstDcs.isValid() &&
+                secondDcs.isValid() && Objects.equals(firstDcs.getDCSCode(), secondDcs.getDCSCode());
+            case TONES -> first instanceof TonesID firstTones && second instanceof TonesID secondTones &&
+                toneSequencesEqual(firstTones, secondTones);
+            default -> false;
+        };
+    }
+
+    /** Matches the persisted overlap definition, where both tone order and duration are significant. */
+    private static boolean toneSequencesEqual(TonesID first, TonesID second)
+    {
+        if(first.getToneSequence() == null || second.getToneSequence() == null)
+        {
+            return false;
+        }
+
+        List<Tone> firstTones = first.getToneSequence().getTones();
+        List<Tone> secondTones = second.getToneSequence().getTones();
+        if(firstTones.isEmpty() || firstTones.size() != secondTones.size())
+        {
+            return false;
+        }
+
+        for(int index = 0; index < firstTones.size(); index++)
+        {
+            Tone firstTone = firstTones.get(index);
+            Tone secondTone = secondTones.get(index);
+            if(firstTone == null || secondTone == null || firstTone.getAmbeTone() != secondTone.getAmbeTone() ||
+                firstTone.getDuration() != secondTone.getDuration())
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static Protocol lookupProtocol(Protocol protocol)
+    {
+        return protocol == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : protocol;
+    }
+
     private Set<Long> validatedScanListIds(Collection<Long> scanListIds)
     {
         if(scanListIds == null)
@@ -1646,13 +1869,16 @@ public final class AliasAdministrationService
     }
 
     public record Catalog(long revision, List<AliasListDefinition> aliasLists, List<ScanList> scanLists,
-                          Map<Long,Set<Long>> unmatchedAliasListMemberships)
+                          Map<Long,Set<Long>> unmatchedAliasListMemberships, Map<Long,Integer> aliasCounts,
+                          Map<Long,Integer> assignedChannelCounts)
     {
         public Catalog
         {
             aliasLists = List.copyOf(aliasLists);
             scanLists = List.copyOf(scanLists);
             unmatchedAliasListMemberships = Map.copyOf(unmatchedAliasListMemberships);
+            aliasCounts = Map.copyOf(aliasCounts);
+            assignedChannelCounts = Map.copyOf(assignedChannelCounts);
         }
     }
 
@@ -1707,6 +1933,15 @@ public final class AliasAdministrationService
         public AliasEntry
         {
             scanListIds = scanListIds != null ? Set.copyOf(scanListIds) : Set.of();
+        }
+    }
+
+    public record AliasConflictEntry(long revision, Alias alias, List<Alias> conflicts, int conflictCount,
+                                     boolean truncated)
+    {
+        public AliasConflictEntry
+        {
+            conflicts = List.copyOf(conflicts);
         }
     }
 

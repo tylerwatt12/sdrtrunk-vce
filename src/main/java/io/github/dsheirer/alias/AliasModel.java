@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
@@ -568,19 +569,17 @@ public class AliasModel
      */
     public List<String> getGroupNames()
     {
-        List<String> groupNames = new ArrayList<>();
+        Set<String> groupNames = new TreeSet<>();
 
         for(Alias alias : mAliases)
         {
-            if(alias.hasGroup() && !groupNames.contains(alias.getGroup()))
+            if(alias.hasGroup())
             {
                 groupNames.add(alias.getGroup());
             }
         }
 
-        Collections.sort(groupNames);
-
-        return groupNames;
+        return List.copyOf(groupNames);
     }
 
     /**

@@ -2674,8 +2674,7 @@ function aliasCustomConfigurationColumns() {
     { id: 'stream-as-talkgroup', label: 'Stream as Talkgroup', group: 'Call Handling', render: (row) =>
       aliasRawValue(row.stream_as_talkgroup) },
     { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
-    { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
-      badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' }
+    { id: 'overlap', label: 'Overlap', group: 'Validation', render: aliasConflictButton }
   ];
 }
 
@@ -2799,6 +2798,53 @@ function aliasColorValue(row) {
   return wrapper;
 }
 
+function aliasMatcherSummary(matcher) {
+  if (!matcher || typeof matcher !== 'object') return 'Matcher unavailable';
+  const type = aliasMatcherOption(matcher.type).label || 'Matcher';
+  const context = [matcher.protocol, matcher.variant].filter(Boolean).join(' · ');
+  let value = '';
+  if (matcher.value !== null && matcher.value !== undefined) value = identifierNumber(matcher.value);
+  else if (matcher.minimum !== null && matcher.minimum !== undefined &&
+      matcher.maximum !== null && matcher.maximum !== undefined) {
+    value = `${identifierNumber(matcher.minimum)}–${identifierNumber(matcher.maximum)}`;
+  } else if (matcher.status !== null && matcher.status !== undefined) value = identifierNumber(matcher.status);
+  else if (matcher.code) value = String(matcher.code).toUpperCase();
+  else if (matcher.esn) value = String(matcher.esn);
+  else if (Array.isArray(matcher.tones)) {
+    value = matcher.tones.map((tone) => `${tone?.tone || 'Tone'} ×${identifierNumber(tone?.duration ?? 1)}`)
+      .join(' → ');
+  }
+  return [type, context, value].filter(Boolean).join(' · ');
+}
+
+function aliasConflictButton(row, label = 'Conflict', detailsHost = null) {
+  const id = Number(row?.alias_id);
+  if (!row?.overlap || !Number.isInteger(id) || id <= 0) return '—';
+  const button = node('button', 'button secondary alias-conflict-button', label);
+  button.type = 'button';
+  button.dataset.aliasId = String(id);
+  button.title = 'Show aliases with overlapping identifiers';
+  button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    if (!detailsHost) {
+      openAliasConflictModal(id, row.name);
+      return;
+    }
+    button.disabled = true;
+    detailsHost.replaceChildren(node('div', 'loading', 'Finding conflicting aliases'));
+    try {
+      const response = await requestJson(`/api/v1/admin/aliases/${id}/conflicts`, { csrf: false });
+      detailsHost.replaceChildren(aliasConflictDetail(response, id, row.name));
+    } catch (error) {
+      detailsHost.replaceChildren(node('div', 'error', error.message || 'Unable to load conflicting aliases.'));
+    } finally {
+      button.disabled = false;
+      if (button.isConnected) button.focus();
+    }
+  });
+  return button;
+}
+
 function aliasDetailMetricBand(row, definitions) {
   return metrics(definitions.map(([label, field]) =>
     [label, row[field] ?? 0, aliasMetricValue(row, field)]), true);
@@ -2838,10 +2884,49 @@ function aliasListFamily(row) {
 }
 
 function mergedAliasLists(publicRows, adminRows = []) {
-  const adminById = new Map((adminRows || []).map((row) => [aliasListId(row), row]));
-  return (publicRows || []).map((row) => ({ ...row, ...(adminById.get(aliasListId(row)) || {}) }))
+  const publicById = new Map((publicRows || []).map((row) => [aliasListId(row), row]));
+  return (adminRows || []).map((row) => {
+    const publicRow = publicById.get(aliasListId(row));
+    return {
+      ...row,
+      ...(publicRow?.alias_count !== undefined ? { alias_count: publicRow.alias_count } : {}),
+      ...(publicRow?.assigned_channel_count !== undefined ?
+        { assigned_channel_count: publicRow.assigned_channel_count } : {})
+    };
+  })
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined,
       { numeric: true, sensitivity: 'base' }));
+}
+
+function aliasListCountLabel(row) {
+  const value = Number(row?.alias_count);
+  return Number.isInteger(value) && value >= 0 ? `${number(value)} aliases` : 'Alias count unavailable';
+}
+
+function aliasOptionLimit(options, name) {
+  const values = Array.isArray(options?.[name]) ? options[name] : [];
+  const reportedTotal = Number(options?.[`${name}_total`]);
+  const total = Number.isInteger(reportedTotal) && reportedTotal >= values.length ? reportedTotal : values.length;
+  return {
+    shown: values.length,
+    total,
+    truncated: options?.[`${name}_truncated`] === true || total > values.length
+  };
+}
+
+function aliasCloneOptionValue(value, configured, cloning, optionsTruncated) {
+  return cloning && value && !configured && !optionsTruncated ? '' : value || '';
+}
+
+function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated) {
+  return Boolean(selected && (editing || configured || optionsTruncated));
+}
+
+function aliasOptionLimitNotice(options, name, label, guidance = '') {
+  const limit = aliasOptionLimit(options, name);
+  if (!limit.truncated) return null;
+  return node('p', 'logging-notice warning alias-option-limit-notice',
+    `Showing ${number(limit.shown)} of ${number(limit.total)} ${label}.${guidance ? ` ${guidance}` : ''}`);
 }
 
 function aliasListRail(lists, selectedList) {
@@ -2877,7 +2962,7 @@ function aliasListRail(lists, selectedList) {
       const label = node('span', 'alias-list-item-name', row.name || `Alias List ${identifierNumber(id)}`);
       const detail = node('span', 'alias-list-item-detail');
       detail.append(node('span', 'alias-list-family', aliasListFamilyLabel(row)),
-        node('span', '', `${number(row.alias_count || 0)} aliases`));
+        node('span', '', aliasListCountLabel(row)));
       link.append(label, detail);
       list.append(link);
     });
@@ -2893,7 +2978,7 @@ function aliasListRail(lists, selectedList) {
   prompt.value = '';
   select.append(prompt);
   lists.forEach((row) => {
-    const option = node('option', '', `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count || 0)}`);
+    const option = node('option', '', `${row.name} · ${aliasListFamilyLabel(row)} · ${aliasListCountLabel(row)}`);
     option.value = String(aliasListId(row));
     option.selected = aliasListId(row) === aliasListId(selectedList);
     select.append(option);
@@ -3103,8 +3188,7 @@ function aliasEditorColumns(view, rows, onSelectionChange) {
   }
   return [...base,
     { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
-    { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
-      badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' }];
+    { id: 'overlap', label: 'Overlap', group: 'Validation', render: aliasConflictButton }];
 }
 
 function scanListMemberColumns(rows, onSelectionChange) {
@@ -3116,8 +3200,7 @@ function scanListMemberColumns(rows, onSelectionChange) {
     { id: 'family', label: 'Family', group: 'Configuration', key: 'family', sort: 'family' });
   columns.push(
     { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
-    { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
-      badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' });
+    { id: 'overlap', label: 'Overlap', group: 'Validation', render: aliasConflictButton });
   return columns;
 }
 
@@ -3227,6 +3310,70 @@ function aliasMutationError(host, error, retry = null) {
       reload.addEventListener('click', retry);
       host.append(reload);
     }
+  }
+}
+
+function aliasConflictSummary(row) {
+  const wrapper = node('li', 'alias-conflict-item');
+  const id = Number(row?.alias_id);
+  const name = String(row?.name || '').trim() || `Alias ${identifierNumber(id)}`;
+  const link = anchor(name, href('aliases', {
+    list: Number(row?.alias_list_id), aliasTab: 'configure', alias: id
+  }), 'alias-conflict-alias-link');
+  link.dataset.aliasId = String(id);
+  link.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    openAliasEditorModal('edit', id, { alias_list_id: Number(row?.alias_list_id) });
+  });
+  wrapper.append(link);
+  const context = [row?.alias_list_name, aliasMatcherSummary(row?.matcher)].filter(Boolean).join(' · ');
+  if (context) wrapper.append(node('small', 'muted', context));
+  return wrapper;
+}
+
+function aliasConflictDetail(response, aliasId, aliasName = '') {
+  const id = Number(aliasId);
+  const conflicts = Array.isArray(response?.conflicts) ? response.conflicts : [];
+  const total = Number(response?.conflicts_total ?? conflicts.length);
+  const body = node('div', 'alias-conflict-detail');
+  body.append(node('p', '', `${response?.alias?.name || aliasName || `Alias ${identifierNumber(id)}`} uses ${
+    aliasMatcherSummary(response?.alias?.matcher)}.`));
+  if (!conflicts.length) {
+    body.append(node('div', 'empty', 'No current conflicts were found. The list may have changed.'));
+  } else {
+    body.append(node('p', 'muted', `${number(total)} overlapping ${total === 1 ? 'alias' : 'aliases'} found.`));
+    const list = node('ul', 'alias-conflict-list');
+    list.append(...conflicts.map(aliasConflictSummary));
+    body.append(list);
+    if (response?.conflicts_truncated === true || total > conflicts.length) {
+      body.append(node('p', 'logging-notice warning',
+        `Showing the first ${number(conflicts.length)} of ${number(total)} conflicts.`));
+    }
+  }
+  return body;
+}
+
+async function openAliasConflictModal(aliasId, aliasName = '') {
+  const id = Number(aliasId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const loading = node('div', 'loading', 'Finding conflicting aliases');
+  const modal = openReadOnlyModal(`Identifier conflicts${aliasName ? ` · ${aliasName}` : ''}`, loading, {
+    id: `alias-conflicts-${id}`, className: 'alias-editor-modal alias-conflict-modal',
+    returnFocusSelector: `.alias-conflict-button[data-alias-id="${id}"]`
+  });
+  if (!modal) return;
+  modal.setBusy(true);
+  try {
+    const response = await requestJson(`/api/v1/admin/aliases/${id}/conflicts`, { csrf: false });
+    if (activeReadOnlyModal !== modal.state) return;
+    modal.content.replaceChildren(aliasConflictDetail(response, id, aliasName));
+    modal.setBusy(false);
+    modal.dialog.querySelector('.modal-close')?.focus();
+  } catch (error) {
+    if (activeReadOnlyModal !== modal.state) return;
+    modal.content.replaceChildren(node('div', 'error', error.message || 'Unable to load conflicting aliases.'));
+    modal.setBusy(false);
   }
 }
 
@@ -3397,6 +3544,15 @@ function aliasMatcherDefault(descriptor, options = {}) {
   return matcher;
 }
 
+function reorderedAliasToneRows(rows, index, direction) {
+  const reordered = [...(rows || [])];
+  const target = index + (direction < 0 ? -1 : 1);
+  if (!Number.isInteger(index) || index < 0 || index >= reordered.length ||
+      target < 0 || target >= reordered.length) return reordered;
+  [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+  return reordered;
+}
+
 function aliasMatcherFields(host, descriptor, matcher, options) {
   host.replaceChildren();
   const fields = descriptor?.fields || [];
@@ -3423,6 +3579,26 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
       const toneHost = node('div', 'alias-tone-list');
       const tones = Array.isArray(matcher?.tones) && matcher.tones.length ? matcher.tones :
         [{ tone: options?.tones?.[0] || '', duration: 1 }];
+      const refreshToneActions = () => {
+        const rows = [...toneHost.children];
+        rows.forEach((row, index) => {
+          const up = row.querySelector('.alias-tone-up');
+          const down = row.querySelector('.alias-tone-down');
+          if (up) up.disabled = index === 0;
+          if (down) down.disabled = index === rows.length - 1;
+        });
+      };
+      const moveTone = (row, direction, button) => {
+        const rows = [...toneHost.children];
+        const index = rows.indexOf(row);
+        const reordered = reorderedAliasToneRows(rows, index, direction);
+        if (reordered[index] === row) return;
+        toneHost.replaceChildren(...reordered);
+        refreshToneActions();
+        const fallback = row.querySelector(direction < 0 ? '.alias-tone-down' : '.alias-tone-up');
+        const focusTarget = button.disabled ? fallback : button;
+        if (focusTarget instanceof HTMLElement) focusTarget.focus();
+      };
       const addTone = (tone = {}) => {
         const row = node('div', 'alias-tone-row');
         const toneSelect = aliasSelect('matcher-tone', options?.tones || [], tone.tone || options?.tones?.[0]);
@@ -3431,11 +3607,29 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
         duration.max = '50';
         duration.step = '1';
         duration.required = true;
+        const actions = node('div', 'alias-tone-actions');
+        actions.setAttribute('role', 'group');
+        actions.setAttribute('aria-label', 'Tone sequence order');
+        const up = node('button', 'button secondary alias-tone-move alias-tone-up', '↑');
+        up.type = 'button';
+        up.title = 'Move tone up';
+        up.setAttribute('aria-label', 'Move tone up');
+        up.addEventListener('click', () => moveTone(row, -1, up));
+        const down = node('button', 'button secondary alias-tone-move alias-tone-down', '↓');
+        down.type = 'button';
+        down.title = 'Move tone down';
+        down.setAttribute('aria-label', 'Move tone down');
+        down.addEventListener('click', () => moveTone(row, 1, down));
         const remove = node('button', 'button secondary alias-tone-remove', 'Remove');
         remove.type = 'button';
-        remove.addEventListener('click', () => row.remove());
-        row.append(toneSelect, duration, remove);
+        remove.addEventListener('click', () => {
+          row.remove();
+          refreshToneActions();
+        });
+        actions.append(up, down, remove);
+        row.append(toneSelect, duration, actions);
         toneHost.append(row);
+        refreshToneActions();
       };
       tones.forEach(addTone);
       const add = node('button', 'button secondary alias-tone-add', 'Add tone');
@@ -3652,16 +3846,22 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const configuredIcons = new Set(options.icon_names || []);
     const iconEntries = [...(options.icon_names || []).map((value) => ({ value, label: value }))];
     if (source.icon_name && !configuredIcons.has(source.icon_name)) {
-      iconEntries.unshift({ value: source.icon_name, label: `Missing: ${source.icon_name}` });
+      const prefix = options.icon_names_truncated === true ? 'Current (outside suggestion limit)' : 'Missing';
+      iconEntries.unshift({ value: source.icon_name, label: `${prefix}: ${source.icon_name}` });
     }
-    const selectedIcon = cloning && source.icon_name && !configuredIcons.has(source.icon_name) ? '' :
-      source.icon_name || '';
+    const selectedIcon = aliasCloneOptionValue(source.icon_name, configuredIcons.has(source.icon_name), cloning,
+      options.icon_names_truncated === true);
     const icon = aliasSelect('iconName', iconEntries, selectedIcon, true);
     const basicsGrid = node('div', 'alias-editor-grid');
     basicsGrid.append(aliasFormField('Alias list', listSelect), aliasFormField('Alias name', name),
       aliasFormField('Group', group), groupList, aliasFormField('Color', color),
       aliasFormField('Icon', icon), aliasFormField('Description', description));
     basics.append(basicsGrid);
+    const groupLimitNotice = aliasOptionLimitNotice(options, 'group_names', 'existing group suggestions',
+      'You can still type an exact group name.');
+    const iconLimitNotice = aliasOptionLimitNotice(options, 'icon_names', 'icons');
+    if (groupLimitNotice) basics.append(groupLimitNotice);
+    if (iconLimitNotice) basics.append(iconLimitNotice);
 
     const matcherType = aliasSelect('matcherType', (options.matchers || []).map((entry) => ({
       value: aliasMatcherKey(entry), label: entry.label
@@ -3671,8 +3871,14 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     matcherType.dataset.originalProtocol = String(source.matcher?.protocol || '');
     matcherType.dataset.originalVariant = String(source.matcher?.variant || '');
     const matcherNotice = node('div', 'alias-identifier-notice');
-    if (source.overlap) matcherNotice.append(node('div', 'logging-notice warning',
-      'This identifier overlaps another alias in the list. Review both aliases before saving.'));
+    if (source.overlap) {
+      const warning = node('div', 'logging-notice warning',
+        'This identifier overlaps another alias in the list.');
+      const conflictDetails = node('div', 'alias-conflict-inline');
+      warning.append(' ', aliasConflictButton({ ...source, alias_id: source.alias_id || id },
+        'Show conflicts', conflictDetails));
+      matcherNotice.append(warning, conflictDetails);
+    }
     const matcherHost = node('div', 'alias-matcher-fields alias-editor-grid');
     let activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
     aliasMatcherFields(matcherHost, activeDescriptor, initialMatcher, options);
@@ -3706,10 +3912,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       checkbox.type = 'checkbox';
       checkbox.name = 'broadcastChannel';
       checkbox.value = streamName;
-      checkbox.checked = selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName));
+      checkbox.checked = aliasStreamOptionSelected(selectedStreams.has(streamName),
+        configuredStreams.has(streamName), editing, options.stream_names_truncated === true);
       const missing = !configuredStreams.has(streamName);
       if (missing) label.classList.add('missing');
-      label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
+      const missingLabel = options.stream_names_truncated === true ?
+        `Current (outside suggestion limit): ${streamName}` : `Missing: ${streamName}`;
+      label.append(checkbox, node('span', '', missing ? missingLabel : streamName));
       streams.append(label);
     });
     updateCreationRoutingDefaults = (changedDescriptor) => {
@@ -3730,7 +3939,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     streamAs.min = '1';
     streamAs.max = '65535';
     streamAs.step = '1';
-    audio.append(scanLists, audioGrid, streams, aliasFormField('Stream as talkgroup', streamAs,
+    audio.append(scanLists, audioGrid, streams);
+    const streamLimitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+      'Destinations already saved on this alias remain visible.');
+    if (streamLimitNotice) audio.append(streamLimitNotice);
+    audio.append(aliasFormField('Stream as talkgroup', streamAs,
       'Optional talkgroup ID sent to configured streaming destinations'));
 
     usage.append(analytics ? aliasActivityContent(analytics) :
@@ -3768,7 +3981,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     form.addEventListener('input', () => modal.setDirty(true));
     form.addEventListener('change', () => modal.setDirty(true));
     form.addEventListener('click', (event) => {
-      if (event.target.closest('.alias-tone-add, .alias-tone-remove')) modal.setDirty(true);
+      if (event.target.closest('.alias-tone-add, .alias-tone-remove, .alias-tone-move')) modal.setDirty(true);
     });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -3882,6 +4095,9 @@ function aliasBulkStreamChoices(options) {
     fieldset.append(label);
   });
   if (!(options?.stream_names || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
+  const limitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+    'Open an alias individually if its saved destination is not listed.');
+  if (limitNotice) fieldset.append(limitNotice);
   return fieldset;
 }
 
@@ -4123,6 +4339,77 @@ function openScanListMemberRemoveModal(scanList) {
   remove.focus();
 }
 
+function fullScanListMembershipRequest(revision, operation, aliasListId = null) {
+  const id = Number(aliasListId);
+  return {
+    revision: Number(revision),
+    operation,
+    alias_scope: Number.isInteger(id) && id > 0 ? { alias_list_id: id } : {}
+  };
+}
+
+function openFullScanListMembershipModal(scanList, operation) {
+  const adding = operation === 'add';
+  const form = node('form', 'alias-editor-form alias-full-membership-form');
+  let aliasList = null;
+  if (adding) {
+    aliasList = aliasSelect('aliasListId', [
+      { value: '', label: 'Choose an alias list' },
+      ...(aliasEditorContext?.lists || []).map((row) => ({
+        value: aliasListId(row),
+        label: `${row.name} · ${aliasListFamilyLabel(row)} · ${aliasListCountLabel(row)}`
+      }))
+    ], '');
+    form.append(node('p', 'modal-introduction',
+      `Every alias in the chosen list will be added to ${scanList.name}. Existing memberships are left unchanged.`),
+    aliasFormField('Alias list', aliasList));
+  } else {
+    form.append(node('p', '', `Remove all ${number(scanList.alias_count || 0)} alias memberships from ${scanList.name}?`),
+      node('p', 'muted',
+        'The aliases, their other scan-list memberships, and Alias List Defaults will be preserved.'));
+  }
+  const message = node('div', 'alias-form-message');
+  message.setAttribute('role', 'alert');
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const submit = node('button', adding ? 'button' : 'danger', adding ? 'Add All Aliases' : 'Remove All Members');
+  submit.type = 'submit';
+  form.append(message, aliasModalFooter(cancel, submit));
+  const modal = openReadOnlyModal(`${adding ? 'Add All' : 'Remove All'} · ${scanList.name}`, form, {
+    id: `${adding ? 'add-all-to' : 'remove-all-from'}-scan-list-${scanList.id}`,
+    className: 'alias-editor-modal alias-confirm-modal',
+    returnFocusSelector: adding ? '.scan-list-add-all' : '.scan-list-remove-all'
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const selectedAliasListId = adding ? Number(aliasList.value) : null;
+    if (adding && (!Number.isInteger(selectedAliasListId) || selectedAliasListId <= 0)) {
+      message.replaceChildren(node('div', 'error', 'Choose an alias list.'));
+      return;
+    }
+    submit.disabled = true;
+    message.textContent = adding ? 'Adding aliases…' : 'Removing memberships…';
+    try {
+      const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
+        method: 'PUT', body: fullScanListMembershipRequest(aliasEditorContext?.revision ?? 0, operation,
+          selectedAliasListId)
+      });
+      await finishAliasMutation(modal, result);
+    } catch (error) {
+      aliasMutationError(message, error, () => {
+        modal.setDirty(false);
+        closeReadOnlyModal(true);
+        render();
+      });
+      submit.disabled = false;
+    }
+  });
+  if (adding) aliasList.focus();
+  else submit.focus();
+}
+
 function observedTalkgroupDiscoverySupported(selectedList) {
   return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
 }
@@ -4177,6 +4464,9 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
     streams.append(label);
   });
+  const streamLimitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+    'Destinations already saved in these defaults remain visible.');
+  if (streamLimitNotice) streams.append(streamLimitNotice);
 
   const errorHost = node('div', 'alias-form-message');
   const cancel = node('button', 'button secondary', 'Cancel');
@@ -4574,6 +4864,15 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   const summaryActions = node('div', 'alias-list-summary-actions');
   summaryActions.append(anchor('Back to Scan Lists', href('configuration', { tab: 'scan-lists' }),
     'button secondary'));
+  const addAll = node('button', 'button secondary scan-list-add-all', 'Add All from Alias List');
+  addAll.type = 'button';
+  addAll.disabled = !(aliasEditorContext?.lists || []).length;
+  addAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'add'));
+  const removeAll = node('button', 'button secondary danger-outline scan-list-remove-all', 'Remove All Members');
+  removeAll.type = 'button';
+  removeAll.disabled = Number(scanList.alias_count || 0) <= 0;
+  removeAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'remove'));
+  summaryActions.append(addAll, removeAll);
   summary.append(summaryCopy, summaryActions);
   main.append(summary, aliasEditorFilterToolbar(listResponse, options));
 

@@ -5438,6 +5438,17 @@ th.numeric {
   gap: 6px;
 }
 
+.alias-tone-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.alias-tone-actions .alias-tone-move {
+  min-width: 34px;
+  padding-inline: 8px;
+}
+
 .alias-modal-footer {
   position: sticky;
   bottom: -12px;
@@ -5465,6 +5476,48 @@ th.numeric {
 
 .alias-conflict-reload {
   margin-top: 7px;
+}
+
+.alias-conflict-button {
+  min-height: 28px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.alias-conflict-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.alias-conflict-inline:not(:empty) {
+  margin-top: 8px;
+}
+
+.alias-conflict-detail > p {
+  margin: 0;
+}
+
+.alias-conflict-list {
+  display: grid;
+  gap: 6px;
+  max-height: min(50vh, 430px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.alias-conflict-item {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.alias-conflict-item small {
+  overflow-wrap: anywhere;
 }
 
 .modal-introduction {
@@ -5801,7 +5854,7 @@ th.numeric {
     grid-template-columns: minmax(0, 1fr) 82px;
   }
 
-  .alias-tone-row .button {
+  .alias-tone-actions {
     grid-column: 1 / -1;
   }
 
