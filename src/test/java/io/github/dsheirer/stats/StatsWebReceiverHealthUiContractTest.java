@@ -123,7 +123,7 @@ class StatsWebReceiverHealthUiContractTest
     }
 
     @Test
-    void collapsesHealthSectionsByDefaultAndPaginatesResolvedAlertsFiveAtATime() throws Exception
+    void expandsSummaryHealthSectionsByDefaultAndPaginatesResolvedAlertsFiveAtATime() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
         String controller = block(source, "class ReceiverHealthController");
@@ -139,7 +139,8 @@ class StatsWebReceiverHealthUiContractTest
         String restoreFocus = block(source, "function receiverHealthRestoreFocus(host, key)");
 
         assertTrue(source.contains("const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;"));
-        assertTrue(controller.contains("this.openHealthSections = new Set(['resolved'])"));
+        assertTrue(controller.contains("this.openHealthSections = new Set(['current', 'active', 'resolved'])"));
+        assertFalse(controller.contains("this.openHealthSections = new Set(['resolved'])"));
         assertTrue(controller.contains("if (this.pageHost !== host)"));
         assertTrue(controller.contains("this.resolvedPage = 0"));
         assertTrue(section.contains("node('section', 'section receiver-health-section')"));

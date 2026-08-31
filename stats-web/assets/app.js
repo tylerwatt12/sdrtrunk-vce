@@ -6670,7 +6670,7 @@ class ReceiverHealthController {
     this.pageHost = null;
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
-    this.openHealthSections = new Set(['resolved']);
+    this.openHealthSections = new Set(['current', 'active', 'resolved']);
     this.expandedResolvedIncidents = new Set();
   }
 
@@ -6695,7 +6695,7 @@ class ReceiverHealthController {
       this.stale = false;
       this.lastError = '';
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['resolved']);
+      this.openHealthSections = new Set(['current', 'active', 'resolved']);
       this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
       this.abortRequest();
@@ -6732,7 +6732,7 @@ class ReceiverHealthController {
   bindPage(host) {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['resolved']);
+      this.openHealthSections = new Set(['current', 'active', 'resolved']);
     }
     this.pageHost = host;
     this.updatePage();
