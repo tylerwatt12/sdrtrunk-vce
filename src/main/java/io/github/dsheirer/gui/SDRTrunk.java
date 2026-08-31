@@ -1263,10 +1263,21 @@ public class SDRTrunk
                 throw new IOException("Desktop browser integration is unavailable");
             }
 
-            Desktop.getDesktop().browse(navigation.baseUri());
+            URI handoffUri = mStatsWebServerService.createDesktopAdministratorHandoffUri();
+
+            if(handoffUri == null)
+            {
+                JOptionPane.showMessageDialog(mMainGui,
+                    "Set the primary administrator password in Web Server settings before opening the web interface.",
+                    "Web Interface", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            Desktop.getDesktop().browse(handoffUri);
         }
-        catch(IOException exception)
+        catch(IOException | SecurityException | UnsupportedOperationException exception)
         {
+            mStatsWebServerService.cancelDesktopAdministratorHandoff();
             mLog.warn("Unable to open the web interface", exception);
             JOptionPane.showMessageDialog(mMainGui,
                 "Unable to open the web browser. Open " + navigation.baseUri() + " manually.",

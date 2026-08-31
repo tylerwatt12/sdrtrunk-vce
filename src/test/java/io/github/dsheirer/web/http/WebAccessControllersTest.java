@@ -302,6 +302,66 @@ class WebAccessControllersTest
     }
 
     @Test
+    void desktopHandoffCreatesOneNormalAdministratorSession() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("desktop-handoff.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+        }
+
+        WebAccessService accessService = new WebAccessService(database);
+        accessService.provisionOrResetPrimaryAdmin(ADMIN_PASSWORD.toCharArray());
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
+        WebSessionHttpController sessions =
+            new WebSessionHttpController(accessService, authenticationService, requestSecurity);
+        HttpServer server = HttpServer.create(
+            new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        ExecutorService executor = Executors.newCachedThreadPool();
+        server.setExecutor(executor);
+        sessions.register(server);
+        server.start();
+
+        try
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(WebRequestSecurity.isLoopbackHost("127.0.0.1:" + server.getAddress().getPort(),
+                server.getAddress().getPort()));
+            assertFalse(WebRequestSecurity.isLoopbackHost("attacker.example:" + server.getAddress().getPort(),
+                server.getAddress().getPort()));
+
+            HttpResponse<String> handoff = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());
+            assertEquals(303, handoff.statusCode());
+            assertEquals("/", handoff.headers().firstValue("Location").orElseThrow());
+            String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
+            assertTrue(setCookie.contains("HttpOnly"));
+            assertTrue(setCookie.contains("SameSite=Strict"));
+            String cookie = setCookie.substring(0, setCookie.indexOf(';'));
+
+            JsonNode session = data(send(client, request(origin, WebSessionHttpController.SESSION_PATH)
+                .header("Cookie", cookie).GET()));
+            assertTrue(session.get("authenticated").booleanValue());
+            assertTrue(session.get("primary").booleanValue());
+
+            HttpResponse<String> replay = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());
+            assertEquals(303, replay.statusCode());
+            assertTrue(replay.headers().firstValue("Set-Cookie").isEmpty());
+        }
+        finally
+        {
+            server.stop(0);
+            requestSecurity.close();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void failedLoginResponseDiscardsNewSessionAndPreservesExistingSession() throws Exception
     {
         Path database = mTemporaryDirectory.resolve("failed-login-response.sqlite");

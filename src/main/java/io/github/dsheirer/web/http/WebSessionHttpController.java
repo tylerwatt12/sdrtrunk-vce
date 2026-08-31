@@ -28,12 +28,13 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Exact endpoints for session discovery, login, and logout. */
+/** Exact endpoints for session discovery, login, local desktop handoff, and logout. */
 public final class WebSessionHttpController
 {
     public static final String SESSION_PATH = "/api/v1/auth/session";
     public static final String LOGIN_PATH = "/api/v1/auth/login";
     public static final String LOGOUT_PATH = "/api/v1/auth/logout";
+    public static final String DESKTOP_HANDOFF_PATH = "/api/v1/auth/desktop-handoff";
     private static final Logger mLog = LoggerFactory.getLogger(WebSessionHttpController.class);
 
     private final WebAccessService mAccessService;
@@ -55,6 +56,7 @@ public final class WebSessionHttpController
         server.createContext(SESSION_PATH, this::handleSession);
         server.createContext(LOGIN_PATH, this::handleLogin);
         server.createContext(LOGOUT_PATH, this::handleLogout);
+        server.createContext(DESKTOP_HANDOFF_PATH, this::handleDesktopHandoff);
     }
 
     private void handleSession(HttpExchange exchange) throws IOException
@@ -190,15 +192,66 @@ public final class WebSessionHttpController
         }
     }
 
+    private void handleDesktopHandoff(HttpExchange exchange) throws IOException
+    {
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
+        if(!WebHttpSupport.hasExactPath(exchange, DESKTOP_HANDOFF_PATH))
+        {
+            WebHttpSupport.notFound(exchange);
+            return;
+        }
+        if(!WebHttpSupport.requireNoQuery(exchange))
+        {
+            return;
+        }
+        if(!"GET".equals(exchange.getRequestMethod()))
+        {
+            WebHttpSupport.methodNotAllowed(exchange, "GET");
+            return;
+        }
+        if(WebHttpSupport.hasRequestBody(exchange) || !WebRequestSecurity.isLoopbackPeer(exchange) ||
+            !WebRequestSecurity.hasLoopbackHost(exchange) || !WebRequestSecurity.hasSafeGetOrigin(exchange))
+        {
+            WebHttpSupport.sendError(exchange, 403, "request_rejected", "The desktop sign-in was rejected");
+            return;
+        }
+
+        WebRequestSecurity.CookieLookup existing = mSecurity.sessionCookie(exchange);
+        String existingSessionId = existing.valid() ? existing.sessionId() : null;
+        Optional<WebAccessSession> session =
+            mAuthenticationService.redeemDesktopAdministratorHandoff(existingSessionId);
+
+        if(session.isEmpty())
+        {
+            redirectHome(exchange);
+            return;
+        }
+
+        deliverSessionResponse(exchange, session.get(), existingSessionId, true);
+    }
+
     /** Retires the prior session only after the replacement session reaches the browser. */
     void deliverLoginResponse(HttpExchange exchange, WebAccessSession created, String existingSessionId)
         throws IOException
+    {
+        deliverSessionResponse(exchange, created, existingSessionId, false);
+    }
+
+    private void deliverSessionResponse(HttpExchange exchange, WebAccessSession created, String existingSessionId,
+                                        boolean redirect) throws IOException
     {
         boolean delivered = false;
         try
         {
             WebRequestSecurity.setSessionCookie(exchange, created.sessionId());
-            WebHttpSupport.sendData(exchange, 200, sessionResponse(created));
+            if(redirect)
+            {
+                redirectHome(exchange);
+            }
+            else
+            {
+                WebHttpSupport.sendData(exchange, 200, sessionResponse(created));
+            }
             delivered = true;
         }
         finally
@@ -215,6 +268,15 @@ public final class WebSessionHttpController
                 mAuthenticationService.logout(created.sessionId());
             }
         }
+    }
+
+    private static void redirectHome(HttpExchange exchange) throws IOException
+    {
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        exchange.getResponseHeaders().set("Location", "/");
+        exchange.getResponseHeaders().set("Vary", "Cookie");
+        exchange.sendResponseHeaders(303, -1);
+        exchange.close();
     }
 
     private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,

@@ -958,6 +958,28 @@ public class StatsWebServerService implements AutoCloseable
             loggingStatus.detailedHistoryActive());
     }
 
+    /** Arms the one-use local administrator sign-in opened by the desktop Web button. */
+    public synchronized URI createDesktopAdministratorHandoffUri()
+    {
+        StatsWebNavigationState navigation = getNavigationState();
+
+        if(!navigation.running() || mWebAuthenticationService == null ||
+            !mWebAuthenticationService.armDesktopAdministratorHandoff())
+        {
+            return null;
+        }
+
+        return navigation.baseUri().resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH);
+    }
+
+    public synchronized void cancelDesktopAdministratorHandoff()
+    {
+        if(mWebAuthenticationService != null)
+        {
+            mWebAuthenticationService.cancelDesktopAdministratorHandoff();
+        }
+    }
+
     static void applyCsvHeaders(Headers headers, String fileName)
     {
         headers.set("Content-Type", "text/csv; charset=utf-8");

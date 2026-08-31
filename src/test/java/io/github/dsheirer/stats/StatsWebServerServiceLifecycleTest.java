@@ -100,7 +100,15 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(service.isPrimaryAdminConfigured());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             URI initialOrigin = origin(initial.port());
-            String cookie = login(client, initialOrigin, "primary-admin-password");
+            URI handoffUri = service.createDesktopAdministratorHandoffUri();
+            assertEquals(initialOrigin.resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH), handoffUri);
+            assertNull(handoffUri.getQuery());
+            assertNull(handoffUri.getFragment());
+            HttpResponse<String> handoff = client.send(HttpRequest.newBuilder(handoffUri)
+                .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(303, handoff.statusCode());
+            String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
+            String cookie = setCookie.substring(0, setCookie.indexOf(';'));
             assertAuthenticated(client, initialOrigin, cookie, true);
             assertAliasRoutes(client, initialOrigin, cookie, aliasListId);
 

@@ -16,6 +16,7 @@ import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
 import java.util.Objects;
@@ -289,6 +290,19 @@ public final class WebRequestSecurity implements AutoCloseable
         {
             return false;
         }
+    }
+
+    static boolean hasLoopbackHost(HttpExchange exchange)
+    {
+        List<String> hosts = exchange.getRequestHeaders().get("Host");
+        InetSocketAddress local = exchange.getLocalAddress();
+        return hosts != null && hosts.size() == 1 && local != null &&
+            isLoopbackHost(hosts.getFirst(), local.getPort());
+    }
+
+    static boolean isLoopbackHost(String authority, int port)
+    {
+        return ("127.0.0.1:" + port).equals(authority);
     }
 
     private static int effectivePort(URI uri)

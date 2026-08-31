@@ -22,12 +22,17 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -65,6 +70,56 @@ class WebAuthenticationServiceTest
         authenticationService.close();
         assertEquals(WebAuthenticationService.LoginStatus.BUSY,
             authenticationService.login("admin", password, "127.0.0.1").join().status());
+    }
+
+    @Test
+    void desktopAdministratorHandoffIsShortLivedAndSingleUse() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("desktop-handoff.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        WebAccessService accessService = new WebAccessService(database);
+        accessService.provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        MutableClock clock = new MutableClock();
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService,
+            new WebAccessSessionManager(), LoginThrottle.Configuration.defaults(),
+            AccountLoginAdmissionLimiter.Configuration.defaults(), clock, 2);
+
+        try
+        {
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            Optional<WebAccessSession> first = authenticationService.redeemDesktopAdministratorHandoff(null);
+            assertTrue(first.isPresent());
+            assertTrue(first.orElseThrow().account().primaryAdmin());
+            assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            clock.advance(Duration.ofSeconds(30));
+            assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            clock.advance(Duration.ofMillis(-1));
+            assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+            clock.advance(Duration.ofMillis(1));
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            CompletableFuture<Optional<WebAccessSession>> left = CompletableFuture.supplyAsync(
+                () -> authenticationService.redeemDesktopAdministratorHandoff(null));
+            CompletableFuture<Optional<WebAccessSession>> right = CompletableFuture.supplyAsync(
+                () -> authenticationService.redeemDesktopAdministratorHandoff(null));
+            assertEquals(1, List.of(left.get(), right.get()).stream().filter(Optional::isPresent).count());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            accessService.provisionOrResetPrimaryAdmin("replacement admin password".toCharArray());
+            assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            authenticationService.invalidateAllSessions();
+            assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
+        }
+        finally
+        {
+            authenticationService.close();
+        }
     }
 
     @Test
@@ -145,6 +200,34 @@ class WebAuthenticationServiceTest
             server.stop(0);
             requestSecurity.close();
             executor.shutdownNow();
+        }
+    }
+
+    private static final class MutableClock extends Clock
+    {
+        private final AtomicLong mMillis = new AtomicLong(1_000);
+
+        private void advance(Duration duration)
+        {
+            mMillis.addAndGet(duration.toMillis());
+        }
+
+        @Override
+        public ZoneId getZone()
+        {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone)
+        {
+            return this;
+        }
+
+        @Override
+        public Instant instant()
+        {
+            return Instant.ofEpochMilli(mMillis.get());
         }
     }
 }

@@ -27,13 +27,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class WebAuthenticationService implements AutoCloseable
 {
     private static final int MAXIMUM_SOURCE_KEY_CHARACTERS = 128;
+    private static final Duration DESKTOP_HANDOFF_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration EXECUTOR_SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
     private final WebAccessService mAccessService;
     private final WebAccessSessionManager mSessionManager;
     private final LoginThrottle mLoginThrottle;
     private final AccountLoginAdmissionLimiter mAdmissionLimiter;
     private final ThreadPoolExecutor mLoginExecutor;
+    private final Clock mClock;
     private final AtomicBoolean mClosed = new AtomicBoolean();
+    private DesktopHandoff mDesktopHandoff;
 
     public WebAuthenticationService(WebAccessService accessService)
     {
@@ -49,6 +52,7 @@ public final class WebAuthenticationService implements AutoCloseable
         mAccessService = Objects.requireNonNull(accessService, "Web access service cannot be null");
         mSessionManager = Objects.requireNonNull(sessionManager, "Web session manager cannot be null");
         Clock actualClock = Objects.requireNonNull(clock, "Clock cannot be null");
+        mClock = actualClock;
         mLoginThrottle = new LoginThrottle(throttleConfiguration, actualClock);
         mAdmissionLimiter = new AccountLoginAdmissionLimiter(admissionConfiguration, actualClock);
 
@@ -124,6 +128,46 @@ public final class WebAuthenticationService implements AutoCloseable
         return mSessionManager.resolve(sessionId, mAccessService);
     }
 
+    /** Arms one short-lived administrator sign-in for the local desktop Web button. */
+    public synchronized boolean armDesktopAdministratorHandoff()
+    {
+        WebAccessAccount account = !mClosed.get() ? mAccessService.primaryAdmin().orElse(null) : null;
+        mDesktopHandoff = account != null ?
+            new DesktopHandoff(account, mClock.millis()) : null;
+        return account != null;
+    }
+
+    /** Consumes the pending desktop sign-in before creating an ordinary browser session. */
+    public synchronized Optional<WebAccessSession> redeemDesktopAdministratorHandoff(String existingSessionId)
+    {
+        DesktopHandoff handoff = mDesktopHandoff;
+        mDesktopHandoff = null;
+        long now = mClock.millis();
+
+        if(handoff == null || mClosed.get() || now < handoff.armedAt() ||
+            now - handoff.armedAt() >= DESKTOP_HANDOFF_TIMEOUT.toMillis() ||
+            !mAccessService.isCurrent(handoff.account()))
+        {
+            return Optional.empty();
+        }
+
+        Optional<WebAccessSession> session =
+            mSessionManager.createOrReuseAtCapacity(handoff.account(), existingSessionId);
+
+        if(session.isPresent() && (!mAccessService.isCurrent(handoff.account()) || mClosed.get()))
+        {
+            mSessionManager.invalidate(session.get().sessionId());
+            return Optional.empty();
+        }
+
+        return session;
+    }
+
+    public synchronized void cancelDesktopAdministratorHandoff()
+    {
+        mDesktopHandoff = null;
+    }
+
     public boolean validateCsrf(String sessionId, String csrfToken)
     {
         return mSessionManager.validateCsrf(sessionId, csrfToken, mAccessService);
@@ -139,8 +183,9 @@ public final class WebAuthenticationService implements AutoCloseable
         return mSessionManager.invalidateAccount(username);
     }
 
-    public void invalidateAllSessions()
+    public synchronized void invalidateAllSessions()
     {
+        cancelDesktopAdministratorHandoff();
         mSessionManager.invalidateAll();
     }
 
@@ -251,6 +296,7 @@ public final class WebAuthenticationService implements AutoCloseable
         }
 
         mSessionManager.close();
+        cancelDesktopAdministratorHandoff();
         mLoginThrottle.clear();
         mAdmissionLimiter.clear();
     }
@@ -298,6 +344,10 @@ public final class WebAuthenticationService implements AutoCloseable
             return "LoginResult[status=" + status + ", session=" +
                 (session.isPresent() ? "<redacted>" : "empty") + ", retryAfterMillis=" + retryAfterMillis + "]";
         }
+    }
+
+    private record DesktopHandoff(WebAccessAccount account, long armedAt)
+    {
     }
 
     private final class LoginTask implements Runnable
