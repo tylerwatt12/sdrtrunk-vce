@@ -12,11 +12,14 @@
 package io.github.dsheirer.gui.configuration.channel;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.ViewWebP25BandplanOverrideRequest;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
@@ -31,6 +34,8 @@ final class P25BandplanOverrideControl extends HBox
     private final P25BandplanOverrideRegistry mRegistry;
     private final CheckBox mEnabled = new CheckBox("Use P25 bandplan override");
     private final Label mStatus = new Label();
+    private final Button mCreate = new Button("Create override");
+    private final Runnable mRegistryListener = this::updateStatus;
     private final ChangeListener<P25SiteIdentity> mIdentityListener =
         (observable, oldValue, newValue) -> updateStatus();
     private Channel mChannel;
@@ -47,7 +52,17 @@ final class P25BandplanOverrideControl extends HBox
             modified.run();
         });
         mStatus.setStyle("-fx-border-color: -fx-box-border; -fx-border-radius: 3; -fx-padding: 4 8 4 8;");
-        getChildren().addAll(mEnabled, mStatus);
+        mCreate.setTooltip(new Tooltip("Create a site-scoped override in the web editor"));
+        mCreate.setOnAction(event -> {
+            P25SiteIdentity identity = mChannel != null ? mChannel.getP25SiteIdentity() : null;
+
+            if(identity != null)
+            {
+                MyEventBus.getGlobalEventBus().post(new ViewWebP25BandplanOverrideRequest(identity));
+            }
+        });
+        mRegistry.addChangeListener(mRegistryListener);
+        getChildren().addAll(mEnabled, mStatus, mCreate);
         updateStatus();
     }
 
@@ -70,6 +85,7 @@ final class P25BandplanOverrideControl extends HBox
 
     void dispose()
     {
+        mRegistry.removeChangeListener(mRegistryListener);
         setChannel(null);
     }
 
@@ -96,10 +112,15 @@ final class P25BandplanOverrideControl extends HBox
             boolean visible = !mEnabled.isDisabled() && mEnabled.isSelected();
             mStatus.setManaged(visible);
             mStatus.setVisible(visible);
+            boolean matched = visible && mRegistry.hasMatch(
+                mChannel != null ? mChannel.getP25SiteIdentity() : null);
+            boolean createVisible = visible && !matched;
+            mCreate.setManaged(createVisible);
+            mCreate.setVisible(createVisible);
+            mCreate.setDisable(mChannel == null || mChannel.getP25SiteIdentity() == null);
 
             if(visible)
             {
-                boolean matched = mRegistry.hasMatch(mChannel != null ? mChannel.getP25SiteIdentity() : null);
                 mStatus.setText(matched ? ACTIVE : FALLBACK);
                 mStatus.setTextFill(Color.web(matched ? "#2E9D55" : "#D9534F"));
             }

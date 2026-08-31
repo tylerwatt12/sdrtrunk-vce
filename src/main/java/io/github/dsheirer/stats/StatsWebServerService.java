@@ -34,6 +34,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -1006,6 +1007,23 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath(aliasListId, aliasId));
+    }
+
+    /**
+     * Arms the one-use local administrator sign-in and opens a site-scoped P25 bandplan override draft.
+     */
+    public synchronized URI createDesktopAdministratorP25BandplanOverrideHandoffUri(P25SiteIdentity identity)
+    {
+        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity);
+        StatsWebNavigationState navigation = getNavigationState();
+
+        if(!navigation.running() || mWebAuthenticationService == null ||
+            !mWebAuthenticationService.armDesktopAdministratorHandoff())
+        {
+            return null;
+        }
+
+        return navigation.baseUri().resolve(handoffPath);
     }
 
     public synchronized void cancelDesktopAdministratorHandoff()

@@ -20,6 +20,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAccessSession;
@@ -336,6 +337,10 @@ class WebAccessControllersTest
 
             assertThrows(IllegalArgumentException.class,
                 () -> WebSessionHttpController.desktopAliasHandoffPath(0, 41));
+            P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
+            assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH +
+                    "/p25-bandplan-overrides/BEE00/49F/01/01",
+                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site));
             HttpResponse<String> arbitraryRedirect = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "?target=https%3A%2F%2Fattacker.example").GET());
@@ -343,6 +348,14 @@ class WebAccessControllersTest
             HttpResponse<String> malformedAliasTarget = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH + "/aliases/12/41/extra").GET());
             assertEquals(404, malformedAliasTarget.statusCode());
+            HttpResponse<String> malformedP25Target = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
+                    "/p25-bandplan-overrides/100000/49F/01/01").GET());
+            assertEquals(404, malformedP25Target.statusCode());
+            HttpResponse<String> nonHexP25Target = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
+                    "/p25-bandplan-overrides/BEE0+/49F/01/01").GET());
+            assertEquals(404, nonHexP25Target.statusCode());
 
             HttpResponse<String> handoff = send(client,
                 request(origin, WebSessionHttpController.desktopAliasHandoffPath()).GET());
@@ -366,6 +379,14 @@ class WebAccessControllersTest
             assertEquals(303, exactHandoff.statusCode());
             assertEquals("/?view=aliases&list=12&alias=41",
                 exactHandoff.headers().firstValue("Location").orElseThrow());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            HttpResponse<String> p25Handoff = send(client,
+                request(origin, WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site))
+                    .header("Cookie", cookie).GET());
+            assertEquals(303, p25Handoff.statusCode());
+            assertEquals("/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01",
+                p25Handoff.headers().firstValue("Location").orElseThrow());
 
             HttpResponse<String> expiredExactHandoff = send(client,
                 request(origin, WebSessionHttpController.desktopAliasHandoffPath(12, 41))

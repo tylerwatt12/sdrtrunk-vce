@@ -19,6 +19,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -108,6 +109,12 @@ class StatsWebServerServiceLifecycleTest
                 WebSessionHttpController.desktopAliasHandoffPath(aliasListId, 41L)), handoffUri);
             assertNull(handoffUri.getQuery());
             assertNull(handoffUri.getFragment());
+            P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
+            URI p25HandoffUri = service.createDesktopAdministratorP25BandplanOverrideHandoffUri(p25Site);
+            assertEquals(initialOrigin.resolve(
+                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site)), p25HandoffUri);
+            assertNull(p25HandoffUri.getQuery());
+            assertNull(p25HandoffUri.getFragment());
             HttpResponse<String> handoff = client.send(HttpRequest.newBuilder(handoffUri)
                 .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(303, handoff.statusCode());

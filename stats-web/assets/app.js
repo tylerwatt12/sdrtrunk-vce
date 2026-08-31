@@ -19,6 +19,9 @@ const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revi
 const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
   'createAlias', 'createListName', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
 ]);
+const P25_OVERRIDE_CREATE_ROUTE_KEYS = Object.freeze([
+  'createP25Override', 'wacn', 'system', 'rfss', 'site'
+]);
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
@@ -15407,6 +15410,36 @@ function p25OverrideNumber(value, divisor) {
   return String(Number((Number(value) / divisor).toFixed(6)));
 }
 
+function p25OverrideCreateRouteProfile(parameters) {
+  if (!parameters || typeof parameters.get !== 'function' || parameters.get('createP25Override') !== '1') {
+    return null;
+  }
+  const hexValue = (name, width, maximum) => {
+    const value = String(parameters.get(name) || '').trim();
+    if (!new RegExp(`^[0-9A-Fa-f]{${width}}$`).test(value)) return null;
+    const parsed = Number.parseInt(value, 16);
+    return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null;
+  };
+  const profile = {
+    wacn: hexValue('wacn', 5, 0xFFFFF),
+    system: hexValue('system', 3, 0xFFF),
+    rfss: hexValue('rfss', 2, 0xFF),
+    site: hexValue('site', 2, 0xFF)
+  };
+  return Object.values(profile).every((value) => value !== null) ? profile : null;
+}
+
+function p25OverrideSameScope(left, right) {
+  if (!left || !right) return false;
+  return ['wacn', 'system', 'rfss', 'site'].every((field) =>
+    Number.isInteger(left[field]) && left[field] === right[field]);
+}
+
+function clearP25OverrideCreateRoute() {
+  P25_OVERRIDE_CREATE_ROUTE_KEYS.forEach((key) => route.delete(key));
+  window.history.replaceState({}, '', currentHref());
+}
+
 function p25OverrideBandRow(band = null) {
   const row = node('div', 'p25-override-band-row');
   const type = node('select');
@@ -15571,8 +15604,35 @@ async function renderAdminP25BandplanOverrides() {
 
   try {
     const documentValue = await requestP25BandplanOverrides();
-    list.append(...documentValue.profiles.map(p25OverrideProfileCard));
-    message.textContent = '';
+    const createRequested = route.has('createP25Override');
+    const requestedProfile = p25OverrideCreateRouteProfile(route);
+    let requestedCard = null;
+    const cards = documentValue.profiles.map((profile) => {
+      const card = p25OverrideProfileCard(profile);
+      if (requestedProfile && p25OverrideSameScope(profile, requestedProfile)) requestedCard = card;
+      return card;
+    });
+    list.append(...cards);
+    if (createRequested) {
+      if (requestedProfile) {
+        if (!requestedCard) {
+          requestedCard = p25OverrideProfileCard(requestedProfile);
+          list.prepend(requestedCard);
+          message.textContent = 'Site override prepared. Enter its replacement bands, then save.';
+        } else {
+          message.textContent = 'This site already has an override. Review its replacement bands before saving.';
+        }
+        window.requestAnimationFrame(() => {
+          requestedCard.scrollIntoView({ block: 'center' });
+          requestedCard.querySelector('[data-p25-override-field="identifier"]')?.focus({ preventScroll: true });
+        });
+      } else {
+        message.textContent = 'The site override could not be prepared because its P25 identity is invalid.';
+      }
+      clearP25OverrideCreateRoute();
+    } else {
+      message.textContent = '';
+    }
     add.disabled = false;
     save.disabled = false;
   } catch (error) {

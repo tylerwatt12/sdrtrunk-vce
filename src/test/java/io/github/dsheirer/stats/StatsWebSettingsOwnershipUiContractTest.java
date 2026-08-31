@@ -24,6 +24,9 @@ class StatsWebSettingsOwnershipUiContractTest
         String request = function(source, "async function requestSiteSettings(method = 'GET', settings = null, revision = null)");
         String bandplanRequest = function(source,
             "async function requestP25BandplanOverrides(method = 'GET', profiles = null)");
+        String bandplanPage = function(source, "async function renderAdminP25BandplanOverrides()");
+        String bandplanPrefill = function(source, "function p25OverrideCreateRouteProfile(parameters)");
+        String clearBandplanPrefill = function(source, "function clearP25OverrideCreateRoute()");
         String personal = function(source, "async function renderSettings()");
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
         String scannerPlayback = function(source, "function openScannerPlaybackSettings(returnFocusSelector = null)");
@@ -36,6 +39,15 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
         assertTrue(bandplanRequest.contains("jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides'"));
         assertFalse(bandplanRequest.contains("requestJson("));
+        assertTrue(bandplanPrefill.contains("parameters.get('createP25Override') !== '1'"));
+        assertTrue(bandplanPrefill.contains("wacn: hexValue('wacn', 5, 0xFFFFF)"));
+        assertTrue(bandplanPrefill.contains("rfss: hexValue('rfss', 2, 0xFF)"));
+        assertTrue(bandplanPrefill.contains("site: hexValue('site', 2, 0xFF)"));
+        assertTrue(bandplanPage.contains("p25OverrideSameScope(profile, requestedProfile)"));
+        assertTrue(bandplanPage.contains("list.prepend(requestedCard)"));
+        assertTrue(bandplanPage.contains("Enter its replacement bands, then save."));
+        assertTrue(bandplanPage.contains("clearP25OverrideCreateRoute()"));
+        assertTrue(clearBandplanPrefill.contains("window.history.replaceState({}, '', currentHref())"));
         assertTrue(site.contains("confirmed?.revision"));
         assertTrue(site.contains("error?.code === 'site_settings_conflict'"));
         assertTrue(site.contains("Current server values were reloaded"));

@@ -8,6 +8,7 @@ package io.github.dsheirer.web.http;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
@@ -17,6 +18,7 @@ import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -36,6 +38,8 @@ public final class WebSessionHttpController
     public static final String LOGOUT_PATH = "/api/v1/auth/logout";
     public static final String DESKTOP_HANDOFF_PATH = "/api/v1/auth/desktop-handoff";
     private static final String DESKTOP_ALIAS_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/aliases";
+    private static final String DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH =
+        DESKTOP_HANDOFF_PATH + "/p25-bandplan-overrides";
     private static final Logger mLog = LoggerFactory.getLogger(WebSessionHttpController.class);
 
     private final WebAccessService mAccessService;
@@ -303,6 +307,14 @@ public final class WebSessionHttpController
         return DESKTOP_ALIAS_HANDOFF_PATH;
     }
 
+    /** Fixed desktop handoff path for creating one site-scoped P25 bandplan override. */
+    public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity)
+    {
+        Objects.requireNonNull(identity, "P25 site identity cannot be null");
+        return DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + String.format(Locale.ROOT, "/%05X/%03X/%02X/%02X",
+            identity.wacn(), identity.system(), identity.rfss(), identity.site());
+    }
+
     private static String desktopHandoffRedirectLocation(String rawPath)
     {
         if(DESKTOP_HANDOFF_PATH.equals(rawPath))
@@ -313,6 +325,31 @@ public final class WebSessionHttpController
         if(DESKTOP_ALIAS_HANDOFF_PATH.equals(rawPath))
         {
             return "/?view=aliases";
+        }
+
+        String p25Prefix = DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + "/";
+        if(rawPath != null && rawPath.startsWith(p25Prefix))
+        {
+            String[] segments = rawPath.substring(p25Prefix.length()).split("/", -1);
+            if(segments.length != 4 || !isFixedHex(segments[0], 5) || !isFixedHex(segments[1], 3) ||
+                !isFixedHex(segments[2], 2) || !isFixedHex(segments[3], 2))
+            {
+                return null;
+            }
+
+            try
+            {
+                P25SiteIdentity identity = new P25SiteIdentity(Integer.parseInt(segments[0], 16),
+                    Integer.parseInt(segments[1], 16), Integer.parseInt(segments[2], 16),
+                    Integer.parseInt(segments[3], 16));
+                return String.format(Locale.ROOT,
+                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X",
+                    identity.wacn(), identity.system(), identity.rfss(), identity.site());
+            }
+            catch(IllegalArgumentException exception)
+            {
+                return null;
+            }
         }
 
         String prefix = DESKTOP_ALIAS_HANDOFF_PATH + "/";
@@ -341,6 +378,28 @@ public final class WebSessionHttpController
         {
             return null;
         }
+    }
+
+    private static boolean isFixedHex(String value, int width)
+    {
+        if(value == null || value.length() != width)
+        {
+            return false;
+        }
+
+        for(int x = 0; x < value.length(); x++)
+        {
+            char character = value.charAt(x);
+            boolean digit = character >= '0' && character <= '9';
+            boolean upperHex = character >= 'A' && character <= 'F';
+            boolean lowerHex = character >= 'a' && character <= 'f';
+            if(!digit && !upperHex && !lowerHex)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,

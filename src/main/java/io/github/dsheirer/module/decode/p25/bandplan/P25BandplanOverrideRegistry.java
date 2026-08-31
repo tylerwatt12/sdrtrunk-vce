@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,6 +34,7 @@ public class P25BandplanOverrideRegistry
     private static final int MAXIMUM_PROFILE_COUNT = 256;
     private static final Logger mLog = LoggerFactory.getLogger(P25BandplanOverrideRegistry.class);
     private final ApplicationSettingsStore mSettingsStore;
+    private final CopyOnWriteArrayList<Runnable> mChangeListeners = new CopyOnWriteArrayList<>();
     private volatile Snapshot mSnapshot = Snapshot.empty();
 
     public P25BandplanOverrideRegistry(ApplicationSettingsStore settingsStore)
@@ -93,6 +95,36 @@ public class P25BandplanOverrideRegistry
 
         mSettingsStore.save(ApplicationSettingsStore.P25_BANDPLAN_OVERRIDES, replacement.profiles());
         mSnapshot = replacement;
+        notifyChangeListeners();
+    }
+
+    /** Adds a lightweight observer for successful administrator changes. */
+    public void addChangeListener(Runnable listener)
+    {
+        if(listener != null)
+        {
+            mChangeListeners.addIfAbsent(listener);
+        }
+    }
+
+    public void removeChangeListener(Runnable listener)
+    {
+        mChangeListeners.remove(listener);
+    }
+
+    private void notifyChangeListeners()
+    {
+        for(Runnable listener: mChangeListeners)
+        {
+            try
+            {
+                listener.run();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("P25 bandplan override change listener failed", exception);
+            }
+        }
     }
 
     public Optional<P25BandplanOverrideProfile> find(P25SiteIdentity identity)
