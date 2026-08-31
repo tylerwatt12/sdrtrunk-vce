@@ -84,10 +84,15 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(helper.contains("renderIsCurrent(renderContext) && host.isConnected"));
         assertTrue(helper.contains("host.setAttribute('role', 'region')"));
         assertTrue(helper.contains("host.setAttribute('aria-label', title)"));
+        assertTrue(helper.contains("const titleActions = sectionActionHost(options.action || null)"));
+        assertTrue(helper.contains("const tableController = {}"));
         assertTrue(helper.contains("loading.setAttribute('role', 'status')"));
+        assertTrue(helper.contains("cleanupTableLayoutMenu(tableController)"));
         assertTrue(helper.contains("failure.querySelector('.async-section-retry')?.focus()"));
+        assertOrdered(helper, "cleanupTableLayoutMenu(tableController);", "host.replaceChildren(loading);");
         assertOrdered(helper, "replaceAsyncContent(host, present(value));",
             "host.setAttribute('aria-busy', 'false');");
+        assertTrue(helper.contains("titleActions, tableController"));
         assertTrue(apiPage.contains("pageLifecycle.decodeOffsetPage(response, path)"));
     }
 

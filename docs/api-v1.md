@@ -336,9 +336,9 @@ Central administration uses:
 - `GET, PUT /api/v1/admin/access`
 - `GET, PUT /api/v1/admin/site-settings`
 
-The site-settings document is intentionally limited to the three receiver-wide settings that change everyone's
-experience: idle-call detail retention, clearing voice decode quality at call end, and traffic-grant age-out in
-milliseconds. `GET` returns the complete document with a quoted positive `ETag`. `PUT` replaces all three values and
+The site-settings document contains only the receiver-wide traffic-grant age-out value in milliseconds. Retaining the
+last call on an idle Live row and clearing idle voice quality are per-user Live presentation preferences, not shared
+site settings. `GET` returns the complete document with a quoted positive `ETag`. `PUT` replaces the age-out value and
 requires the exact quoted revision in `If-Match`; a stale revision returns `409` with the current complete document
 and `ETag`.
 

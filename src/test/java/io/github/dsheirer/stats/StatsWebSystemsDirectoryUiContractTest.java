@@ -52,8 +52,11 @@ class StatsWebSystemsDirectoryUiContractTest
 
         assertTrue(systems.contains("createAsyncSection('System Directory'"));
         assertTrue(systems.contains("systemsDirectory.load(apiPage, pageParameters())"));
+        assertTrue(systems.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(systems.contains("controller: directory.tableController"));
         assertTrue(systems.indexOf("beginPage(renderContext") < systems.indexOf("await directory.load("));
         assertTrue(presenter.contains("pager(page, 'bottom', 'Systems')"));
+        assertTrue(presenter.contains("...tableOptions"));
         assertTrue(presenter.contains("label: 'Details'"));
         assertTrue(presenter.contains("label: 'Inventory'"));
         assertFalse(presenter.contains("label: 'WACN / Net'"));

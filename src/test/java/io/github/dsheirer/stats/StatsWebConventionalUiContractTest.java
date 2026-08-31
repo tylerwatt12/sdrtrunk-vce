@@ -95,6 +95,8 @@ class StatsWebConventionalUiContractTest
         assertTrue(details.contains("`NAC ${hex(row.nac, 3)}`"));
         assertTrue(list.contains("createAsyncSection('Conventional Channels'"));
         assertTrue(list.contains("apiPage('/api/v1/conventional-channels', pageParameters())"));
+        assertTrue(list.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(list.contains("controller: directory.tableController"));
         assertTrue(list.indexOf("beginPage(renderContext") < list.indexOf("await directory.load("));
         assertTrue(detail.contains("const channel = data?.channel"));
         assertTrue(detail.contains("decoderDisplay(channel.decoder)"));

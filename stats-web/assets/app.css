@@ -973,33 +973,38 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .summary-band {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
   background: var(--surface);
-  border: 1px solid var(--line);
 }
 
 .metric {
   min-width: 0;
   min-height: 62px;
-  padding: 9px 11px;
-  border-right: 1px solid var(--line);
-}
-
-.metric:last-child {
-  border-right: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
 }
 
 .metric span {
+  min-height: 2.5em;
   display: block;
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.25;
   text-transform: uppercase;
 }
 
 .metric strong {
   display: block;
   max-width: 100%;
-  margin-top: 4px;
   font-size: 22px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -3857,7 +3862,9 @@ button.receiver-health-section-toggle:focus-visible {
 }
 
 .receiver-health-overview > .summary-band {
-  border-width: 0 1px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-right: 1px solid var(--line);
+  border-left: 1px solid var(--line);
 }
 
 .receiver-health-overview-state {
@@ -5167,23 +5174,77 @@ th.numeric {
 }
 
 .alias-editor-filter-toolbar {
+  display: grid;
+  align-items: stretch;
+  gap: 9px;
   margin-bottom: 10px;
 }
 
-.alias-editor-filter-toolbar .alias-filter:not(.alias-search-filter) {
-  min-width: 108px;
-  flex: 1 1 108px;
+.alias-filter-group {
+  min-width: 0;
+  margin: 0;
+  padding: 7px 9px 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.alias-filter-group legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.alias-filter-group-fields {
+  min-width: 0;
+  display: grid;
+  align-items: end;
+  gap: 8px;
+}
+
+.alias-filter-group-identity .alias-filter-group-fields {
+  grid-template-columns: minmax(260px, 2fr) repeat(2, minmax(130px, 1fr)) minmax(160px, 1fr);
+}
+
+.alias-filter-group-behavior .alias-filter-group-fields {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.alias-filter-group-observed .alias-filter-group-fields {
+  grid-template-columns: repeat(2, minmax(190px, 240px)) minmax(0, 1fr);
+}
+
+.alias-editor-filter-toolbar .alias-filter {
+  width: 100%;
+  min-width: 0;
+}
+
+.alias-editor-filter-toolbar .alias-filter select,
+.alias-editor-filter-toolbar .alias-filter input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .alias-editor-filter-toolbar .alias-date-filter {
-  min-width: 178px;
-  flex: 1 1 178px;
+  width: auto;
 }
 
 .alias-editor-filter-toolbar .alias-date-filter input[type="datetime-local"] {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+
+.alias-filter-actions {
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
 }
 
 .alias-editor-table-section {
@@ -5583,7 +5644,14 @@ th.numeric {
   gap: 10px;
 }
 
-.observed-talkgroup-detail > .section {
+.observed-talkgroup-detail-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.observed-talkgroup-detail-column > .section {
   margin: 0;
 }
 
@@ -5726,8 +5794,21 @@ th.numeric {
     grid-template-columns: 1fr;
   }
 
-  .metric:nth-child(2n) {
-    border-right: 0;
+  .alias-filter-group-identity .alias-filter-group-fields,
+  .alias-filter-group-behavior .alias-filter-group-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .alias-filter-group-identity .alias-search-filter {
+    grid-column: 1 / -1;
+  }
+
+  .alias-filter-group-observed .alias-filter-group-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .alias-filter-actions {
+    grid-column: 1 / -1;
   }
 
   .key-values {
@@ -5996,7 +6077,8 @@ th.numeric {
   }
 
   .receiver-health-overview > .summary-band {
-    border-width: 1px 0 0;
+    border: 0;
+    border-top: 1px solid var(--line);
   }
 
   .receiver-health-timing,
@@ -6048,10 +6130,6 @@ th.numeric {
     grid-template-columns: 1fr;
   }
 
-  .dashboard-summary-section .metric {
-    border-right: 0;
-  }
-
   .metric-guide-list {
     grid-template-columns: 1fr;
     gap: 2px;
@@ -6076,8 +6154,24 @@ th.numeric {
     grid-template-columns: 1fr;
   }
 
-  .metric {
-    border-right: 0;
+  .alias-filter-group-identity .alias-filter-group-fields,
+  .alias-filter-group-behavior .alias-filter-group-fields,
+  .alias-filter-group-observed .alias-filter-group-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .alias-filter-group-identity .alias-search-filter,
+  .alias-filter-actions {
+    grid-column: 1;
+  }
+
+  .alias-filter-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .alias-filter-actions > * {
+    flex: 1 1 auto;
   }
 
   .credits-list {

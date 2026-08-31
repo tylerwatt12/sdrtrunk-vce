@@ -87,6 +87,13 @@ class AliasAdminHttpControllerTest
                     "revision", revision, "name", "County P25", "family", "p25"))))));
             long aliasListId = createdList.get("alias_list_id").longValue();
             revision = createdList.get("revision").longValue();
+            JsonNode initialCustomCatalog = json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
+            JsonNode initialCustomPolicy = aliasList(initialCustomCatalog, aliasListId)
+                .get("unmatched_talkgroup_policy");
+            assertFalse(initialCustomPolicy.get("recordable").booleanValue());
+            assertTrue(initialCustomPolicy.get("broadcast_channels").isEmpty());
+            assertTrue(initialCustomPolicy.get("scan_list_ids").isEmpty());
 
             JsonNode createdScanList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH).POST(HttpRequest.BodyPublishers.ofString(

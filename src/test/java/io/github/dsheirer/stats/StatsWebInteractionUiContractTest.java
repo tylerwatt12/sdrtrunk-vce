@@ -264,7 +264,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String css = readText(APP_CSS);
-        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));"));
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));"));
         assertTrue(css.contains(".metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
         assertTrue(css.contains(".resizable-table th:last-child .column-resizer {\n  right: 0;"));
@@ -348,10 +348,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function talkgroupActivityChart(response, seriesConfigurations, ariaLabel)")
             .contains("const largest = configurations.reduce"));
         assertTrue(source.contains("section('Logical Call Activity'"));
-        assertTrue(source.contains("section('Retained Signaling Observations'"));
+        assertTrue(source.contains("tableSection('Retained Signaling Observations'"));
         assertTrue(source.contains("section('Call Activity'"));
-        assertTrue(source.contains("section('Collected Signaling Observations'"));
-        assertTrue(source.contains("section('Retained Signaling Totals'"));
+        assertTrue(source.contains("tableSection('Collected Signaling Observations'"));
+        assertTrue(source.contains("tableSection('Retained Signaling Totals'"));
         assertTrue(source.contains("TALKGROUP_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("TALKGROUP_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
@@ -432,11 +432,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(channels.contains("createAsyncSection('Channels'"));
         assertTrue(channels.contains("apiPage(siteApiPath(site.guid, 'channels'), pageParameters())"));
         assertTrue(channels.contains("pagedTableContent(page"));
-        assertTrue(channels.contains("tableOptions: { sortable: false, serverSort: false }"));
+        assertTrue(channels.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(channels.contains("controller: directory.tableController"));
         assertTrue(neighbors.contains("createAsyncSection('Neighbors'"));
         assertTrue(neighbors.contains("apiPage(siteApiPath(site.guid, 'neighbors'), pageParameters())"));
         assertTrue(neighbors.contains("pagedTableContent(page"));
-        assertTrue(neighbors.contains("tableOptions: { sortable: false, serverSort: false }"));
+        assertTrue(neighbors.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(neighbors.contains("controller: directory.tableController"));
         assertTrue(site.contains("renderSiteChannels(site, renderContext)"));
         assertTrue(site.contains("renderSiteNeighbors(site, renderContext)"));
         assertTrue(system.contains("const tabItems = systemTabItems(system)"));
@@ -455,8 +457,6 @@ class StatsWebInteractionUiContractTest
         String pager = function(source, "function pager(page, position = 'bottom', itemLabel = 'Rows')");
         String content = function(source,
             "function pagedTableContent(page, columns, tableType, options = {})");
-        String pagedSection = function(source,
-            "function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {})");
         String system = function(source, "async function renderSystem()");
         String css = readText(APP_CSS);
 
@@ -465,7 +465,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(pager.contains("aria-label"));
         assertTrue(content.contains("if (options.topPager) result.append(pager(page, 'top', itemLabel))"));
         assertTrue(content.contains("result.append(pager(page, 'bottom', itemLabel))"));
-        assertTrue(pagedSection.contains("section(title, pagedTableContent(page, columns, tableType, options), action)"));
+        assertTrue(source.contains("const actions = sectionActionHost(action);"));
+        assertTrue(source.contains("layoutMenuHost: actions }"));
+        assertTrue(source.contains(
+            "section(title, pagedTableContent(page, columns, tableType, { ...options, tableOptions }), actions)"));
         assertEquals(3, system.split("topPager: true", -1).length - 1);
         assertTrue(css.contains(".pager-top {\n  border-top: 0;\n  border-bottom: 1px solid var(--line);"));
     }
@@ -1126,8 +1129,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("iconGlyph('icon-live-presentation')"));
         assertTrue(systems.contains("openLivePresentationSettings('#live-presentation-settings')"));
         assertTrue(systems.contains("section('Live Systems', host, titleActions)"));
-        assertFalse(events.contains("layoutMenuHost"));
-        assertFalse(messages.contains("layoutMenuHost"));
+        assertTrue(events.contains("layoutMenuHost: eventToolbar"));
+        assertTrue(messages.contains("layoutMenuHost: toolbar"));
         assertTrue(html.contains("id=\"icon-columns\""));
         assertTrue(html.contains("id=\"icon-live-presentation\""));
         assertTrue(events.contains("['events', 'messages', 'channel']"));

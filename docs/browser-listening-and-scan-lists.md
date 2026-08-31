@@ -95,9 +95,9 @@ New channels created in the Channel editor and new RadioReference trunked-site i
 factory Alias List. Another compatible Alias List can be selected instead. RadioReference agency-frequency imports
 do not assign an Alias List automatically.
 
-A newly created custom Alias List initially sends unmatched talkgroups to whichever published Scan List is currently
-marked as default. Changing the default designation later does not move existing Alias or unmatched-talkgroup
-memberships.
+A newly created custom Alias List starts with no Scan List, recording, or external-streaming defaults. An
+administrator can opt into those routes through Alias List Defaults. The four canonical factory Alias Lists retain
+their unmatched-talkgroup route to `Default`, including when a canonical list is manually recreated.
 
 With these factory settings, an Alias List does not need an entry for every talkgroup. Clear calls from unmatched
 talkgroups are eligible for the `Default` Scan List through the Alias List Defaults.

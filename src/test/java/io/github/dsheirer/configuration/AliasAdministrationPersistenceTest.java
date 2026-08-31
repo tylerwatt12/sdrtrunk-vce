@@ -56,6 +56,33 @@ class AliasAdministrationPersistenceTest
     Path mTemporaryFolder;
 
     @Test
+    void customAliasListStartsWithoutPersistedUnmatchedScanListRouting() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("custom-list-default-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25,
+                service.currentRevision()).aliasListId();
+
+            assertTrue(service.getAliasListDefaults(aliasListId).defaults().scanListIds().isEmpty());
+            assertTrue(new ScanListDatabaseStore(database).loadConfiguration()
+                .scanListIdsForUnmatchedTalkgroups(aliasListId).isEmpty());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
     void createCommitsCanonicalIdentityBeforePublishingTheAlias() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("publish-after-commit-data");

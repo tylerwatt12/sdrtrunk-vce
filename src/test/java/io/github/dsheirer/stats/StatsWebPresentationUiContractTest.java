@@ -47,6 +47,12 @@ class StatsWebPresentationUiContractTest
         String scanList = function(source,
             "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
         String aliases = function(source, "async function renderAliases()");
+        String siteTalkgroups = function(source, "async function siteTopTalkgroupsSection(site)");
+        String siteChannels = function(source, "async function renderSiteChannels(site, renderContext)");
+        String siteNeighbors = function(source, "async function renderSiteNeighbors(site, renderContext)");
+        String conventional = function(source, "async function renderConventional()");
+        String liveMessages = function(source, "function liveMessagesPane()");
+        String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
 
         assertTrue(source.contains("trigger.append(iconGlyph('icon-columns'))"));
         assertTrue(source.contains("trigger.setAttribute('aria-label', 'Choose table columns')"));
@@ -59,6 +65,19 @@ class StatsWebPresentationUiContractTest
         assertTrue(discover.contains("section('Observed Talkgroups', host, actions)"));
         assertTrue(scanList.contains("layoutMenuHost: actions"));
         assertTrue(aliases.contains("layoutMenuHost: actions"));
+        assertTrue(source.contains("const actions = sectionActionHost(action);"));
+        assertTrue(source.contains("layoutMenuHost: actions }"));
+        assertTrue(siteTalkgroups.contains("const titleActions = sectionActionHost(rangeControl.controls)"));
+        assertTrue(siteTalkgroups.contains("controller: tableController, layoutMenuHost: titleActions"));
+        assertTrue(siteTalkgroups.indexOf("cleanupTableLayoutMenu(tableController)") <
+            siteTalkgroups.indexOf("host.replaceChildren(node('div', 'loading'"));
+        assertTrue(siteChannels.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(siteNeighbors.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(conventional.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(liveMessages.contains("layoutMenuHost: toolbar"));
+        assertTrue(liveEvents.contains("layoutMenuHost: eventToolbar"));
+        assertTrue(source.contains("function tableSection(title, rows, columns"));
+        assertTrue(source.contains("{ ...options, layoutMenuHost: actions }"));
     }
 
     @Test
@@ -85,8 +104,28 @@ class StatsWebPresentationUiContractTest
         assertTrue(detail.contains("stream_submitted_logical_call_count"));
         assertTrue(detail.contains("encrypted_logical_call_count"));
         assertTrue(filters.contains("'alias-filter alias-date-filter'"));
+        assertTrue(filters.contains("filterGroup('Find aliases', 'alias-filter-group-identity'"));
+        assertTrue(filters.contains("filterGroup('Call handling', 'alias-filter-group-behavior'"));
+        assertTrue(filters.contains("filterGroup('Observed activity', 'alias-filter-group-observed'"));
         assertTrue(css.contains(".alias-editor-filter-toolbar .alias-date-filter"));
         assertTrue(css.contains("width: 100%;\n  min-width: 0;\n  box-sizing: border-box;"));
+    }
+
+    @Test
+    void usesReusableMetricCardsAndIndependentObservedDetailColumns() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+        String css = readText(APP_CSS);
+        String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
+
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"));
+        assertTrue(css.contains("background: var(--surface-2);\n  border: 1px solid var(--line);\n" +
+            "  border-radius: 4px;"));
+        assertTrue(css.contains(".metric span {\n  min-height: 2.5em;"));
+        assertTrue(detail.contains("node('div', 'observed-talkgroup-detail-column')"));
+        assertTrue(detail.contains("wrapper.append(identityColumn, activityColumn)"));
+        assertTrue(css.contains(".observed-talkgroup-detail-column {"));
+        assertTrue(css.contains("flex-direction: column;"));
     }
 
     private static String function(String source, String signature)

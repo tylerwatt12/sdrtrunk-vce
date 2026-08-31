@@ -419,9 +419,14 @@ public final class AliasAdministrationService
             AliasListDefinition definition = new AliasListDefinition(preparedName, family);
             definition.setId(nextAliasListId());
             aliasModel().addAliasListDefinition(definition);
-            scanListModel().replaceUnmatchedTalkgroupMemberships(definition.getId(),
-                Set.of(scanListModel().defaultScanList().getId()));
-            return new MutationTarget(definition, List.of(), 1, PublicationMode.SCAN_LISTS_THEN_ALIAS_LISTS);
+            boolean factoryDefault = isFactoryDefaultAliasList(preparedName, family);
+            if(factoryDefault)
+            {
+                scanListModel().replaceUnmatchedTalkgroupMemberships(definition.getId(),
+                    Set.of(scanListModel().defaultScanList().getId()));
+            }
+            return new MutationTarget(definition, List.of(), 1, factoryDefault ?
+                PublicationMode.SCAN_LISTS_THEN_ALIAS_LISTS : PublicationMode.ALIAS_LISTS);
         });
     }
 
@@ -1263,6 +1268,11 @@ public final class AliasAdministrationService
     {
         return family == AliasListFamily.P25 || family == AliasListFamily.DMR || family == AliasListFamily.NXDN ||
             family == AliasListFamily.NBFM;
+    }
+
+    private static boolean isFactoryDefaultAliasList(String name, AliasListFamily family)
+    {
+        return family != null && family.getDefaultAliasListName().equalsIgnoreCase(name);
     }
 
     private void validateBulkStreams(BulkEdit edit)

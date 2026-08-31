@@ -570,8 +570,7 @@ class AliasAdministrationServiceTest
             long defaultScanListId = manager.getScanListModel().defaultScanList().getId();
             AliasAdministrationService.MutationResult list = service.createAliasList(
                 "County P25", AliasListFamily.P25, service.currentRevision());
-            assertEquals(Set.of(defaultScanListId),
-                service.getAliasListDefaults(list.aliasListId()).defaults().scanListIds());
+            assertTrue(service.getAliasListDefaults(list.aliasListId()).defaults().scanListIds().isEmpty());
 
             BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             primary.setName("Primary");
@@ -614,6 +613,41 @@ class AliasAdministrationServiceTest
                 new AliasListDefaults(UnmatchedTalkgroupPolicy.DEFAULT, Set.of()), service.currentRevision());
             assertTrue(service.getAlias(talkgroupId).alias().isRecordable());
             assertEquals(Set.of(defaultScanListId), service.getAlias(talkgroupId).scanListIds());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void onlyCanonicalFactoryAliasListsReceiveTheDefaultScanListOnCreation() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("factory-defaults-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long defaultScanListId = manager.getScanListModel().defaultScanList().getId();
+            AliasAdministrationService.MutationResult custom = service.createAliasList(
+                "Default P25 Copy", AliasListFamily.P25, service.currentRevision());
+            assertTrue(service.getAliasListDefaults(custom.aliasListId()).defaults().scanListIds().isEmpty());
+
+            AliasListDefinition factory = manager.getAliasModel().getAliasListDefinition(
+                AliasListFamily.P25.getDefaultAliasListName());
+            AliasAdministrationService.MutationResult deleted = service.deleteAliasList(factory.getId(),
+                custom.revision(), true);
+            AliasAdministrationService.MutationResult recreated = service.createAliasList(
+                "default p25", AliasListFamily.P25, deleted.revision());
+
+            assertEquals(Set.of(defaultScanListId),
+                service.getAliasListDefaults(recreated.aliasListId()).defaults().scanListIds());
         }
         finally
         {

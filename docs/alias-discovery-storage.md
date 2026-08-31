@@ -81,10 +81,11 @@ New tuple admission is independently capped at 100,000 rows per scope; existing 
 Budgeting approximately 250–400 bytes per tuple row and its two indexes gives a conservative saturated estimate of
 25–40 MiB per scope, although normal systems should remain far below that defensive limit.
 
-P25 identity scopes are linked systems, not individual receiver sites. If several receiver contexts for one P25
-WACN/System use different alias lists, each selected list can see the same system-wide observations once that list is
-attached to a context in the scope. DMR and NXDN trunked scopes remain receiver-context owned. Conventional discovery
-uses the existing DMR talkgroup summaries and protocol-neutral hourly call-identity buckets.
+P25 identity scopes combine one linked WACN/System with one durable Alias List. Sites for the same P25 system share
+observations only while they use that same list; sites using different lists write to separate scopes. The Discover
+tab for a selected list therefore shows only observations collected under that list. DMR and NXDN trunked scopes
+remain receiver-context owned. Conventional discovery uses the existing DMR talkgroup summaries and protocol-neutral
+hourly call-identity buckets.
 
 ## Write rate and retention
 
