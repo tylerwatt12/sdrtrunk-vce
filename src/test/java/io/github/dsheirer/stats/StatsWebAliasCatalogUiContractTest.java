@@ -214,9 +214,14 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String bulk = function(source, "function openAliasBulkModal(kind)");
         String columns = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
+        String selectedIds = function(source, "function validatedAliasSelectionIds(selection, maximum = 500)");
 
-        assertTrue(bulk.contains("slice(0, 500)"));
-        assertTrue(bulk.contains("explicitly selected aliases"));
+        assertTrue(bulk.contains("aliasMutationSelectionIds()"));
+        assertTrue(bulk.contains("selected aliases"));
+        assertFalse(bulk.contains("on this page"));
+        assertTrue(selectedIds.contains("ids.length > maximum"));
+        assertTrue(selectedIds.contains("Select no more than ${maximum} aliases"));
+        assertFalse(source.contains("slice(0, 500)"));
         for(String operation: new String[]{"group_operation", "recordable",
             "stream_operation", "broadcast_channels", "alias_list_id", "icon_name", "delete",
             "/api/v1/admin/scan-lists/", "alias_ids"})
@@ -238,6 +243,53 @@ class StatsWebAliasCatalogUiContractTest
         assertFalse(bulk.contains("aliasSelect('groupOperation'"));
         assertTrue(columns.contains("event.shiftKey"));
         assertTrue(source.contains("event.metaKey || event.ctrlKey"));
+    }
+
+    @Test
+    void selectsEveryBoundedMatchAcrossPagesWithoutChangingFilterMeaning() throws Exception
+    {
+        String source = source();
+        String renderer = function(source, "async function renderAliases()");
+        String members = function(source,
+            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
+        String selectAll = function(source,
+            "async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)");
+        String complete = function(source, "function completeAliasSelection(page, maximum = 500)");
+        String extend = function(source, "function extendedAliasSelection(selection, additions, maximum = 500)");
+        String scope = function(source, "function aliasSelectionScopeKey(kind, filters = {})");
+        String applicationRender = function(source, "async function render()");
+        String inactive = function(source, "function clearInactiveAliasSelection(activeTable)");
+        String leave = function(source, "function clearAliasSelectionOutsideEditor(view)");
+
+        assertTrue(selectAll.contains("apiPage('/api/v1/aliases'"));
+        assertTrue(selectAll.contains("offset: 0, limit: ALIAS_BULK_SELECTION_LIMIT"));
+        assertTrue(selectAll.contains("request !== aliasEditorSelectionRequest"));
+        assertTrue(complete.contains("page.has_more"));
+        assertTrue(complete.contains("More than ${maximum} aliases match"));
+        assertTrue(complete.contains("new Set(ids).size !== ids.length"));
+        assertTrue(extend.contains("const next = new Set(selection)"));
+        assertTrue(extend.contains("The previous selection was kept"));
+        assertTrue(scope.contains("'list', 'type', 'matcher', 'group', 'scan_list_id'"));
+        assertTrue(scope.contains("'record', 'stream', 'q', 'evidence', 'use'"));
+        assertFalse(scope.contains("offset"));
+        assertFalse(scope.contains("sort"));
+        assertTrue(renderer.contains("aliasSelectionScopeKey('alias-list', selectionFilters)"));
+        assertTrue(members.contains("aliasSelectionScopeKey('scan-list-members', selectionFilters)"));
+        assertTrue(renderer.contains("synchronizeAliasEditorSelectionScope(selectionScope)"));
+        assertTrue(members.contains("synchronizeAliasEditorSelectionScope(selectionScope)"));
+        assertTrue(renderer.contains("aliasEditorSelection = extendedAliasSelection(aliasEditorSelection"));
+        assertTrue(members.contains("aliasEditorSelection = extendedAliasSelection(aliasEditorSelection"));
+        assertFalse(renderer.contains("visibleIds"));
+        assertFalse(members.contains("visibleIds"));
+        assertTrue(applicationRender.contains("clearAliasSelectionOutsideEditor(effectiveView)"));
+        assertTrue(applicationRender.contains("clearInactiveAliasSelection(false)"));
+        assertTrue(renderer.contains("clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable)"));
+        assertTrue(renderer.contains("if (requestedScanListId) {\n    clearInactiveAliasSelection(false);"));
+        assertTrue(renderer.contains("if (!selectedList) {\n    clearInactiveAliasSelection(false);"));
+        assertTrue(inactive.contains("resetAliasEditorSelection()"));
+        assertTrue(leave.contains("clearInactiveAliasSelection(view === 'aliases')"));
+        int firstButton = source.indexOf("'Select All Matching'");
+        assertTrue(firstButton >= 0 && source.indexOf("'Select All Matching'", firstButton + 1) > firstButton);
     }
 
     @Test
@@ -268,7 +320,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(columns.contains("id: 'alias-list'"));
         assertTrue(columns.contains("id: 'family'"));
         assertTrue(bulk.contains("`Remove from ${scanList.name}`"));
-        assertTrue(remove.contains("slice(0, 500)"));
+        assertTrue(remove.contains("aliasMutationSelectionIds()"));
         assertTrue(remove.contains("/api/v1/admin/scan-lists/${scanList.id}/members"));
         assertTrue(remove.contains("operation: 'remove'"));
         assertTrue(remove.contains("alias_ids: ids"));

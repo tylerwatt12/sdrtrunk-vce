@@ -46,6 +46,11 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(`
+  const ALIAS_BULK_SELECTION_LIMIT = 500;
+  let aliasEditorSelection = new Set();
+  let aliasEditorSelectionScope = null;
+  let aliasEditorSelectionRequest = 0;
+  let aliasEditorLastSelectionIndex = null;
   ${functionSource('function aliasListId(row)')}
   ${functionSource('function mergedAliasLists(publicRows, adminRows = [])')}
   ${functionSource('function aliasOptionLimit(options, name)')}
@@ -54,6 +59,15 @@ vm.runInContext(`
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
+  ${functionSource('function aliasSelectionScopeKey(kind, filters = {})')}
+  ${functionSource('function completeAliasSelection(page, maximum = 500)')}
+  ${functionSource('function extendedAliasSelection(selection, additions, maximum = 500)')}
+  ${functionSource('function validatedAliasSelectionIds(selection, maximum = 500)')}
+  ${functionSource('function resetAliasEditorSelection(scope = null)')}
+  ${functionSource('function synchronizeAliasEditorSelectionScope(scope)')}
+  ${functionSource('function clearInactiveAliasSelection(activeTable)')}
+  ${functionSource('function clearAliasSelectionOutsideEditor(view)')}
+  ${functionSource('async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)')}
   globalThis.mergeLists = mergedAliasLists;
   globalThis.optionLimit = aliasOptionLimit;
   globalThis.cloneOptionValue = aliasCloneOptionValue;
@@ -61,6 +75,23 @@ vm.runInContext(`
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
   globalThis.matcherSummary = aliasMatcherSummary;
+  globalThis.selectionScopeKey = aliasSelectionScopeKey;
+  globalThis.completeSelection = completeAliasSelection;
+  globalThis.extendSelection = extendedAliasSelection;
+  globalThis.validatedSelectionIds = validatedAliasSelectionIds;
+  globalThis.resetSelection = resetAliasEditorSelection;
+  globalThis.synchronizeSelectionScope = synchronizeAliasEditorSelectionScope;
+  globalThis.clearInactiveSelection = clearInactiveAliasSelection;
+  globalThis.clearSelectionOutsideEditor = clearAliasSelectionOutsideEditor;
+  globalThis.selectAllMatching = selectAllMatchingAliases;
+  globalThis.seedSelection = (ids, scope, request = 0) => {
+    aliasEditorSelection = new Set(ids);
+    aliasEditorSelectionScope = scope;
+    aliasEditorSelectionRequest = request;
+    aliasEditorLastSelectionIndex = null;
+  };
+  globalThis.selectionState = () => ({ ids: [...aliasEditorSelection], scope: aliasEditorSelectionScope,
+    request: aliasEditorSelectionRequest });
 `, context);
 
 const adminLists = Array.from({ length: 150 }, (_, offset) => {
@@ -129,3 +160,94 @@ assert.equal(context.matcherSummary({ type: 'talkgroup_range', protocol: 'P25', 
 assert.equal(context.matcherSummary({ type: 'tone_sequence', tones: [
   { tone: 'DTMF_1', duration: 2 }, { tone: 'DTMF_2', duration: 3 }
 ] }), 'Tone Sequence · DTMF_1 ×2 → DTMF_2 ×3');
+
+const selectionFilters = {
+  list: 42, type: 'talkgroup', matcher: 'talkgroup', group: 'Dispatch', scan_list_id: 7,
+  record: 'true', stream: 'Primary', q: 'county', evidence: 'observed', use: 'used',
+  last_activity_before: 2000, last_activity_after: 1000
+};
+const selectionScope = context.selectionScopeKey('alias-list', selectionFilters);
+assert.equal(selectionScope, context.selectionScopeKey('alias-list', {
+  ...selectionFilters, offset: 100, sort: 'calls', direction: 'desc', alias: 99, view: 'activity'
+}), 'Pagination, sorting, modal routes, and view tabs must not change a matching selection scope.');
+assert.notEqual(selectionScope, context.selectionScopeKey('alias-list', { ...selectionFilters, q: 'fire' }));
+assert.notEqual(selectionScope, context.selectionScopeKey('alias-list', { ...selectionFilters, list: 43 }));
+assert.notEqual(selectionScope, context.selectionScopeKey('scan-list-members', selectionFilters));
+
+assert.deepEqual(Array.from(context.completeSelection({
+  rows: [{ alias_id: 11 }, { alias_id: 12 }], has_more: false
+})), [11, 12]);
+assert.throws(() => context.completeSelection({ rows: [{ alias_id: 11 }], has_more: true }),
+  /More than 500 aliases match/);
+assert.throws(() => context.completeSelection({
+  rows: [{ alias_id: 11 }, { alias_id: 11 }], has_more: false
+}), /invalid or duplicate Alias IDs/);
+assert.throws(() => context.completeSelection({
+  rows: Array.from({ length: 501 }, (_, index) => ({ alias_id: index + 1 })), has_more: false
+}), /limited to 500 aliases/);
+assert.deepEqual(Array.from(context.validatedSelectionIds(new Set([21, 22]))), [21, 22]);
+assert.throws(() => context.validatedSelectionIds(new Set(Array.from({ length: 501 }, (_, index) => index + 1))),
+  /no more than 500 aliases/);
+
+const priorSelection = new Set([1, 2]);
+assert.throws(() => context.extendSelection(priorSelection,
+  Array.from({ length: 499 }, (_, index) => index + 3)), /previous selection was kept/);
+assert.deepEqual([...priorSelection], [1, 2], 'An overflowing page add must leave the previous selection unchanged.');
+
+context.seedSelection([31, 32], selectionScope, 4);
+context.synchronizeSelectionScope(selectionScope);
+assert.deepEqual(JSON.parse(JSON.stringify(context.selectionState())), {
+  ids: [31, 32], scope: selectionScope, request: 5
+}, 'Rendering another page in the same scope must retain its selection.');
+context.synchronizeSelectionScope(context.selectionScopeKey('alias-list', { ...selectionFilters, group: 'Fire' }));
+assert.deepEqual(Array.from(context.selectionState().ids), [], 'Changing a matching filter must clear the selection.');
+context.seedSelection([41, 42], selectionScope, 0);
+context.clearSelectionOutsideEditor('aliases');
+assert.deepEqual(Array.from(context.selectionState().ids), [41, 42],
+  'Rendering the Alias editor itself must preserve a same-scope selection.');
+context.clearInactiveSelection(true);
+assert.deepEqual(Array.from(context.selectionState().ids), [41, 42],
+  'An active Alias table must preserve its selection.');
+context.clearInactiveSelection(false);
+assert.deepEqual(Array.from(context.selectionState().ids), [],
+  'An Alias route without a selectable table must clear destructive bulk targets.');
+context.seedSelection([41, 42], selectionScope, 0);
+context.clearSelectionOutsideEditor('dashboard');
+assert.deepEqual(Array.from(context.selectionState().ids), [],
+  'Leaving the Alias editor must clear destructive bulk targets.');
+
+async function verifyAsyncSelectionLifecycle() {
+  const button = () => ({ textContent: 'Select All Matching', disabled: false, isConnected: true });
+  const messages = [];
+  context.seedSelection([99], selectionScope, 0);
+  context.apiPage = async () => ({ rows: [{ alias_id: 11 }, { alias_id: 12 }], has_more: false });
+  await context.selectAllMatching(selectionFilters, selectionScope, button(), (...message) => messages.push(message));
+  assert.deepEqual(Array.from(context.selectionState().ids), [11, 12]);
+  assert.match(messages.at(-1)[0], /Selected all 2 matching aliases/);
+
+  messages.length = 0;
+  context.seedSelection([99], selectionScope, 0);
+  context.apiPage = async () => ({ rows: [{ alias_id: 11 }], has_more: true });
+  await context.selectAllMatching(selectionFilters, selectionScope, button(), (...message) => messages.push(message));
+  assert.deepEqual(Array.from(context.selectionState().ids), [99],
+    'An overflowing Select All response must preserve the prior selection.');
+  assert.match(messages.at(-1)[0], /More than 500 aliases match/);
+
+  messages.length = 0;
+  let resolvePage;
+  context.seedSelection([88], selectionScope, 0);
+  context.apiPage = () => new Promise((resolve) => { resolvePage = resolve; });
+  const pending = context.selectAllMatching(selectionFilters, selectionScope, button(),
+    (...message) => messages.push(message));
+  context.resetSelection(selectionScope);
+  resolvePage({ rows: [{ alias_id: 77 }], has_more: false });
+  await pending;
+  assert.deepEqual(Array.from(context.selectionState().ids), [],
+    'A late response must not replace a selection cleared while it was loading.');
+  assert.deepEqual(messages, [], 'A stale Select All response must not announce success or failure.');
+}
+
+verifyAsyncSelectionLifecycle().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

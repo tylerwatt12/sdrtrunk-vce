@@ -235,12 +235,15 @@ const SERVICE_STATUS_RETRY_DELAY_MS = 500;
 const ALIAS_CATALOG_DEFAULT_COLUMNS = Object.freeze([
   'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'signaling', 'last-seen'
 ]);
+const ALIAS_BULK_SELECTION_LIMIT = 500;
 let serviceStatus = null;
 let serviceStatusRequestPending = false;
 let serviceStatusConsecutiveFailures = 0;
 let webClientReloadAttempted = false;
 let activeReadOnlyModal = null;
 let aliasEditorSelection = new Set();
+let aliasEditorSelectionScope = null;
+let aliasEditorSelectionRequest = 0;
 let aliasEditorLastSelectionIndex = null;
 let aliasEditorContext = null;
 let accessSession = anonymousAccessSession();
@@ -3171,19 +3174,20 @@ function aliasEditorBaseColumns(rows, onSelectionChange) {
       checkbox.setAttribute('aria-label', `Select ${row.name || `alias ${id}`}`);
       checkbox.addEventListener('click', (event) => {
         const index = rows.findIndex((candidate) => Number(candidate.alias_id) === id);
-        if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
-          const start = Math.min(index, aliasEditorLastSelectionIndex);
-          const end = Math.max(index, aliasEditorLastSelectionIndex);
-          const select = checkbox.checked;
-          rows.slice(start, end + 1).forEach((candidate) => {
-            const candidateId = Number(candidate.alias_id);
-            if (select) aliasEditorSelection.add(candidateId);
-            else aliasEditorSelection.delete(candidateId);
-          });
-        } else if (checkbox.checked) aliasEditorSelection.add(id);
-        else aliasEditorSelection.delete(id);
-        aliasEditorLastSelectionIndex = index;
-        onSelectionChange();
+        try {
+          if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+            const start = Math.min(index, aliasEditorLastSelectionIndex);
+            const end = Math.max(index, aliasEditorLastSelectionIndex);
+            const ids = rows.slice(start, end + 1).map((candidate) => Number(candidate.alias_id));
+            if (checkbox.checked) aliasEditorSelection = extendedAliasSelection(aliasEditorSelection, ids);
+            else ids.forEach((candidateId) => aliasEditorSelection.delete(candidateId));
+          } else if (checkbox.checked) aliasEditorSelection = extendedAliasSelection(aliasEditorSelection, [id]);
+          else aliasEditorSelection.delete(id);
+          aliasEditorLastSelectionIndex = index;
+          onSelectionChange();
+        } catch (error) {
+          onSelectionChange(error.message, true);
+        }
       });
       return checkbox;
     }, sortValue: (row) => aliasEditorSelection.has(Number(row.alias_id)) }];
@@ -3409,8 +3413,7 @@ async function openAliasConflictModal(aliasId, aliasName = '') {
 async function finishAliasMutation(modal, result, routeChanges = {}) {
   if (modal) modal.setDirty(false);
   closeReadOnlyModal(true);
-  aliasEditorSelection.clear();
-  aliasEditorLastSelectionIndex = null;
+  resetAliasEditorSelection();
   Object.entries(routeChanges).forEach(([key, value]) => {
     if (value === null || value === undefined || value === '') route.delete(key);
     else route.set(key, String(value));
@@ -4084,6 +4087,119 @@ function openAliasDeleteModal(id, name, revision) {
   });
 }
 
+function aliasSelectionScopeKey(kind, filters = {}) {
+  const fields = ['list', 'type', 'matcher', 'group', 'scan_list_id', 'record', 'stream', 'q', 'evidence', 'use',
+    'last_activity_before', 'last_activity_after'];
+  return JSON.stringify([String(kind || ''), ...fields.map((field) => {
+    const value = filters?.[field];
+    return value === null || value === undefined || value === '' ? null : String(value);
+  })]);
+}
+
+function resetAliasEditorSelection(scope = null) {
+  aliasEditorSelection.clear();
+  aliasEditorSelectionScope = scope;
+  aliasEditorLastSelectionIndex = null;
+  aliasEditorSelectionRequest += 1;
+}
+
+function synchronizeAliasEditorSelectionScope(scope) {
+  if (aliasEditorSelectionScope !== scope) resetAliasEditorSelection(scope);
+  else {
+    aliasEditorLastSelectionIndex = null;
+    aliasEditorSelectionRequest += 1;
+  }
+}
+
+function clearInactiveAliasSelection(activeTable) {
+  if (!activeTable && (aliasEditorSelection.size || aliasEditorSelectionScope !== null)) {
+    resetAliasEditorSelection();
+  }
+}
+
+function clearAliasSelectionOutsideEditor(view) {
+  clearInactiveAliasSelection(view === 'aliases');
+}
+
+function completeAliasSelection(page, maximum = 500) {
+  if (!page || !Array.isArray(page.rows) || typeof page.has_more !== 'boolean') {
+    throw new Error('The Alias list returned an invalid selection response.');
+  }
+  if (page.has_more) {
+    throw new Error(`More than ${maximum} aliases match. Narrow the filters, then try again.`);
+  }
+  if (page.rows.length > maximum) {
+    throw new Error(`Alias selections are limited to ${maximum} aliases.`);
+  }
+  const ids = page.rows.map((row) => Number(row?.alias_id));
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0) || new Set(ids).size !== ids.length) {
+    throw new Error('The Alias list returned invalid or duplicate Alias IDs.');
+  }
+  return ids;
+}
+
+function extendedAliasSelection(selection, additions, maximum = 500) {
+  const next = new Set(selection);
+  for (const value of additions) {
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('The Alias selection contains an invalid Alias ID.');
+    next.add(id);
+  }
+  if (next.size > maximum) {
+    throw new Error(`Select no more than ${maximum} aliases at one time. The previous selection was kept.`);
+  }
+  return next;
+}
+
+function validatedAliasSelectionIds(selection, maximum = 500) {
+  const ids = [...selection].map(Number);
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0) || new Set(ids).size !== ids.length) {
+    throw new Error('The Alias selection contains invalid Alias IDs.');
+  }
+  if (ids.length > maximum) {
+    throw new Error(`Select no more than ${maximum} aliases at one time.`);
+  }
+  return ids;
+}
+
+async function selectAllMatchingAliases(filters, scope, button, onSelectionChange) {
+  const request = ++aliasEditorSelectionRequest;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Selecting…';
+  try {
+    const page = await apiPage('/api/v1/aliases', {
+      ...filters, offset: 0, limit: ALIAS_BULK_SELECTION_LIMIT
+    });
+    if (request !== aliasEditorSelectionRequest || aliasEditorSelectionScope !== scope) return;
+    const ids = completeAliasSelection(page, ALIAS_BULK_SELECTION_LIMIT);
+    aliasEditorSelection = new Set(ids);
+    aliasEditorLastSelectionIndex = null;
+    onSelectionChange(ids.length ? `Selected all ${number(ids.length)} matching aliases.` :
+      'No aliases match the current filters.', false, true);
+  } catch (error) {
+    if (request === aliasEditorSelectionRequest && aliasEditorSelectionScope === scope) {
+      onSelectionChange(error.message || 'Unable to select matching aliases.', true, true);
+    }
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+}
+
+function aliasMutationSelectionIds() {
+  try {
+    return validatedAliasSelectionIds(aliasEditorSelection, ALIAS_BULK_SELECTION_LIMIT);
+  } catch (error) {
+    openReadOnlyModal('Selection is too large', node('div', 'error', error.message), {
+      id: 'alias-selection-limit', className: 'alias-editor-modal alias-confirm-modal'
+    });
+    return null;
+  }
+}
+
 function aliasBulkBar(onClear) {
   const bar = node('div', 'alias-bulk-bar');
   bar.hidden = !aliasEditorSelection.size;
@@ -4153,11 +4269,11 @@ function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescri
 }
 
 function openAliasBulkModal(kind) {
-  const ids = [...aliasEditorSelection].filter((id) => Number.isInteger(id) && id > 0).slice(0, 500);
-  if (!ids.length) return;
+  const ids = aliasMutationSelectionIds();
+  if (!ids?.length) return;
   const form = node('form', 'alias-editor-form alias-bulk-form');
   form.append(node('p', 'modal-introduction',
-    `This change applies only to the ${number(ids.length)} explicitly selected aliases on this page.`));
+    `This change applies only to the ${number(ids.length)} selected aliases.`));
   const options = aliasEditorContext?.options || {};
   const payload = { revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0), alias_ids: ids };
   let readChange;
@@ -4326,8 +4442,8 @@ function scanListMemberBulkBar(scanList, onClear) {
 }
 
 function openScanListMemberRemoveModal(scanList) {
-  const ids = [...aliasEditorSelection].filter((id) => Number.isInteger(id) && id > 0).slice(0, 500);
-  if (!ids.length) return;
+  const ids = aliasMutationSelectionIds();
+  if (!ids?.length) return;
   const body = node('div', 'admin-confirmation');
   body.append(node('p', '', `Remove ${number(ids.length)} selected aliases from ${scanList.name}?`),
     node('p', 'muted', 'The aliases and their other scan-list memberships will be preserved.'));
@@ -4879,9 +4995,9 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   aliasEditorContext.options = options;
   aliasEditorContext.revision = Number(scanListCatalog.revision ?? 0);
   const rows = page.rows || [];
-  const visibleIds = new Set(rows.map((row) => Number(row.alias_id)));
-  aliasEditorSelection = new Set([...aliasEditorSelection].filter((id) => visibleIds.has(id)));
-  aliasEditorLastSelectionIndex = null;
+  const selectionFilters = { ...filters, q: route.get('q') };
+  const selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
+  synchronizeAliasEditorSelectionScope(selectionScope);
 
   const summary = node('section', 'alias-list-summary scan-list-member-summary');
   const summaryCopy = node('div', 'alias-list-summary-copy');
@@ -4908,8 +5024,12 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   main.append(summary, aliasEditorFilterToolbar(listResponse, options));
 
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  const selectionStatus = node('div', 'alias-form-message alias-selection-status');
+  selectionStatus.setAttribute('role', 'status');
+  selectionStatus.setAttribute('aria-live', 'polite');
   let bulkBar = null;
-  const updateSelection = () => {
+  const updateSelection = (message = '', error = false, preserveRequest = false) => {
+    if (!preserveRequest) aliasEditorSelectionRequest += 1;
     tableHost.querySelectorAll('.alias-row-select').forEach((checkbox) => {
       const tableRow = checkbox.closest('tr');
       const id = Number(tableRow?.dataset.id);
@@ -4917,6 +5037,8 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
       tableRow?.classList.toggle('selected', checkbox.checked);
     });
     bulkBar?.update();
+    selectionStatus.replaceChildren();
+    if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const actions = node('div', 'section-title-actions');
   const aliasTable = table(rows, scanListMemberColumns(rows, updateSelection),
@@ -4928,15 +5050,19 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
         const id = Number(row.alias_id);
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
           const index = rows.indexOf(row);
-          if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
-            const start = Math.min(index, aliasEditorLastSelectionIndex);
-            const end = Math.max(index, aliasEditorLastSelectionIndex);
-            rows.slice(start, end + 1).forEach((candidate) =>
-              aliasEditorSelection.add(Number(candidate.alias_id)));
-          } else if (aliasEditorSelection.has(id)) aliasEditorSelection.delete(id);
-          else aliasEditorSelection.add(id);
-          aliasEditorLastSelectionIndex = index;
-          updateSelection();
+          try {
+            if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+              const start = Math.min(index, aliasEditorLastSelectionIndex);
+              const end = Math.max(index, aliasEditorLastSelectionIndex);
+              aliasEditorSelection = extendedAliasSelection(aliasEditorSelection,
+                rows.slice(start, end + 1).map((candidate) => Number(candidate.alias_id)));
+            } else if (aliasEditorSelection.has(id)) aliasEditorSelection.delete(id);
+            else aliasEditorSelection = extendedAliasSelection(aliasEditorSelection, [id]);
+            aliasEditorLastSelectionIndex = index;
+            updateSelection();
+          } catch (error) {
+            updateSelection(error.message, true);
+          }
           return;
         }
         window.location.assign(aliasEditorRowHref(row));
@@ -4947,12 +5073,19 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   const selectPage = node('button', 'button secondary', 'Select This Page');
   selectPage.type = 'button';
   selectPage.addEventListener('click', () => {
-    rows.forEach((row) => {
-      if (aliasEditorSelection.size < 500) aliasEditorSelection.add(Number(row.alias_id));
-    });
-    updateSelection();
+    try {
+      aliasEditorSelection = extendedAliasSelection(aliasEditorSelection,
+        rows.map((row) => Number(row.alias_id)));
+      updateSelection();
+    } catch (error) {
+      updateSelection(error.message, true);
+    }
   });
-  actions.append(selectPage);
+  const selectAll = node('button', 'button secondary alias-select-all', 'Select All Matching');
+  selectAll.type = 'button';
+  selectAll.addEventListener('click', () =>
+    selectAllMatchingAliases(selectionFilters, selectionScope, selectAll, updateSelection));
+  actions.append(selectPage, selectAll);
   const exportContext = { scan_list_id: scanList.id };
   new Map([
     ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['record', 'record'],
@@ -4965,11 +5098,10 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'scan-list-member-table-section');
   bulkBar = scanListMemberBulkBar(scanList, () => {
-    aliasEditorSelection.clear();
-    aliasEditorLastSelectionIndex = null;
+    resetAliasEditorSelection(selectionScope);
     updateSelection();
   });
-  block.append(bulkBar);
+  block.append(bulkBar, selectionStatus);
   updateSelection();
   block.append(node('p', 'metric-meaning-note alias-catalog-guide',
     'This view includes members from every alias list. Removing membership preserves each alias and its other ' +
@@ -4979,9 +5111,13 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
 
 async function renderAliases() {
   const renderContext = captureRenderContext();
-  if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
+  const requestedListId = /^[1-9][0-9]*$/.test(route.get('list') || '') ? Number(route.get('list')) : null;
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
+  const requestedTable = route.get('aliasTab') !== 'discover' &&
+    (requestedListId !== null || requestedScanListId !== null);
+  clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
+  if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
   const publicListsPromise = apiPage('/api/v1/alias-lists');
   const adminListsPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
   const scanListCatalogPromise = requestedScanListId ?
@@ -5027,6 +5163,7 @@ async function renderAliases() {
   }
 
   if (requestedScanListId) {
+    clearInactiveAliasSelection(false);
     const missing = node('section', 'alias-editor-welcome');
     missing.append(node('h2', '', 'Scan list not found'),
       node('p', '', 'This scan list may have been deleted or changed.'),
@@ -5036,6 +5173,7 @@ async function renderAliases() {
   }
 
   if (!selectedList) {
+    clearInactiveAliasSelection(false);
     main.append(aliasEditorEmptyState(lists));
     return;
   }
@@ -5067,9 +5205,9 @@ async function renderAliases() {
     aliasEditorContext.revision = Number(options.revision);
   }
   const rows = page.rows || [];
-  const visibleIds = new Set(rows.map((row) => Number(row.alias_id)));
-  aliasEditorSelection = new Set([...aliasEditorSelection].filter((id) => visibleIds.has(id)));
-  aliasEditorLastSelectionIndex = null;
+  const selectionFilters = { ...filters, q: route.get('q') };
+  const selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
+  synchronizeAliasEditorSelectionScope(selectionScope);
 
   const summary = node('section', 'alias-list-summary');
   const summaryCopy = node('div', 'alias-list-summary-copy');
@@ -5097,17 +5235,19 @@ async function renderAliases() {
     observedTalkgroupToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
 
   if (view === 'discover') {
-    aliasEditorSelection.clear();
-    aliasEditorLastSelectionIndex = null;
     renderObservedTalkgroups(main, page, selectedList);
     return;
   }
 
   const definitions = [...aliasCustomConfigurationColumns(), ...aliasActivityColumns()];
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  const selectionStatus = node('div', 'alias-form-message alias-selection-status');
+  selectionStatus.setAttribute('role', 'status');
+  selectionStatus.setAttribute('aria-live', 'polite');
   const actions = node('div', 'section-title-actions');
   let bulkBar = null;
-  const updateSelection = () => {
+  const updateSelection = (message = '', error = false, preserveRequest = false) => {
+    if (!preserveRequest) aliasEditorSelectionRequest += 1;
     tableHost.querySelectorAll('.alias-row-select').forEach((checkbox) => {
       const row = checkbox.closest('tr');
       const id = Number(row?.dataset.id);
@@ -5115,6 +5255,8 @@ async function renderAliases() {
       row?.classList.toggle('selected', checkbox.checked);
     });
     bulkBar?.update();
+    selectionStatus.replaceChildren();
+    if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const columnsForView = () => aliasEditorColumns(view, rows, updateSelection);
   const renderTable = () => {
@@ -5128,15 +5270,19 @@ async function renderAliases() {
         const id = Number(row.alias_id);
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
           const index = rows.indexOf(row);
-          if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
-            const start = Math.min(index, aliasEditorLastSelectionIndex);
-            const end = Math.max(index, aliasEditorLastSelectionIndex);
-            rows.slice(start, end + 1).forEach((candidate) =>
-              aliasEditorSelection.add(Number(candidate.alias_id)));
-          } else if (aliasEditorSelection.has(id)) aliasEditorSelection.delete(id);
-          else aliasEditorSelection.add(id);
-          aliasEditorLastSelectionIndex = index;
-          updateSelection();
+          try {
+            if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+              const start = Math.min(index, aliasEditorLastSelectionIndex);
+              const end = Math.max(index, aliasEditorLastSelectionIndex);
+              aliasEditorSelection = extendedAliasSelection(aliasEditorSelection,
+                rows.slice(start, end + 1).map((candidate) => Number(candidate.alias_id)));
+            } else if (aliasEditorSelection.has(id)) aliasEditorSelection.delete(id);
+            else aliasEditorSelection = extendedAliasSelection(aliasEditorSelection, [id]);
+            aliasEditorLastSelectionIndex = index;
+            updateSelection();
+          } catch (error) {
+            updateSelection(error.message, true);
+          }
           return;
         }
         window.location.assign(currentHref({ alias: id }));
@@ -5149,12 +5295,19 @@ async function renderAliases() {
   const selectPage = node('button', 'button secondary', 'Select This Page');
   selectPage.type = 'button';
   selectPage.addEventListener('click', () => {
-    rows.forEach((row) => {
-      if (aliasEditorSelection.size < 500) aliasEditorSelection.add(Number(row.alias_id));
-    });
-    updateSelection();
+    try {
+      aliasEditorSelection = extendedAliasSelection(aliasEditorSelection,
+        rows.map((row) => Number(row.alias_id)));
+      updateSelection();
+    } catch (error) {
+      updateSelection(error.message, true);
+    }
   });
-  actions.append(selectPage);
+  const selectAll = node('button', 'button secondary alias-select-all', 'Select All Matching');
+  selectAll.type = 'button';
+  selectAll.addEventListener('click', () =>
+    selectAllMatchingAliases(selectionFilters, selectionScope, selectAll, updateSelection));
+  actions.append(selectPage, selectAll);
   const exportContext = { list: aliasListId(selectedList) };
   const exportFilters = new Map([
     ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'],
@@ -5171,11 +5324,10 @@ async function renderAliases() {
   tableHost, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section');
   bulkBar = aliasBulkBar(() => {
-    aliasEditorSelection.clear();
-    aliasEditorLastSelectionIndex = null;
+    resetAliasEditorSelection(selectionScope);
     updateSelection();
   });
-  block.append(bulkBar);
+  block.append(bulkBar, selectionStatus);
   renderTable();
   block.append(node('p', 'metric-meaning-note alias-catalog-guide', view === 'configure' ?
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
@@ -16319,6 +16471,7 @@ async function render() {
 
   pageTitleController.update({ routeId: entry?.id || 'not-found', pageTitle: entry?.title || 'Not Found' });
   let effectiveView = entry?.id || 'not-found';
+  clearAliasSelectionOutsideEditor(effectiveView);
   try {
     if (!entry) {
       document.body.dataset.view = 'not-found';
@@ -16329,6 +16482,7 @@ async function render() {
     document.body.dataset.view = effectiveView;
     activateNavigation(effectiveView);
     if (!entry.allowed()) {
+      clearInactiveAliasSelection(false);
       document.body.dataset.view = 'access-denied';
       pageTitleController.update({ pageTitle: 'Access Required' });
       renderAccessDenied(effectiveView, renderContext);
@@ -16347,10 +16501,12 @@ async function render() {
     if (error?.status === 401 || error?.status === 403) {
       await refreshAccessSession(false);
       if (!renderIsCurrent(renderContext)) return;
+      clearInactiveAliasSelection(false);
       document.body.dataset.view = 'access-denied';
       renderAccessDenied(effectiveView, renderContext);
       return;
     }
+    if (effectiveView === 'aliases') clearInactiveAliasSelection(false);
     const notice = databaseLoggingNotice(effectiveView);
     beginPage(renderContext, ...[notice, node('div', 'error', error.message)].filter(Boolean));
   }
