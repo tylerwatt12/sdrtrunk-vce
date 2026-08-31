@@ -30,7 +30,7 @@ public enum WebCapability
     CONVENTIONAL_VIEW("conventional", "Conventional", AccessTier.PUBLIC),
     CREDITS_VIEW("credits", "Credits", AccessTier.PUBLIC),
     CSV_EXPORT("csv-export", "CSV export", AccessTier.PUBLIC),
-    WEB_AUDIO_LISTEN("call-audio", "Call audio", AccessTier.PUBLIC),
+    WEB_AUDIO_LISTEN("call-audio", "Scanner and call audio", AccessTier.PUBLIC),
     USER_SETTINGS("user-settings", "Personal settings", AccessTier.USER, false),
 
     ADMIN_USERS("admin-users", "User management", AccessTier.ADMIN, false),

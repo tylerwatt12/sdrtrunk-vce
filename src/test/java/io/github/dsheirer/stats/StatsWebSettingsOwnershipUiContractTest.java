@@ -110,6 +110,19 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(service.contains("/api/v1/live/settings"));
     }
 
+    @Test
+    void usesThePersonalSettingsCapabilityForThePageAndApi() throws Exception
+    {
+        String source = Files.readString(APP_JAVASCRIPT);
+        String routes = Files.readString(Path.of("stats-web", "assets", "core", "routes.js"));
+        String access = function(source, "function routeDefinitionAllowed(definition)");
+
+        assertTrue(routes.contains("id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, " +
+            "capability: 'user-settings'"));
+        assertFalse(routes.contains("access: 'authenticated'"));
+        assertFalse(access.contains("definition.access === 'authenticated'"));
+    }
+
     private static String function(String source, String marker)
     {
         int start = source.indexOf(marker);

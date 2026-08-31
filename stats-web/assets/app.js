@@ -601,7 +601,6 @@ function viewAccessCapability(view) {
 }
 
 function routeDefinitionAllowed(definition) {
-  if (definition.access === 'authenticated') return accessSessionAvailable && accessSession.authenticated;
   if (definition.access === 'admin-configuration') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
   }
@@ -14328,7 +14327,7 @@ function conventionalTabItems(channel) {
     items.push({ id: 'radios', label: 'Radios',
       href: href('conventional-detail', { ...values, tab: 'radios' }) });
   }
-  if (conventionalCapability(channel, 'activity') && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
+  if (conventionalCapability(channel, 'activity')) {
     items.push({ id: 'activity', label: 'Activity',
       href: href('conventional-detail', { ...values, tab: 'activity' }),
       disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });

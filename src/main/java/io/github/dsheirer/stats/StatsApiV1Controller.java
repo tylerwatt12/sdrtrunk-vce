@@ -38,6 +38,11 @@ final class StatsApiV1Controller
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(StatsApiV1Controller.class);
     private static final int MAX_PATH_SEGMENT_LENGTH = 512;
+    private static final Set<WebCapability> ACTIVITY_CAPABILITIES =
+        Set.of(WebCapability.SYSTEMS_VIEW, WebCapability.CONVENTIONAL_VIEW);
+    private static final Set<WebCapability> CSV_ROUTE_CAPABILITIES = Set.of(WebCapability.CSV_EXPORT,
+        WebCapability.DASHBOARD_VIEW, WebCapability.SYSTEMS_VIEW, WebCapability.CONVENTIONAL_VIEW,
+        WebCapability.ADMIN_ALIASES);
 
     private final StatsWebDatabase mDatabase;
     private final Supplier<Map<String,Object>> mStatusSupplier;
@@ -92,13 +97,14 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.SYSTEMS, this::systems));
         create(server, StatsApiV1.SITES, WebCapability.SYSTEMS_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.SITES, this::sites));
-        create(server, StatsApiV1.ACTIVITY, WebCapability.SYSTEMS_VIEW,
+        server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "talkgroup_id", "radio_id", "scope", "guid", "context",
                     "configuration_id", "hide_grants", "kind", "limit");
+                requireAuthorized(exchange, activityCapability(request));
                 return page(mDatabase.activity(request));
-            }));
+            })));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {
                 requireNoSegments(segments);
@@ -109,8 +115,8 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_RADIOS, this::dashboardActivityRadios));
         create(server, StatsApiV1.CONVENTIONAL_CHANNELS, WebCapability.CONVENTIONAL_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CHANNELS, this::conventionalChannels));
-        server.createContext(StatsApiV1.EXPORTS, mRequestSecurity.protectAny(
-            Set.of(WebCapability.CSV_EXPORT, WebCapability.ADMIN_ALIASES), this::handleCsvExport));
+        server.createContext(StatsApiV1.EXPORTS,
+            mRequestSecurity.protectAny(CSV_ROUTE_CAPABILITIES, this::handleCsvExport));
         create(server, StatsApiV1.RECEIVER_HEALTH, WebCapability.RECEIVER_HEALTH,
             exchange -> handleJson(exchange, StatsApiV1.RECEIVER_HEALTH, (request, segments) -> {
                 requireNoSegments(segments);
@@ -411,13 +417,8 @@ final class StatsApiV1Controller
             }
 
             String dataset = segments.getFirst().substring(0, segments.getFirst().length() - 4);
-
-            if("aliases".equals(dataset) &&
-                !mRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.ADMIN_ALIASES))
-            {
-                ApiHttpResponse.sendError(exchange, 403, "access_denied", "Access is denied");
-                return;
-            }
+            requireAuthorized(exchange, WebCapability.CSV_EXPORT);
+            requireAuthorized(exchange, csvDatasetCapability(dataset));
 
             StatsRequest request = StatsRequest.from(exchange.getRequestURI());
             validateExportQuery(request, dataset);
@@ -454,6 +455,39 @@ final class StatsApiV1Controller
         server.createContext(path, mRequestSecurity.protect(capability, handler));
     }
 
+    private void requireAuthorized(HttpExchange exchange, WebCapability capability)
+    {
+        if(!mRequestSecurity.isRequestStillAuthorized(exchange, capability))
+        {
+            throw new StatsApiException(403, "access_denied", "Access is denied");
+        }
+    }
+
+    private static WebCapability activityCapability(StatsRequest request)
+    {
+        return request.text("configuration_id") != null ? WebCapability.CONVENTIONAL_VIEW :
+            WebCapability.SYSTEMS_VIEW;
+    }
+
+    private static WebCapability csvDatasetCapability(String dataset)
+    {
+        return switch(dataset)
+        {
+            case "system-talkgroups", "system-radios", "site-channels", "site-neighbors", "site-quality" ->
+                WebCapability.SYSTEMS_VIEW;
+            case "conventional-channels", "conventional-talkgroups", "conventional-radios" ->
+                WebCapability.CONVENTIONAL_VIEW;
+            case "signal-health" -> WebCapability.DASHBOARD_VIEW;
+            case "aliases" -> WebCapability.ADMIN_ALIASES;
+            default -> throw invalidExport();
+        };
+    }
+
+    private static StatsApiException invalidExport()
+    {
+        return new StatsApiException(400, "invalid_export", "Unsupported CSV dataset", "dataset");
+    }
+
     private static void validateExportQuery(StatsRequest request, String dataset)
     {
         switch(dataset)
@@ -471,7 +505,7 @@ final class StatsApiV1Controller
             case "aliases" -> request.requireOnly("family", "type", "matcher", "list", "group",
                 "scan_list_id", "record", "stream", "q", "sort", "direction", "evidence", "use",
                 "last_activity_after", "last_activity_before");
-            default -> throw new StatsApiException(400, "invalid_export", "Unsupported CSV dataset", "dataset");
+            default -> throw invalidExport();
         }
     }
 

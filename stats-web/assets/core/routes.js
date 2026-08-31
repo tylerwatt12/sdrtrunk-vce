@@ -16,7 +16,7 @@
     { id: 'configuration', label: 'Configuration', title: 'Configuration', parent: 'configuration', access: 'admin-configuration', databaseNotice: false },
     { id: 'hardware', label: 'Hardware', title: 'Hardware', parent: 'hardware', access: 'admin-tuner', databaseNotice: false },
     { id: 'admin', label: 'Administration', title: 'Administration', parent: 'admin', access: 'admin', databaseNotice: false },
-    { id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, access: 'authenticated', databaseNotice: false },
+    { id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, capability: 'user-settings', databaseNotice: false },
     { id: 'credits', label: 'About', title: 'About', parent: 'credits', capability: 'credits', databaseNotice: false }
   ].map((definition) => Object.freeze({ ...definition })));
 

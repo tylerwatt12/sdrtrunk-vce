@@ -33,8 +33,7 @@ class StatsWebConventionalUiContractTest
                 () -> "Missing conventional capability check for " + capability);
         }
 
-        assertTrue(tabBuilder.contains(
-            "conventionalCapability(channel, 'activity') && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertFalse(tabBuilder.contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertFalse(tabBuilder.contains("protocol_code"));
         assertFalse(tabBuilder.contains("isDmr"));
     }

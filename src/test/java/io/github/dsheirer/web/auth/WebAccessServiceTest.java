@@ -210,6 +210,7 @@ class WebAccessServiceTest
 
         assertEquals(AccessTier.USER, WebCapability.USER_SETTINGS.defaultTier());
         assertFalse(WebCapability.USER_SETTINGS.configurable());
+        assertEquals("Scanner and call audio", WebCapability.WEB_AUDIO_LISTEN.displayName());
         assertFalse(WebCapability.TUNER_SPECTRUM_VIEW.configurable());
         assertFalse(WebCapability.ADMIN_USERS.configurable());
         assertTrue(AccessTier.ADMIN.allows(AccessTier.USER));
