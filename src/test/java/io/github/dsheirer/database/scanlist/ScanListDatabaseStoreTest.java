@@ -22,13 +22,14 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
@@ -110,8 +111,14 @@ class ScanListDatabaseStoreTest
         state.setScanListConfiguration(new ScanListConfiguration(seeded.scanLists(),
             Map.of(999L, Set.of(seeded.defaultScanList().getId())), Map.of()));
 
-        assertThrows(java.sql.SQLException.class,
-            () -> new ConfigurationSnapshotDatabaseStore(database).replace(state));
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            connection.setAutoCommit(false);
+            assertThrows(java.sql.SQLException.class,
+                () -> new ScanListDatabaseStore(database).replaceConfiguration(connection,
+                    state.getScanListConfiguration()));
+            connection.rollback();
+        }
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
@@ -131,8 +138,14 @@ class ScanListDatabaseStoreTest
         state.setScanListConfiguration(new ScanListConfiguration(seeded.scanLists(), Map.of(),
             Map.of(999L, Set.of(seeded.defaultScanList().getId()))));
 
-        assertThrows(java.sql.SQLException.class,
-            () -> new ConfigurationSnapshotDatabaseStore(database).replace(state));
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            connection.setAutoCommit(false);
+            assertThrows(java.sql.SQLException.class,
+                () -> new ScanListDatabaseStore(database).replaceConfiguration(connection,
+                    state.getScanListConfiguration()));
+            connection.rollback();
+        }
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
@@ -146,7 +159,11 @@ class ScanListDatabaseStoreTest
     private Path database(String name) throws Exception
     {
         Path database = mTemporaryFolder.resolve(name);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.validate(connection);
+        }
         return database;
     }
 
@@ -158,4 +175,3 @@ class ScanListDatabaseStoreTest
         return state;
     }
 }
-
