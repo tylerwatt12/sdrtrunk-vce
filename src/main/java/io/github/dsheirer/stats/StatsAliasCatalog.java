@@ -897,10 +897,11 @@ final class StatsAliasCatalog
         List<Object> parameters = new ArrayList<>(p25Scopes);
         parameters.add(MAX_EVIDENCE_ROWS + 1);
         List<Map<String,Object>> affiliations = queryRows(connection, """
-            SELECT scope.scope_id, affiliation.radio_id, affiliation.talkgroup_id, affiliation.updated_at_ms,
+            SELECT scope.scope_id, affiliation.radio_id, affiliation.talkgroup_id,
+                affiliation.confirmed_at_ms AS updated_at_ms,
                 scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id
             FROM trunked_identity_scope scope
-            JOIN p25_radio_affiliation affiliation ON affiliation.system_key = scope.p25_system_key
+            JOIN trunked_radio_affiliation affiliation ON affiliation.scope_id = scope.scope_id
             JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE scope.scope_id IN (%s)
             ORDER BY scope.scope_id, affiliation.radio_id
