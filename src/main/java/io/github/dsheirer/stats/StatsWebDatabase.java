@@ -3594,9 +3594,7 @@ class StatsWebDatabase
              WHERE identifier.protocol IN ('APCO25', 'APCO25_PHASE2')
                AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
                  OR (identifier.ranged = 0 AND identifier.value = %s))
-               AND (identifier.fully_qualified = 0 OR
-                 (identifier.wacn = system.wacn AND identifier.system_id = system.system_id))
-               AND (EXISTS (
+               AND EXISTS (
                      SELECT 1
                      FROM trunked_identity_scope assigned_scope
                      JOIN trunked_identity_scope_context assigned_ownership
@@ -3608,35 +3606,17 @@ class StatsWebDatabase
                       AND assigned.system_key = assigned_scope.p25_system_key
                      WHERE assigned_scope.protocol_code = 1
                        AND assigned_scope.p25_system_key = system.system_key
-                       AND assigned.alias_list_name = identifier.alias_list_name
+                       AND assigned.alias_list_name = identifier.alias_list_name COLLATE NOCASE
                        AND trim(assigned.alias_list_name) <> '')
-                 OR (identifier.fully_qualified <> 0 AND NOT EXISTS
-                     (SELECT 1
-                      FROM trunked_identity_scope assigned_scope
-                      JOIN trunked_identity_scope_context assigned_ownership
-                        ON assigned_ownership.scope_id = assigned_scope.scope_id
-                      JOIN receiver_context assigned_context
-                        ON assigned_context.id = assigned_ownership.context_id
-                      JOIN p25_site_snapshot assigned
-                        ON assigned.guid = assigned_context.guid
-                       AND assigned.system_key = assigned_scope.p25_system_key
-                      WHERE assigned_scope.protocol_code = 1
-                        AND assigned_scope.p25_system_key = system.system_key
-                        AND assigned.alias_list_name IS NOT NULL
-                        AND trim(assigned.alias_list_name) <> '')))
-             ORDER BY CASE
-                 WHEN identifier.fully_qualified <> 0 AND identifier.ranged = 0 THEN 3
-                 WHEN identifier.ranged = 0 THEN 2
-                 WHEN identifier.fully_qualified <> 0 THEN 1
-                 ELSE 0 END DESC,
+             ORDER BY CASE WHEN identifier.ranged = 0 THEN 1 ELSE 0 END DESC,
                  alias.id
              LIMIT 1)
             """.formatted(aliasColumn, identifierTable, identifierColumn, identifierColumn).strip();
     }
 
     /**
-     * Protocol-neutral identity sort expression. P25 retains fully-qualified matching across every alias list assigned
-     * to its linked sites; DMR and NXDN resolve only against the exact alias list assigned to their one owning context.
+     * Protocol-neutral identity sort expression. P25 resolves across every Alias List assigned to its linked sites;
+     * DMR and NXDN resolve only against the exact Alias List assigned to their one owning context.
      */
     private static String scopeAliasSortExpression(String identifierTable, String identifierColumn,
                                                    String aliasColumn)
@@ -3662,9 +3642,7 @@ class StatsWebDatabase
                  OR (identifier.ranged = 0 AND identifier.value = %s))
                AND (
                  (scope.protocol_code = 1
-                   AND (identifier.fully_qualified = 0 OR
-                     (identifier.wacn = system.wacn AND identifier.system_id = system.system_id))
-                   AND (EXISTS (
+                   AND EXISTS (
                          SELECT 1
                          FROM trunked_identity_scope_context assigned_ownership
                          JOIN receiver_context assigned_context
@@ -3673,21 +3651,10 @@ class StatsWebDatabase
                            ON assigned.guid = assigned_context.guid
                           AND assigned.system_key = scope.p25_system_key
                          WHERE assigned_ownership.scope_id = scope.scope_id
-                           AND assigned.alias_list_name = identifier.alias_list_name
-                           AND trim(assigned.alias_list_name) <> '')
-                     OR (identifier.fully_qualified <> 0 AND NOT EXISTS
-                         (SELECT 1
-                          FROM trunked_identity_scope_context assigned_ownership
-                          JOIN receiver_context assigned_context
-                            ON assigned_context.id = assigned_ownership.context_id
-                          JOIN p25_site_snapshot assigned
-                            ON assigned.guid = assigned_context.guid
-                           AND assigned.system_key = scope.p25_system_key
-                          WHERE assigned_ownership.scope_id = scope.scope_id
-                            AND assigned.alias_list_name IS NOT NULL
-                            AND trim(assigned.alias_list_name) <> ''))))
+                           AND assigned.alias_list_name = identifier.alias_list_name COLLATE NOCASE
+                           AND trim(assigned.alias_list_name) <> ''))
                  OR
-                 (scope.protocol_code IN (3, 4) AND identifier.fully_qualified = 0
+                 (scope.protocol_code IN (3, 4)
                    AND identifier.alias_list_name = (
                      SELECT context.alias_list_name
                      FROM trunked_identity_scope_context ownership
@@ -3696,13 +3663,9 @@ class StatsWebDatabase
                        AND context.alias_list_name IS NOT NULL
                        AND trim(context.alias_list_name) <> ''
                      ORDER BY ownership.context_id
-                     LIMIT 1))
+                     LIMIT 1) COLLATE NOCASE)
                )
-             ORDER BY CASE
-                 WHEN identifier.fully_qualified <> 0 AND identifier.ranged = 0 THEN 3
-                 WHEN identifier.ranged = 0 THEN 2
-                 WHEN identifier.fully_qualified <> 0 THEN 1
-                 ELSE 0 END DESC,
+             ORDER BY CASE WHEN identifier.ranged = 0 THEN 1 ELSE 0 END DESC,
                  alias.id
              LIMIT 1)
             """.formatted(aliasColumn, identifierTable, protocol, identifierColumn, identifierColumn).strip();

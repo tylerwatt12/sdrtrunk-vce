@@ -107,7 +107,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(metric.contains("row[field] === null || row[field] === undefined"));
         assertTrue(metric.contains("return '—'"));
         assertTrue(metric.contains("Number.isFinite(value) ? number(value)"));
-        assertTrue(behavior.contains("row.priority === null || row.priority === undefined ? Number.NaN"));
+        assertTrue(behavior.contains("row.listen_enabled === null || row.listen_enabled === undefined ? Number.NaN"));
+        assertTrue(behavior.contains("badge('Listen'"));
+        assertTrue(behavior.contains("badge('Listen off'"));
         assertTrue(optional.contains("'Enc Obs.'"));
         assertTrue(optional.contains("Encrypted observations"));
         assertTrue(optional.contains("count('logout', 'Logout', 'logout_count'"));
