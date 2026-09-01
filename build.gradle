@@ -498,7 +498,7 @@ jar {
 
 tasks.register('verifyBundledApplicationDatabaseMigrator') {
     group = 'verification'
-    description = 'Verifies that packaged builds contain the single application database migrator.'
+    description = 'Verifies that packaged builds contain the migrator and no retired or alternate database entry points.'
     dependsOn jar
     inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
 
@@ -511,6 +511,9 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
             'io/github/dsheirer/database/upgrade/P25ActivitySchemaUpgrade.class',
             'io/github/dsheirer/database/upgrade/TrunkedSiteSchemaInstaller.class',
             'io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultMigrationTool.class'
+        ]
+        def alternateDatabaseEntryPoints = [
+            'io/github/dsheirer/gui/configuration/ConfigurationEditorApplication.class'
         ]
         def zip = new java.util.zip.ZipFile(archive)
 
@@ -525,6 +528,12 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
                 if(zip.getEntry(retiredEntry) != null) {
                     throw new GradleException(
                         "Retired standalone migration entry point ${retiredEntry} is still present in ${archive.name}")
+                }
+            }
+            alternateDatabaseEntryPoints.each { alternateEntry ->
+                if(zip.getEntry(alternateEntry) != null) {
+                    throw new GradleException(
+                        "Standalone database entry point ${alternateEntry} bypasses the application bootstrap in ${archive.name}")
                 }
             }
         } finally {
