@@ -31,19 +31,19 @@ streaming output remain in the previous data folder instead of being duplicated.
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
-Alpha 10 retains Alpha 9's migration behavior and accepts either an exact Alpha 7 database (Alias v3, P25 activity
-v21, trunked-site v2, and no DMR activity schema) or the exact current database tuple shared by Alpha 8, Alpha 9, and
-Alpha 10 (Alias v4, P25 activity v24, trunked-site v2, and DMR activity v1). It does not accept Alpha 1 through Alpha 6
-databases, mixed schema combinations, or intermediate development schemas; those older public releases must be
-upgraded sequentially through Alpha 7.
+### Alpha 8+ Database Compatibility
 
-Alpha 8, Alpha 9, and Alpha 10 use the same schema, so an Alpha 8 or Alpha 9 profile has no database conversion or
-history reset.
-Application and tuner settings, channels, channel maps, broadcast streams, icons, aliases, calls, counts,
-affiliations, site observations, identity evidence, and quality records remain in the copied database. An exact Alpha
-7 profile still uses the existing conversion: supported configuration is preserved or converted, while activity and
-statistics history starts fresh. Both paths use a validated staged copy and rebase recognized portable paths when the
-data folder moves.
+This build uses one global database-format number and one linear chain across Alpha and nightly releases. The bundled
+catalog accepts the exact shared Alpha 8, Alpha 9, and Alpha 10 layout as format 1 and migrates it to the current format
+2. An exact markerless format-2 database is validated and safely adopts the authoritative marker through the same
+migrator. Pre-Alpha 8, retired `webfirst`, known-unpublished developer, unknown, mixed, partially migrated, corrupt,
+and newer-than-this-build databases are refused without mutation.
+
+The format 1-to-2 step preserves supported administrator configuration while converting numeric playback priority to
+Default scan-list Listen membership and eligible catch-all talkgroup Aliases to list-level unmatched behavior. It
+removes retired fully-qualified P25 Alias rows and their dependent routes and resets rebuildable P25 affiliation and
+identity evidence. Preflight and completion show the exact counts before any staged result can be promoted. See
+[Database Migration Contract](database-migration.md) for the complete boundary.
 
 ## Alpha And Nightly Channels
 
@@ -58,20 +58,26 @@ The channels are product choices, not separate database-format families. Databas
 history, but a Nightly can advance before the next Alpha includes support for that newer format. Keep separate portable
 data folders when testing both channels, never run both builds against the same database, and never try to open a
 database from a newer build in an older build. Use the bundled Application Migrator only when the target release says
-it supports the source database.
+it supports the source database. Rollback means reopening the preserved older data with the older build, never a
+down-migration.
 
 Both channels keep classic call recordings as administrator-owned files in the configured recording directory. They
 do not require a managed recording catalog or automatically delete recordings by age or disk usage.
 
-When a numbered release contains a transition for its immediately preceding release, startup offers the Application
-Migrator. It first creates a timestamped backup under `data/database/backups`, migrates another staged copy, validates
-the complete database, and then replaces the current database atomically. If migration fails, the application does
-not start and the completed backup is retained.
+When startup finds a supported older format, it offers the Application Migrator. The migrator first creates a
+timestamped backup under `data/database/backups`, migrates another staged copy through every required adjacent step,
+validates the exact current format and complete database, and then replaces the active database atomically. If
+migration fails, the application does not start and the completed backup is retained.
 
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.
 
-After setup, **File > Import Legacy Playlist XML** can merge another supported playlist into the active profile.
+After setup, **File > Import SQLite Database** replaces the complete active database through the same backed-up,
+staged, validated workflow. It is not a row merge. A file-only import leaves the selected source and neighboring files
+unchanged, does not copy external profile artifacts or remap stored portable paths, and restarts only after confirmed
+success.
+
+**File > Import Legacy Playlist XML** can merge another supported playlist into the active profile.
 Existing configuration is retained, imported name conflicts are renamed, and a validated timestamped database backup
 is created before the configuration snapshot is committed. The source XML remains read only.
 
@@ -84,9 +90,8 @@ Headless launches require one explicit option when the database is absent:
 ```
 
 Fresh creation and XML import build the complete current schema in a temporary database, validate it, and then install
-it atomically. `--upgrade-data` is the non-graphical equivalent of choosing accepted portable data. In a numbered
-release that supports its immediate predecessor, `--upgrade-current` explicitly authorizes the release transition.
-Unreleased development builds do not add intermediate schema transitions.
+it atomically. `--upgrade-data` is the non-graphical equivalent of choosing accepted portable data.
+`--upgrade-current` explicitly authorizes migration of a supported older active database through the bundled chain.
 
 Once a portable database exists, the app holds an operating-system lock for that data folder until shutdown. A second
 sdrtrunk-vce process receives a clear “already in use” error before it can validate, upgrade, or write the same data.
