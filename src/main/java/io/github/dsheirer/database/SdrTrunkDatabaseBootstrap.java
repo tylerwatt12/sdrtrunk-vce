@@ -28,6 +28,8 @@ import java.util.List;
 import java.util.Optional;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
 /**
@@ -39,6 +41,8 @@ public final class SdrTrunkDatabaseBootstrap
     private static final String MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
     private static final String MIGRATION_SUMMARY_PREFIX = "Migrated database format ";
     private static final int MAXIMUM_MIGRATION_SUMMARY_LENGTH = 8_192;
+    private static final String MIGRATION_TIME_NOTICE = "Migration time depends mainly on retained activity history. " +
+        "Large databases may take several minutes or longer. Leave this window open until it finishes.";
 
     private SdrTrunkDatabaseBootstrap()
     {
@@ -59,7 +63,7 @@ public final class SdrTrunkDatabaseBootstrap
             }
 
             DatabaseMigrationChain.PreflightReport migrationPlan =
-                ApplicationMigrationService.readMigrationPlan(databasePath);
+                readMigrationPlan(databasePath, GraphicsEnvironment.isHeadless());
 
             if(migrationPlan.source().requiresMigration())
             {
@@ -322,15 +326,16 @@ public final class SdrTrunkDatabaseBootstrap
     {
         boolean portableProfile = source.portableProfile();
         DatabaseMigrationChain.PreflightReport migrationPlan =
-            ApplicationMigrationService.readMigrationPlan(source.database());
+            readMigrationPlan(source.database(), false);
         int confirmation = JOptionPane.showConfirmDialog(null,
-            "Close the previous sdrtrunk-vce app before continuing.\n\nThe Application Migrator will " +
+            migrationPrompt("Close the previous sdrtrunk-vce app before continuing.\n\nThe Application Migrator " +
+                "will " +
                 (portableProfile ? "copy its setup and update the copied database" :
                     "copy and update only the selected SQLite database; neighboring profile files and stored " +
                         "paths will not be copied or remapped") +
                 ", leaving the selected source unchanged.\n\nPrevious data:\n" + source.path() +
-                "\n\nRequired changes:\n" + ApplicationMigrationService.describePlan(migrationPlan) +
-                "\n\nContinue?", MIGRATOR_TITLE, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                "\n\nRequired changes:\n" + ApplicationMigrationService.describePlan(migrationPlan)),
+            MIGRATOR_TITLE, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
 
         if(confirmation != JOptionPane.OK_OPTION)
         {
@@ -339,8 +344,11 @@ public final class SdrTrunkDatabaseBootstrap
 
         ApplicationMigrationService service = new ApplicationMigrationService();
         ApplicationMigrationService.MigrationResult result = ApplicationMigrationProgressDialog.run(null,
-            MIGRATOR_TITLE,
-            progress -> service.importPrevious(source, target, migrationPlan, progress));
+            MIGRATOR_TITLE, progress ->
+            {
+                progress.update("Copying and updating the database; extensive history may take several minutes");
+                return service.importPrevious(source, target, migrationPlan, progress);
+            });
         ApplicationMigrationSuccessDialog.show(null, MIGRATOR_TITLE,
             ApplicationMigrationSuccessDialog.previousImportReport(result));
         return true;
@@ -373,12 +381,55 @@ public final class SdrTrunkDatabaseBootstrap
     {
         Object[] buttons = {"Migrate and Start", "Quit"};
         int result = JOptionPane.showOptionDialog(null,
-            "This database uses an earlier supported format and must be updated before this build can start.\n\n" +
+            migrationPrompt("This database uses an earlier supported format and must be updated before this build " +
+                "can start.\n\n" +
                 "Required changes: " + ApplicationMigrationService.describePlan(migrationPlan) + "\n\n" +
                 "Close every other sdrtrunk-vce window first. A safety backup will be created before the staged " +
-                "copy is updated.\n\nDatabase:\n" + database,
+                "copy is updated.\n\nDatabase:\n" + database),
             MIGRATOR_TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, buttons, buttons[0]);
         return result == 0;
+    }
+
+    private static DatabaseMigrationChain.PreflightReport readMigrationPlan(Path database, boolean headless)
+        throws IOException, SQLException, InterruptedException
+    {
+        if(headless)
+        {
+            return ApplicationMigrationService.readMigrationPlan(database);
+        }
+
+        try
+        {
+            return ApplicationMigrationProgressDialog.run(null, MIGRATOR_TITLE, progress ->
+            {
+                progress.update("Checking database; extensive history may take several minutes");
+                return ApplicationMigrationService.readMigrationPlan(database);
+            });
+        }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw e;
+        }
+        catch(IOException | SQLException e)
+        {
+            throw e;
+        }
+        catch(Exception e)
+        {
+            throw new IOException("Database check failed: " + message(e), e);
+        }
+    }
+
+    static JScrollPane migrationPrompt(String message)
+    {
+        JTextArea text = new JTextArea(MIGRATION_TIME_NOTICE + "\n\n" + message + "\n\nContinue?", 16, 68);
+        text.setEditable(false);
+        text.setOpaque(false);
+        text.setLineWrap(true);
+        text.setWrapStyleWord(true);
+        text.setCaretPosition(0);
+        return new JScrollPane(text);
     }
 
     private static Path chooseDiscoveredPrevious(List<Path> previousBuilds)

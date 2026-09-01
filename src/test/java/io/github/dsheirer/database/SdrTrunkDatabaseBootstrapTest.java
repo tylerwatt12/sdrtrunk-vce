@@ -11,12 +11,30 @@
 package io.github.dsheirer.database;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import org.junit.jupiter.api.Test;
 
 class SdrTrunkDatabaseBootstrapTest
 {
+    @Test
+    void migrationPromptIsWrappedAndScrollable()
+    {
+        JScrollPane prompt = SdrTrunkDatabaseBootstrap.migrationPrompt("A long migration message");
+        JTextArea text = (JTextArea)prompt.getViewport().getView();
+
+        assertFalse(text.isEditable());
+        assertTrue(text.getLineWrap());
+        assertTrue(text.getWrapStyleWord());
+        assertEquals(16, text.getRows());
+        assertEquals(68, text.getColumns());
+        assertTrue(text.getText().contains("retained activity history"));
+        assertTrue(text.getText().contains("may take several minutes or longer"));
+    }
+
     @Test
     void exposesOnlyTheReleaseOwnedMigrationSummaryLine()
     {
