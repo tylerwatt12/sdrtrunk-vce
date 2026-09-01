@@ -133,6 +133,52 @@ class AudioRecordingManagerTest
     }
 
     @Test
+    void callsCompletedInSameMillisecondUseCollisionSuffix() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> writtenPaths = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                writtenPaths.add(path);
+                Files.write(path, new byte[]{(byte)call.snapshot().callId().sequence()},
+                    StandardOpenOption.CREATE_NEW);
+            });
+        long completedAt = 1_777_777_777_123L;
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.MP3);
+            manager.start();
+            manager.receive(completedCall(1, completedAt, List.of(new float[80])));
+            manager.receive(completedCall(2, completedAt, List.of(new float[80])));
+            manager.stop();
+
+            assertEquals(2, recorded.get());
+            assertEquals(2, writtenPaths.size());
+            assertNotEquals(writtenPaths.get(0), writtenPaths.get(1));
+            assertTrue(writtenPaths.get(0).getFileName().toString()
+                .startsWith(TimeStamp.getLongTimeStamp(completedAt, "_") + "_"));
+            assertTrue(writtenPaths.get(1).getFileName().toString().endsWith("_2.mp3"));
+            assertFalse(writtenPaths.get(0).getFileName().toString().contains("_CALL_"));
+            assertFalse(writtenPaths.get(1).getFileName().toString().contains("_CALL_"));
+            assertArrayEquals(new byte[]{1}, Files.readAllBytes(writtenPaths.get(0)));
+            assertArrayEquals(new byte[]{2}, Files.readAllBytes(writtenPaths.get(1)));
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+        }
+    }
+
+    @Test
     void completedCallQueueIsBoundedByCount() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
