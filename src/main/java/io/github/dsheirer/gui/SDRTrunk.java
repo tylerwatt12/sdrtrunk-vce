@@ -48,7 +48,6 @@ import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
 import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog;
 import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog.PreparedImport;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
-import io.github.dsheirer.gui.bugreport.BugReportDialog;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
@@ -665,12 +664,6 @@ public class SDRTrunk
         helpMenu.add(mCheckForUpdatesMenuItem);
         helpMenu.add(new JSeparator());
 
-        JMenuItem bugReportItem = new JMenuItem("Submit Bug Report...");
-        bugReportItem.setIcon(IconFontSwing.buildIcon(FontAwesome.BUG, 12));
-        bugReportItem.addActionListener(event ->
-            new BugReportDialog(mMainGui, mUserPreferences, mTunerManager).setVisible(true));
-        helpMenu.add(bugReportItem);
-        helpMenu.add(new JSeparator());
         JMenuItem creditsItem = new JMenuItem("Credits & Licensing");
         creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
         helpMenu.add(creditsItem);
