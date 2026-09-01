@@ -477,7 +477,42 @@ public class AudioRecordingManager
 
         sbFinal.append(cleaned).append(recordFormat.getExtension());
 
-        return getRecordingBasePath().resolve(sbFinal.toString());
+        return getAvailableRecordingPath(getRecordingBasePath().resolve(sbFinal.toString()), recordFormat);
+    }
+
+    /**
+     * Selects a free recording path without adding call identity to the normal filename.  Completed calls can share
+     * both metadata and the same millisecond timestamp, so an actual collision receives a compact numeric suffix.
+     * Recording writes are serialized by {@link #mProcessingLock}, which makes the existence check and subsequent
+     * write exclusive to this manager.
+     */
+    private static Path getAvailableRecordingPath(Path preferredPath, RecordFormat recordFormat)
+    {
+        if(!Files.exists(preferredPath))
+        {
+            return preferredPath;
+        }
+
+        Path parent = preferredPath.getParent();
+        String extension = recordFormat.getExtension();
+        String fileName = preferredPath.getFileName().toString();
+        String stem = fileName.substring(0, fileName.length() - extension.length());
+        int version = 2;
+
+        while(version > 0)
+        {
+            String suffix = "_" + version++;
+            int maximumStemLength = 255 - suffix.length() - extension.length();
+            String candidateStem = stem.length() > maximumStemLength ? stem.substring(0, maximumStemLength) : stem;
+            Path candidate = parent.resolve(candidateStem + suffix + extension);
+
+            if(!Files.exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new IllegalStateException("Unable to select a unique completed-call recording path");
     }
 
     public static String clean(String value)
