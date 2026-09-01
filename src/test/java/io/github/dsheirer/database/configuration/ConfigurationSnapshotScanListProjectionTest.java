@@ -82,4 +82,3 @@ class ConfigurationSnapshotScanListProjectionTest
             new ScanList(2, 1, "Hidden", null, false, false)), aliases, unmatched);
     }
 }
-

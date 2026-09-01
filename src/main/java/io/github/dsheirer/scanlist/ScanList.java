@@ -185,4 +185,3 @@ public final class ScanList
         return mName;
     }
 }
-

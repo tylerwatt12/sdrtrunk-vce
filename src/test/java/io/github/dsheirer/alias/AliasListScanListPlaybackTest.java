@@ -98,4 +98,3 @@ class AliasListScanListPlaybackTest
         return model;
     }
 }
-

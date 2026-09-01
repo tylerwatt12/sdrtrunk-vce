@@ -270,4 +270,3 @@ public final class ScanListDatabaseStore
         return value == 1;
     }
 }
-

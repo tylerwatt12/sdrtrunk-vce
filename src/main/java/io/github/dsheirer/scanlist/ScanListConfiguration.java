@@ -203,4 +203,3 @@ public final class ScanListConfiguration
         return Map.copyOf(prepared);
     }
 }
-

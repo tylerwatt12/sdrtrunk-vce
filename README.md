@@ -193,7 +193,7 @@ For more detail, see [Portable Startup And Storage](docs/portable-startup-and-st
 These older or experimental features are not included:
 
 - Local alias actions and the Actions editor
-- AM, LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
+- LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
 - Funcube Dongle Pro/Pro+ tuners
 - Legacy named Channel Maps formerly used by MPT-1327; decoder-embedded DMR and NXDN channel maps remain supported
 - Heterodyne channelization

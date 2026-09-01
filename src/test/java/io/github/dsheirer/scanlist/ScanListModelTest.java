@@ -110,4 +110,3 @@ class ScanListModelTest
         assertEquals(2, changes.get());
     }
 }
-
