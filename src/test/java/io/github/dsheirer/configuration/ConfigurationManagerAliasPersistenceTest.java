@@ -44,7 +44,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Verifies that editor-style Alias mutations commit to schema v4 before entering the live model. */
+/** Verifies that editor-style Alias mutations commit to the current schema before entering the live model. */
 class ConfigurationManagerAliasPersistenceTest
 {
     @TempDir
@@ -53,7 +53,7 @@ class ConfigurationManagerAliasPersistenceTest
     @Test
     void atomicallyCreatesReplacesAndDeletesByDurableIdentity() throws Exception
     {
-        assertEquals(4, SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION);
+        assertEquals(6, SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION);
         Path dataRoot = mTemporaryFolder.resolve("alias-persistence");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         Files.createDirectories(database.getParent());
