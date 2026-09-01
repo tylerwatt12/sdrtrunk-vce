@@ -13,6 +13,7 @@ package io.github.dsheirer.database.upgrade;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -169,6 +170,8 @@ public final class ApplicationDatabaseMigrator
         requireApplicationStage(database);
         output.println("Checking staged database: " + database);
 
+        MigrationSummary migration = null;
+
         try(Connection connection = open(database))
         {
             DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
@@ -183,17 +186,26 @@ public final class ApplicationDatabaseMigrator
             {
                 validateCurrentDatabase(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
-                finalizeStagedDatabase(connection);
-                output.println("RESULT: Application database is already current and valid; no schema changes made.");
-                return;
             }
+            else
+            {
+                output.println("Pre-migration checks passed. Updating the staged database.");
+                migration = migrateInTransaction(connection, source, relocation);
+                validateCurrentDatabase(connection);
+                requireForeignKeysValid(connection);
+                requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+            }
+        }
 
-            output.println("Pre-migration checks passed. Updating the staged database.");
-            MigrationSummary migration = migrateInTransaction(connection, source, relocation);
-            validateCurrentDatabase(connection);
-            requireForeignKeysValid(connection);
-            requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
-            finalizeStagedDatabase(connection);
+        validateConfiguration(database);
+        finalizeStagedDatabase(database);
+
+        if(migration == null)
+        {
+            output.println("RESULT: Application database is already current and valid; no schema changes made.");
+        }
+        else
+        {
             printCompletion(output, migration.chainReport());
             output.println("Portable directory preferences updated: " + migration.rebasedDirectories() + ".");
             output.println("RESULT: Application database migration and validation complete.");
@@ -523,6 +535,11 @@ public final class ApplicationDatabaseMigrator
         DatabaseFormatCatalog.requireCurrent(connection);
     }
 
+    private static void validateConfiguration(Path database) throws IOException, SQLException
+    {
+        ConfigurationSnapshotValidator.validateDatabaseForStartup(database);
+    }
+
     private static Connection open(Path database) throws SQLException
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -585,23 +602,35 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    private static void finalizeStagedDatabase(Connection connection) throws SQLException
+    private static void finalizeStagedDatabase(Path database) throws IOException, SQLException
     {
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)"))
+        try(Connection connection = open(database);
+            Statement statement = connection.createStatement())
         {
-            if(resultSet.next() && resultSet.getInt(1) != 0)
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)"))
             {
-                throw new SQLException("Unable to checkpoint the migrated staged database.");
+                if(resultSet.next() && resultSet.getInt(1) != 0)
+                {
+                    throw new SQLException("Unable to checkpoint the migrated staged database.");
+                }
+            }
+
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA journal_mode=DELETE"))
+            {
+                if(!resultSet.next() || !"delete".equalsIgnoreCase(resultSet.getString(1)))
+                {
+                    throw new SQLException("Unable to finalize the staged database journal.");
+                }
             }
         }
 
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA journal_mode=DELETE"))
+        for(String suffix: List.of("-wal", "-shm", "-journal"))
         {
-            if(!resultSet.next() || !"delete".equalsIgnoreCase(resultSet.getString(1)))
+            Path sidecar = database.resolveSibling(database.getFileName() + suffix);
+            if(Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(sidecar))
             {
-                throw new SQLException("Unable to finalize the staged database journal.");
+                throw new IOException("The finalized staged database still has an unsafe SQLite sidecar: " +
+                    sidecar);
             }
         }
     }

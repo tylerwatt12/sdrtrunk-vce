@@ -108,6 +108,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
 import javafx.application.Platform;
@@ -137,6 +139,7 @@ import javax.swing.event.MenuListener;
 public class SDRTrunk implements Listener<TunerEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(SDRTrunk.class);
+    private static final long DATABASE_SHUTDOWN_TIMEOUT_SECONDS = 30;
     private Preferences mPreferences;
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
@@ -840,8 +843,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     /**
      * Replaces the complete active SQLite profile at a restart boundary. A database replacement cannot use the
-     * lighter live configuration-reload path because preferences, authentication, statistics, and other services
-     * also own state in the same file.
+     * lighter live configuration-reload path because preferences, statistics, and other services also own state in
+     * the same file.
      */
     private void importSqliteDatabase()
     {
@@ -873,20 +876,30 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         boolean replacementSucceeded = false;
+        ApplicationRelauncher.RelaunchPlan relaunchPlan = null;
 
         try
         {
             //Keep the portable-root lock while services are closed and the staged replacement is running so another
             //application process cannot enter the data folder between shutdown and promotion.
-            processShutdown(false);
+            processShutdownForDatabaseReplacement();
             ApplicationMigrationService service = new ApplicationMigrationService();
             ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(mMainGui,
                 APPLICATION_MIGRATOR_TITLE,
                 progress -> service.replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.plan(),
                     progress));
             replacementSucceeded = true;
+            try
+            {
+                relaunchPlan = ApplicationRelauncher.plan(dataRoot);
+            }
+            catch(IOException e)
+            {
+                mLog.warn("Automatic SDRTrunk restart is unavailable; a normal restart will be required", e);
+            }
             ApplicationMigrationSuccessDialog.show(mMainGui, APPLICATION_MIGRATOR_TITLE,
-                ApplicationMigrationSuccessDialog.replacementImportReport(migration, prepared.sourceDatabase()));
+                ApplicationMigrationSuccessDialog.replacementImportReport(migration, prepared.sourceDatabase(),
+                    relaunchPlan != null && relaunchPlan.automatic()));
         }
         catch(InterruptedException e)
         {
@@ -905,21 +918,23 @@ public class SDRTrunk implements Listener<TunerEvent>
             return;
         }
 
-        try
+        releaseDataRootLock();
+        if(relaunchPlan != null && relaunchPlan.automatic())
         {
-            releaseDataRootLock();
-            ApplicationRelauncher.relaunch();
-        }
-        catch(IOException e)
-        {
-            JOptionPane.showMessageDialog(mMainGui,
-                (replacementSucceeded ? "The database was replaced successfully" :
-                    "The database replacement did not complete") +
-                    ", but SDRTrunk could not restart automatically. Start it again manually.\n\n" +
-                    exceptionMessage(e), "SDRTrunk Restart Required", JOptionPane.ERROR_MESSAGE);
+            try
+            {
+                ApplicationRelauncher.relaunch(relaunchPlan);
+            }
+            catch(IOException e)
+            {
+                JOptionPane.showMessageDialog(mMainGui,
+                    "The database was replaced successfully, but SDRTrunk could not restart automatically. " +
+                        "Start it again with its normal launcher.\n\n" + exceptionMessage(e),
+                    "SDRTrunk Restart Required", JOptionPane.ERROR_MESSAGE);
+            }
         }
 
-        System.exit(replacementSucceeded ? 0 : 1);
+        System.exit(0);
     }
 
     private void flushConfigurationForDatabaseReplacement() throws Exception
@@ -983,10 +998,28 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private void processShutdown()
     {
-        processShutdown(true);
+        try
+        {
+            processShutdown(true, false);
+        }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            mLog.warn("Interrupted while stopping SDRTrunk", e);
+        }
+        catch(TimeoutException e)
+        {
+            mLog.warn("Timed out while stopping SDRTrunk", e);
+        }
     }
 
-    private void processShutdown(boolean releaseDataRootLock)
+    private void processShutdownForDatabaseReplacement() throws InterruptedException, TimeoutException
+    {
+        processShutdown(false, true);
+    }
+
+    private void processShutdown(boolean releaseDataRootLock, boolean awaitDatabaseOwners)
+        throws InterruptedException, TimeoutException
     {
         if(mShutdownProcessed)
         {
@@ -1032,6 +1065,12 @@ public class SDRTrunk implements Listener<TunerEvent>
             mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
                 mControlChannelQualityRegistry);
         }
+        if(awaitDatabaseOwners &&
+            !mConfigurationManager.getChannelProcessingManager().suspendSiteMetadataAndAwait(
+                DATABASE_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        {
+            throw new TimeoutException("Timed out waiting for receiver metadata to stop");
+        }
         mConfigurationManager.getChannelProcessingManager().shutdown();
         if(mP25ActivityLogService != null)
         {
@@ -1042,7 +1081,14 @@ public class SDRTrunk implements Listener<TunerEvent>
             mConfigurationManager.getChannelProcessingManager().removeSiteMetadataListener(mP25ActivityLogService);
             mConfigurationManager.getChannelProcessingManager()
                 .removeProtocolSiteMetadataListener(mP25ActivityLogService);
-            mP25ActivityLogService.dispose();
+            if(awaitDatabaseOwners)
+            {
+                mP25ActivityLogService.closeAndAwaitTermination(DATABASE_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            }
+            else
+            {
+                mP25ActivityLogService.dispose();
+            }
         }
         EventLogger.flushPendingWrites();
         if(mAudioCallCoordinator != null)

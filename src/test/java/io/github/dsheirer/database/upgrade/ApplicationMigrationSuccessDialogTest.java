@@ -162,13 +162,17 @@ class ApplicationMigrationSuccessDialogTest
             ApplicationMigrationSuccessDialog.previousImportReport(databaseOnly));
 
         Path source = Path.of("/old/profile.sqlite");
-        String replacement = ApplicationMigrationSuccessDialog.replacementImportReport(current, source);
+        String replacement = ApplicationMigrationSuccessDialog.replacementImportReport(current, source, true);
         assertEquals("SQLite database import complete. The selected database replaced the active database after " +
             "staged migration and validation. The selected source file and its neighboring files were left " +
             "unchanged.\n\nStored portable paths were not remapped.\n\n" + helper +
             "\n\nSelected source:\n" + source.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + backup +
             "\n\nSDRTrunk will restart automatically.", replacement);
+
+        String manualRestart = ApplicationMigrationSuccessDialog.replacementImportReport(current, source, false);
+        assertTrue(manualRestart.endsWith(
+            "SDRTrunk will now exit. Use its normal launcher if it does not restart automatically."));
     }
 
     @Test
