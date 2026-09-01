@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.id.priority.Priority;
@@ -48,6 +49,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -55,8 +57,10 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -206,6 +210,278 @@ class P25ActivityLogServiceLifecycleTest
         {
             releaseProjection.countDown();
             service.dispose();
+        }
+    }
+
+    @Test
+    void strictShutdownRefusesWhileObservationMapperIgnoresInterrupt() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("Strict observer shutdown", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch mapperEntered = new CountDownLatch(1);
+        CountDownLatch releaseMapper = new CountDownLatch(1);
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                mapperEntered.countDown();
+                awaitIgnoringInterrupt(releaseMapper);
+                return super.getEventType();
+            }
+        };
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(mapperEntered.await(2, TimeUnit.SECONDS));
+
+            TimeoutException timeout = assertThrows(TimeoutException.class,
+                () -> service.closeAndAwaitTermination(100, TimeUnit.MILLISECONDS));
+            assertTrue(timeout.getMessage().contains("observation mapper"));
+            assertFalse(service.isObservationWorkerTerminated(),
+                "strict close cannot report success while the mapper worker is alive");
+
+            releaseMapper.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+            assertTrue(service.isObservationWorkerTerminated());
+            assertFalse(service.hasLiveWritersForTest());
+        }
+        finally
+        {
+            releaseMapper.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void strictShutdownTerminatesWithSaturatedObservationIngress() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("Saturated observer shutdown", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch mapperEntered = new CountDownLatch(1);
+        CountDownLatch releaseMapper = new CountDownLatch(1);
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                mapperEntered.countDown();
+
+                try
+                {
+                    releaseMapper.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getEventType();
+            }
+        };
+        DecodeEvent queued = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis() + 1).build();
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(mapperEntered.await(2, TimeUnit.SECONDS));
+            BoundedMpscPairQueue<Object,Object> saturatedEpoch = service.getObservationIngressForTest();
+
+            for(int index = 0; index < P25ActivityLogService.OBSERVATION_QUEUE_SIZE + 32; index++)
+            {
+                service.getDecodeEventListener().accept(channel, queued);
+            }
+
+            assertEquals(P25ActivityLogService.OBSERVATION_QUEUE_SIZE, saturatedEpoch.size());
+            assertTrue(service.getObservationDropCount() > 0);
+            releaseMapper.countDown();
+
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+            assertTrue(service.isObservationWorkerTerminated());
+            assertFalse(service.hasLiveWritersForTest());
+            assertEquals(0, service.getPendingObservationCount());
+        }
+        finally
+        {
+            releaseMapper.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void strictShutdownRefusesWhileWriterHoldingSQLiteConnectionIgnoresInterrupt() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        CountDownLatch connectionOpened = new CountDownLatch(1);
+        CountDownLatch releaseWriter = new CountDownLatch(1);
+        AtomicReference<P25ActivityLogWriter> writerReference = new AtomicReference<>();
+        P25ActivityLogService.WriterFactory writerFactory =
+            (databasePath, retentionDays, detailedHistoryEnabled, commitListener) -> {
+                P25ActivityLogWriter writer = new P25ActivityLogWriter(databasePath, retentionDays,
+                    detailedHistoryEnabled, 16, commitListener, () -> {
+                        connectionOpened.countDown();
+                        awaitIgnoringInterrupt(releaseWriter);
+                    });
+                writerReference.set(writer);
+                return writer;
+            };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            null, null, writerFactory);
+
+        try
+        {
+            assertTrue(connectionOpened.await(2, TimeUnit.SECONDS));
+            TimeoutException timeout = assertThrows(TimeoutException.class,
+                () -> service.closeAndAwaitTermination(250, TimeUnit.MILLISECONDS));
+            assertTrue(timeout.getMessage().contains("SQLite writer"));
+            assertTrue(service.isObservationWorkerTerminated());
+            assertFalse(writerReference.get().isTerminated(),
+                "strict close cannot report success while the SQLite writer owns its connection");
+            assertFalse(writerReference.get().isExecutorTerminatedForTest());
+            assertFalse(writerReference.get().isConnectionClosedForTest());
+            assertTrue(service.hasLiveWritersForTest());
+
+            releaseWriter.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+            assertTrue(writerReference.get().isTerminated());
+            assertTrue(writerReference.get().isExecutorTerminatedForTest());
+            assertTrue(writerReference.get().isConnectionClosedForTest());
+            assertFalse(service.hasLiveWritersForTest());
+        }
+        finally
+        {
+            releaseWriter.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void callbackPausedAcrossStrictEpochSwapCannotResurrectIngressOrWriter() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        CountDownLatch epochCaptured = new CountDownLatch(1);
+        CountDownLatch releaseCallback = new CountDownLatch(1);
+        Runnable pauseAfterSnapshot = () -> {
+            epochCaptured.countDown();
+
+            try
+            {
+                releaseCallback.await();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            pauseAfterSnapshot);
+        Channel channel = new Channel("Strict callback epoch", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis()).build();
+        BoundedMpscPairQueue<Object,Object> capturedEpoch = service.getObservationIngressForTest();
+        AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+        Thread callback = observationProducer(service, channel, event, callbackFailure,
+            "strict shutdown paused callback");
+
+        try
+        {
+            callback.start();
+            assertTrue(epochCaptured.await(2, TimeUnit.SECONDS));
+
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+            assertTrue(callback.isAlive(), "shutdown proof must not depend on a receiver callback returning");
+            assertTrue(service.isObservationWorkerTerminated());
+            assertFalse(service.hasLiveWritersForTest());
+
+            releaseCallback.countDown();
+            callback.join(TimeUnit.SECONDS.toMillis(2));
+            assertFalse(callback.isAlive());
+            assertEquals(null, callbackFailure.get());
+            assertEquals(0, capturedEpoch.size());
+            assertEquals(0, service.getPendingObservationCount());
+        }
+        finally
+        {
+            releaseCallback.countDown();
+            callback.join(TimeUnit.SECONDS.toMillis(2));
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void strictShutdownTracksWriterCreatedDuringUnfinishedEpochTransition() throws Exception
+    {
+        Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        Path secondRoot = mTemporaryFolder.resolve("strict-transition");
+        Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
+        TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
+        CountDownLatch writerReadyToActivate = new CountDownLatch(1);
+        CountDownLatch allowWriterActivation = new CountDownLatch(1);
+        List<P25ActivityLogWriter> createdWriters = new CopyOnWriteArrayList<>();
+        P25ActivityLogService.WriterFactory writerFactory =
+            (databasePath, retentionDays, detailedHistoryEnabled, commitListener) -> {
+                P25ActivityLogWriter writer = new P25ActivityLogWriter(databasePath, retentionDays,
+                    detailedHistoryEnabled, commitListener);
+                createdWriters.add(writer);
+                return writer;
+            };
+        Runnable pauseBeforeActivation = () -> {
+            writerReadyToActivate.countDown();
+            awaitIgnoringInterrupt(allowWriterActivation);
+        };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            null, pauseBeforeActivation, writerFactory);
+
+        try
+        {
+            directoryPreference.setRoot(secondRoot);
+            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            assertTrue(writerReadyToActivate.await(8, TimeUnit.SECONDS));
+            assertEquals(2, createdWriters.size());
+            P25ActivityLogWriter unactivatedWriter = createdWriters.get(1);
+
+            TimeoutException timeout = assertThrows(TimeoutException.class,
+                () -> service.closeAndAwaitTermination(100, TimeUnit.MILLISECONDS));
+            assertTrue(timeout.getMessage().contains("observation mapper"));
+            awaitWriterTermination(unactivatedWriter);
+            assertEquals(null, service.getCurrentDatabasePathForTest(),
+                "strict shutdown must not publish the replacement writer");
+
+            allowWriterActivation.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
+            assertTrue(service.isObservationWorkerTerminated());
+            assertFalse(service.hasLiveWritersForTest());
+            assertEquals(null, service.getCurrentDatabasePathForTest());
+        }
+        finally
+        {
+            allowWriterActivation.countDown();
+            service.closeAndAwaitTermination(5, TimeUnit.SECONDS);
         }
     }
 
@@ -524,6 +800,21 @@ class P25ActivityLogServiceLifecycleTest
             .build();
     }
 
+    private static void awaitIgnoringInterrupt(CountDownLatch release)
+    {
+        while(release.getCount() > 0)
+        {
+            try
+            {
+                release.await();
+            }
+            catch(InterruptedException ignored)
+            {
+                //Emulate a native/mapper operation that does not cooperate with executor interruption.
+            }
+        }
+    }
+
     private static CompletedAudioCall conventionalCompletedCall(long sequence, String configurationId, String guid,
                                                                  long frequency, long timestamp)
     {
@@ -578,6 +869,18 @@ class P25ActivityLogServiceLifecycleTest
         }
 
         assertTrue(service.isObservationWorkerTerminated(), "statistics observer did not terminate");
+    }
+
+    private static void awaitWriterTermination(P25ActivityLogWriter writer) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+        while(!writer.isTerminated() && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5);
+        }
+
+        assertTrue(writer.isTerminated(), "statistics SQLite writer did not terminate");
     }
 
     @Test

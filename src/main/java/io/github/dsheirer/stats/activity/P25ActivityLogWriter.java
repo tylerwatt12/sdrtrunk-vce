@@ -50,6 +50,7 @@ class P25ActivityLogWriter implements AutoCloseable
     private final ArrayBlockingQueue<QueuedRecord> mQueue;
     private final ConcurrentLinkedQueue<MaintenanceCommand> mMaintenanceQueue = new ConcurrentLinkedQueue<>();
     private final Object mQueueOrderingLock = new Object();
+    private final Object mLifecycleLock = new Object();
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private final AtomicBoolean mRetentionCleanupRequested = new AtomicBoolean();
     private final AtomicLong mEnqueueSequence = new AtomicLong();
@@ -57,7 +58,11 @@ class P25ActivityLogWriter implements AutoCloseable
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
     private final P25ActivityCommitListener mCommitListener;
+    private final Runnable mAfterConnectionOpenedForTest;
     private ExecutorService mExecutorService;
+    private boolean mCloseRequested;
+    private volatile Connection mActiveConnection;
+    private volatile boolean mConnectionClosed = true;
     private volatile int mRetentionDays;
     private volatile boolean mDetailedEventHistoryEnabled;
     private volatile long mLastRetentionCleanup;
@@ -67,38 +72,58 @@ class P25ActivityLogWriter implements AutoCloseable
 
     P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
-        this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY, null);
+        this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY, null, null);
     }
 
     P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled,
                          P25ActivityCommitListener commitListener)
     {
-        this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY, commitListener);
+        this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY, commitListener, null);
     }
 
     P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity)
     {
-        this(databasePath, retentionDays, detailedEventHistoryEnabled, queueCapacity, null);
+        this(databasePath, retentionDays, detailedEventHistoryEnabled, queueCapacity, null, null);
     }
 
-    private P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled,
-                                 int queueCapacity, P25ActivityCommitListener commitListener)
+    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled,
+                         int queueCapacity, P25ActivityCommitListener commitListener,
+                         Runnable afterConnectionOpenedForTest)
     {
         mDatabasePath = databasePath;
         mQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         mCommitListener = commitListener;
+        mAfterConnectionOpenedForTest = afterConnectionOpenedForTest;
         setRetentionDays(retentionDays);
         setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
     }
 
     void start()
     {
-        if(mRunning.compareAndSet(false, true))
+        synchronized(mLifecycleLock)
         {
+            if(mCloseRequested || !mRunning.compareAndSet(false, true))
+            {
+                return;
+            }
+
             mLastError = null;
             mState = P25ActivityLogStatus.State.STARTING;
-            mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("statistics database writer"));
-            mExecutorService.execute(this::run);
+            ExecutorService executor =
+                Executors.newSingleThreadExecutor(new NamingThreadFactory("statistics database writer"));
+            mExecutorService = executor;
+
+            try
+            {
+                executor.execute(this::run);
+            }
+            catch(RuntimeException exception)
+            {
+                mRunning.set(false);
+                mCloseRequested = true;
+                executor.shutdownNow();
+                throw exception;
+            }
         }
     }
 
@@ -195,36 +220,124 @@ class P25ActivityLogWriter implements AutoCloseable
     @Override
     public void close()
     {
-        synchronized(mQueueOrderingLock)
+        try
         {
-            mRunning.set(false);
+            if(!closeAndAwait(5, TimeUnit.SECONDS))
+            {
+                mLog.warn("Timed out waiting for the statistics database writer to stop");
+            }
+        }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            forceStop();
+        }
+    }
+
+    /**
+     * Stops accepting observations and waits for the writer task to return. Executor termination is the proof that
+     * the task's try-with-resources block finished closing its SQLite connection. A timeout requests interruption but
+     * deliberately leaves the executor identity available so a strict caller cannot mistake a live native operation
+     * for a completed close.
+     */
+    boolean closeAndAwait(long timeout, TimeUnit unit) throws InterruptedException
+    {
+        if(timeout < 0 || unit == null)
+        {
+            throw new IllegalArgumentException("A non-negative timeout and time unit are required");
         }
 
-        if(mExecutorService != null)
-        {
-            mExecutorService.shutdown();
+        ExecutorService executor = requestStop(false);
 
-            try
+        if(executor == null || executor.isTerminated())
+        {
+            clearTerminatedExecutor(executor);
+            return isTerminated();
+        }
+
+        if(executor.awaitTermination(timeout, unit))
+        {
+            clearTerminatedExecutor(executor);
+            return isTerminated();
+        }
+
+        executor.shutdownNow();
+        return false;
+    }
+
+    /** Initiates an orderly writer stop without waiting on the caller. */
+    void requestStop()
+    {
+        requestStop(false);
+    }
+
+    /** Escalates a previously requested stop while retaining the executor until its task actually terminates. */
+    void forceStop()
+    {
+        requestStop(true);
+    }
+
+    boolean isTerminated()
+    {
+        synchronized(mLifecycleLock)
+        {
+            return (mExecutorService == null || mExecutorService.isTerminated()) && mConnectionClosed;
+        }
+    }
+
+    boolean isExecutorTerminatedForTest()
+    {
+        synchronized(mLifecycleLock)
+        {
+            return mExecutorService == null || mExecutorService.isTerminated();
+        }
+    }
+
+    boolean isConnectionClosedForTest()
+    {
+        return mConnectionClosed;
+    }
+
+    private ExecutorService requestStop(boolean interrupt)
+    {
+        synchronized(mLifecycleLock)
+        {
+            mCloseRequested = true;
+
+            synchronized(mQueueOrderingLock)
             {
-                if(!mExecutorService.awaitTermination(5, TimeUnit.SECONDS))
+                mRunning.set(false);
+            }
+
+            ExecutorService executor = mExecutorService;
+
+            if(executor != null)
+            {
+                executor.shutdown();
+
+                if(interrupt)
                 {
-                    mExecutorService.shutdownNow();
+                    executor.shutdownNow();
                 }
             }
-            catch(InterruptedException e)
-            {
-                Thread.currentThread().interrupt();
-                mExecutorService.shutdownNow();
-            }
-            finally
+
+            return executor;
+        }
+    }
+
+    private void clearTerminatedExecutor(ExecutorService executor)
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(executor != null && executor == mExecutorService && executor.isTerminated() && mConnectionClosed)
             {
                 mExecutorService = null;
-            }
-        }
 
-        if(mState != P25ActivityLogStatus.State.FAILED)
-        {
-            mState = P25ActivityLogStatus.State.STOPPED;
+                if(mState != P25ActivityLogStatus.State.FAILED)
+                {
+                    mState = P25ActivityLogStatus.State.STOPPED;
+                }
+            }
         }
     }
 
@@ -234,6 +347,8 @@ class P25ActivityLogWriter implements AutoCloseable
 
         try(Connection connection = openConnection())
         {
+            trackOpenConnection(connection);
+            afterConnectionOpenedForTest();
             restoreStatus(connection);
             runMaintenanceWithRetry(connection);
 
@@ -338,11 +453,69 @@ class P25ActivityLogWriter implements AutoCloseable
             mRunning.set(false);
             failPendingMaintenance(terminalFailure != null ? terminalFailure :
                 new IllegalStateException("Statistics database writer stopped"));
+            confirmConnectionClosed();
 
             if(mState != P25ActivityLogStatus.State.FAILED)
             {
                 mState = P25ActivityLogStatus.State.STOPPED;
             }
+        }
+    }
+
+    private void trackOpenConnection(Connection connection)
+    {
+        synchronized(mLifecycleLock)
+        {
+            mActiveConnection = connection;
+            mConnectionClosed = false;
+        }
+    }
+
+    private void confirmConnectionClosed()
+    {
+        Connection connection = mActiveConnection;
+
+        if(connection == null)
+        {
+            return;
+        }
+
+        boolean closed = false;
+
+        try
+        {
+            closed = connection.isClosed();
+        }
+        catch(SQLException exception)
+        {
+            fail(exception);
+            mLog.warn("Could not confirm that the statistics SQLite connection closed", exception);
+        }
+
+        synchronized(mLifecycleLock)
+        {
+            if(connection == mActiveConnection)
+            {
+                mConnectionClosed = closed;
+
+                if(closed)
+                {
+                    mActiveConnection = null;
+                }
+            }
+        }
+
+        if(!closed && mState != P25ActivityLogStatus.State.FAILED)
+        {
+            fail(new SQLException("Statistics SQLite connection close could not be confirmed"));
+        }
+    }
+
+    private void afterConnectionOpenedForTest()
+    {
+        if(mAfterConnectionOpenedForTest != null)
+        {
+            mAfterConnectionOpenedForTest.run();
         }
     }
 
