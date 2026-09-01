@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,7 +52,35 @@ class SdrTrunkDatabaseStartupTest
         {
             assertTrue(resultSet.next());
             assertEquals(Integer.toString(DmrActivitySchema.SCHEMA_VERSION), resultSet.getString(1));
+            assertEquals("2", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+                SqliteSchemaValidator.fingerprint(connection));
+            DatabaseFormatCatalog.requireCurrent(connection);
             DmrActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void refusesMarkerlessCurrentLayoutWithoutRepairingIt() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("missing-global-marker.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA journal_mode=DELETE");
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
+        }
+
+        java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
+            () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
+        assertTrue(failure.getMessage().contains("missing authoritative metadata"));
+        assertEquals("delete", journalMode(database));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(null, metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
         }
     }
 
@@ -251,7 +280,7 @@ class SdrTrunkDatabaseStartupTest
         assertEquals("delete", journalMode(database));
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("exact current main schema layout"));
+        assertTrue(failure.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertEquals("delete", journalMode(database));
     }
 
@@ -272,7 +301,20 @@ class SdrTrunkDatabaseStartupTest
 
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("exact current main schema layout"));
+        assertTrue(failure.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
+    }
+
+    private static String metadata(Connection connection, String key) throws Exception
+    {
+        try(var statement = connection.prepareStatement(
+            "SELECT value FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, key);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getString(1) : null;
+            }
+        }
     }
 
     private static String journalMode(Path database) throws Exception

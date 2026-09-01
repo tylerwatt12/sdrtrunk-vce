@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database;
 
+import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
@@ -33,8 +34,6 @@ import org.sqlite.SQLiteConfig;
  */
 public final class SdrTrunkDatabaseStartup
 {
-    private static final String CURRENT_GLOBAL_SCHEMA_FINGERPRINT =
-        "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
     private SdrTrunkDatabaseStartup()
     {
     }
@@ -62,7 +61,10 @@ public final class SdrTrunkDatabaseStartup
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            requireCurrentSchemaFingerprint(connection);
+            //Stamp only after every format-2 schema object, metadata value, and required seed row has been created
+            //and validated successfully.
+            DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);
+            DatabaseFormatCatalog.requireCurrent(connection);
         }
     }
 
@@ -77,7 +79,7 @@ public final class SdrTrunkDatabaseStartup
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            requireCurrentSchemaFingerprint(connection);
+            DatabaseFormatCatalog.requireCurrent(connection);
         }
 
         //Only a database proven to be the current main-track schema may be opened read/write and placed in the
@@ -177,17 +179,8 @@ public final class SdrTrunkDatabaseStartup
 
         if(!footprints.isEmpty())
         {
-            throw new SQLException("This main release cannot open a webfirst managed-recording database; found " +
+            throw new SQLException("This release cannot open a webfirst managed-recording database; found " +
                 footprints + ". Use separate portable data folders for main and webfirst.");
-        }
-    }
-
-    public static void requireCurrentSchemaFingerprint(Connection connection) throws SQLException
-    {
-        String actual = SqliteSchemaValidator.fingerprint(connection);
-        if(!CURRENT_GLOBAL_SCHEMA_FINGERPRINT.equals(actual))
-        {
-            throw new SQLException("SQLite database is not the exact current main schema layout (" + actual + ")");
         }
     }
 
