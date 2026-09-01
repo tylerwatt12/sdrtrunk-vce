@@ -14,6 +14,7 @@ package io.github.dsheirer.database;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
 import io.github.dsheirer.portable.PortableApplicationPaths;
@@ -104,10 +105,8 @@ public final class SdrTrunkDatabaseBootstrap
                         throw new IOException("Database migration failed: " + message(e), e);
                     }
 
-                    JOptionPane.showMessageDialog(null,
-                        "Your database was migrated successfully." + dialogMigrationSummary(result) +
-                            "\n\nSafety backup:\n" + result.safetyBackup(),
-                        MIGRATOR_TITLE, JOptionPane.INFORMATION_MESSAGE);
+                    ApplicationMigrationSuccessDialog.show(null, MIGRATOR_TITLE,
+                        ApplicationMigrationSuccessDialog.currentDatabaseReport(result));
                 }
             }
 
@@ -342,10 +341,8 @@ public final class SdrTrunkDatabaseBootstrap
         ApplicationMigrationService.MigrationResult result = ApplicationMigrationProgressDialog.run(null,
             MIGRATOR_TITLE,
             progress -> service.importPrevious(source, target, migrationPlan, progress));
-        JOptionPane.showMessageDialog(null,
-            "Migration complete. Your previous installation and its data were left unchanged." +
-                dialogMigrationSummary(result), MIGRATOR_TITLE,
-            JOptionPane.INFORMATION_MESSAGE);
+        ApplicationMigrationSuccessDialog.show(null, MIGRATOR_TITLE,
+            ApplicationMigrationSuccessDialog.previousImportReport(result));
         return true;
     }
 
@@ -369,13 +366,6 @@ public final class SdrTrunkDatabaseBootstrap
     private static void printMigrationSummary(ApplicationMigrationService.MigrationResult result)
     {
         migrationSummary(result.helperOutput()).ifPresent(System.out::println);
-    }
-
-    private static String dialogMigrationSummary(ApplicationMigrationService.MigrationResult result)
-    {
-        return migrationSummary(result.helperOutput())
-            .map(summary -> "\n\nMigration summary:\n" + summary)
-            .orElse("");
     }
 
     private static boolean confirmCurrentMigration(Path database,
