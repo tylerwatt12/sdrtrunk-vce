@@ -29,7 +29,12 @@ import java.util.concurrent.TimeUnit;
  */
 public final class ApplicationMigratorLauncher
 {
+    private static final String APPLICATION_MODULE = "sdr.trunk";
     private static final String APPLICATION_MIGRATOR_CLASS = ApplicationDatabaseMigrator.class.getName();
+    private static final String APPLICATION_MIGRATOR_MODULE_MAIN =
+        APPLICATION_MODULE + "/" + APPLICATION_MIGRATOR_CLASS;
+    private static final String MODULE_MAIN_PROPERTY = "jdk.module.main";
+    private static final String MODULE_PATH_PROPERTY = "jdk.module.path";
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
     private static final int MAX_CAPTURED_OUTPUT_BYTES = 1024 * 1024;
     private static final byte[] TRUNCATION_NOTICE =
@@ -233,6 +238,14 @@ public final class ApplicationMigratorLauncher
 
     static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot) throws IOException
     {
+        return command(stagedDatabase, sourceDataRoot, targetDataRoot,
+            new RuntimeLaunchMetadata(System.getProperty(MODULE_MAIN_PROPERTY),
+                System.getProperty(MODULE_PATH_PROPERTY), System.getProperty("java.class.path")));
+    }
+
+    static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                                RuntimeLaunchMetadata runtime) throws IOException
+    {
         if((sourceDataRoot == null) != (targetDataRoot == null))
         {
             throw new IOException("Both source and target data roots are required for portable path relocation.");
@@ -247,19 +260,46 @@ public final class ApplicationMigratorLauncher
             throw new IOException("The packaged Java executable was not found: " + java);
         }
 
-        String classPath = System.getProperty("java.class.path");
-
-        if(classPath == null || classPath.isBlank())
-        {
-            throw new IOException("The Java class path is unavailable for the Application Migrator.");
-        }
-
         List<String> command = new ArrayList<>();
         command.add(java.toString());
-        command.add("--enable-native-access=ALL-UNNAMED");
-        command.add("-cp");
-        command.add(classPath);
-        command.add(APPLICATION_MIGRATOR_CLASS);
+
+        String mainModule = nonBlank(runtime.mainModule());
+        String modulePath = nonBlank(runtime.modulePath());
+
+        if((mainModule == null) != (modulePath == null))
+        {
+            throw new IOException("The Java module launch metadata is incomplete for the Application Migrator: " +
+                MODULE_MAIN_PROPERTY + " and " + MODULE_PATH_PROPERTY + " must both be available.");
+        }
+
+        if(mainModule != null)
+        {
+            if(!APPLICATION_MODULE.equals(mainModule))
+            {
+                throw new IOException("The running application module is '" + mainModule + "'; expected '" +
+                    APPLICATION_MODULE + "' for the Application Migrator.");
+            }
+
+            command.add("--enable-native-access=" + APPLICATION_MODULE + ",org.xerial.sqlitejdbc");
+            command.add("--module-path");
+            command.add(modulePath);
+            command.add("-m");
+            command.add(APPLICATION_MIGRATOR_MODULE_MAIN);
+        }
+        else
+        {
+            String classPath = nonBlank(runtime.classPath());
+
+            if(classPath == null)
+            {
+                throw new IOException("The Java class path is unavailable for the Application Migrator.");
+            }
+
+            command.add("--enable-native-access=ALL-UNNAMED");
+            command.add("-cp");
+            command.add(classPath);
+            command.add(APPLICATION_MIGRATOR_CLASS);
+        }
 
         command.add(stagedDatabase.toAbsolutePath().normalize().toString());
 
@@ -270,5 +310,14 @@ public final class ApplicationMigratorLauncher
         }
 
         return List.copyOf(command);
+    }
+
+    private static String nonBlank(String value)
+    {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    record RuntimeLaunchMetadata(String mainModule, String modulePath, String classPath)
+    {
     }
 }

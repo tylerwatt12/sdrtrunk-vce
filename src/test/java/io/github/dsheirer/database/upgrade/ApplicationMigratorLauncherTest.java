@@ -48,6 +48,55 @@ class ApplicationMigratorLauncherTest
     }
 
     @Test
+    void buildsJpmsChildProcessCommand() throws Exception
+    {
+        Path stagedDatabase = mTemporaryFolder.resolve("stage/database/sdrtrunk.sqlite");
+        Path sourceDataRoot = mTemporaryFolder.resolve("old data");
+        Path targetDataRoot = mTemporaryFolder.resolve("new data");
+        String modulePath = mTemporaryFolder.resolve("application modules").toString();
+        Path javaHome = Path.of(System.getProperty("java.home", "")).toAbsolutePath().normalize();
+        boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        Path java = javaHome.resolve("bin").resolve(windows ? "java.exe" : "java");
+
+        assertEquals(List.of(java.toString(),
+                "--enable-native-access=sdr.trunk,org.xerial.sqlitejdbc",
+                "--module-path", modulePath,
+                "-m", "sdr.trunk/" + ApplicationDatabaseMigrator.class.getName(),
+                stagedDatabase.toAbsolutePath().normalize().toString(),
+                sourceDataRoot.toAbsolutePath().normalize().toString(),
+                targetDataRoot.toAbsolutePath().normalize().toString()),
+            ApplicationMigratorLauncher.command(stagedDatabase, sourceDataRoot, targetDataRoot,
+                new ApplicationMigratorLauncher.RuntimeLaunchMetadata("sdr.trunk", modulePath, "ignored")));
+    }
+
+    @Test
+    void rejectsIncompleteJpmsRuntimeMetadata()
+    {
+        Path stagedDatabase = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+
+        IOException missingModulePath = assertThrows(IOException.class,
+            () -> ApplicationMigratorLauncher.command(stagedDatabase, null, null,
+                new ApplicationMigratorLauncher.RuntimeLaunchMetadata("sdr.trunk", " ", "ignored")));
+        IOException missingMainModule = assertThrows(IOException.class,
+            () -> ApplicationMigratorLauncher.command(stagedDatabase, null, null,
+                new ApplicationMigratorLauncher.RuntimeLaunchMetadata(null, "/application/mods", "ignored")));
+
+        assertTrue(missingModulePath.getMessage().contains("jdk.module.main and jdk.module.path"));
+        assertTrue(missingMainModule.getMessage().contains("jdk.module.main and jdk.module.path"));
+    }
+
+    @Test
+    void rejectsUnexpectedJpmsMainModule()
+    {
+        IOException error = assertThrows(IOException.class,
+            () -> ApplicationMigratorLauncher.command(mTemporaryFolder.resolve("sdrtrunk.sqlite"), null, null,
+                new ApplicationMigratorLauncher.RuntimeLaunchMetadata("unexpected.module", "/application/mods",
+                    "ignored")));
+
+        assertTrue(error.getMessage().contains("expected 'sdr.trunk'"));
+    }
+
+    @Test
     void rejectsMissingClasspath() throws Exception
     {
         String originalClassPath = System.getProperty("java.class.path");
