@@ -41,9 +41,9 @@ and newer-than-this-build databases are refused without mutation.
 
 The format 1-to-2 step preserves supported administrator configuration while converting numeric playback priority to
 Default scan-list Listen membership and eligible catch-all talkgroup Aliases to list-level unmatched behavior. It
-removes retired fully-qualified P25 Alias rows and their dependent routes and resets rebuildable P25 affiliation and
-identity evidence. Preflight and completion show the exact counts before any staged result can be promoted. See
-[Database Migration Contract](database-migration.md) for the complete boundary.
+removes retired fully-qualified P25 Alias matcher rows and their dependent routes and resets rebuildable P25
+affiliation and identity evidence. Preflight and completion show the exact counts before any staged result can be
+promoted. See [Database Migration Contract](database-migration.md) for the complete boundary.
 
 ## Alpha And Nightly Channels
 

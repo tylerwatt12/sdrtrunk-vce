@@ -30,10 +30,13 @@ key integers, four value/timestamp integers, and SQLite B-tree overhead, with no
 
 The decoder publishes message-scoped facts through the existing bounded statistics queue and single background writer.
 Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
-path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. The current
-P25 activity schema is v24. Alpha 8 and Alpha 9 profiles already have this schema, so Alpha 10 preserves the retained
-rows without conversion. The retained Alpha 7 migration path creates the current activity storage empty; historical
-Alpha 7 band observations are not converted. Older and intermediate schema combinations are rejected.
+path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables.
+
+The current P25 activity schema is v26. Alpha 8, Alpha 9, and Alpha 10 share the exact v24/global-format-1 signature.
+Alpha 11's `1 -> 2` migration preserves the foreign-band tables and their rows unchanged while moving the whole
+database to format 2 and P25 v26; reproducible identity and affiliation state is reset separately. Pre-Alpha 8,
+unknown, mixed, and unregistered intermediate layouts are refused. See
+[Database Migration Contract](database-migration.md).
 
 ## Query access path
 
