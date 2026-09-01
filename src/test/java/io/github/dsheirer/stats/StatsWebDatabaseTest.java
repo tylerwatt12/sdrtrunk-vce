@@ -541,9 +541,9 @@ class StatsWebDatabaseTest
                          (1, 1, 3, 60000, %1$d, 3)
                 """.formatted(bucket));
             statement.executeUpdate("""
-                UPDATE p25_radio_affiliation
+                UPDATE trunked_radio_affiliation
                 SET talkgroup_id = 60000
-                WHERE system_key = 1 AND radio_id = 1811332
+                WHERE scope_id = 1 AND radio_id = 1811332
                 """);
             statement.executeUpdate("""
                 UPDATE trunked_identity_summary
@@ -3226,7 +3226,7 @@ class StatsWebDatabaseTest
                     first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
                 VALUES (1, 1811332, 56132, 1, 1000, 2000, 8, 8, 1)
                 """);
-            statement.executeUpdate("INSERT INTO p25_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
+            statement.executeUpdate("INSERT INTO trunked_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
             statement.executeUpdate("""
                 INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, lcn_band, lcn_number, timeslot,

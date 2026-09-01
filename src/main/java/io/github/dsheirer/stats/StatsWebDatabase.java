@@ -371,7 +371,7 @@ class StatsWebDatabase
         Map.entry("encrypted", "summary.encrypted_count"),
         Map.entry("affiliated_talkgroup", scopeAliasSortExpression("alias_talkgroup",
             "affiliation.talkgroup_id", "name")),
-        Map.entry("affiliation_updated", "affiliation.updated_at_ms"),
+        Map.entry("affiliation_updated", "affiliation.confirmed_at_ms"),
         Map.entry("first_seen", "summary.first_seen_ms"),
         Map.entry("last_seen", "summary.last_seen_ms")
     );
@@ -381,8 +381,8 @@ class StatsWebDatabase
         Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
         Map.entry("talkgroup", "affiliation.talkgroup_id"),
         Map.entry("talkgroup_alias", aliasSortExpression("alias_talkgroup", "affiliation.talkgroup_id", "name")),
-        Map.entry("updated", "affiliation.updated_at_ms"),
-        Map.entry("last_seen", "affiliation.updated_at_ms")
+        Map.entry("updated", "affiliation.confirmed_at_ms"),
+        Map.entry("last_seen", "affiliation.confirmed_at_ms")
     );
     private static final Map<String,String> RELATIONSHIP_SORT_COLUMNS = Map.ofEntries(
         Map.entry("radio", "relationship.radio_id"),
@@ -394,8 +394,8 @@ class StatsWebDatabase
         Map.entry("calls", "relationship.call_count"),
         Map.entry("grants", "relationship.grant_count"),
         Map.entry("encrypted", "relationship.encrypted_count"),
-        Map.entry("affiliated", "EXISTS (SELECT 1 FROM p25_radio_affiliation current_affiliation " +
-            "WHERE current_affiliation.system_key = scope.p25_system_key " +
+        Map.entry("affiliated", "EXISTS (SELECT 1 FROM trunked_radio_affiliation current_affiliation " +
+            "WHERE current_affiliation.scope_id = relationship.scope_id " +
             "AND current_affiliation.radio_id = relationship.radio_id " +
             "AND current_affiliation.talkgroup_id = relationship.talkgroup_id)"),
         Map.entry("first_seen", "relationship.first_seen_ms"),
@@ -1270,13 +1270,12 @@ class StatsWebDatabase
                     CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
                         THEN summary.last_counterpart_kind_code END AS last_talkgroup_kind_code,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
-                    affiliation.updated_at_ms AS affiliation_updated_at_ms
+                    affiliation.confirmed_at_ms AS affiliation_updated_at_ms
                 FROM trunked_identity_summary summary
                 JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
-                LEFT JOIN p25_radio_affiliation affiliation
-                  ON scope.protocol_code = 1 AND affiliation.system_key = scope.p25_system_key
-                 AND affiliation.radio_id = summary.identity_id
+                LEFT JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = scope.scope_id AND affiliation.radio_id = summary.identity_id
                 WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
                 """);
         List<Object> parameters = new ArrayList<>(List.of(scopeToken));
@@ -1379,10 +1378,9 @@ class StatsWebDatabase
                         WHERE relationship.scope_id = summary.scope_id
                           AND relationship.talkgroup_id = summary.identity_id
                           AND relationship.target_kind_code = summary.identity_kind_code) AS radios,
-                    (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
+                    (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
                         WHERE summary.identity_kind_code = 1
-                          AND scope.protocol_code = 1
-                          AND affiliation.system_key = scope.p25_system_key
+                          AND affiliation.scope_id = summary.scope_id
                           AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_radios
                 FROM trunked_identity_summary summary
                 JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
@@ -1521,16 +1519,15 @@ class StatsWebDatabase
                     CASE WHEN summary.last_counterpart_kind_code = 2
                         THEN summary.last_counterpart_id END AS last_peer_radio_id,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
-                    affiliation.updated_at_ms AS affiliation_updated_at_ms,
+                    affiliation.confirmed_at_ms AS affiliation_updated_at_ms,
                     (SELECT COUNT(*) FROM trunked_radio_talkgroup_summary relationship
                         WHERE relationship.scope_id = summary.scope_id
                           AND relationship.radio_id = summary.identity_id) AS talkgroups
                 FROM trunked_identity_summary summary
                 JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
-                LEFT JOIN p25_radio_affiliation affiliation
-                  ON scope.protocol_code = 1 AND affiliation.system_key = scope.p25_system_key
-                 AND affiliation.radio_id = summary.identity_id
+                LEFT JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = scope.scope_id AND affiliation.radio_id = summary.identity_id
                 WHERE scope.scope_token = ? AND summary.identity_kind_code = 2 AND summary.identity_id = ?
                 """, scopeToken, radio);
             enrichScopeRadios(connection, rows, "radio_id", "alias_");
@@ -1561,10 +1558,11 @@ class StatsWebDatabase
             StringBuilder sql = new StringBuilder("""
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, 'P25' AS protocol,
                     scope.p25_system_key AS system_key, system.wacn, system.system_id,
-                    affiliation.radio_id, affiliation.talkgroup_id, affiliation.updated_at_ms,
+                    affiliation.radio_id, affiliation.talkgroup_id,
+                    affiliation.confirmed_at_ms AS updated_at_ms,
                     summary.last_talker_alias
-                FROM p25_radio_affiliation affiliation
-                JOIN trunked_identity_scope scope ON scope.p25_system_key = affiliation.system_key
+                FROM trunked_radio_affiliation affiliation
+                JOIN trunked_identity_scope scope ON scope.scope_id = affiliation.scope_id
                 JOIN p25_system system ON system.system_key = scope.p25_system_key
                 LEFT JOIN trunked_identity_summary summary
                   ON summary.scope_id = scope.scope_id AND summary.identity_kind_code = 2
@@ -2473,9 +2471,8 @@ class StatsWebDatabase
                 (SELECT COUNT(*) FROM trunked_identity_summary identity
                     WHERE identity.scope_id = scope.scope_id
                       AND identity.identity_kind_code = 2) AS radios,
-                (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                    WHERE scope.protocol_code = 1
-                      AND affiliation.system_key = scope.p25_system_key) AS affiliations,
+                (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
+                    WHERE affiliation.scope_id = scope.scope_id) AS affiliations,
                 (SELECT group_concat(name, ', ') FROM (
                     SELECT DISTINCT coalesce(nullif(trim(context.channel_name), ''),
                                              nullif(trim(p25.channel_name), ''),
