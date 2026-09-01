@@ -20,15 +20,12 @@
 package io.github.dsheirer.gui;
 
 import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ConfigurationEditor;
 import io.github.dsheirer.gui.configuration.ConfigurationEditorRequest;
-import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
-import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEditor;
@@ -36,10 +33,8 @@ import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceE
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
-import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.jmbe.JmbeEditor;
 import io.github.dsheirer.jmbe.JmbeEditorRequest;
-import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.monitor.StatusBox;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
@@ -53,7 +48,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javafx.animation.AnimationTimer;
-import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.geometry.Insets;
@@ -74,16 +68,12 @@ import org.slf4j.LoggerFactory;
  * Java FX window manager.  Handles all secondary Java FX windows that are used within this primarily
  * Swing application.
  */
-public class JavaFxWindowManager extends Application
+public class JavaFxWindowManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
     private static final String LOADING_TEXT_STYLE = "-fx-text-fill: -fx-text-base-color;";
     private static final String LOADING_FAILURE_STYLE = "-fx-text-fill: #ef5350;";
 
-    public static final String ICON_MANAGER = "iconmanager";
-    public static final String CONFIGURATION_EDITOR = "configuration";
-    public static final String ENCRYPTION_KEY_EDITOR = "encryptionkeys";
-    public static final String USER_PREFERENCES_EDITOR = "preferences";
     public static final String STAGE_MONITOR_KEY_CALIBRATION_DIALOG = "calibration.dialog";
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
     public static final String STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR = "icon.manager";
@@ -126,21 +116,6 @@ public class JavaFxWindowManager extends Application
         mTunerManager = tunerManager;
         mConfigurationManager = configurationManager;
 
-        setup();
-    }
-
-    /**
-     * Constructs an instance.  Note: this constructor is used for standalone JavaFX application testing
-     */
-    public JavaFxWindowManager()
-    {
-        mUserPreferences = new UserPreferences();
-        AliasModel aliasModel = new AliasModel();
-        EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
-        mTunerManager = new TunerManager(mUserPreferences);
-        mTunerManager.start();
-        mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, new IconModel());
-        mConfigurationManager.init();
         setup();
     }
 
@@ -796,60 +771,4 @@ public class JavaFxWindowManager extends Application
         stage.toFront();
     }
 
-    @Override
-    public void start(Stage primaryStage) throws Exception
-    {
-        mLog.debug("Starting ...");
-        Parameters parameters = getParameters();
-        mLog.debug("Parameters: " + (parameters != null));
-
-        boolean valid = false;
-
-        if(parameters != null && parameters.getRaw().size() == 1)
-        {
-            String window = parameters.getRaw().get(0);
-
-            if(window != null)
-            {
-                switch(window)
-                {
-                    case ICON_MANAGER:
-                        valid = true;
-                        process(new ViewIconManagerRequest());
-                        break;
-                    case CONFIGURATION_EDITOR:
-                        valid = true;
-                        process(new ViewConfigurationRequest());
-                        break;
-                    case ENCRYPTION_KEY_EDITOR:
-                        valid = true;
-                        process(new ViewEncryptionKeyPreferenceEditorRequest());
-                        break;
-                    case USER_PREFERENCES_EDITOR:
-                        valid = true;
-                        process(new ViewUserPreferenceEditorRequest(PreferenceEditorType.DEFAULT));
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-
-        if(!valid)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.append("An argument is required to launch JavaFX windows from this window manager.  " +
-                "Valid options are:\n\ticonmanager\tIcon Manager\n\tconfiguration\tConfiguration Editor\n" +
-                "\tencryptionkeys\tEncryption Keys\n\tpreferences\tUser Preferences Editor\n");
-            sb.append("Supplied Argument(s): ").append(parameters.getRaw());
-
-            mLog.error(sb.toString());
-        }
-    }
-
-    public static void main(String[] args)
-    {
-        mLog.info("Application Start - Parameters: " + args);
-        launch(args);
-    }
 }
