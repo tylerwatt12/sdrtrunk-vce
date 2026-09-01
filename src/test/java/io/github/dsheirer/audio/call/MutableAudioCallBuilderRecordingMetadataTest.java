@@ -11,6 +11,7 @@
 package io.github.dsheirer.audio.call;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,17 +19,120 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class MutableAudioCallBuilderRecordingMetadataTest
 {
+    @Test
+    void correctedDestinationWithdrawsRecordableAliasPolicy()
+    {
+        Alias recorded = new Alias("Recorded");
+        recorded.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
+        recorded.setRecordable(true);
+        recorded.addBroadcastChannel("Recorded Stream");
+        recorded.setCallPriority(10);
+        Alias notRecorded = new Alias("Not Recorded");
+        notRecorded.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 200));
+        notRecorded.addBroadcastChannel("Not Recorded Stream");
+        notRecorded.setCallPriority(50);
+        AliasList aliasList = new AliasList(new AliasListDefinition("Primary", AliasListFamily.P25));
+        aliasList.addAlias(recorded);
+        aliasList.addAlias(notRecorded);
+        MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
+
+        builder.addIdentifiers(List.of(APCO25Talkgroup.create(100)));
+        assertTrue(builder.isRecordAudio());
+        assertTrue(builder.getRecordingMetadata().destinationTalkgroupRecordEnabled());
+        assertEquals(Set.of(new BroadcastChannel("Recorded Stream")), builder.getBroadcastChannels());
+        assertEquals(10, builder.getMonitorPriority());
+
+        builder.addIdentifiers(List.of(APCO25Talkgroup.create(200)));
+
+        assertFalse(builder.isRecordAudio());
+        assertEquals("Not Recorded", builder.getRecordingMetadata().destinationAlias());
+        assertFalse(builder.getRecordingMetadata().destinationTalkgroupRecordEnabled());
+        assertEquals(Set.of(new BroadcastChannel("Not Recorded Stream")), builder.getBroadcastChannels());
+        assertEquals(50, builder.getMonitorPriority());
+    }
+
+    @Test
+    void patchPromotionReplacesPriorDestinationAndItsRecordingPolicy()
+    {
+        Alias recorded = new Alias("Recorded");
+        recorded.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
+        recorded.setRecordable(true);
+        Alias notRecorded = new Alias("Not Recorded");
+        notRecorded.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 200));
+        AliasList aliasList = new AliasList(new AliasListDefinition("Primary", AliasListFamily.P25));
+        aliasList.addAlias(recorded);
+        aliasList.addAlias(notRecorded);
+        MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
+
+        builder.addIdentifiers(List.of(APCO25Talkgroup.create(100)));
+        assertTrue(builder.isRecordAudio());
+
+        APCO25PatchGroup patchGroup = APCO25PatchGroup.create(new PatchGroup(APCO25Talkgroup.create(200)));
+        builder.addIdentifiers(List.of(patchGroup));
+
+        assertFalse(builder.isRecordAudio());
+        assertEquals("Not Recorded", builder.getRecordingMetadata().destinationAlias());
+        assertEquals(1, builder.getIdentifierCollection().getIdentifiers().stream()
+            .filter(AudioCallRecordingMetadata::isDestination).count());
+        assertTrue(builder.getIdentifierCollection().getIdentifiers().contains(patchGroup));
+    }
+
+    @Test
+    void explicitRecordingOverrideSurvivesDestinationCorrection()
+    {
+        AliasList aliasList = new AliasList(new AliasListDefinition("Primary", AliasListFamily.P25));
+        MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
+        builder.setRecordAudio(true);
+
+        builder.addIdentifiers(List.of(APCO25Talkgroup.create(100)));
+        builder.addIdentifiers(List.of(APCO25Talkgroup.create(200)));
+
+        assertTrue(builder.isRecordAudio());
+        builder.setRecordAudio(false);
+        assertFalse(builder.isRecordAudio());
+    }
+
+    @Test
+    void patchMemberUpdateReplacesEqualityEquivalentDestinationPolicy()
+    {
+        Alias recordedMember = new Alias("Recorded Member");
+        recordedMember.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 300));
+        recordedMember.setRecordable(true);
+        AliasList aliasList = new AliasList(new AliasListDefinition("Primary", AliasListFamily.P25));
+        aliasList.addAlias(recordedMember);
+        MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
+        PatchGroup firstValue = new PatchGroup(APCO25Talkgroup.create(200));
+        firstValue.addPatchedTalkgroup(APCO25Talkgroup.create(300));
+        APCO25PatchGroup first = APCO25PatchGroup.create(firstValue);
+        PatchGroup correctedValue = new PatchGroup(APCO25Talkgroup.create(200));
+        correctedValue.addPatchedTalkgroup(APCO25Talkgroup.create(400));
+        APCO25PatchGroup corrected = APCO25PatchGroup.create(correctedValue);
+
+        builder.addIdentifiers(List.of(first));
+        assertTrue(builder.isRecordAudio());
+
+        builder.addIdentifiers(List.of(corrected));
+
+        assertFalse(builder.isRecordAudio());
+        assertSame(corrected, builder.getIdentifierCollection().getIdentifiers().stream()
+            .filter(AudioCallRecordingMetadata::isDestination).findFirst().orElseThrow());
+    }
+
     @Test
     void freezesAliasNamesAndRecordDecisionWhenIdentifiersJoinTheCall()
     {
