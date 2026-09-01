@@ -122,6 +122,9 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
 
     protected void dispose()
     {
+        //The tuner editor can detach while a wideband recording remains active.  The controller owns the recorder,
+        //so its final lifecycle boundary must stop and close that recorder before its listeners are discarded.
+        stopRecorder();
         getTunerFrequencyErrorManager().dispose();
         mRecordingStatusBroadcaster.dispose();
         mNativeBufferBroadcaster.clear();
