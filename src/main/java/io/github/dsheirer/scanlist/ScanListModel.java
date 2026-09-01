@@ -336,4 +336,3 @@ public final class ScanListModel
         return updated;
     }
 }
-
