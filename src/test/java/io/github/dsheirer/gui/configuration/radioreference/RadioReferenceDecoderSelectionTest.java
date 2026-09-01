@@ -28,6 +28,7 @@ import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.Flavor;
@@ -83,6 +84,51 @@ class RadioReferenceDecoderSelectionTest
     {
         assertEquals(DecoderType.P25_PHASE1, trunkedDecoderType("Phase I"));
         assertEquals(DecoderType.P25_PHASE2, trunkedDecoderType("Phase II"));
+    }
+
+    @Test
+    void mapsRadioReferenceCqpskSiteModulationToLsm()
+    {
+        Site site = new Site();
+        site.setModulation("CQPSK Phase 1");
+
+        assertEquals(Modulation.CQPSK, SiteEditor.getP25Phase1Modulation(site));
+    }
+
+    @Test
+    void simulcastSiteNameTakesPrecedenceOverStructuredC4fmModulation()
+    {
+        Site site = new Site();
+        site.setDescription("Lorain County Simulcast");
+        site.setModulation("C4FM, H-DQPSK");
+
+        assertEquals(Modulation.CQPSK, SiteEditor.getP25Phase1Modulation(site));
+    }
+
+    @Test
+    void simulcastSiteNameMatchIsCaseInsensitive()
+    {
+        Site site = new Site();
+        site.setDescription("county SIMULCAST layer");
+        site.setModulation("C4FM");
+
+        assertEquals(Modulation.CQPSK, SiteEditor.getP25Phase1Modulation(site));
+    }
+
+    @Test
+    void fallsBackToSimulcastSiteDescriptionWhenModulationIsMissing()
+    {
+        Site site = new Site();
+        site.setDescription("Cuyahoga Co Simulcast");
+
+        assertEquals(Modulation.CQPSK, SiteEditor.getP25Phase1Modulation(site));
+    }
+
+    @Test
+    void defaultsP25Phase1ImportToC4fmWhenRadioReferenceHasNoIndicator()
+    {
+        assertEquals(Modulation.C4FM, SiteEditor.getP25Phase1Modulation(new Site()));
+        assertEquals(Modulation.C4FM, SiteEditor.getP25Phase1Modulation(null));
     }
 
     @Test
