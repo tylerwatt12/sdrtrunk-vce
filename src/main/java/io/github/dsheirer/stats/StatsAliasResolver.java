@@ -97,9 +97,9 @@ class StatsAliasResolver
     }
 
     /**
-     * Activity spans several protocols and ownership models. P25 trunked identities retain their system-qualified
-     * lookup, while conventional P25 and all DMR/NXDN identities resolve only against the alias list assigned to the
-     * exact receiver context.
+     * Activity spans several protocols and ownership models. P25 trunked identities resolve against the Alias Lists
+     * assigned to their system, while conventional P25 and all DMR/NXDN identities resolve only against the Alias
+     * List assigned to the exact receiver context.
      */
     private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot,
                                         Map<Integer,Set<String>> aliasLists, boolean radio,
@@ -150,7 +150,7 @@ class StatsAliasResolver
 
     /**
      * Projects each compact evidence row to the one winning configured alias.  This is deliberately the same
-     * precedence used by the normal Stats read models, so overlapping exact/range/fully-qualified rules cannot make
+     * precedence used by the normal Stats read models, so overlapping exact/range rules cannot make
      * one observation count against multiple aliases.
      *
      * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code identity_kind_code},
@@ -203,18 +203,12 @@ class StatsAliasResolver
 
             if(trunkedP25)
             {
-                Integer wacn = integer(row.get("wacn"));
-                Integer system = integer(row.get("system_id"));
                 Integer systemKey = integer(row.get("system_key"));
-
-                if(wacn != null && system != null)
-                {
-                    Set<String> aliasLists = systemKey != null ?
-                        systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
-                    best = bestSystemRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
-                        wacn, system, aliasLists);
-                    best = bestSystemRule(rules.ranged(), best, identifier, wacn, system, aliasLists);
-                }
+                Set<String> aliasLists = systemKey != null ?
+                    systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
+                best = bestSystemRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
+                    aliasLists);
+                best = bestSystemRule(rules.ranged(), best, identifier, aliasLists);
             }
             else if(row.get("alias_list_name") instanceof String aliasList && !aliasList.isBlank())
             {
@@ -267,8 +261,7 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves a conventional P25 identity from its receiver's exact alias list. Fully-qualified rules are excluded
-     * because a conventional receiver has no decoded WACN/system identity with which to validate them.
+     * Resolves a conventional P25 identity from its receiver's exact alias list.
      */
     void enrichP25ConventionalTalkgroups(Connection connection, List<Map<String,Object>> rows,
                                          String identifierColumn, String prefix) throws SQLException
@@ -304,19 +297,16 @@ class StatsAliasResolver
                         String identifierColumn, String prefix)
     {
         Integer identifier = integer(row.get(identifierColumn));
-        Integer wacn = integer(row.get("wacn"));
-        Integer system = integer(row.get("system_id"));
         Integer systemKey = integer(row.get("system_key"));
 
-        if(identifier == null || wacn == null || system == null)
+        if(identifier == null)
         {
             return;
         }
 
         Set<String> aliasLists = systemKey != null ? aliasListsBySystem.getOrDefault(systemKey, Set.of()) : Set.of();
-        Rule best = bestSystemRule(index.exact().getOrDefault(identifier, List.of()), null, identifier, wacn,
-            system, aliasLists);
-        best = bestSystemRule(index.ranged(), best, identifier, wacn, system, aliasLists);
+        Rule best = bestSystemRule(index.exact().getOrDefault(identifier, List.of()), null, identifier, aliasLists);
+        best = bestSystemRule(index.ranged(), best, identifier, aliasLists);
         apply(row, best, prefix);
     }
 
@@ -324,11 +314,9 @@ class StatsAliasResolver
                         String identifierColumn, String prefix)
     {
         Integer identifier = integer(row.get(identifierColumn));
-        Integer wacn = integer(row.get("wacn"));
-        Integer system = integer(row.get("system_id"));
         Integer systemKey = integer(row.get("system_key"));
 
-        if(identifier == null || wacn == null || system == null)
+        if(identifier == null)
         {
             return;
         }
@@ -338,7 +326,7 @@ class StatsAliasResolver
 
         for(Rule rule: rules)
         {
-            if(!rule.matches(identifier, wacn, system) || !rule.isEligible(aliasLists))
+            if(!rule.matchesIdentifier(identifier) || !rule.isEligible(aliasLists))
             {
                 continue;
             }
@@ -402,8 +390,7 @@ class StatsAliasResolver
 
         for(Rule rule: rules)
         {
-            if(rule.fullyQualified() || !aliasList.equals(rule.aliasList()) ||
-                !rule.matchesIdentifier(identifier))
+            if(!aliasList.equals(rule.aliasList()) || !rule.matchesIdentifier(identifier))
             {
                 continue;
             }
@@ -420,12 +407,11 @@ class StatsAliasResolver
         }
     }
 
-    private static Rule bestSystemRule(List<Rule> rules, Rule best, int identifier, int wacn, int system,
-                                       Set<String> aliasLists)
+    private static Rule bestSystemRule(List<Rule> rules, Rule best, int identifier, Set<String> aliasLists)
     {
         for(Rule rule: rules)
         {
-            if(rule.matches(identifier, wacn, system) && rule.isEligible(aliasLists) &&
+            if(rule.matchesIdentifier(identifier) && rule.isEligible(aliasLists) &&
                 (best == null || rule.isPreferredTo(best)))
             {
                 best = rule;
@@ -439,7 +425,7 @@ class StatsAliasResolver
     {
         for(Rule rule: rules)
         {
-            if(!rule.fullyQualified() && aliasList.equals(rule.aliasList()) && rule.matchesIdentifier(identifier) &&
+            if(aliasList.equals(rule.aliasList()) && rule.matchesIdentifier(identifier) &&
                 (best == null || rule.isPreferredAssignedListTo(best)))
             {
                 best = rule;
@@ -542,8 +528,7 @@ class StatsAliasResolver
         List<Rule> rules = new ArrayList<>();
 
         try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
-            SELECT identifier.value, identifier.min_value, identifier.max_value, identifier.wacn,
-                identifier.system_id, identifier.fully_qualified, identifier.ranged, alias.name,
+            SELECT identifier.value, identifier.min_value, identifier.max_value, identifier.ranged, alias.name,
                 alias.description, alias.group_name, alias.color, identifier.alias_list_name,
                 alias.id AS alias_id
             FROM %s identifier
@@ -556,8 +541,7 @@ class StatsAliasResolver
             {
                 rules.add(new Rule(integer(resultSet.getObject("value")),
                     integer(resultSet.getObject("min_value")), integer(resultSet.getObject("max_value")),
-                    integer(resultSet.getObject("wacn")), integer(resultSet.getObject("system_id")),
-                    resultSet.getInt("fully_qualified") != 0, resultSet.getInt("ranged") != 0,
+                    resultSet.getInt("ranged") != 0,
                     resultSet.getString("name"), resultSet.getString("description"),
                     resultSet.getString("group_name"), resultSet.getInt("color"),
                     resultSet.getString("alias_list_name"), resultSet.getLong("alias_id")));
@@ -586,13 +570,13 @@ class StatsAliasResolver
     {
     }
 
-    private record Rule(Integer value, Integer minimum, Integer maximum, Integer wacn, Integer systemId,
-                        boolean fullyQualified, boolean ranged, String name, String description, String group,
+    private record Rule(Integer value, Integer minimum, Integer maximum,
+                        boolean ranged, String name, String description, String group,
                         int color, String aliasList, long aliasId)
     {
         boolean isEligible(Set<String> systemAliasLists)
         {
-            return systemAliasLists.contains(aliasList) || (systemAliasLists.isEmpty() && fullyQualified);
+            return systemAliasLists.contains(aliasList);
         }
 
         boolean isPreferredTo(Rule other)
@@ -617,32 +601,7 @@ class StatsAliasResolver
 
         private int specificity()
         {
-            if(fullyQualified && !ranged)
-            {
-                return 3;
-            }
-            else if(!ranged)
-            {
-                return 2;
-            }
-            else if(fullyQualified)
-            {
-                return 1;
-            }
-
-            return 0;
-        }
-
-        boolean matches(int identifier, int observedWacn, int observedSystem)
-        {
-            if(fullyQualified && (!Integer.valueOf(observedWacn).equals(wacn) ||
-                !Integer.valueOf(observedSystem).equals(systemId)))
-            {
-                return false;
-            }
-
-            return ranged ? minimum != null && maximum != null && identifier >= minimum && identifier <= maximum :
-                value != null && identifier == value;
+            return ranged ? 0 : 1;
         }
     }
 }

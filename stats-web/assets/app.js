@@ -1376,11 +1376,10 @@ function aliasMetricsState(value) {
 
 function aliasBehavior(row) {
   const values = [];
-  const priority = row.priority === null || row.priority === undefined ? Number.NaN : Number(row.priority);
-  if (priority === -1) values.push(badge('Muted', 'state-stale', 'This alias is not monitored for audio'));
-  else if (Number.isFinite(priority) && priority >= 0 && priority < 100) {
-    values.push(badge(`Priority ${identifierNumber(priority)}`, '', 'Audio monitoring priority'));
-  }
+  const listen = row.listen_enabled === null || row.listen_enabled === undefined ? Number.NaN :
+    Number(row.listen_enabled);
+  if (listen === 1) values.push(badge('Listen', 'state-current', 'Included in the Default scan list'));
+  else if (listen === 0) values.push(badge('Listen off', 'state-stale', 'Not included in the Default scan list'));
   if (Number(row.record_enabled)) values.push(badge('Record', 'state-current'));
   const destinations = Array.isArray(row.broadcast_channels) ? row.broadcast_channels.length : 0;
   if (destinations) values.push(badge(`Stream ×${identifierNumber(destinations)}`, 'state-current'));
@@ -1738,14 +1737,9 @@ function aliasDetailContent(alias, breakdown) {
     ['Protocol', availableValue(alias.protocol)],
     ['Exact', alias.exact === null || alias.exact === undefined ? '—' : yesNoKnown(alias.exact)],
     ['Ranged', alias.ranged === null || alias.ranged === undefined ? '—' : yesNoKnown(alias.ranged)],
-    ['Fully Qualified', alias.fully_qualified === null || alias.fully_qualified === undefined ? '—' :
-      yesNoKnown(alias.fully_qualified)],
     ['Value', aliasRawValue(alias.value)],
     ['Minimum', aliasRawValue(alias.min_value)],
     ['Maximum', aliasRawValue(alias.max_value)],
-    ['WACN', alias.wacn === null || alias.wacn === undefined ? '—' : hexDecimalPair(alias.wacn, 5)],
-    ['P25 System', alias.p25_system_id === null || alias.p25_system_id === undefined ? '—' :
-      hexDecimalPair(alias.p25_system_id, 3)],
     ['Text Value', availableValue(alias.text_value)],
     ['Numeric Value', aliasRawValue(alias.numeric_value)],
     ['Tone Sequence', availableValue(alias.tone_sequence)],

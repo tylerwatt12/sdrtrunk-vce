@@ -13,8 +13,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
+import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
 import java.net.URI;
@@ -58,7 +60,7 @@ class StatsWebDatabaseTest
     void setUp() throws Exception
     {
         mDatabasePath = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(mDatabasePath);
+        createDatabase(mDatabasePath);
         seed(mDatabasePath);
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
     }
@@ -116,11 +118,6 @@ class StatsWebDatabaseTest
                 VALUES (3, 1, 'County Range', 'TALKGROUP_RANGE', 'APCO25', 56000, 56200)
                 """);
             statement.executeUpdate("""
-                UPDATE alias
-                SET matcher_type='P25_FULLY_QUALIFIED_TALKGROUP', wacn=0xBEE00, p25_system_id=0x348
-                WHERE id=1
-                """);
-            statement.executeUpdate("""
                 UPDATE trunked_radio_talkgroup_summary SET join_count=2
                 WHERE scope_id=1 AND radio_id=1811332 AND talkgroup_id=56132
                 """);
@@ -131,6 +128,10 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO alias_broadcast_channel(alias_id, channel_name)
                 VALUES(1, 'Primary'), (1, 'Archive')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_scan_list_membership(alias_id, scan_list_id)
+                VALUES(1, 1)
                 """);
         }
 
@@ -151,6 +152,8 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(dispatch.get("join_relationship_count")));
         assertEquals(1L, number(dispatch.get("current_affiliation_count")));
         assertEquals(List.of("Archive", "Primary"), dispatch.get("broadcast_channels"));
+        assertEquals(1L, number(dispatch.get("listen_enabled")));
+        assertFalse(dispatch.containsKey("priority"));
 
         Map<String,Object> range = aliases.getLast();
         assertEquals("covered_no_evidence", range.get("metrics_state"));
@@ -167,11 +170,13 @@ class StatsWebDatabaseTest
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
-        assertEquals("BEE00", csv.getFirst().get("wacn_hex"));
+        assertEquals("1", csv.getFirst().get("listen_enabled"));
+        assertFalse(csv.getFirst().isMapped("priority"));
+        assertFalse(csv.getFirst().isMapped("fully_qualified"));
     }
 
     @Test
-    void searchesOnlyRealFullyQualifiedIdentifiersAndSortsEveryMatcherByItsDisplayValue() throws Exception
+    void searchesAndSortsOnlyFormat2Identifiers() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -179,32 +184,36 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO alias (
                     id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value,
-                    wacn, p25_system_id, text_value, numeric_value, tone_sequence
+                    text_value, numeric_value, tone_sequence
                 ) VALUES
-                    (3, 1, 'Qualified B', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 7,
-                        NULL, NULL, 0xBEE01, 0x100, NULL, NULL, NULL),
-                    (4, 1, 'Qualified A', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 8,
-                        NULL, NULL, 0xBEE00, 0x400, NULL, NULL, NULL),
+                    (3, 1, 'Exact Seven', 'TALKGROUP', 'APCO25', 7,
+                        NULL, NULL, NULL, NULL, NULL),
+                    (4, 1, 'Exact Eight', 'TALKGROUP', 'APCO25', 8,
+                        NULL, NULL, NULL, NULL, NULL),
                     (5, 1, 'Small Range', 'TALKGROUP_RANGE', 'APCO25', NULL,
-                        20, 30, NULL, NULL, NULL, NULL, NULL),
+                        20, 30, NULL, NULL, NULL),
                     (6, 1, 'Status Ten', 'STATUS', NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, 10, NULL),
+                        NULL, NULL, NULL, 10, NULL),
                     (7, 1, 'DCS Code', 'DCS', NULL, NULL,
-                        NULL, NULL, NULL, NULL, 'D023N', NULL, NULL),
+                        NULL, NULL, 'D023N', NULL, NULL),
                     (8, 1, 'Tone Code', 'TONES', NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, NULL, 'A-B')
+                        NULL, NULL, NULL, NULL, 'A-B')
                 """);
         }
 
         assertTrue(rows(mDatabase.aliases(request("/api/aliases?q=00000"))).isEmpty(),
-            "Ordinary aliases must not acquire a synthetic 00000-000 fully-qualified identifier");
-        assertEquals(List.of("Qualified A"), rows(mDatabase.aliases(request(
-            "/api/aliases?q=BEE00-400-8"))).stream().map(row -> row.get("name")).toList());
-        assertEquals(List.of("Qualified A"), rows(mDatabase.aliases(request(
-            "/api/aliases?q=781824-1024-8"))).stream().map(row -> row.get("name")).toList());
+            "Ordinary aliases must not acquire a synthetic qualified identifier");
+        assertTrue(rows(mDatabase.aliases(request("/api/aliases?q=BEE00-400-8"))).isEmpty());
+        assertTrue(rows(mDatabase.aliases(request("/api/aliases?q=781824-1024-8"))).isEmpty());
+        assertEquals(List.of("Exact Eight"), rows(mDatabase.aliases(request(
+            "/api/aliases?q=8&matcher=TALKGROUP"))).stream().map(row -> row.get("name")).toList());
 
-        assertEquals(List.of("Status Ten", "Small Range", "Dispatch", "Engine 1", "Qualified A",
-                "Qualified B", "Tone Code", "DCS Code"),
+        StatsApiException retiredMatcher = assertThrows(StatsApiException.class, () ->
+            mDatabase.aliases(request("/api/aliases?matcher=P25_FULLY_QUALIFIED_TALKGROUP")));
+        assertEquals(400, retiredMatcher.status());
+
+        assertEquals(List.of("Exact Seven", "Exact Eight", "Status Ten", "Small Range", "Dispatch",
+                "Engine 1", "Tone Code", "DCS Code"),
             rows(mDatabase.aliases(request("/api/aliases?sort=value&direction=asc&limit=20"))).stream()
                 .map(row -> row.get("name")).toList());
     }
@@ -3066,6 +3075,17 @@ class StatsWebDatabaseTest
             statement.setDouble(9, decode);
             statement.setLong(10, observedAt);
             statement.executeUpdate();
+        }
+    }
+
+    private static void createDatabase(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            P25ActivityLogSchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
         }
     }
 
