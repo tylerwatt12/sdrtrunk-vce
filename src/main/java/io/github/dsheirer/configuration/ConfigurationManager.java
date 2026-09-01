@@ -675,7 +675,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
-            mChannelProcessingManager.shutdown();
+            mChannelProcessingManager.stopAllChannels();
             saveNow(true);
 
             if(hasDirtyConfiguration())
@@ -741,7 +741,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mConfigurationLoading = true;
 
         //Shutdown any running channels
-        mChannelProcessingManager.shutdown();
+        mChannelProcessingManager.stopAllChannels();
 
         mChannelModel.clear();
         mBroadcastModel.clear();
