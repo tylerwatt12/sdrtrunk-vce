@@ -166,21 +166,153 @@ public final class SqliteSchemaValidator
         throw new SQLException("SQLite schema is missing " + type + " [" + name + "]");
     }
 
-    private static String canonicalSql(String sql)
+    static String canonicalSql(String sql)
     {
         if(sql == null)
         {
             return "";
         }
 
-        return sql.trim()
+        String source = sql.trim()
             .replaceFirst(
                 "(?i)^CREATE\\s+((?:UNIQUE\\s+)?(?:TABLE|INDEX|VIEW|TRIGGER))\\s+IF\\s+NOT\\s+EXISTS\\s+",
-                "CREATE $1 ")
-            .replaceAll("\"([A-Za-z_][A-Za-z0-9_]*)\"", "$1")
-            .replaceAll("\\s+", " ")
-            .replaceAll("\\s*([(),=])\\s*", "$1")
-            .replaceFirst(";\\s*$", "");
+                "CREATE $1 ");
+
+        if(source.endsWith(";"))
+        {
+            source = source.substring(0, source.length() - 1).stripTrailing();
+        }
+
+        StringBuilder canonical = new StringBuilder(source.length());
+        boolean pendingSpace = false;
+
+        for(int index = 0; index < source.length(); index++)
+        {
+            char character = source.charAt(index);
+
+            if(Character.isWhitespace(character))
+            {
+                pendingSpace = canonical.length() > 0;
+                continue;
+            }
+
+            if(character == '\'')
+            {
+                appendPendingSpace(canonical, pendingSpace);
+                pendingSpace = false;
+                canonical.append(character);
+
+                while(++index < source.length())
+                {
+                    character = source.charAt(index);
+                    canonical.append(character);
+
+                    if(character == '\'')
+                    {
+                        if(index + 1 < source.length() && source.charAt(index + 1) == '\'')
+                        {
+                            canonical.append(source.charAt(++index));
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if(character == '"')
+            {
+                int end = quotedIdentifierEnd(source, index);
+                appendPendingSpace(canonical, pendingSpace);
+                pendingSpace = false;
+                String identifier = source.substring(index + 1, end);
+
+                if(identifier.matches("[A-Za-z_][A-Za-z0-9_]*"))
+                {
+                    canonical.append(identifier);
+                }
+                else
+                {
+                    canonical.append(source, index, end + 1);
+                }
+
+                index = end;
+                continue;
+            }
+
+            if(character == '`' || character == '[')
+            {
+                char closing = character == '`' ? '`' : ']';
+                appendPendingSpace(canonical, pendingSpace);
+                pendingSpace = false;
+                canonical.append(character);
+
+                while(++index < source.length())
+                {
+                    character = source.charAt(index);
+                    canonical.append(character);
+                    if(character == closing)
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            if(isTightPunctuation(character))
+            {
+                int length = canonical.length();
+                if(length > 0 && canonical.charAt(length - 1) == ' ')
+                {
+                    canonical.setLength(length - 1);
+                }
+                canonical.append(character);
+                pendingSpace = false;
+                continue;
+            }
+
+            appendPendingSpace(canonical, pendingSpace);
+            pendingSpace = false;
+            canonical.append(character);
+        }
+
+        return canonical.toString().stripTrailing();
+    }
+
+    private static int quotedIdentifierEnd(String sql, int start)
+    {
+        for(int index = start + 1; index < sql.length(); index++)
+        {
+            if(sql.charAt(index) == '"')
+            {
+                if(index + 1 < sql.length() && sql.charAt(index + 1) == '"')
+                {
+                    index++;
+                }
+                else
+                {
+                    return index;
+                }
+            }
+        }
+
+        return sql.length() - 1;
+    }
+
+    private static void appendPendingSpace(StringBuilder canonical, boolean pendingSpace)
+    {
+        if(pendingSpace && canonical.length() > 0 &&
+            !isTightPunctuation(canonical.charAt(canonical.length() - 1)))
+        {
+            canonical.append(' ');
+        }
+    }
+
+    private static boolean isTightPunctuation(char character)
+    {
+        return character == '(' || character == ')' || character == ',' || character == '=';
     }
 
     private static void updateDigest(MessageDigest digest, String value)

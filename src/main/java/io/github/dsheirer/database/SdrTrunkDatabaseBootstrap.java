@@ -14,6 +14,7 @@ package io.github.dsheirer.database;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
@@ -35,7 +36,7 @@ public final class SdrTrunkDatabaseBootstrap
 {
     private static final String TITLE = "sdrtrunk-vce Setup";
     private static final String MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
-    private static final String ALPHA_7_SUMMARY_PREFIX = "Alpha 7 migration:";
+    private static final String MIGRATION_SUMMARY_PREFIX = "Migrated database format ";
     private static final int MAXIMUM_MIGRATION_SUMMARY_LENGTH = 8_192;
 
     private SdrTrunkDatabaseBootstrap()
@@ -56,27 +57,20 @@ public final class SdrTrunkDatabaseBootstrap
                     "--upgrade-data or choose a new data folder.");
             }
 
-            ApplicationMigrationService.MigrationState state =
-                ApplicationMigrationService.readMigrationState(databasePath);
+            DatabaseMigrationChain.PreflightReport migrationPlan =
+                ApplicationMigrationService.readMigrationPlan(databasePath);
 
-            if(!state.supported())
-            {
-                throw new IOException("This release accepts only an exact Alpha 7 database or its exact current " +
-                    "database, not " + state.description() + ". Upgrade an older public release sequentially to " +
-                    "Alpha 7 first. Intermediate development and webfirst databases are not supported; keep " +
-                    "separate portable data folders for main and webfirst.");
-            }
-
-            if(state.requiresMigration())
+            if(migrationPlan.source().requiresMigration())
             {
                 if(GraphicsEnvironment.isHeadless() && !options.upgradeCurrent())
                 {
                     throw new IOException("The portable database requires these changes: " +
-                        state.requiredChanges() + ". Start once with --upgrade-current to let the Application " +
-                        "Migrator create a safety backup and update it.");
+                        ApplicationMigrationService.describePlan(migrationPlan) +
+                        ". Start once with --upgrade-current to let the Application Migrator create a safety " +
+                        "backup and update it.");
                 }
 
-                if(!options.upgradeCurrent() && !confirmCurrentMigration(databasePath, state))
+                if(!options.upgradeCurrent() && !confirmCurrentMigration(databasePath, migrationPlan))
                 {
                     return BootstrapResult.cancelled();
                 }
@@ -86,7 +80,7 @@ public final class SdrTrunkDatabaseBootstrap
 
                 if(GraphicsEnvironment.isHeadless())
                 {
-                    result = service.migrateCurrent(dataRoot, System.out::println);
+                    result = service.migrateCurrent(dataRoot, migrationPlan, System.out::println);
                     printMigrationSummary(result);
                 }
                 else
@@ -94,7 +88,7 @@ public final class SdrTrunkDatabaseBootstrap
                     try
                     {
                         result = ApplicationMigrationProgressDialog.run(null, MIGRATOR_TITLE,
-                            progress -> service.migrateCurrent(dataRoot, progress));
+                            progress -> service.migrateCurrent(dataRoot, migrationPlan, progress));
                     }
                     catch(InterruptedException e)
                     {
@@ -141,7 +135,8 @@ public final class SdrTrunkDatabaseBootstrap
         }
         else if(options.upgradeData() != null)
         {
-            Path source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
+            PreviousBuildLocator.Selection source =
+                PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
                 new IOException("The selected location does not contain portable sdrtrunk-vce data: " +
                     options.upgradeData()));
             ApplicationMigrationService.MigrationResult migration =
@@ -196,7 +191,8 @@ public final class SdrTrunkDatabaseBootstrap
                             continue;
                         }
 
-                        if(!importPrevious(source, dataRoot))
+                        if(!importPrevious(new PreviousBuildLocator.Selection(source,
+                            PreviousBuildLocator.InputScope.PORTABLE_PROFILE), dataRoot))
                         {
                             continue;
                         }
@@ -212,7 +208,8 @@ public final class SdrTrunkDatabaseBootstrap
                             continue;
                         }
 
-                        Optional<Path> source = PreviousBuildLocator.resolveSelection(selected);
+                        Optional<PreviousBuildLocator.Selection> source =
+                            PreviousBuildLocator.resolveSelection(selected);
 
                         if(source.isEmpty())
                         {
@@ -322,11 +319,18 @@ public final class SdrTrunkDatabaseBootstrap
         };
     }
 
-    private static boolean importPrevious(Path source, Path target) throws Exception
+    private static boolean importPrevious(PreviousBuildLocator.Selection source, Path target) throws Exception
     {
+        boolean portableProfile = source.portableProfile();
+        DatabaseMigrationChain.PreflightReport migrationPlan =
+            ApplicationMigrationService.readMigrationPlan(source.database());
         int confirmation = JOptionPane.showConfirmDialog(null,
-            "Close the previous sdrtrunk-vce app before continuing.\n\nThe Application Migrator will copy its setup, " +
-                "update the copied database, and leave the previous data unchanged.\n\nPrevious data:\n" + source +
+            "Close the previous sdrtrunk-vce app before continuing.\n\nThe Application Migrator will " +
+                (portableProfile ? "copy its setup and update the copied database" :
+                    "copy and update only the selected SQLite database; neighboring profile files and stored " +
+                        "paths will not be copied or remapped") +
+                ", leaving the selected source unchanged.\n\nPrevious data:\n" + source.path() +
+                "\n\nRequired changes:\n" + ApplicationMigrationService.describePlan(migrationPlan) +
                 "\n\nContinue?", MIGRATOR_TITLE, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
 
         if(confirmation != JOptionPane.OK_OPTION)
@@ -337,7 +341,7 @@ public final class SdrTrunkDatabaseBootstrap
         ApplicationMigrationService service = new ApplicationMigrationService();
         ApplicationMigrationService.MigrationResult result = ApplicationMigrationProgressDialog.run(null,
             MIGRATOR_TITLE,
-            progress -> service.importPrevious(source, target, progress));
+            progress -> service.importPrevious(source, target, migrationPlan, progress));
         JOptionPane.showMessageDialog(null,
             "Migration complete. Your previous installation and its data were left unchanged." +
                 dialogMigrationSummary(result), MIGRATOR_TITLE,
@@ -346,7 +350,7 @@ public final class SdrTrunkDatabaseBootstrap
     }
 
     /** Returns only the release-owned summary line, never the helper process's other captured output. */
-    static Optional<String> alpha7MigrationSummary(String helperOutput)
+    static Optional<String> migrationSummary(String helperOutput)
     {
         if(helperOutput == null || helperOutput.isBlank())
         {
@@ -355,30 +359,32 @@ public final class SdrTrunkDatabaseBootstrap
 
         return helperOutput.lines()
             .map(String::trim)
-            .filter(line -> line.startsWith(ALPHA_7_SUMMARY_PREFIX))
+            .filter(line -> line.startsWith(MIGRATION_SUMMARY_PREFIX) ||
+                line.startsWith("Database is already at current format "))
             .filter(line -> line.length() <= MAXIMUM_MIGRATION_SUMMARY_LENGTH)
-            .filter(line -> line.matches("[A-Za-z0-9 .,:;=/()_-]+"))
+            .filter(line -> line.matches("[A-Za-z0-9 .,:;=/()_\\[\\]-]+"))
             .findFirst();
     }
 
     private static void printMigrationSummary(ApplicationMigrationService.MigrationResult result)
     {
-        alpha7MigrationSummary(result.helperOutput()).ifPresent(System.out::println);
+        migrationSummary(result.helperOutput()).ifPresent(System.out::println);
     }
 
     private static String dialogMigrationSummary(ApplicationMigrationService.MigrationResult result)
     {
-        return alpha7MigrationSummary(result.helperOutput())
+        return migrationSummary(result.helperOutput())
             .map(summary -> "\n\nMigration summary:\n" + summary)
             .orElse("");
     }
 
-    private static boolean confirmCurrentMigration(Path database, ApplicationMigrationService.MigrationState state)
+    private static boolean confirmCurrentMigration(Path database,
+                                                   DatabaseMigrationChain.PreflightReport migrationPlan)
     {
         Object[] buttons = {"Migrate and Start", "Quit"};
         int result = JOptionPane.showOptionDialog(null,
-            "This database was created by an earlier alpha and must be updated before this build can start.\n\n" +
-                "Required changes: " + state.requiredChanges() + "\n\n" +
+            "This database uses an earlier supported format and must be updated before this build can start.\n\n" +
+                "Required changes: " + ApplicationMigrationService.describePlan(migrationPlan) + "\n\n" +
                 "Close every other sdrtrunk-vce window first. A safety backup will be created before the staged " +
                 "copy is updated.\n\nDatabase:\n" + database,
             MIGRATOR_TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, buttons, buttons[0]);
