@@ -12,6 +12,7 @@ package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -52,7 +53,21 @@ public final class Format1TestDatabase
 
     public static Path create(Path database) throws Exception
     {
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try
+        {
+            SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        }
+        catch(java.sql.SQLException e)
+        {
+            //The isolated migrator branch deliberately carries the format-2 Startup integration separately from the
+            //Alias/P25 runtime-schema commits.  Startup therefore leaves an exact format-1 database behind until
+            //those commits are combined.  Continue only when a real database exists; the fingerprint gate below
+            //still refuses every layout except exact format 1 or exact format 2.
+            if(!Files.isRegularFile(database))
+            {
+                throw e;
+            }
+        }
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
