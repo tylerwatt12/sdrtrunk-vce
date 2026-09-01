@@ -128,7 +128,7 @@ public final class AliasFactory
         copy.setColor(original.getColor());
         copy.setIconName(original.getIconName());
         copy.setRecordable(original.isRecordable());
-        copy.setCallPriority(original.getPlaybackPriority());
+        copy.setListen(original.isListen());
 
         if(original.getStreamTalkgroupAlias() != null)
         {

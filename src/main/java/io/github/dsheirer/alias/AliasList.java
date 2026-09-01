@@ -21,30 +21,32 @@ package io.github.dsheirer.alias;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.esn.ESNIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.status.UnitStatusIdentifier;
 import io.github.dsheirer.identifier.status.UserStatusIdentifier;
-import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.scanlist.ScanList;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.scanlist.ScanListModel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -76,7 +78,16 @@ public class AliasList
     private boolean mRebuilding;
     private final String mName;
     private final AliasListDefinition mDefinition;
+    private final ScanListModel mScanListModel;
     private final ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
+
+    /** Classification of the destination talkgroup for one immutable lookup generation. */
+    private enum TalkgroupMatchStatus
+    {
+        NOT_APPLICABLE,
+        MATCHED,
+        UNMATCHED
+    }
 
     /**
      * List of aliases where all aliases share the same list name.  Contains
@@ -88,6 +99,7 @@ public class AliasList
     {
         mName = name;
         mDefinition = null;
+        mScanListModel = null;
     }
 
     public static AliasList empty(String name)
@@ -97,8 +109,14 @@ public class AliasList
 
     public AliasList(AliasListDefinition definition)
     {
+        this(definition, null);
+    }
+
+    public AliasList(AliasListDefinition definition, ScanListModel scanListModel)
+    {
         mDefinition = definition;
         mName = definition != null ? definition.getName() : null;
+        mScanListModel = scanListModel;
     }
 
     /**
@@ -209,36 +227,6 @@ public class AliasList
                         }
 
                         talkgroupRangeAliasList.add(talkgroupRange, alias);
-                        break;
-                    case P25_FULLY_QUALIFIED_RADIO_ID:
-                        P25FullyQualifiedRadio qualifiedRadio = (P25FullyQualifiedRadio) id;
-                        Protocol qualifiedRadioProtocol =
-                            lookupProtocol(Objects.requireNonNull(qualifiedRadio.getProtocol()));
-
-                        RadioAliasList p25RadioAliasList = index.mRadioProtocolMap.get(qualifiedRadioProtocol);
-
-                        if(p25RadioAliasList == null)
-                        {
-                            p25RadioAliasList = new RadioAliasList();
-                            index.mRadioProtocolMap.put(qualifiedRadioProtocol, p25RadioAliasList);
-                        }
-
-                        p25RadioAliasList.add(qualifiedRadio, alias);
-                        break;
-                    case P25_FULLY_QUALIFIED_TALKGROUP:
-                        P25FullyQualifiedTalkgroup qualifiedTalkgroup = (P25FullyQualifiedTalkgroup) id;
-                        Protocol qualifiedTalkgroupProtocol =
-                            lookupProtocol(Objects.requireNonNull(qualifiedTalkgroup.getProtocol()));
-
-                        TalkgroupAliasList p25TalkgroupAliasList = index.mTalkgroupProtocolMap.get(qualifiedTalkgroupProtocol);
-
-                        if(p25TalkgroupAliasList == null)
-                        {
-                            p25TalkgroupAliasList = new TalkgroupAliasList();
-                            index.mTalkgroupProtocolMap.put(qualifiedTalkgroupProtocol, p25TalkgroupAliasList);
-                        }
-
-                        p25TalkgroupAliasList.add(qualifiedTalkgroup, alias);
                         break;
                     case RADIO_ID:
                         Radio radio = (Radio)id;
@@ -449,6 +437,11 @@ public class AliasList
     public String getName()
     {
         return mDefinition != null ? mDefinition.getName() : mName;
+    }
+
+    public long getId()
+    {
+        return mDefinition != null ? mDefinition.getId() : AliasListDefinition.UNASSIGNED_ID;
     }
 
     /**
@@ -693,10 +686,13 @@ public class AliasList
      */
     public List<Alias> getAliases(Identifier<?> identifier)
     {
+        return getAliases(identifier, mLookupIndex);
+    }
+
+    private List<Alias> getAliases(Identifier<?> identifier, LookupIndex index)
+    {
         if(identifier != null)
         {
-            LookupIndex index = mLookupIndex;
-
             switch(identifier.getForm())
             {
                 case TALKGROUP:
@@ -773,7 +769,8 @@ public class AliasList
                 case ESN:
                     if(identifier instanceof ESNIdentifier esnidentifier)
                     {
-                        return toList(getESNAlias(esnidentifier.getValue()));
+                        String esn = esnidentifier.getValue();
+                        return toList(esn != null ? index.mESNMap.get(esn.toLowerCase()) : null);
                     }
                     break;
                 case UNIT_STATUS:
@@ -825,6 +822,150 @@ public class AliasList
         return Collections.emptyList();
     }
 
+    /**
+     * Receiver-local playback policy. Any matched Alias in the Default scan list enables the call; disabled matches
+     * never veto an enabled match. An otherwise unmatched destination follows its Alias List's Default membership.
+     */
+    public boolean shouldListen(IdentifierCollection identifiers)
+    {
+        if(identifiers == null)
+        {
+            return false;
+        }
+
+        LookupIndex index = mLookupIndex;
+        TalkgroupMatchStatus talkgroupStatus = TalkgroupMatchStatus.NOT_APPLICABLE;
+
+        if(mScanListModel != null)
+        {
+            ScanListConfiguration scanLists = mScanListModel.configuration();
+            ScanList defaultScanList = scanLists.defaultScanList();
+            long defaultId = defaultScanList.getId();
+
+            for(Identifier<?> identifier: identifiers.getIdentifiers())
+            {
+                List<Alias> aliases = getAliases(identifier, index);
+
+                for(Alias alias: aliases)
+                {
+                    if(alias != null && alias.getId() > Alias.UNASSIGNED_ID &&
+                        scanLists.scanListIdsForAlias(alias.getId()).contains(defaultId))
+                    {
+                        return true;
+                    }
+                }
+
+                TalkgroupMatchStatus identifierStatus = talkgroupMatchStatus(identifier, index, aliases);
+                if(identifierStatus == TalkgroupMatchStatus.MATCHED)
+                {
+                    talkgroupStatus = TalkgroupMatchStatus.MATCHED;
+                }
+                else if(identifierStatus == TalkgroupMatchStatus.UNMATCHED &&
+                    talkgroupStatus == TalkgroupMatchStatus.NOT_APPLICABLE)
+                {
+                    talkgroupStatus = TalkgroupMatchStatus.UNMATCHED;
+                }
+            }
+
+            return talkgroupStatus == TalkgroupMatchStatus.UNMATCHED &&
+                getId() > AliasListDefinition.UNASSIGNED_ID &&
+                scanLists.scanListIdsForUnmatchedTalkgroups(getId()).contains(defaultId);
+        }
+
+        //Compatibility/debug lists are not database-backed. Preserve the Swing projection for those callers.
+        for(Identifier<?> identifier: identifiers.getIdentifiers())
+        {
+            for(Alias alias: getAliases(identifier, index))
+            {
+                if(alias != null && alias.isListen())
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public UnmatchedTalkgroupPolicy getUnmatchedTalkgroupPolicy(Identifier<?> identifier)
+    {
+        return talkgroupMatchStatus(identifier, mLookupIndex) == TalkgroupMatchStatus.UNMATCHED &&
+            mDefinition != null ? mDefinition.getUnmatchedTalkgroupPolicy() : null;
+    }
+
+    private TalkgroupMatchStatus talkgroupMatchStatus(Identifier<?> identifier, LookupIndex index)
+    {
+        return talkgroupMatchStatus(identifier, index, null);
+    }
+
+    /**
+     * Classifies one destination. Callers that already resolved its aliases can supply that list to avoid repeating
+     * the common talkgroup lookup. Patch groups still inspect only their talkgroup components so patched radios do
+     * not make an otherwise unknown destination look matched.
+     */
+    private TalkgroupMatchStatus talkgroupMatchStatus(Identifier<?> identifier, LookupIndex index,
+                                                       List<Alias> resolvedAliases)
+    {
+        if(mDefinition == null || identifier == null || identifier.getRole() != Role.TO ||
+            !supportsUnmatchedTalkgroup(mDefinition.getFamily(), identifier.getProtocol()))
+        {
+            return TalkgroupMatchStatus.NOT_APPLICABLE;
+        }
+
+        TalkgroupAliasList talkgroups = index.mTalkgroupProtocolMap.get(lookupProtocol(identifier.getProtocol()));
+
+        if(identifier.getForm() == Form.TALKGROUP && identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+        {
+            boolean matched = resolvedAliases != null ? !resolvedAliases.isEmpty() :
+                talkgroups != null && talkgroups.getAlias(talkgroupIdentifier) != null;
+            return matched ?
+                TalkgroupMatchStatus.MATCHED : TalkgroupMatchStatus.UNMATCHED;
+        }
+
+        if(identifier.getForm() == Form.PATCH_GROUP && identifier instanceof PatchGroupIdentifier patchIdentifier)
+        {
+            PatchGroup patchGroup = patchIdentifier.getValue();
+            if(patchGroup == null || patchGroup.getPatchGroup() == null)
+            {
+                return TalkgroupMatchStatus.NOT_APPLICABLE;
+            }
+            if(talkgroups == null)
+            {
+                return TalkgroupMatchStatus.UNMATCHED;
+            }
+            if(talkgroups.getAlias(patchGroup.getPatchGroup()) != null)
+            {
+                return TalkgroupMatchStatus.MATCHED;
+            }
+            for(TalkgroupIdentifier patchedTalkgroup: patchGroup.getPatchedTalkgroupIdentifiers())
+            {
+                if(talkgroups.getAlias(patchedTalkgroup) != null)
+                {
+                    return TalkgroupMatchStatus.MATCHED;
+                }
+            }
+            return TalkgroupMatchStatus.UNMATCHED;
+        }
+
+        return TalkgroupMatchStatus.NOT_APPLICABLE;
+    }
+
+    private static boolean supportsUnmatchedTalkgroup(AliasListFamily family, Protocol protocol)
+    {
+        if(family == null || protocol == null)
+        {
+            return false;
+        }
+
+        return switch(family)
+        {
+            case P25 -> protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2;
+            case DMR -> protocol == Protocol.DMR;
+            case NXDN -> protocol == Protocol.NXDN;
+            case NBFM -> protocol == Protocol.AM || protocol == Protocol.NBFM;
+        };
+    }
+
     private static List<Alias> toList(Alias alias)
     {
         if(alias != null)
@@ -863,20 +1004,13 @@ public class AliasList
      */
     public class TalkgroupAliasList
     {
-        private final Map<String,Alias> mFullyQualifiedTalkgroupAliasMap = new HashMap<>();
         private final Map<Integer,Alias> mTalkgroupAliasMap = new HashMap<>();
         private final List<TalkgroupRangeEntry> mTalkgroupRanges = new ArrayList<>();
         private int[] mTalkgroupRangePrefixMaximums = new int[0];
 
         public Alias getAlias(TalkgroupIdentifier identifier)
         {
-            //Attempt to do a fully qualified identifier match only
-            if(identifier instanceof FullyQualifiedTalkgroupIdentifier fqti)
-            {
-                return mFullyQualifiedTalkgroupAliasMap.get(fqti.getFullyQualifiedTalkgroupAddress());
-            }
-
-            //Attempt to match the talkgroup value
+            //Fully-qualified signaling is matched by its local address, never its retired home-domain tuple.
             int value = identifier.getValue();
 
             Alias mapValue = mTalkgroupAliasMap.get(value);
@@ -905,47 +1039,22 @@ public class AliasList
 
         public void add(Talkgroup talkgroup, Alias alias)
         {
-            if(talkgroup instanceof P25FullyQualifiedTalkgroup fqt)
+            Alias existingTalkgroupAlias = mTalkgroupAliasMap.computeIfAbsent(talkgroup.getValue(), key -> alias);
+
+            if(!existingTalkgroupAlias.equals(alias))
             {
-                Alias existingFullyQualifiedTalkgroupAlias =
-                    mFullyQualifiedTalkgroupAliasMap.computeIfAbsent(fqt.getHashKey(), key -> alias);
+                talkgroup.setOverlap(true);
+                AliasID aliasID = existingTalkgroupAlias.getMatchIdentifier();
 
-                //Detect collisions
-                if(!existingFullyQualifiedTalkgroupAlias.equals(alias))
+                if(aliasID instanceof Talkgroup existingTalkgroup &&
+                    lookupProtocol(existingTalkgroup.getProtocol()) == lookupProtocol(talkgroup.getProtocol()) &&
+                    existingTalkgroup.getValue() == talkgroup.getValue())
                 {
-                    fqt.setOverlap(true);
-
-                    AliasID aliasID = existingFullyQualifiedTalkgroupAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof P25FullyQualifiedTalkgroup existingFqt &&
-                        existingFqt.getHashKey().contentEquals(fqt.getHashKey()))
-                    {
-                        aliasID.setOverlap(true);
-                    }
+                    aliasID.setOverlap(true);
                 }
             }
-            else
-            {
-                Alias existingTalkgroupAlias = mTalkgroupAliasMap.computeIfAbsent(talkgroup.getValue(), key -> alias);
 
-                //Detect talkgroup collisions and set overlap flag for both
-                if(!existingTalkgroupAlias.equals(alias))
-                {
-                    talkgroup.setOverlap(true);
-
-                    AliasID aliasID = existingTalkgroupAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof Talkgroup existingTalkgroup &&
-                        !(existingTalkgroup instanceof P25FullyQualifiedTalkgroup) &&
-                        lookupProtocol(existingTalkgroup.getProtocol()) == lookupProtocol(talkgroup.getProtocol()) &&
-                        existingTalkgroup.getValue() == talkgroup.getValue())
-                    {
-                        aliasID.setOverlap(true);
-                    }
-                }
-
-                mTalkgroupAliasMap.put(talkgroup.getValue(), alias);
-            }
+            mTalkgroupAliasMap.put(talkgroup.getValue(), alias);
         }
 
         public void add(TalkgroupRange talkgroupRange, Alias alias)
@@ -1089,7 +1198,6 @@ public class AliasList
          */
         public void remove(Alias alias)
         {
-            mFullyQualifiedTalkgroupAliasMap.values().removeAll(Collections.singleton(alias));
             mTalkgroupAliasMap.values().removeAll(Collections.singleton(alias));
             mTalkgroupRanges.removeIf(entry -> entry.alias().equals(alias));
         }
@@ -1109,20 +1217,13 @@ public class AliasList
      */
     public class RadioAliasList
     {
-        private final Map<String,Alias> mFullyQualifiedRadioAliasMap = new HashMap<>();
         private final Map<Integer,Alias> mRadioAliasMap = new HashMap<>();
         private final List<RadioRangeEntry> mRadioRanges = new ArrayList<>();
         private int[] mRadioRangePrefixMaximums = new int[0];
 
         public Alias getAlias(RadioIdentifier identifier)
         {
-            //Match fully qualified identifier only.
-            if(identifier instanceof FullyQualifiedRadioIdentifier fqri)
-            {
-                return mFullyQualifiedRadioAliasMap.get(fqri.getFullyQualifiedRadioAddress());
-            }
-
-            //Attempt to match against the radio identifier
+            //Fully-qualified signaling is matched by its local address, never its retired home-domain tuple.
             int value = identifier.getValue();
 
             Alias mapValue = mRadioAliasMap.get(value);
@@ -1151,47 +1252,22 @@ public class AliasList
 
         public void add(Radio radio, Alias alias)
         {
-            if(radio instanceof P25FullyQualifiedRadio fqr)
+            Alias existingRadioAlias = mRadioAliasMap.computeIfAbsent(radio.getValue(), key -> alias);
+
+            if(!existingRadioAlias.equals(alias))
             {
-                Alias existingFullyQualifiedRadioAlias =
-                    mFullyQualifiedRadioAliasMap.computeIfAbsent(fqr.getHashKey(), key -> alias);
+                radio.setOverlap(true);
+                AliasID aliasID = existingRadioAlias.getMatchIdentifier();
 
-                //Detect collisions
-                if(!existingFullyQualifiedRadioAlias.equals(alias))
+                if(aliasID instanceof Radio existingRadio &&
+                    lookupProtocol(existingRadio.getProtocol()) == lookupProtocol(radio.getProtocol()) &&
+                    existingRadio.getValue() == radio.getValue())
                 {
-                    fqr.setOverlap(true);
-
-                    AliasID aliasID = existingFullyQualifiedRadioAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof P25FullyQualifiedRadio existingFqr &&
-                        existingFqr.getHashKey().contentEquals(fqr.getHashKey()))
-                    {
-                        aliasID.setOverlap(true);
-                    }
+                    aliasID.setOverlap(true);
                 }
             }
-            else
-            {
-                Alias existingRadioAlias = mRadioAliasMap.computeIfAbsent(radio.getValue(), key -> alias);
 
-                //Detect collisions
-                if(!existingRadioAlias.equals(alias))
-                {
-                    radio.setOverlap(true);
-
-                    AliasID aliasID = existingRadioAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof Radio existingRadio &&
-                        !(existingRadio instanceof P25FullyQualifiedRadio) &&
-                        lookupProtocol(existingRadio.getProtocol()) == lookupProtocol(radio.getProtocol()) &&
-                        existingRadio.getValue() == radio.getValue())
-                    {
-                        aliasID.setOverlap(true);
-                    }
-                }
-
-                mRadioAliasMap.put(radio.getValue(), alias);
-            }
+            mRadioAliasMap.put(radio.getValue(), alias);
         }
 
         public void add(RadioRange radioRange, Alias alias)
@@ -1334,7 +1410,6 @@ public class AliasList
          */
         public void remove(Alias alias)
         {
-            mFullyQualifiedRadioAliasMap.values().removeAll(Collections.singleton(alias));
             mRadioAliasMap.values().removeAll(Collections.singleton(alias));
             mRadioRanges.removeIf(entry -> entry.alias().equals(alias));
         }

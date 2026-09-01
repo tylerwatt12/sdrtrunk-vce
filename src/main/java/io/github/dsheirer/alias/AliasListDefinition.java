@@ -22,11 +22,20 @@ public final class AliasListDefinition
     private volatile long mId = UNASSIGNED_ID;
     private final String mName;
     private final AliasListFamily mFamily;
+    private volatile UnmatchedTalkgroupPolicy mUnmatchedTalkgroupPolicy;
+    private volatile boolean mListenToUnmatchedTalkgroups;
 
     public AliasListDefinition(String name, AliasListFamily family)
     {
+        this(name, family, UnmatchedTalkgroupPolicy.DEFAULT);
+    }
+
+    public AliasListDefinition(String name, AliasListFamily family,
+                               UnmatchedTalkgroupPolicy unmatchedTalkgroupPolicy)
+    {
         mName = name;
         mFamily = family;
+        setUnmatchedTalkgroupPolicy(unmatchedTalkgroupPolicy);
     }
 
     public long getId()
@@ -52,6 +61,32 @@ public final class AliasListDefinition
     public AliasListFamily getFamily()
     {
         return mFamily;
+    }
+
+    public UnmatchedTalkgroupPolicy getUnmatchedTalkgroupPolicy()
+    {
+        return mUnmatchedTalkgroupPolicy;
+    }
+
+    public void setUnmatchedTalkgroupPolicy(UnmatchedTalkgroupPolicy unmatchedTalkgroupPolicy)
+    {
+        if(unmatchedTalkgroupPolicy == null)
+        {
+            throw new IllegalArgumentException("Unmatched talkgroup policy cannot be null");
+        }
+
+        mUnmatchedTalkgroupPolicy = unmatchedTalkgroupPolicy;
+    }
+
+    /** Swing projection of this Alias List's unmatched-talkgroup membership in the Default scan list. */
+    public boolean isListenToUnmatchedTalkgroups()
+    {
+        return mListenToUnmatchedTalkgroups;
+    }
+
+    public void setListenToUnmatchedTalkgroups(boolean listen)
+    {
+        mListenToUnmatchedTalkgroups = listen;
     }
 
     @Override

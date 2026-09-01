@@ -16,7 +16,9 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -158,8 +160,44 @@ public final class AliasListDefinitionResolver
             }
         }
 
+        convertUnambiguousCatchAllAliases(importedAliases, definitions);
         state.setAliases(importedAliases);
         state.setAliasListDefinitions(definitions);
+    }
+
+    /** Converts one unambiguous full-domain legacy range into list-owned unmatched behavior. */
+    private static void convertUnambiguousCatchAllAliases(List<Alias> aliases,
+                                                           List<AliasListDefinition> definitions)
+    {
+        for(AliasListDefinition definition: definitions)
+        {
+            List<Alias> candidates = aliases.stream()
+                .filter(alias -> definition.getName().equals(alias.getAliasListName()))
+                .filter(alias -> AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(definition,
+                    alias.getMatchIdentifier())).toList();
+            if(candidates.size() != 1)
+            {
+                continue;
+            }
+
+            Alias catchAll = candidates.getFirst();
+            if(catchAll.getStreamTalkgroupAlias() != null || hasCustomAppearance(catchAll))
+            {
+                continue;
+            }
+
+            definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(catchAll.isRecordable(),
+                catchAll.getBroadcastChannels().stream().map(BroadcastChannel::getChannelName).toList()));
+            definition.setListenToUnmatchedTalkgroups(catchAll.isListen());
+            aliases.remove(catchAll);
+        }
+    }
+
+    private static boolean hasCustomAppearance(Alias alias)
+    {
+        return (alias.getDescription() != null && !alias.getDescription().isBlank()) ||
+            (alias.getGroup() != null && !alias.getGroup().isBlank()) || alias.getColor() != 0 ||
+            (alias.getIconName() != null && !alias.getIconName().isBlank());
     }
 
     private static Set<String> reserveSingleFamilyNames(Iterable<LegacyListGroup> groups)

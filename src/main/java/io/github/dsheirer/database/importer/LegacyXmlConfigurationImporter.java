@@ -38,6 +38,7 @@ import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.record.Record;
+import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
@@ -109,7 +110,8 @@ public class LegacyXmlConfigurationImporter
     private static final Pattern LEGACY_MDC1200_MATCHER = Pattern.compile("[A-Fa-f\\d]{4}");
     private static final Set<String> RETIRED_DECODER_CONFIG_TYPES = Set.of(
         "decodeConfigLTRStandard", "decodeConfigLTRNet", "decodeConfigPassport");
-    private static final Set<String> RETIRED_ALIAS_IDENTIFIER_TYPES = Set.of("min", "uniqueID");
+    private static final Set<String> RETIRED_ALIAS_IDENTIFIER_TYPES = Set.of(
+        "min", "p25FullyQualifiedRadio", "uniqueID");
     private static final Set<String> RETIRED_BROADCAST_CONFIG_TYPES = Set.of("shoutcastV2Configuration");
 
     private LegacyXmlConfigurationImporter()
@@ -577,7 +579,7 @@ public class LegacyXmlConfigurationImporter
                     case RetiredAliasIdentifier ignored -> { }
                     case BroadcastChannel broadcastChannel -> template.addBroadcastChannel(broadcastChannel);
                     case Record ignored -> template.setRecordable(true);
-                    case Priority priority -> template.setCallPriority(priority.getPriority());
+                    case Priority priority -> template.setListen(!priority.isDoNotMonitor());
                     case NonRecordable ignored -> {
                         if(playlistVersion > 2)
                         {
@@ -612,6 +614,11 @@ public class LegacyXmlConfigurationImporter
          */
         private static List<AliasID> upgradeMatcher(AliasID identifier, int playlistVersion)
         {
+            if(identifier instanceof P25FullyQualifiedTalkgroup)
+            {
+                return List.of();
+            }
+
             if(playlistVersion <= 2 && identifier instanceof SiteID)
             {
                 return List.of();

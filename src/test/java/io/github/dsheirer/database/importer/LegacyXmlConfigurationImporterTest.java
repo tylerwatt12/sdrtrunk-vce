@@ -89,7 +89,7 @@ class LegacyXmlConfigurationImporterTest
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof Talkgroup));
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof TalkgroupRange));
         assertTrue(aliases.stream().allMatch(alias -> alias.hasBroadcastChannel("RadioResolve")));
-        assertTrue(aliases.stream().allMatch(alias -> alias.getPlaybackPriority() == 50));
+        assertTrue(aliases.stream().allMatch(Alias::isListen));
 
         ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
         assertEquals(2, state.getChannels().size());

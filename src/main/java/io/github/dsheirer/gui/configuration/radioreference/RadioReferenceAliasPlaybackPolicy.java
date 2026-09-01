@@ -20,7 +20,6 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 
 /**
@@ -40,7 +39,7 @@ final class RadioReferenceAliasPlaybackPolicy
         if(alias != null && talkgroup != null && muteFullyEncrypted &&
             TalkgroupEncryption.lookup(talkgroup.getEncryptionState()) == TalkgroupEncryption.FULL)
         {
-            alias.setCallPriority(Priority.DO_NOT_MONITOR);
+            alias.setListen(false);
         }
     }
 }

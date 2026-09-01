@@ -25,7 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -37,18 +37,18 @@ class LocalPlaybackUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference");
 
     @Test
-    void aliasEditorsExposeReceiverLocalPlaybackPriority() throws Exception
+    void aliasEditorsExposeReceiverLocalListenSwitch() throws Exception
     {
         String itemEditor = Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasItemEditor.java"));
         String bulkEditor = Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasBulkEditor.java"));
         String configurationEditor =
             Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasConfigurationEditor.java"));
 
-        assertTrue(itemEditor.contains("getPlaybackPriority()"));
-        assertTrue(itemEditor.contains("setCallPriority("));
+        assertTrue(itemEditor.contains("isListen()"));
+        assertTrue(itemEditor.contains("setListen("));
         assertTrue(itemEditor.contains("new Label(\"Listen\")"));
-        assertTrue(itemEditor.contains("new Label(\"Priority\")"));
-        assertTrue(bulkEditor.contains("setCallPriority("));
+        assertFalse(itemEditor.contains("new Label(\"Priority\")"));
+        assertTrue(bulkEditor.contains("setListen("));
         assertTrue(configurationEditor.contains("new TableColumn<>(\"Listen\")"));
     }
 
@@ -69,12 +69,12 @@ class LocalPlaybackUiContractTest
     }
 
     @Test
-    void monitorPriorityRemainsPartOfAliasAudioPolicy()
+    void listenProjectionIsBinary()
     {
-        Alias alias = new Alias("Playback priority");
-        alias.setCallPriority(12);
+        Alias alias = new Alias("Listen");
+        alias.setListen(false);
 
-        assertEquals(12, alias.getPlaybackPriority());
+        assertFalse(alias.isListen());
         assertNull(alias.getMatchIdentifier());
     }
 }

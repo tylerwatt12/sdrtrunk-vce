@@ -21,6 +21,7 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.identifier.Identifier;
@@ -349,7 +350,6 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private void recomputeAliasActions()
     {
         boolean recordAudio = mRecordAudioOverride;
-        int monitorPriority = Priority.DEFAULT_PRIORITY;
         Set<BroadcastChannel> broadcastChannels = new HashSet<>();
 
         for(Identifier<?> identifier: mIdentifierCollection.getIdentifiers())
@@ -365,17 +365,25 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
                 broadcastChannels.addAll(alias.getBroadcastChannels());
 
-                int playbackPriority = alias.getPlaybackPriority();
+            }
 
-                if(playbackPriority < monitorPriority)
+            UnmatchedTalkgroupPolicy unmatchedPolicy = mAliasList.getUnmatchedTalkgroupPolicy(identifier);
+            if(unmatchedPolicy != null)
+            {
+                if(unmatchedPolicy.isRecordEnabled())
                 {
-                    monitorPriority = playbackPriority;
+                    recordAudio = true;
+                }
+                for(String destination: unmatchedPolicy.getStreamDestinationNames())
+                {
+                    broadcastChannels.add(new BroadcastChannel(destination));
                 }
             }
         }
 
         mRecordAudio = recordAudio;
-        mMonitorPriority = monitorPriority;
+        mMonitorPriority = mIdentifierCollection.getIdentifiers().isEmpty() ||
+            mAliasList.shouldListen(mIdentifierCollection) ? Priority.DEFAULT_PRIORITY : Priority.DO_NOT_MONITOR;
         mBroadcastChannels.clear();
         mBroadcastChannels.addAll(broadcastChannels);
     }

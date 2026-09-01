@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
+import io.github.dsheirer.scanlist.ScanListModel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -52,6 +53,7 @@ public class AliasModel
     private ObservableList<String> mAliasListNames = FXCollections.observableArrayList();
     private ObservableList<AliasListDefinition> mAliasListDefinitions = FXCollections.observableArrayList();
     private Map<String,AliasList> mAliasListMap = new HashMap<>();
+    private ScanListModel mScanListModel;
 
     public AliasModel()
     {
@@ -62,6 +64,16 @@ public class AliasModel
     public ObservableList<Alias> aliasList()
     {
         return mAliases;
+    }
+
+    /** Supplies normalized scan-list policy to subsequently constructed runtime Alias Lists. */
+    public void setScanListModel(ScanListModel scanListModel)
+    {
+        if(mScanListModel != scanListModel)
+        {
+            mScanListModel = scanListModel;
+            mAliasListMap.clear();
+        }
     }
 
     public ObservableList<String> aliasListNames()
@@ -267,7 +279,7 @@ public class AliasModel
             return mapValue;
         }
 
-        AliasList aliasList = new AliasList(definition);
+        AliasList aliasList = new AliasList(definition, mScanListModel);
         List<Alias> matchingAliases = new ArrayList<>();
 
         for(Alias alias : mAliases)
@@ -316,7 +328,8 @@ public class AliasModel
         mLog.warn("Ignoring alias list [{}] that is incompatible with channel decoder [{}]",
             channel.getAliasListName(),
             channel.getDecodeConfiguration() != null ? channel.getDecodeConfiguration().getDecoderType() : null);
-        return definition != null ? new AliasList(definition) : AliasList.empty(channel.getAliasListName());
+        return definition != null ? new AliasList(definition, mScanListModel) :
+            AliasList.empty(channel.getAliasListName());
     }
 
     /**

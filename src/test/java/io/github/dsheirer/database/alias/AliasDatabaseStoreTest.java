@@ -59,7 +59,7 @@ class AliasDatabaseStoreTest
         alias.setIconName("Fire Truck");
         alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(42));
         alias.setRecordable(true);
-        alias.setCallPriority(5);
+        alias.setListen(false);
         alias.addBroadcastChannel(new BroadcastChannel("RadioResolve"));
 
         replace(store, List.of(alias), List.of(definition));
@@ -80,7 +80,7 @@ class AliasDatabaseStoreTest
         assertEquals("Fire Truck", loaded.getIconName());
         assertEquals(42, loaded.getStreamTalkgroupAlias().getValue());
         assertTrue(loaded.isRecordable());
-        assertEquals(5, loaded.getPlaybackPriority());
+        assertTrue(loaded.isListen(), "Listen is projected from scan-list membership, not the Alias row");
         assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().getChannelName());
         assertEquals(1001, ((Talkgroup)loaded.getMatchIdentifier()).getValue());
 

@@ -17,12 +17,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
+import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.protocol.Protocol;
@@ -41,6 +43,8 @@ class AliasMatchRegistryTest
         assertTrue(AliasMatchRegistry.supports(p25, new Talkgroup(Protocol.APCO25, 1)));
         assertTrue(AliasMatchRegistry.supports(p25, new Talkgroup(Protocol.APCO25_PHASE2, 1)));
         assertFalse(AliasMatchRegistry.supports(p25, new Talkgroup(Protocol.DMR, 1)));
+        assertFalse(AliasMatchRegistry.supports(p25, new P25FullyQualifiedTalkgroup(1, 2, 3)));
+        assertFalse(AliasMatchRegistry.supports(p25, new P25FullyQualifiedRadio(1, 2, 3)));
         assertTrue(AliasMatchRegistry.supports(dmr, new Radio(Protocol.DMR, 1)));
         assertFalse(AliasMatchRegistry.supports(dmr, new Radio(Protocol.NXDN, 1)));
         assertTrue(AliasMatchRegistry.isChannelCompatible(p25, DecoderType.P25_PHASE1));
@@ -98,8 +102,7 @@ class AliasMatchRegistryTest
     void eachFamilyOffersOnlyItsSupportedMatchers()
     {
         assertEquals(Set.of("P25 Talkgroup", "P25 Talkgroup Range", "P25 Radio ID", "P25 Radio ID Range",
-                "P25 Fully Qualified Talkgroup", "P25 Fully Qualified Radio ID", "Tone Sequence", "User Status",
-                "Unit Status"),
+                "Tone Sequence", "User Status", "Unit Status"),
             labels(AliasListFamily.P25));
         assertEquals(Set.of("DMR Talkgroup", "DMR Talkgroup Range", "DMR Radio ID", "DMR Radio ID Range",
                 "Tone Sequence", "Unit Status"),

@@ -15,18 +15,16 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.priority.Priority;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
@@ -58,9 +56,9 @@ import java.util.StringJoiner;
 /**
  * SQLite persistence for alias-list definitions and their aliases.
  *
- * <p>Alias schema v4 gives both lists and aliases durable identities. Each alias row contains exactly one operational
- * matcher. Recording, playback, and streaming routes remain behavior attached to that matcher and are not represented
- * as additional match identifiers.</p>
+ * <p>Alias schema v6 gives both lists and aliases durable identities. Each alias row contains exactly one operational
+ * matcher. Recording and streaming routes remain behavior attached to that matcher. A list-level unmatched
+ * talkgroup policy carries actions only and is never represented as an alias or match identifier.</p>
  */
 public class AliasDatabaseStore
 {
@@ -131,12 +129,14 @@ public class AliasDatabaseStore
         }
     }
 
-    private List<AliasListDefinition> loadAliasListDefinitions(Connection connection) throws SQLException
+    List<AliasListDefinition> loadAliasListDefinitions(Connection connection) throws SQLException
     {
         List<AliasListDefinition> definitions = new ArrayList<>();
+        Map<Long,List<String>> streamDestinations = loadUnmatchedTalkgroupStreams(connection);
+        Set<Long> loadedDefinitionIds = new HashSet<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, name, family
+            SELECT id, name, family, unmatched_talkgroup_record_enabled
             FROM alias_list
             ORDER BY id
             """);
@@ -149,11 +149,33 @@ public class AliasDatabaseStore
                 {
                     throw new SQLException("Persisted alias-list IDs must be greater than zero");
                 }
-                AliasListDefinition definition = new AliasListDefinition(
-                    resultSet.getString("name"),
-                    requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"));
+                UnmatchedTalkgroupPolicy policy;
+                try
+                {
+                    policy = new UnmatchedTalkgroupPolicy(
+                        getBoolean(resultSet, "unmatched_talkgroup_record_enabled"),
+                        streamDestinations.getOrDefault(definitionId, List.of()));
+                }
+                catch(IllegalArgumentException e)
+                {
+                    throw new SQLException("Alias list [" + definitionId +
+                        "] has an invalid unmatched talkgroup policy", e);
+                }
+
+                AliasListDefinition definition = new AliasListDefinition(resultSet.getString("name"),
+                    requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"), policy);
                 definition.setId(definitionId);
                 definitions.add(definition);
+                loadedDefinitionIds.add(definitionId);
+            }
+        }
+
+        for(Long aliasListId: streamDestinations.keySet())
+        {
+            if(!loadedDefinitionIds.contains(aliasListId))
+            {
+                throw new SQLException("Unmatched talkgroup stream route references unknown alias_list_id [" +
+                    aliasListId + "]");
             }
         }
 
@@ -161,7 +183,7 @@ public class AliasDatabaseStore
         return definitions;
     }
 
-    private List<Alias> loadAliases(Connection connection, List<AliasListDefinition> definitions) throws SQLException
+    List<Alias> loadAliases(Connection connection, List<AliasListDefinition> definitions) throws SQLException
     {
         Map<Long,AliasListDefinition> definitionsById = new HashMap<>();
         if(definitions != null)
@@ -179,10 +201,10 @@ public class AliasDatabaseStore
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT alias.id, alias.alias_list_id, alias.name, alias.description,
                    alias.group_name, alias.color, alias.icon_name, alias.stream_as_talkgroup,
-                   alias.record_enabled, alias.priority,
+                   alias.record_enabled,
                    alias.matcher_type, alias.protocol, alias.value,
-                   alias.min_value, alias.max_value, alias.wacn, alias.p25_system_id,
-                   alias.text_value, alias.numeric_value, alias.tone_sequence
+                   alias.min_value, alias.max_value, alias.text_value,
+                   alias.numeric_value, alias.tone_sequence
             FROM alias
             ORDER BY alias.id
             """);
@@ -227,16 +249,6 @@ public class AliasDatabaseStore
                     alias.setMatchIdentifier(matcher);
                 }
                 alias.setRecordable(getBoolean(resultSet, "record_enabled"));
-                Integer priority = getInteger(resultSet, "priority");
-                if(priority != null)
-                {
-                    if(!isValidPriority(priority))
-                    {
-                        throw new SQLException("Alias [" + alias.getName() +
-                            "] has invalid stored priority [" + priority + "]");
-                    }
-                    alias.setCallPriority(priority);
-                }
                 aliases.put(aliasId, alias);
             }
 
@@ -283,6 +295,21 @@ public class AliasDatabaseStore
             {
                 throw new SQLException("Alias list [" + definition.getName() +
                     "] must declare a protocol family");
+            }
+            UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
+            if(policy == null)
+            {
+                throw new SQLException("Alias list [" + definition.getName() +
+                    "] has an invalid unmatched talkgroup policy");
+            }
+            Set<String> streamDestinations = new HashSet<>();
+            for(String destination: policy.getStreamDestinationNames())
+            {
+                if(destination == null || destination.isBlank() || !streamDestinations.add(destination))
+                {
+                    throw new SQLException("Alias list [" + definition.getName() +
+                        "] has invalid unmatched talkgroup stream destinations");
+                }
             }
         }
 
@@ -356,8 +383,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        name, family
-                    ) VALUES (?, ?)
+                        name, family, unmatched_talkgroup_record_enabled
+                    ) VALUES (?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindDefinition(statement, definition, 1);
@@ -376,8 +403,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        id, name, family
-                    ) VALUES (?, ?, ?)
+                        id, name, family, unmatched_talkgroup_record_enabled
+                    ) VALUES (?, ?, ?, ?)
                     """))
                 {
                     statement.setLong(1, definition.getId());
@@ -385,6 +412,8 @@ public class AliasDatabaseStore
                     statement.executeUpdate();
                 }
             }
+
+            insertUnmatchedTalkgroupStreams(connection, definition);
         }
     }
 
@@ -393,6 +422,55 @@ public class AliasDatabaseStore
     {
         statement.setString(offset, definition.getName());
         statement.setString(offset + 1, definition.getFamily().name());
+        UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
+        statement.setInt(offset + 2, policy.isRecordEnabled() ? 1 : 0);
+    }
+
+    private void insertUnmatchedTalkgroupStreams(Connection connection, AliasListDefinition definition)
+        throws SQLException
+    {
+        for(String destination: definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames())
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list_unmatched_talkgroup_stream (alias_list_id, channel_name)
+                VALUES (?, ?)
+                """))
+            {
+                statement.setLong(1, definition.getId());
+                statement.setString(2, destination);
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    private Map<Long,List<String>> loadUnmatchedTalkgroupStreams(Connection connection) throws SQLException
+    {
+        Map<Long,List<String>> destinations = new LinkedHashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT alias_list_id, channel_name
+            FROM alias_list_unmatched_talkgroup_stream
+            ORDER BY alias_list_id, id
+            """);
+            ResultSet resultSet = statement.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                long aliasListId = resultSet.getLong("alias_list_id");
+                if(resultSet.wasNull() || aliasListId <= AliasListDefinition.UNASSIGNED_ID)
+                {
+                    throw new SQLException("Unmatched talkgroup stream route has no valid alias_list_id");
+                }
+
+                String destination = resultSet.getString("channel_name");
+                if(destination == null || destination.isBlank())
+                {
+                    throw new SQLException("Unmatched talkgroup stream route for alias list [" + aliasListId +
+                        "] must have a nonblank name");
+                }
+                destinations.computeIfAbsent(aliasListId, ignored -> new ArrayList<>()).add(destination);
+            }
+        }
+        return destinations;
     }
 
     private void attachDefinitions(List<Alias> aliases, List<AliasListDefinition> definitions) throws SQLException
@@ -437,10 +515,10 @@ public class AliasDatabaseStore
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias (
                         alias_list_id, name, description, group_name, color, icon_name,
-                        stream_as_talkgroup, record_enabled, priority, matcher_type,
-                        protocol, value, min_value, max_value, wacn, p25_system_id, text_value,
-                        numeric_value, tone_sequence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        stream_as_talkgroup, record_enabled, matcher_type,
+                        protocol, value, min_value, max_value, text_value, numeric_value,
+                        tone_sequence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindAlias(statement, alias, 1);
@@ -462,10 +540,10 @@ public class AliasDatabaseStore
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias (
                         id, alias_list_id, name, description, group_name, color, icon_name,
-                        stream_as_talkgroup, record_enabled, priority, matcher_type,
-                        protocol, value, min_value, max_value, wacn, p25_system_id, text_value,
-                        numeric_value, tone_sequence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        stream_as_talkgroup, record_enabled, matcher_type,
+                        protocol, value, min_value, max_value, text_value, numeric_value,
+                        tone_sequence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """))
                 {
                     statement.setLong(1, aliasId);
@@ -495,17 +573,14 @@ public class AliasDatabaseStore
         StreamAsTalkgroup streamAsTalkgroup = alias.getStreamTalkgroupAlias();
         setInteger(statement, offset + 6, streamAsTalkgroup != null ? streamAsTalkgroup.getValue() : null);
         statement.setInt(offset + 7, alias.isRecordable() ? 1 : 0);
-        setInteger(statement, offset + 8, alias.hasCallPriority() ? alias.getPlaybackPriority() : null);
-        statement.setString(offset + 9, matcher.type());
-        statement.setString(offset + 10, matcher.protocol());
-        setInteger(statement, offset + 11, matcher.value());
-        setInteger(statement, offset + 12, matcher.minimum());
-        setInteger(statement, offset + 13, matcher.maximum());
-        setInteger(statement, offset + 14, matcher.wacn());
-        setInteger(statement, offset + 15, matcher.p25SystemId());
-        statement.setString(offset + 16, matcher.textValue());
-        setInteger(statement, offset + 17, matcher.numericValue());
-        statement.setString(offset + 18, matcher.toneSequence());
+        statement.setString(offset + 8, matcher.type());
+        statement.setString(offset + 9, matcher.protocol());
+        setInteger(statement, offset + 10, matcher.value());
+        setInteger(statement, offset + 11, matcher.minimum());
+        setInteger(statement, offset + 12, matcher.maximum());
+        statement.setString(offset + 13, matcher.textValue());
+        setInteger(statement, offset + 14, matcher.numericValue());
+        statement.setString(offset + 15, matcher.toneSequence());
     }
 
     private MatcherData matcherData(Alias alias) throws SQLException
@@ -520,8 +595,6 @@ public class AliasDatabaseStore
         Integer value = null;
         Integer minimum = null;
         Integer maximum = null;
-        Integer wacn = null;
-        Integer p25SystemId = null;
         String textValue = null;
         Integer numericValue = null;
         String toneSequence = null;
@@ -539,13 +612,6 @@ public class AliasDatabaseStore
                 minimum = range.getMinTalkgroup();
                 maximum = range.getMaxTalkgroup();
             }
-            case P25_FULLY_QUALIFIED_TALKGROUP -> {
-                P25FullyQualifiedTalkgroup talkgroup = (P25FullyQualifiedTalkgroup)matcher;
-                protocol = protocol(talkgroup.getProtocol());
-                value = talkgroup.getValue();
-                wacn = talkgroup.getWacn();
-                p25SystemId = talkgroup.getSystem();
-            }
             case RADIO_ID -> {
                 Radio radio = (Radio)matcher;
                 protocol = protocol(radio.getProtocol());
@@ -556,13 +622,6 @@ public class AliasDatabaseStore
                 protocol = protocol(range.getProtocol());
                 minimum = range.getMinRadio();
                 maximum = range.getMaxRadio();
-            }
-            case P25_FULLY_QUALIFIED_RADIO_ID -> {
-                P25FullyQualifiedRadio radio = (P25FullyQualifiedRadio)matcher;
-                protocol = protocol(radio.getProtocol());
-                value = radio.getValue();
-                wacn = radio.getWacn();
-                p25SystemId = radio.getSystem();
             }
             case STATUS -> numericValue = ((UserStatusID)matcher).getStatus();
             case UNIT_STATUS -> numericValue = ((UnitStatusID)matcher).getStatus();
@@ -575,8 +634,8 @@ public class AliasDatabaseStore
             default -> throw new SQLException("Unsupported alias matcher type [" + matcher.getType() + "]");
         }
 
-        return new MatcherData(matcher.getType().name(), protocol, value, minimum, maximum, wacn,
-            p25SystemId, textValue, numericValue, toneSequence);
+        return new MatcherData(matcher.getType().name(), protocol, value, minimum, maximum,
+            textValue, numericValue, toneSequence);
     }
 
     private AliasID toMatcher(ResultSet resultSet) throws SQLException
@@ -592,8 +651,6 @@ public class AliasDatabaseStore
         Integer value = getInteger(resultSet, "value");
         Integer minimum = getInteger(resultSet, "min_value");
         Integer maximum = getInteger(resultSet, "max_value");
-        Integer wacn = getInteger(resultSet, "wacn");
-        Integer p25SystemId = getInteger(resultSet, "p25_system_id");
         Integer numericValue = getInteger(resultSet, "numeric_value");
         String textValue = resultSet.getString("text_value");
         String toneSequence = resultSet.getString("tone_sequence");
@@ -603,70 +660,47 @@ public class AliasDatabaseStore
         AliasID matcher = switch(type)
         {
             case TALKGROUP -> {
-                requireNullPayload(type, minimum, maximum, wacn, p25SystemId, textValue,
-                    numericValue, toneSequence);
+                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
                 yield new Talkgroup(protocol, requireInteger(value, "alias.value", type));
             }
             case TALKGROUP_RANGE -> {
-                requireNullPayload(type, value, wacn, p25SystemId, textValue, numericValue,
-                    toneSequence);
+                requireNullPayload(type, value, textValue, numericValue, toneSequence);
                 yield new TalkgroupRange(protocol, requireInteger(minimum, "alias.min_value", type),
                     requireInteger(maximum, "alias.max_value", type));
             }
-            case P25_FULLY_QUALIFIED_TALKGROUP -> {
-                requireP25Protocol(protocol, type);
-                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
-                yield new P25FullyQualifiedTalkgroup(requireInteger(wacn, "alias.wacn", type),
-                    requireInteger(p25SystemId, "alias.p25_system_id", type),
-                    requireInteger(value, "alias.value", type));
-            }
             case RADIO_ID -> {
-                requireNullPayload(type, minimum, maximum, wacn, p25SystemId, textValue,
-                    numericValue, toneSequence);
+                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
                 yield new Radio(protocol, requireInteger(value, "alias.value", type));
             }
             case RADIO_ID_RANGE -> {
-                requireNullPayload(type, value, wacn, p25SystemId, textValue, numericValue,
-                    toneSequence);
+                requireNullPayload(type, value, textValue, numericValue, toneSequence);
                 yield new RadioRange(protocol, requireInteger(minimum, "alias.min_value", type),
                     requireInteger(maximum, "alias.max_value", type));
             }
-            case P25_FULLY_QUALIFIED_RADIO_ID -> {
-                requireP25Protocol(protocol, type);
-                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
-                yield new P25FullyQualifiedRadio(requireInteger(wacn, "alias.wacn", type),
-                    requireInteger(p25SystemId, "alias.p25_system_id", type),
-                    requireInteger(value, "alias.value", type));
-            }
             case STATUS -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId, textValue,
-                    toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, toneSequence);
                 UserStatusID status = new UserStatusID();
                 status.setStatus(requireInteger(numericValue, "alias.numeric_value", type));
                 yield status;
             }
             case UNIT_STATUS -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId, textValue,
-                    toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, toneSequence);
                 UnitStatusID status = new UnitStatusID();
                 status.setStatus(requireInteger(numericValue, "alias.numeric_value", type));
                 yield status;
             }
             case TONES -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId, textValue,
-                    numericValue);
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, numericValue);
                 yield new TonesID(parseToneSequence(toneSequence));
             }
             case DCS -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId,
-                    numericValue, toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, numericValue, toneSequence);
                 Dcs dcs = new Dcs();
                 dcs.setDCSCode(parseOptionalEnum(DCSCode.class, textValue, "alias.text_value"));
                 yield dcs;
             }
             case ESN -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId,
-                    numericValue, toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, numericValue, toneSequence);
                 Esn esn = new Esn();
                 esn.setEsn(textValue);
                 yield esn;
@@ -674,7 +708,6 @@ public class AliasDatabaseStore
             default -> throw new SQLException("Unsupported stored alias matcher type [" + type + "]");
         };
 
-        matcher.updateValueProperty();
         return matcher;
     }
 
@@ -816,14 +849,6 @@ public class AliasDatabaseStore
         }
     }
 
-    private static void requireP25Protocol(Protocol protocol, AliasIDType type) throws SQLException
-    {
-        if(protocol != Protocol.APCO25)
-        {
-            throw new SQLException("Alias matcher type [" + type + "] requires protocol APCO25");
-        }
-    }
-
     private static Integer getInteger(ResultSet resultSet, String column) throws SQLException
     {
         int value = resultSet.getInt(column);
@@ -844,12 +869,6 @@ public class AliasDatabaseStore
             throw new SQLException(column + " must be stored as integer 0 or 1");
         }
         return value == 1;
-    }
-
-    private static boolean isValidPriority(int priority)
-    {
-        return priority == Priority.DO_NOT_MONITOR ||
-            (Priority.MIN_PRIORITY <= priority && priority < Priority.MAX_PRIORITY);
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException
@@ -889,8 +908,7 @@ public class AliasDatabaseStore
     }
 
     private record MatcherData(String type, String protocol, Integer value, Integer minimum,
-                               Integer maximum, Integer wacn, Integer p25SystemId, String textValue,
-                               Integer numericValue, String toneSequence)
+                               Integer maximum, String textValue, Integer numericValue, String toneSequence)
     {
     }
 }
