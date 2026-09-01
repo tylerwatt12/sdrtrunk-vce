@@ -20,26 +20,24 @@ class SdrTrunkDatabaseBootstrapTest
     @Test
     void exposesOnlyTheReleaseOwnedMigrationSummaryLine()
     {
-        String summary = "Alpha 7 migration: aliases=10, alias lists=2, DMR conventional channels=1, " +
-            "DMR trunked channels=2, NXDN trunked channels=3; activity, statistics, site observations, " +
-            "identities, affiliations, and quality history reset; new activity starts empty; " +
-            "planned removals/collapses: alias actions removed=7.";
+        String summary = "Migrated database format 1 [alpha8-shared] to 2 [scan-lists-p25-v26] through " +
+            "1 step(s): transformed/defaulted 4, reset 5, and dropped 6 counted row(s).";
         String helperOutput = "Checking staged database: /private/source\n" +
             "credential-like-noise=do-not-display\n" + summary + "\n" +
             "RESULT: Application database migration and validation complete.\n";
 
         assertEquals(summary,
-            SdrTrunkDatabaseBootstrap.alpha7MigrationSummary(helperOutput).orElseThrow());
-        assertTrue(SdrTrunkDatabaseBootstrap.alpha7MigrationSummary("unrelated output").isEmpty());
-        assertTrue(SdrTrunkDatabaseBootstrap.alpha7MigrationSummary(null).isEmpty());
+            SdrTrunkDatabaseBootstrap.migrationSummary(helperOutput).orElseThrow());
+        assertTrue(SdrTrunkDatabaseBootstrap.migrationSummary("unrelated output").isEmpty());
+        assertTrue(SdrTrunkDatabaseBootstrap.migrationSummary(null).isEmpty());
     }
 
     @Test
     void rejectsMalformedOrUnboundedSummaryLines()
     {
-        assertTrue(SdrTrunkDatabaseBootstrap.alpha7MigrationSummary(
-            "Alpha 7 migration: aliases=1 [unexpected]").isEmpty());
-        assertTrue(SdrTrunkDatabaseBootstrap.alpha7MigrationSummary(
-            "Alpha 7 migration: " + "x".repeat(8_192)).isEmpty());
+        assertTrue(SdrTrunkDatabaseBootstrap.migrationSummary(
+            "Migrated database format 1 [unexpected] @ bad").isEmpty());
+        assertTrue(SdrTrunkDatabaseBootstrap.migrationSummary(
+            "Migrated database format " + "x".repeat(8_192)).isEmpty());
     }
 }

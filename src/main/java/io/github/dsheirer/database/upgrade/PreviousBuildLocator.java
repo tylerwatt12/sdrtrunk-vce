@@ -21,6 +21,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -31,7 +32,8 @@ import java.util.regex.Pattern;
  *
  * <p>Discovery examines only the direct children beside the current installation and data roots. A selected path
  * may be an installation root, a portable data root, a macOS application bundle, or the global SQLite database
- * itself. A candidate is returned only when it contains {@code database/sdrtrunk.sqlite}.</p>
+ * itself. A folder selection represents a complete portable profile, while a direct SQLite-file selection is kept
+ * as a database-only input so that callers do not accidentally copy neighboring profile artifacts.</p>
  */
 public final class PreviousBuildLocator
 {
@@ -83,12 +85,13 @@ public final class PreviousBuildLocator
     }
 
     /**
-     * Resolves a user selection to its portable data root.
+     * Resolves a user selection and retains whether the user selected a complete portable profile or only its SQLite
+     * database.
      *
      * @param selected installation root, data root, macOS application bundle, or sdrtrunk.sqlite file
-     * @return the normalized portable data root when the selection identifies one
+     * @return the normalized, explicitly scoped migration input when the selection identifies one
      */
-    public static Optional<Path> resolveSelection(Path selected)
+    public static Optional<Selection> resolveSelection(Path selected)
     {
         if(selected == null)
         {
@@ -97,10 +100,10 @@ public final class PreviousBuildLocator
 
         Path normalized = normalize(selected);
 
-        if(isGlobalDatabase(normalized))
+        if(isSqliteFileSelection(normalized))
         {
-            Path dataRoot = normalize(normalized.getParent().getParent());
-            return isInternalStagingDirectory(dataRoot) ? Optional.empty() : Optional.of(dataRoot);
+            return isInsideInternalStagingDirectory(normalized) ? Optional.empty() :
+                Optional.of(new Selection(normalized, InputScope.DATABASE_FILE));
         }
 
         if(!Files.isDirectory(normalized))
@@ -114,18 +117,18 @@ public final class PreviousBuildLocator
 
             if(dataRoot != null && containsGlobalDatabase(dataRoot))
             {
-                return Optional.of(normalize(dataRoot));
+                return Optional.of(new Selection(normalize(dataRoot), InputScope.PORTABLE_PROFILE));
             }
         }
 
         if(!isInternalStagingDirectory(normalized) && containsGlobalDatabase(normalized))
         {
-            return Optional.of(normalized);
+            return Optional.of(new Selection(normalized, InputScope.PORTABLE_PROFILE));
         }
 
         Path nestedDataRoot = normalized.resolve(DATA_DIRECTORY);
         return !isInternalStagingDirectory(nestedDataRoot) && containsGlobalDatabase(nestedDataRoot) ?
-            Optional.of(normalize(nestedDataRoot)) : Optional.empty();
+            Optional.of(new Selection(normalize(nestedDataRoot), InputScope.PORTABLE_PROFILE)) : Optional.empty();
     }
 
     private static void inspectDirectChildren(Path directory, Set<Path> candidates)
@@ -139,7 +142,8 @@ public final class PreviousBuildLocator
         {
             for(Path child : children)
             {
-                resolveSelection(child).ifPresent(candidates::add);
+                resolveSelection(child).filter(Selection::portableProfile).map(Selection::path)
+                    .ifPresent(candidates::add);
             }
         }
         catch(IOException | SecurityException e)
@@ -161,12 +165,10 @@ public final class PreviousBuildLocator
         return dataRoot != null && Files.isRegularFile(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
     }
 
-    private static boolean isGlobalDatabase(Path path)
+    private static boolean isSqliteFileSelection(Path path)
     {
-        Path parent = path.getParent();
-        return Files.isRegularFile(path) && path.getFileName() != null && parent != null && parent.getParent() != null &&
-            SdrTrunkDatabasePath.DATABASE_FILENAME.equalsIgnoreCase(path.getFileName().toString()) &&
-            SdrTrunkDatabasePath.DATABASE_DIRECTORY.equalsIgnoreCase(parent.getFileName().toString());
+        return Files.isRegularFile(path) && path.getFileName() != null &&
+            path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".sqlite");
     }
 
     private static boolean isMacApplication(Path path)
@@ -179,6 +181,22 @@ public final class PreviousBuildLocator
     {
         return path != null && path.getFileName() != null &&
             INTERNAL_STAGING_DIRECTORY.matcher(path.getFileName().toString()).matches();
+    }
+
+    private static boolean isInsideInternalStagingDirectory(Path path)
+    {
+        Path current = path;
+
+        for(int depth = 0; current != null && depth < 4; depth++)
+        {
+            if(isInternalStagingDirectory(current))
+            {
+                return true;
+            }
+            current = current.getParent();
+        }
+
+        return false;
     }
 
     private static Path macDataRoot(Path application)
@@ -209,6 +227,38 @@ public final class PreviousBuildLocator
         catch(IOException | SecurityException e)
         {
             return normalized;
+        }
+    }
+
+    /**
+     * Scope explicitly selected for a previous-build import.
+     */
+    public enum InputScope
+    {
+        DATABASE_FILE,
+        PORTABLE_PROFILE
+    }
+
+    /**
+     * Normalized previous-build input. {@link #path()} is the selected database for {@code DATABASE_FILE} and the
+     * portable data root for {@code PORTABLE_PROFILE}.
+     */
+    public record Selection(Path path, InputScope scope)
+    {
+        public Selection
+        {
+            Objects.requireNonNull(path, "Previous-build selection path cannot be null");
+            Objects.requireNonNull(scope, "Previous-build selection scope cannot be null");
+        }
+
+        public Path database()
+        {
+            return scope == InputScope.DATABASE_FILE ? path : SdrTrunkDatabasePath.getDatabasePath(path);
+        }
+
+        public boolean portableProfile()
+        {
+            return scope == InputScope.PORTABLE_PROFILE;
         }
     }
 }
