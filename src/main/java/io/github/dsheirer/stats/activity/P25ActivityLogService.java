@@ -41,16 +41,19 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -91,12 +94,15 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private final Semaphore mObservationWakeup = new Semaphore(0);
     private final AtomicLong mObservationDrops = new AtomicLong();
     private final AtomicBoolean mDisposed = new AtomicBoolean();
+    private final AtomicBoolean mStrictShutdownRequested = new AtomicBoolean();
     private final AtomicBoolean mObservationStateClearRequested = new AtomicBoolean();
     private final AtomicBoolean mWriterTransitionActive = new AtomicBoolean();
     private final AtomicReference<WriterTransition> mWriterTransition = new AtomicReference<>();
+    private final Set<P25ActivityLogWriter> mOwnedWriters = ConcurrentHashMap.newKeySet();
     private final long mDisposeTimeoutMilliseconds;
     private final Runnable mAfterIngressSnapshotForTest;
     private final Runnable mBeforeWriterActivationForTest;
+    private final WriterFactory mWriterFactory;
     private volatile P25ActivityLogWriter mWriter;
     private volatile boolean mCollectionEnabled;
     private volatile boolean mObservationWorkerStarted;
@@ -106,28 +112,37 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     public P25ActivityLogService(UserPreferences userPreferences)
     {
-        this(userPreferences, DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS, null, null);
+        this(userPreferences, DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS, null, null, null);
     }
 
     P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit)
     {
-        this(userPreferences, disposeTimeout, unit, null, null);
+        this(userPreferences, disposeTimeout, unit, null, null, null);
     }
 
     P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
                           Runnable afterIngressSnapshotForTest)
     {
-        this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest, null);
+        this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest, null, null);
     }
 
     P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
                           Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest)
+    {
+        this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest,
+            beforeWriterActivationForTest, null);
+    }
+
+    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+                          Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest,
+                          WriterFactory writerFactory)
     {
         mUserPreferences = userPreferences;
         java.util.Objects.requireNonNull(unit, "unit cannot be null");
         mDisposeTimeoutMilliseconds = Math.max(0, unit.toMillis(disposeTimeout));
         mAfterIngressSnapshotForTest = afterIngressSnapshotForTest;
         mBeforeWriterActivationForTest = beforeWriterActivationForTest;
+        mWriterFactory = writerFactory != null ? writerFactory : P25ActivityLogWriter::new;
         MyEventBus.getGlobalEventBus().register(this);
         updateWriterState();
         mObservationWorkerStarted = true;
@@ -348,22 +363,10 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     public void dispose()
     {
-        synchronized(this)
+        if(!initiateShutdown())
         {
-            if(!mDisposed.compareAndSet(false, true))
-            {
-                return;
-            }
-
-            mCollectionEnabled = false;
-            mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            return;
         }
-
-        MyEventBus.getGlobalEventBus().unregister(this);
-        mCommitListeners.clear();
-        //The observer worker remains the only ingress consumer and owns state cleanup, even when disposal times out.
-        mObservationWakeup.release();
-        mObservationWorker.shutdown();
 
         try
         {
@@ -376,6 +379,175 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Irreversibly stops this service and proves that both its observation mapper and every SQLite writer task have
+     * terminated before returning. Writer executor termination occurs only after the task leaves the try-with-
+     * resources block that owns its SQLite connection. The timeout is one deadline shared by both shutdown phases;
+     * callers must refuse database replacement when this method throws.
+     *
+     * @throws TimeoutException if either worker remains alive at the deadline
+     * @throws InterruptedException if the caller is interrupted before shutdown can be proven
+     */
+    public void closeAndAwaitTermination(long timeout, TimeUnit unit)
+        throws InterruptedException, TimeoutException
+    {
+        if(timeout < 0)
+        {
+            throw new IllegalArgumentException("Shutdown timeout cannot be negative");
+        }
+
+        java.util.Objects.requireNonNull(unit, "unit cannot be null");
+        long deadline = deadlineAfter(timeout, unit);
+        mStrictShutdownRequested.set(true);
+        initiateShutdown();
+        requestOwnedWriterStops();
+
+        try
+        {
+            if(!awaitObservationWorker(deadline))
+            {
+                throw timeoutStrictShutdown("statistics observation mapper");
+            }
+
+            if(!awaitOwnedWriterTermination(deadline))
+            {
+                throw timeoutStrictShutdown("statistics SQLite writer");
+            }
+
+            if(!mObservationWorker.isTerminated() || hasLiveOwnedWriters())
+            {
+                throw timeoutStrictShutdown("statistics database service");
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            forceStrictShutdown();
+            throw exception;
+        }
+    }
+
+    private boolean initiateShutdown()
+    {
+        boolean initiated;
+
+        synchronized(this)
+        {
+            initiated = mDisposed.compareAndSet(false, true);
+
+            if(initiated)
+            {
+                mCollectionEnabled = false;
+                mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            }
+        }
+
+        if(initiated)
+        {
+            MyEventBus.getGlobalEventBus().unregister(this);
+            mCommitListeners.clear();
+        }
+
+        //The observer worker remains the only ingress consumer and owns state cleanup, even when disposal times out.
+        mObservationWakeup.release();
+        mObservationWorker.shutdown();
+        return initiated;
+    }
+
+    private boolean awaitObservationWorker(long deadline) throws InterruptedException
+    {
+        return mObservationWorker.isTerminated() ||
+            mObservationWorker.awaitTermination(remainingNanoseconds(deadline), TimeUnit.NANOSECONDS);
+    }
+
+    private boolean awaitOwnedWriterTermination(long deadline) throws InterruptedException
+    {
+        //Writer creation is owned by the observation worker. Once that worker is terminated, this set is stable.
+        for(P25ActivityLogWriter writer: new ArrayList<>(mOwnedWriters))
+        {
+            if(!writer.closeAndAwait(remainingNanoseconds(deadline), TimeUnit.NANOSECONDS))
+            {
+                return false;
+            }
+
+            synchronized(this)
+            {
+                mLastWriterStatus = writer.getStatus();
+            }
+
+            mOwnedWriters.remove(writer);
+        }
+
+        return !hasLiveOwnedWriters();
+    }
+
+    private void requestOwnedWriterStops()
+    {
+        for(P25ActivityLogWriter writer: mOwnedWriters)
+        {
+            writer.requestStop();
+        }
+    }
+
+    private void forceStrictShutdown()
+    {
+        mObservationWorker.shutdownNow();
+
+        for(P25ActivityLogWriter writer: mOwnedWriters)
+        {
+            writer.forceStop();
+        }
+    }
+
+    private TimeoutException timeoutStrictShutdown(String liveComponent)
+    {
+        forceStrictShutdown();
+        return new TimeoutException("Timed out waiting for " + liveComponent + " to terminate");
+    }
+
+    private boolean hasLiveOwnedWriters()
+    {
+        boolean live = false;
+
+        for(P25ActivityLogWriter writer: mOwnedWriters)
+        {
+            if(writer.isTerminated())
+            {
+                mOwnedWriters.remove(writer);
+            }
+            else
+            {
+                live = true;
+            }
+        }
+
+        return live;
+    }
+
+    private static long deadlineAfter(long timeout, TimeUnit unit)
+    {
+        long now = System.nanoTime();
+        long timeoutNanoseconds = unit.toNanos(timeout);
+
+        try
+        {
+            return Math.addExact(now, timeoutNanoseconds);
+        }
+        catch(ArithmeticException exception)
+        {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private static long remainingNanoseconds(long deadline)
+    {
+        if(deadline == Long.MAX_VALUE)
+        {
+            return Long.MAX_VALUE;
+        }
+
+        return Math.max(0, deadline - System.nanoTime());
     }
 
     @Subscribe
@@ -428,10 +600,13 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void installInitialWriter(WriterTransition transition)
     {
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(transition.databasePath(),
-            transition.retentionDays(), transition.detailedEventHistoryEnabled(),
-            this::notifyActivityCommitted);
-        writer.start();
+        P25ActivityLogWriter writer = createAndStartWriter(transition);
+
+        if(writer == null)
+        {
+            return;
+        }
+
         mCurrentDatabasePath = transition.databasePath();
         mWriter = writer;
         mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
@@ -479,10 +654,13 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             return;
         }
 
-        P25ActivityLogWriter nextWriter = new P25ActivityLogWriter(transition.databasePath(),
-            transition.retentionDays(), transition.detailedEventHistoryEnabled(),
-            this::notifyActivityCommitted);
-        nextWriter.start();
+        P25ActivityLogWriter nextWriter = createAndStartWriter(transition);
+
+        if(nextWriter == null)
+        {
+            return;
+        }
+
         beforeWriterActivationForTest();
         boolean installed = false;
 
@@ -508,20 +686,81 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
         else
         {
-            nextWriter.close();
+            retireWriter(nextWriter);
         }
     }
 
-    private synchronized void stopWriter()
+    private synchronized P25ActivityLogWriter createAndStartWriter(WriterTransition transition)
     {
-        if(mWriter != null)
+        if(mDisposed.get())
         {
-            mWriter.close();
-            mLastWriterStatus = mWriter.getStatus();
+            return null;
+        }
+
+        P25ActivityLogWriter writer = mWriterFactory.create(transition.databasePath(), transition.retentionDays(),
+            transition.detailedEventHistoryEnabled(), this::notifyActivityCommitted);
+        mOwnedWriters.add(java.util.Objects.requireNonNull(writer, "writer factory returned null"));
+
+        try
+        {
+            writer.start();
+            return writer;
+        }
+        catch(RuntimeException exception)
+        {
+            writer.forceStop();
+            throw exception;
+        }
+    }
+
+    private void stopWriter()
+    {
+        P25ActivityLogWriter writer;
+
+        synchronized(this)
+        {
+            writer = mWriter;
+
+            if(writer == null)
+            {
+                return;
+            }
+
             mWriter = null;
             mCurrentDatabasePath = null;
+        }
 
+        retireWriter(writer);
+
+        if(writer.isTerminated())
+        {
             mLog.info("Stats database writer stopped");
+        }
+        else
+        {
+            mLog.info("Stats database writer stop requested");
+        }
+    }
+
+    private void retireWriter(P25ActivityLogWriter writer)
+    {
+        if(mStrictShutdownRequested.get())
+        {
+            writer.requestStop();
+        }
+        else
+        {
+            writer.close();
+        }
+
+        synchronized(this)
+        {
+            mLastWriterStatus = writer.getStatus();
+        }
+
+        if(writer.isTerminated())
+        {
+            mOwnedWriters.remove(writer);
         }
     }
 
@@ -776,6 +1015,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     boolean isObservationWorkerTerminated()
     {
         return mObservationWorker.isTerminated();
+    }
+
+    boolean hasLiveWritersForTest()
+    {
+        return hasLiveOwnedWriters();
     }
 
     @Subscribe
@@ -1212,6 +1456,13 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
                 listener.activityCommitted(rowIds);
             }
         }
+    }
+
+    @FunctionalInterface
+    interface WriterFactory
+    {
+        P25ActivityLogWriter create(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled,
+                                    P25ActivityCommitListener commitListener);
     }
 
     private record WriterTransition(Path databasePath, int retentionDays,
