@@ -53,6 +53,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.value.ObservableValue;
@@ -249,12 +250,7 @@ public class SiteEditor extends GridPane
             case P25_PHASE1:
                 DecodeConfigP25Phase1 p25Phase1 = new DecodeConfigP25Phase1();
                 p25Phase1.setLearnAnnouncedControlChannels(true);
-
-                if(mRadioReferenceDecoder.isLSM(site))
-                {
-                    p25Phase1.setModulation(Modulation.CQPSK);
-                }
-
+                p25Phase1.setModulation(getP25Phase1Modulation(site));
                 return p25Phase1;
             case P25_PHASE2:
                 DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
@@ -312,6 +308,45 @@ public class SiteEditor extends GridPane
             default:
                 return DecoderFactory.getDecodeConfiguration(decoderType);
         }
+    }
+
+    /**
+     * Maps the RadioReference site name and modulation to the P25 Phase 1 decoder waveform. A site description
+     * containing "simulcast" takes precedence because the structured modulation field can identify a simulcast site
+     * as C4FM even though it requires the LSM decoder.
+     */
+    static Modulation getP25Phase1Modulation(Site site)
+    {
+        if(site == null)
+        {
+            return Modulation.C4FM;
+        }
+
+        String description = site.getDescription();
+
+        if(description != null && description.toLowerCase(Locale.ROOT).contains("simulcast"))
+        {
+            return Modulation.CQPSK;
+        }
+
+        String modulation = site.getModulation();
+
+        if(modulation != null && !modulation.isBlank())
+        {
+            String normalized = modulation.toUpperCase(Locale.ROOT);
+
+            if(normalized.contains("CQPSK") || normalized.contains("LSM"))
+            {
+                return Modulation.CQPSK;
+            }
+
+            if(normalized.contains("C4FM"))
+            {
+                return Modulation.C4FM;
+            }
+        }
+
+        return Modulation.C4FM;
     }
 
     /**
