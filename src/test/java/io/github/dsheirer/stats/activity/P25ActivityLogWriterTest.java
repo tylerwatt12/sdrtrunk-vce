@@ -1256,6 +1256,27 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void persistsAmConventionalContextProtocolCode() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("am-conventional-context.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection, amConventionalActivity(4_000L), true);
+
+            assertEquals(10L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context
+                WHERE context_key='CONVENTIONAL_ANALOG:AM:121900000'
+                """));
+            assertEquals(11L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context
+                WHERE context_key='CONVENTIONAL_ANALOG:AM:121900000'
+                """));
+        }
+    }
+
+    @Test
     void trunkedActivityDoesNotStoreLogicalChannelAsContextName() throws Exception
     {
         Path database = mTemporaryFolder.resolve("context-name.sqlite");
@@ -2802,6 +2823,14 @@ class P25ActivityLogWriterTest
             P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", action, "CALL", null, null, null,
             154310000L, null, null, false, null, null, null, null, null, null, null, "County Fire", "NBFM",
             null, action == P25ActivityLogRecords.Action.CALL, null, null);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent amConventionalActivity(long timestamp)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONVENTIONAL_ANALOG:AM:121900000", null,
+            P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", P25ActivityLogRecords.Action.CALL,
+            "CALL", null, null, null, 121_900_000L, null, null, false, null, null, null, null, null, null, null,
+            "Airport Ground", "AM", null, true, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)
