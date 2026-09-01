@@ -7,7 +7,7 @@ controls, long-term statistics, and performance improvements.
 
 This project has two release channels. Back up your receiver data before installing or upgrading.
 
-- [Download Alpha 10](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/v0.6.2-alpha-10): the more stable,
+- [Download Alpha 11](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/v0.6.2-alpha-11): the more stable,
   deliberately maintained line. Alphas receive selected fixes after review and testing and can intentionally omit
   newer Nightly features.
 - [Download the current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly): the rolling build
@@ -33,30 +33,19 @@ This project has two release channels. Back up your receiver data before install
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems.
 - **Improved listening:** Desktop audio adds Hold, Avoid, Clear, saved mute state, a queue counter, and a queue limit.
 
-## What’s New in Alpha 10
+## What’s New in Alpha 11
 
-Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stability release.
+Alpha 11 focuses on receiver reliability and a clearer upgrade process.
 
-- **Scanner-Map uploads work again.** The Rdio Scanner integration uses the protocol-compatible SDRTrunk identity for
-  both connection tests and call uploads.
-- **Encryption details stay with the correct call.** Late algorithm and key information updates the existing P25,
-  DMR, or NXDN activity row, and event key IDs display in hexadecimal.
-- **Alias editing preserves the intended row.** New and cloned aliases stay detached until Save, and edits, deletes,
-  moves, sorted-table selection, and numeric talkgroup/radio identifier sorting use stable schema-v4 identities. Alias
-  action buttons retain their full labels at supported window sizes.
-- **Dark-themed editors stay covered while loading.** Playlist and Settings render a theme-aware shell before
-  constructing their full JavaFX content.
-- **P25 channel handling is safer.** Implicit uplinks resolve from the downlink band, non-autonomous SNDCP messages no
-  longer create ghost `DAT-A` channels, shortened TDULC candidates are rejected, traffic-channel shutdown avoids a
-  manager lock hazard, and stale channelizer work is bounded during overload.
-- **Tuner disable and allocation no longer race.** Decoder-side allocation fails fast while tuner hardware is being
-  stopped instead of observing a removed channel manager.
-- **Windows packages retain signed Java runtime files.** Packaging preserves the BellSoft and Microsoft Authenticode
-  signatures used by Windows Application Control.
-- **Alpha 8 and Alpha 9 data carry forward unchanged.** Alpha 10 uses the same database schema and storage formats.
+- **USB tuner recovery is more reliable,** and the Tuners tab can rescan for reconnected devices.
+- **AM conventional decoding is restored,** with Activity, CSV, and website statistics support.
+- **RadioReference Import All** previews and imports every loaded talkgroup while preserving local choices.
+- **Alias listening uses a simple Listen setting** stored in the Default list.
+- **P25 control learning, activity, completed-call handling, and recording names are more accurate.**
+- **The Application Migrator shows progress and supports post-setup SQLite database replacement** with a safety backup
+  and validation.
 
-Read the complete [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md), including the retained Alpha 7 migration
-compatibility and the scope limits of the receiver-stability fixes.
+Read the complete [Alpha 11 What’s New](docs/whats-new-0.6.2-alpha-11.md) before upgrading.
 
 ## Screenshots
 
