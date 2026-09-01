@@ -39,6 +39,20 @@ class P25ActivityLogWriterTest
     Path mTemporaryFolder;
 
     @Test
+    void boundsPatchMembersBeforeTheyReachTheWriterQueue()
+    {
+        List<Integer> members = new ArrayList<>();
+
+        for(int index = 0; index < P25ActivityLogRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS + 20; index++)
+        {
+            members.add(60_000 + index);
+        }
+
+        assertEquals(P25ActivityLogRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS,
+            patchActivity(1_000L, members).patchMemberTalkgroupIds().size());
+    }
+
+    @Test
     void writesActivityEvent() throws Exception
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
@@ -170,6 +184,29 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             assertCount(connection, "p25_activity_event", 1);
+            assertEquals(3L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context WHERE context_key='GUID:dmr-detailed'
+                """));
+            assertEquals(3L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:dmr-detailed'
+                """));
+            assertEquals("DMR Repeater", scalarString(connection, """
+                SELECT channel_name FROM receiver_context WHERE context_key='GUID:dmr-detailed'
+                """));
+            assertEquals("County DMR", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:dmr-detailed'
+                """));
+            assertEquals("DMR", scalarString(connection, """
+                SELECT decoder FROM receiver_context WHERE context_key='GUID:dmr-detailed'
+                """));
+            assertEquals(461_125_000L, scalarLong(connection, """
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:dmr-detailed'
+                """));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT COUNT(*) FROM receiver_context
+                WHERE context_key='GUID:dmr-detailed' AND current_control_hz IS NULL
+                  AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
+                """));
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1L, scalarLong(connection,
@@ -208,6 +245,29 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             assertCount(connection, "p25_activity_event", 1);
+            assertEquals(4L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
+                """));
+            assertEquals(4L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
+                """));
+            assertEquals("NXDN Repeater", scalarString(connection, """
+                SELECT channel_name FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
+                """));
+            assertEquals("County NXDN", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
+                """));
+            assertEquals("NXDN", scalarString(connection, """
+                SELECT decoder FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
+                """));
+            assertEquals(461_125_000L, scalarLong(connection, """
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:nxdn-detailed'
+                """));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT COUNT(*) FROM receiver_context
+                WHERE context_key='GUID:nxdn-detailed' AND current_control_hz IS NULL
+                  AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
+                """));
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1L, scalarLong(connection,
@@ -794,7 +854,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("24", resultSet.getString(1));
+                assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION), resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -830,7 +890,8 @@ class P25ActivityLogWriterTest
             assertColumnAbsent(connection, "p25_site_neighbor", "observation_count");
             assertColumnAbsent(connection, "receiver_context", "wacn");
             assertColumnAbsent(connection, "receiver_context", "system_id");
-            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
     }
 
@@ -940,13 +1001,17 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
             P25ActivityLogSchema.recordActivity(connection, affiliation(1000L, 1811524, 56133), true);
             assertAffiliation(connection, 1811524, 56133, 1000L);
+            assertPresence(connection, 1811524, "123e4567-e89b-12d3-a456-426614174000",
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 1000L);
 
             P25ActivityLogSchema.recordActivity(connection, affiliation(2000L, 1811524, 56538), true);
-            assertEquals(1, count(connection, "p25_radio_affiliation"));
+            assertEquals(1, count(connection, "trunked_radio_affiliation"));
+            assertEquals(1, count(connection, "trunked_radio_site_presence"));
             assertAffiliation(connection, 1811524, 56538, 2000L);
 
             P25ActivityLogSchema.recordActivity(connection, affiliation(3000L, 1811524, null), true);
-            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
     }
 
@@ -955,13 +1020,189 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("affiliation-order.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String siteA = "123e4567-e89b-12d3-a456-42661417400a";
+        String siteB = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, 56_538,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(1_000L, siteA, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            assertAffiliation(connection, 1811524, 56538, 2000L);
+            assertPresence(connection, 1811524, siteB,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2000L);
+        }
+    }
+
+    @Test
+    void registrationOnlyMovesSitePresenceWithoutReplacingTalkgroupAffiliation() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("registration-moves-site.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String siteA = "123e4567-e89b-12d3-a456-42661417400a";
+        String siteB = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(1_000L, siteA, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, null,
+                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+
+            assertAffiliation(connection, 1_811_524, 56_133, 1_000L);
+            assertPresence(connection, 1_811_524, siteB,
+                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
+        }
+    }
+
+    @Test
+    void equalTimestampPresenceUsesEvidenceThenContextAndTalkgroupTieBreaks() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-equal-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String siteA = "123e4567-e89b-12d3-a456-42661417400a";
+        String siteB = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, null,
+                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteA, 1_811_524, null,
+                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+            assertPresence(connection, 1_811_524, siteA,
+                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
+
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, 56_538,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            assertPresence(connection, 1_811_524, siteB,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
+
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteA, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            assertPresence(connection, 1_811_524, siteA,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
+            assertAffiliation(connection, 1_811_524, 56_133, 2_000L);
+        }
+    }
+
+    @Test
+    void staleAndNewerClearsRespectConfirmedTimestamps() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-clear-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, affiliation(2000L, 1811524, 56538), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(1000L, 1811524, 56133), false);
-            assertAffiliation(connection, 1811524, 56538, 2000L);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(1_000L, 1_811_524, null), false);
+            assertAffiliation(connection, 1_811_524, 56_538, 2_000L);
+            assertEquals(1, count(connection, "trunked_radio_site_presence"));
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+        }
+    }
+
+    @Test
+    void clearWatermarkPreventsStaleAndEqualConfirmationsFromResurrectingState() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-clear-watermark.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
+
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+            assertEquals(3_000L, scalarLong(connection, """
+                SELECT cleared_at_ms FROM trunked_radio_presence_lifecycle WHERE radio_id=1811524
+                """));
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(1_000L, 1_811_524, 56_133), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, 56_133), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(2_500L, 1_811_524, null), false);
+
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+            assertEquals(3_000L, scalarLong(connection, """
+                SELECT cleared_at_ms FROM trunked_radio_presence_lifecycle WHERE radio_id=1811524
+                """));
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_001L, 1_811_524, 56_133), false);
+            assertAffiliation(connection, 1_811_524, 56_133, 3_001L);
+            assertPresence(connection, 1_811_524, "123e4567-e89b-12d3-a456-426614174000",
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 3_001L);
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(4_000L, 1_811_525, 56_133), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(4_000L, 1_811_525, null), false);
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_affiliation WHERE radio_id=1811525
+                """));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_site_presence WHERE radio_id=1811525
+                """));
+        }
+    }
+
+    @Test
+    void clearingOneSiteRemovesItsPresenceButRetainsSystemAffiliation() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-site-clear.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String clearedSite = "123e4567-e89b-12d3-a456-42661417400a";
+        String retainedSite = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, clearedSite, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, retainedSite, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(1_000L, clearedSite, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+
+            P25ActivityLogSchema.clearSiteStats(connection, clearedSite);
+
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+            assertAffiliation(connection, 1_811_524, 56_133, 1_000L);
+        }
+    }
+
+    @Test
+    void ordinaryCallsNeverCreateAuthoritativeRadioState() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("calls-do-not-create-presence.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(1_000L, P25ActivityLogRecords.Action.CALL), true);
+
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
     }
 
@@ -1018,7 +1259,8 @@ class P25ActivityLogWriterTest
                 WHERE identity_kind_code=2 AND (identity_id <= 0 OR identity_id >= 16777212)
                 """));
             assertEquals(0, count(connection, "trunked_radio_talkgroup_summary"));
-            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM p25_site_talkgroup_bucket
                 WHERE talkgroup_id <= 0 OR talkgroup_id >= 65535
@@ -1252,27 +1494,6 @@ class P25ActivityLogWriterTest
             assertActionCount(connection, "conventional_activity_bucket", "call_count", 2);
             assertActionCount(connection, "conventional_activity_summary", "grant_count", 1);
             assertCount(connection, "p25_activity_event", 1);
-        }
-    }
-
-    @Test
-    void persistsAmConventionalContextProtocolCode() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("am-conventional-context.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-        {
-            P25ActivityLogSchema.recordActivity(connection, amConventionalActivity(4_000L), true);
-
-            assertEquals(10L, scalarLong(connection, """
-                SELECT kind_code FROM receiver_context
-                WHERE context_key='CONVENTIONAL_ANALOG:AM:121900000'
-                """));
-            assertEquals(11L, scalarLong(connection, """
-                SELECT protocol_code FROM receiver_context
-                WHERE context_key='CONVENTIONAL_ANALOG:AM:121900000'
-                """));
         }
     }
 
@@ -2251,6 +2472,13 @@ class P25ActivityLogWriterTest
                 SELECT alias_list_name FROM receiver_context WHERE guid='%s'
                 """.formatted(guid)));
 
+            //An older-style activity record has no configured-metadata observation and must not erase the alias.
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(1_500L, P25ActivityLogRecords.Action.GRANT, guid), false);
+            assertEquals("Example System", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
+
             P25ActivityLogSchema.insertSite(connection, withAliasList(p25, 2_000L, "without-alias", null));
             assertNull(scalarString(connection, """
                 SELECT alias_list_name FROM receiver_context WHERE guid='%s'
@@ -2274,6 +2502,147 @@ class P25ActivityLogWriterTest
             assertNull(scalarString(connection, """
                 SELECT alias_list_name FROM receiver_context WHERE guid='%s'
                 """.formatted(guid)));
+        }
+    }
+
+    @Test
+    void persistsConfiguredMetadataForP25AndAnalogConventionalContexts() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("configured-conventional-metadata.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            String p25Guid = "123e4567-e89b-12d3-a456-426614174090";
+            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(1_000L, p25Guid,
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", "Elyria PD",
+                "P25-1", 155_730_000L, 0x348), false);
+
+            assertEquals(2L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+            assertEquals("ELYRIA PDISP", scalarString(connection, """
+                SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+            assertEquals("Elyria PD", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+            assertEquals("P25-1", scalarString(connection, """
+                SELECT decoder FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+            assertEquals(155_730_000L, scalarLong(connection, """
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+            assertEquals(0x348L, scalarLong(connection, """
+                SELECT nac FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+
+            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(2_000L, p25Guid,
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", null,
+                "P25-1", 155_730_000L, 0x348), false);
+            assertNull(scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(p25Guid)));
+
+            String nbfmGuid = "123e4567-e89b-12d3-a456-426614174091";
+            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(3_000L, nbfmGuid,
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", "County Fire",
+                "Conventional Lorain Cnty", "NBFM", 154_310_000L, null), false);
+
+            assertEquals(10L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nbfmGuid)));
+            assertEquals(10L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nbfmGuid)));
+            assertEquals("County Fire", scalarString(connection, """
+                SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nbfmGuid)));
+            assertEquals("Conventional Lorain Cnty", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nbfmGuid)));
+            assertEquals(154_310_000L, scalarLong(connection, """
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nbfmGuid)));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT COUNT(*) FROM receiver_context WHERE context_key='GUID:%s'
+                  AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
+                  AND current_control_hz IS NULL
+                """.formatted(nbfmGuid)));
+
+            String amGuid = "123e4567-e89b-12d3-a456-426614174099";
+            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(4_000L, amGuid,
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", "Airport Ground",
+                "County Airport", "AM", 121_900_000L, null), true);
+
+            assertEquals(10L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(amGuid)));
+            assertEquals(11L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(amGuid)));
+        }
+    }
+
+    @Test
+    void persistsConfiguredMetadataForDmrAndNxdnTrunkedSites() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("configured-trunked-metadata.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String dmrGuid = "123e4567-e89b-12d3-a456-426614174092";
+        String nxdnGuid = "123e4567-e89b-12d3-a456-426614174093";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            TrunkedSiteSchema.Snapshot dmr = trunkedSite(1_000L, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR,
+                "dmr-metadata", "Metro DMR Aliases").snapshot();
+            TrunkedSiteSchema.upsert(connection, dmr);
+            P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, dmr);
+
+            TrunkedSiteSchema.Snapshot nxdn = trunkedSite(2_000L, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN,
+                "nxdn-metadata", "Metro NXDN Aliases").snapshot();
+            TrunkedSiteSchema.upsert(connection, nxdn);
+            P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, nxdn);
+
+            assertEquals("Downtown", scalarString(connection, """
+                SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(dmrGuid)));
+            assertEquals("Metro DMR Aliases", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(dmrGuid)));
+            assertEquals("DMR", scalarString(connection, """
+                SELECT decoder FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(dmrGuid)));
+            assertEquals(451_000_000L, scalarLong(connection, """
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(dmrGuid)));
+            assertEquals(451_000_000L, scalarLong(connection, """
+                SELECT current_control_hz FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(dmrGuid)));
+
+            assertEquals("North", scalarString(connection, """
+                SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nxdnGuid)));
+            assertEquals("Metro NXDN Aliases", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nxdnGuid)));
+            assertEquals("NXDN", scalarString(connection, """
+                SELECT decoder FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nxdnGuid)));
+            assertEquals(155_000_000L, scalarLong(connection, """
+                SELECT primary_frequency_hz FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nxdnGuid)));
+            assertEquals(155_000_000L, scalarLong(connection, """
+                SELECT current_control_hz FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(nxdnGuid)));
+            assertEquals(2L, scalarLong(connection, """
+                SELECT COUNT(*) FROM receiver_context
+                WHERE kind_code=1 AND protocol_code IN (3,4) AND system_key IS NULL
+                  AND nac IS NULL AND rfss IS NULL AND site IS NULL
+                """));
         }
     }
 
@@ -2487,6 +2856,13 @@ class P25ActivityLogWriterTest
     private static P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
                                                                          int protocol, String hash)
     {
+        return trunkedSite(observedAt, guid, protocol, hash, null);
+    }
+
+    private static P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
+                                                                         int protocol, String hash,
+                                                                         String aliasListName)
+    {
         boolean dmr = protocol == TrunkedSiteSchema.PROTOCOL_DMR;
         TrunkedSiteSchema.Channel channel = dmr ?
             new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L,
@@ -2500,7 +2876,7 @@ class P25ActivityLogWriterTest
                 TrunkedSiteSchema.NEIGHBOR_STATUS_ISOLATED, observedAt);
         TrunkedSiteSchema.Snapshot snapshot = new TrunkedSiteSchema.Snapshot(
             observedAt, guid, hash, protocol, dmr ? 1 : 2, dmr ? 2 : 4,
-            dmr ? "Metro DMR" : "Metro NXDN", dmr ? "Downtown" : "North", null,
+            dmr ? "Metro DMR" : "Metro NXDN", dmr ? "Downtown" : "North", aliasListName,
             dmr ? "DMR" : "NXDN", dmr ? 10 : 7, dmr ? null : 8, dmr ? 20 : 9,
             dmr ? null : 12, null, null, null, null, null, null, null, 0, null,
             channel.frequencyHertz(), channel.frequencyHertz(), List.of(channel), List.of(neighbor));
@@ -2672,9 +3048,10 @@ class P25ActivityLogWriterTest
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT system.wacn, system.system_id, affiliation.radio_id, affiliation.talkgroup_id,
-                    affiliation.updated_at_ms
-                FROM p25_radio_affiliation affiliation
-                JOIN p25_system system ON system.system_key = affiliation.system_key
+                    affiliation.confirmed_at_ms
+                FROM trunked_radio_affiliation affiliation
+                JOIN trunked_identity_scope scope ON scope.scope_id = affiliation.scope_id
+                JOIN p25_system system ON system.system_key = scope.p25_system_key
                 """))
         {
             assertTrue(resultSet.next());
@@ -2682,7 +3059,27 @@ class P25ActivityLogWriterTest
             assertEquals(0x348, resultSet.getInt("system_id"));
             assertEquals(radioId, resultSet.getInt("radio_id"));
             assertEquals(talkgroupId, resultSet.getInt("talkgroup_id"));
-            assertEquals(updatedAt, resultSet.getLong("updated_at_ms"));
+            assertEquals(updatedAt, resultSet.getLong("confirmed_at_ms"));
+            assertFalse(resultSet.next());
+        }
+    }
+
+    private static void assertPresence(Connection connection, int radioId, String guid,
+                                       P25ActivityLogRecords.RadioPresenceEvidence evidence, long confirmedAt)
+        throws Exception
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT presence.radio_id, context.guid, presence.evidence_code, presence.confirmed_at_ms
+                FROM trunked_radio_site_presence presence
+                JOIN receiver_context context ON context.id = presence.context_id
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(radioId, resultSet.getInt("radio_id"));
+            assertEquals(guid, resultSet.getString("guid"));
+            assertEquals(evidence.code(), resultSet.getInt("evidence_code"));
+            assertEquals(confirmedAt, resultSet.getLong("confirmed_at_ms"));
             assertFalse(resultSet.next());
         }
     }
@@ -2744,15 +3141,15 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent identityActivity(long timestamp, int sourceRadio,
                                                                          int talkgroup,
-                                                                         P25ActivityLogRecords.RadioAffiliationUpdate
-                                                                             affiliationUpdate)
+                                                                         P25ActivityLogRecords.RadioPresenceUpdate
+                                                                             radioPresenceUpdate)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.JOIN,
             "AFFILIATE", Integer.toString(sourceRadio), Integer.toString(talkgroup), "TALKGROUP",
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
-            "Example Site", null, null, false, null, affiliationUpdate);
+            "Example Site", null, null, false, null, radioPresenceUpdate);
     }
 
     private static P25ActivityLogRecords.ActivityEvent countedIdentityActivity(long timestamp, int sourceRadio,
@@ -2768,11 +3165,16 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp)
     {
+        return patchActivity(timestamp, List.of(56181, 56180, 56180, 56182, -1));
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp, List<Integer> members)
+    {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
             "CALL_PATCH_GROUP_ENCRYPTED", "1811524", "56182", "PATCH_GROUP",
-            List.of(56181, 56180, 56180, 56182, -1), 854187500L, "00-0509", 1, true, 0x84, 101,
+            members, 854187500L, "00-0509", 1, true, 0x84, 101,
             0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25_PHASE1", null, true, null, null);
     }
 
@@ -2825,25 +3227,49 @@ class P25ActivityLogWriterTest
             null, action == P25ActivityLogRecords.Action.CALL, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent amConventionalActivity(long timestamp)
+    private static P25ActivityLogRecords.ActivityEvent configuredConventionalActivity(long timestamp, String guid,
+        P25ActivityLogRecords.ContextKind contextKind, String protocol, String channelName, String aliasListName,
+        String decoder, long frequencyHertz, Integer nac)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONVENTIONAL_ANALOG:AM:121900000", null,
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", P25ActivityLogRecords.Action.CALL,
-            "CALL", null, null, null, 121_900_000L, null, null, false, null, null, null, null, null, null, null,
-            "Airport Ground", "AM", null, true, null, null);
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid, contextKind, protocol,
+            P25ActivityLogRecords.Action.CALL, "CALL", null, null, null, List.of(), frequencyHertz, null, null,
+            false, null, null, null, null, nac, null, null, channelName, decoder, null, true, null, null,
+            P25ActivityLogRecords.IdentityDomain.STANDARD, P25ActivityLogRecords.P25TargetIdentity.UNKNOWN,
+            List.of(), aliasListName, true);
     }
 
     private static P25ActivityLogRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)
     {
-        P25ActivityLogRecords.Action action = talkgroupId != null ? P25ActivityLogRecords.Action.JOIN :
-            P25ActivityLogRecords.Action.LOGOUT;
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return talkgroupId != null ?
+            presence(timestamp, guid, radioId, talkgroupId,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION) :
+            clearedPresence(timestamp, guid, radioId);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent presence(long timestamp, String guid, int radioId,
+                                                                 Integer talkgroupId,
+        P25ActivityLogRecords.RadioPresenceEvidence evidence)
+    {
+        P25ActivityLogRecords.Action action = evidence == P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION ?
+            P25ActivityLogRecords.Action.REGISTER : P25ActivityLogRecords.Action.JOIN;
         return new P25ActivityLogRecords.ActivityEvent(timestamp,
-            "GUID:123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000",
+            "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", action,
-            talkgroupId != null ? "AFFILIATE" : "DEREGISTER", Integer.toString(radioId),
+            evidence == P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION ? "REGISTER" : "AFFILIATE",
+            Integer.toString(radioId),
             talkgroupId != null ? talkgroupId.toString() : null, talkgroupId != null ? "TALKGROUP" : null,
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null,
-            false, null, new P25ActivityLogRecords.RadioAffiliationUpdate(radioId, talkgroupId));
+            false, null, P25ActivityLogRecords.RadioPresenceUpdate.confirmed(radioId, talkgroupId, evidence));
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent clearedPresence(long timestamp, String guid, int radioId)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.LOGOUT,
+            "DEREGISTER", Integer.toString(radioId), null, null, null, null, null, false, null, null,
+            0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null, false, null,
+            P25ActivityLogRecords.RadioPresenceUpdate.cleared(radioId));
     }
 
     private static P25ActivityLogRecords.ActivityEvent activityWithoutSystemIdentity(long timestamp)
@@ -2861,6 +3287,11 @@ class P25ActivityLogWriterTest
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp, String guid)
+    {
+        return siteSnapshot(timestamp, guid, 2, 1);
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp, String guid, int rfss, int site)
     {
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L, null, false, 1,
@@ -2883,7 +3314,7 @@ class P25ActivityLogWriterTest
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
-            0xBEE00, 0x348, 0x348, 2, 1, 0, true,
+            0xBEE00, 0x348, 0x348, rfss, site, 0, true,
             new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
                 "Autonomous and by Request", 240, true, 0x90, true),
             856137500L, 856137500L, channels, neighbors, bands, patches, foreignBands);

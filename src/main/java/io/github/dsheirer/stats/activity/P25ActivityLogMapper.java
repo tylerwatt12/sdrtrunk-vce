@@ -11,15 +11,17 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -44,6 +46,7 @@ import io.github.dsheirer.protocol.Protocol;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -67,20 +70,13 @@ class P25ActivityLogMapper
         String guid = blankToNull(event.guid());
         String configurationId = blankToNull(event.channelConfigurationId());
         String channelName = blankToNull(event.channelName());
-        String contextKey;
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
 
-        if(guid != null)
+        if(contextKey == null)
         {
-            contextKey = "GUID:" + guid;
-        }
-        else if(configurationId != null)
-        {
-            contextKey = "CONFIGURATION:" + configurationId;
-        }
-        else
-        {
-            contextKey = "CONVENTIONAL_DMR:DMR:" + event.frequencyHertz() +
-                (channelName != null ? ":" + channelName : "");
+            contextKey = ReceiverContextKey.conventionalWithChannelName(
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, Protocol.DMR.name(), event.frequencyHertz(),
+                channelName);
         }
 
         P25ActivityLogRecords.DmrTargetKind targetKind = switch(event.targetKind())
@@ -119,10 +115,14 @@ class P25ActivityLogMapper
         String guid = blankToNull(event.guid());
         String configurationId = blankToNull(event.channelConfigurationId());
         String channelName = blankToNull(event.channelName());
-        String contextKey = guid != null ? "GUID:" + guid :
-            configurationId != null ? "CONFIGURATION:" + configurationId :
-                "CONVENTIONAL_NXDN:NXDN:" + event.frequencyHertz() +
-                    (channelName != null ? ":" + channelName : "");
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
+
+        if(contextKey == null)
+        {
+            contextKey = ReceiverContextKey.conventionalWithChannelName(
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN, Protocol.NXDN.name(), event.frequencyHertz(),
+                channelName);
+        }
         P25ActivityLogRecords.NxdnTargetKind targetKind = switch(event.targetKind())
         {
             case GROUP -> P25ActivityLogRecords.NxdnTargetKind.GROUP;
@@ -233,23 +233,29 @@ class P25ActivityLogMapper
     P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(CompletedAudioCall call,
                                                                      P25ActivityLogRecords.CallOutput output)
     {
-        if(call == null || call.snapshot() == null || call.snapshot().identifierCollection() == null ||
-            output == null)
+        return mapCompletedCallOutput(call != null ? call.snapshot() : null, output);
+    }
+
+    P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(AudioCallSnapshot snapshot,
+                                                                     P25ActivityLogRecords.CallOutput output)
+    {
+        if(snapshot == null || snapshot.identifierCollection() == null || output == null)
         {
             return null;
         }
 
-        IdentifierCollection identifiers = call.snapshot().identifierCollection();
+        IdentifierCollection identifiers = snapshot.identifierCollection();
         IdentifierFacts facts = IdentifierFacts.from(identifiers);
-        Integer destination = destinationId(identifiers.getToIdentifier());
+        Identifier targetIdentifier = identifiers.getToIdentifier();
+        Integer destination = destinationId(targetIdentifier);
         Identifier sourceIdentifier = identifiers.getFromIdentifier();
         Integer sourceRadio = sourceIdentifier != null && sourceIdentifier.getForm() == Form.RADIO ?
             destinationId(sourceIdentifier) : null;
         String guid = blankToNull(facts.radresGuid());
         String contextKey = outputContextKey(guid, facts);
 
-        long timestamp = call.snapshot().startTimestamp() > 0 ? call.snapshot().startTimestamp() :
-            call.snapshot().lastActivityTimestamp();
+        long timestamp = snapshot.startTimestamp() > 0 ? snapshot.startTimestamp() :
+            snapshot.lastActivityTimestamp();
 
         if(timestamp <= 0)
         {
@@ -261,12 +267,14 @@ class P25ActivityLogMapper
             return null;
         }
 
-        Integer timeslot = call.snapshot().timeslot() > 0 ? Integer.valueOf(call.snapshot().timeslot()) :
+        Integer timeslot = snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) :
             facts.timeslot();
         return new P25ActivityLogRecords.CompletedCallOutput(timestamp, contextKey, guid, facts.frequencyHertz(),
             timeslot, destination != null ? destination : 0, facts.targetForm(),
             facts.patchMemberTalkgroupIds(), sourceRadio, output,
-            identityDomain(identifiers, DecoderType.NXDN.toString().equals(facts.decoder()), false));
+            identityDomain(identifiers, DecoderType.NXDN.toString().equals(facts.decoder()), false),
+            p25TargetIdentity(targetIdentifier, isP25Decoder(facts.decoder())),
+            facts.p25PatchMemberIdentities());
     }
 
     private static String outputContextKey(String guid, IdentifierFacts facts)
@@ -404,7 +412,18 @@ class P25ActivityLogMapper
             affiliationEvent.getTalkgroupId().toString() : facts.targetId();
         String targetKind = affiliationEvent != null && affiliationEvent.getTalkgroupId() != null ?
             Form.TALKGROUP.name() : facts.targetForm();
-        P25ActivityLogRecords.RadioAffiliationUpdate affiliationUpdate = affiliationUpdate(affiliationEvent);
+        IdentifierCollection eventIdentifiers = event.getIdentifierCollection();
+        Identifier targetIdentifier = affiliationEvent != null ? affiliationTarget(affiliationEvent,
+            eventIdentifiers) : eventIdentifiers != null ? eventIdentifiers.getToIdentifier() : null;
+        P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity =
+            p25TargetIdentity(targetIdentifier, isP25Decoder(decoderType));
+
+        if(p25TargetIdentity.state() == P25ActivityLogRecords.P25IdentityState.UNKNOWN &&
+            affiliationEvent != null && affiliationEvent.getTalkgroupId() != null)
+        {
+            p25TargetIdentity = P25ActivityLogRecords.P25TargetIdentity.ORDINARY;
+        }
+        P25ActivityLogRecords.RadioPresenceUpdate radioPresenceUpdate = radioPresenceUpdate(affiliationEvent);
         boolean metricsEncrypted = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
             P25EncryptionConfirmationTracker.isConfirmed(grantEvent, facts.encryptionAlgorithmId(),
                 facts.encryptionKeyId());
@@ -445,7 +464,8 @@ class P25ActivityLogMapper
             activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
             action == P25ActivityLogRecords.Action.CALL &&
                 (contextKind != P25ActivityLogRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
-            affiliationUpdate, identityDomain(channel, event.getIdentifierCollection()));
+            radioPresenceUpdate, identityDomain(channel, event.getIdentifierCollection()), p25TargetIdentity,
+            facts.p25PatchMemberIdentities(), blankToNull(channel.getAliasListName()), true);
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
@@ -492,7 +512,8 @@ class P25ActivityLogMapper
 
         return new P25ActivityLogRecords.SiteSnapshot(event.observedAtEpochMilliseconds(), guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
-            blankToNull(channel.getName()), blankToNull(channel.getAliasListName()), snapshot.decoder(), wacn,
+            TrunkedSiteMetadataMapper.configuredSiteName(channel), blankToNull(channel.getAliasListName()),
+            snapshot.decoder(), wacn,
             system, nac, rfss, site, lra, tdma, snapshot.siteStatus(), currentControl, currentControl,
             snapshot.channels(), snapshot.neighborSites(),
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.foreignSystemBands());
@@ -687,7 +708,7 @@ class P25ActivityLogMapper
         return P25ActivityLogRecords.Action.UNKNOWN;
     }
 
-    private static P25ActivityLogRecords.RadioAffiliationUpdate affiliationUpdate(
+    private static P25ActivityLogRecords.RadioPresenceUpdate radioPresenceUpdate(
         P25AffiliationEvent affiliationEvent)
     {
         if(affiliationEvent == null || affiliationEvent.getRadioId() == null || affiliationEvent.getRadioId() <= 0)
@@ -695,13 +716,17 @@ class P25ActivityLogMapper
             return null;
         }
 
+        P25ActivityLogRecords.RadioPresenceEvidence evidence =
+            affiliationEvent.getEventType() == DecodeEventType.REGISTER ?
+                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION :
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION;
+
         return switch(affiliationEvent.getOutcome())
         {
-            case ACCEPTED, CONFIRMED -> affiliationEvent.getTalkgroupId() != null &&
-                affiliationEvent.getTalkgroupId() > 0 ?
-                new P25ActivityLogRecords.RadioAffiliationUpdate(affiliationEvent.getRadioId(),
-                    affiliationEvent.getTalkgroupId()) : null;
-            case CLEARED -> new P25ActivityLogRecords.RadioAffiliationUpdate(affiliationEvent.getRadioId(), null);
+            case ACCEPTED, CONFIRMED -> P25ActivityLogRecords.RadioPresenceUpdate.confirmed(
+                affiliationEvent.getRadioId(), affiliationEvent.getTalkgroupId() != null &&
+                    affiliationEvent.getTalkgroupId() > 0 ? affiliationEvent.getTalkgroupId() : null, evidence);
+            case CLEARED -> P25ActivityLogRecords.RadioPresenceUpdate.cleared(affiliationEvent.getRadioId());
             case REQUESTED, REJECTED, UNRESOLVED -> null;
         };
     }
@@ -730,6 +755,100 @@ class P25ActivityLogMapper
         }
 
         return null;
+    }
+
+    private static P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity(Identifier identifier,
+                                                                              boolean p25Decoder)
+    {
+        Identifier primary = identifier;
+
+        if(identifier instanceof PatchGroupIdentifier patchGroup && patchGroup.getValue() != null)
+        {
+            primary = patchGroup.getValue().getPatchGroup();
+        }
+
+        if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified &&
+            fullyQualified.getProtocol() == Protocol.APCO25)
+        {
+            return P25ActivityLogRecords.P25TargetIdentity.fullyQualified(fullyQualified.getWacn(),
+                fullyQualified.getSystem(), fullyQualified.getTalkgroup());
+        }
+
+        return (p25Decoder || primary != null && primary.getProtocol() == Protocol.APCO25) &&
+            primary instanceof TalkgroupIdentifier ?
+            P25ActivityLogRecords.P25TargetIdentity.ORDINARY :
+            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+    }
+
+    private static List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(
+        Identifier identifier)
+    {
+        if(!(identifier instanceof PatchGroupIdentifier patchGroup) || patchGroup.getValue() == null)
+        {
+            return List.of();
+        }
+
+        List<P25ActivityLogRecords.P25PatchMemberIdentity> identities = new ArrayList<>();
+        for(TalkgroupIdentifier member: patchGroup.getValue().getPatchedTalkgroupIdentifiers())
+        {
+            if(member == null || member.getValue() == null || member.getValue() <= 0 ||
+                member.getProtocol() != Protocol.APCO25)
+            {
+                continue;
+            }
+
+            P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(member, true);
+            if(targetIdentity.state() != P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+            {
+                identities.add(new P25ActivityLogRecords.P25PatchMemberIdentity(member.getValue(), targetIdentity));
+            }
+        }
+
+        return List.copyOf(identities);
+    }
+
+    private static Identifier affiliationTarget(P25AffiliationEvent affiliation,
+                                                IdentifierCollection identifiers)
+    {
+        if(affiliation == null || affiliation.getTalkgroupId() == null || identifiers == null)
+        {
+            return null;
+        }
+
+        Identifier ordinaryMatch = null;
+
+        for(Identifier identifier: identifiers.getIdentifiers())
+        {
+            Integer value = talkgroup(identifier);
+
+            if(value != null && value.equals(affiliation.getTalkgroupId()))
+            {
+                Identifier primary = identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
+                    patch.getValue().getPatchGroup() : identifier;
+
+                if(primary instanceof FullyQualifiedTalkgroupIdentifier)
+                {
+                    return identifier;
+                }
+
+                ordinaryMatch = identifier;
+            }
+        }
+
+        return ordinaryMatch;
+    }
+
+    private static boolean isP25Decoder(DecoderType decoderType)
+    {
+        return decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ||
+            decoderType == DecoderType.P25_CONVENTIONAL;
+    }
+
+    private static boolean isP25Decoder(String decoder)
+    {
+        return DecoderType.P25_PHASE1.toString().equals(decoder) ||
+            DecoderType.P25_PHASE2.toString().equals(decoder) ||
+            DecoderType.P25_CONVENTIONAL.toString().equals(decoder);
     }
 
     private static Integer destinationId(Identifier identifier)
@@ -845,17 +964,13 @@ class P25ActivityLogMapper
                                      P25ActivityLogRecords.ContextKind contextKind, String configuredChannelName,
                                      String channelConfigurationId)
     {
-        if(guid != null)
-        {
-            return "GUID:" + guid;
-        }
-
         String configurationId = facts != null && facts.configurationId() != null ?
             facts.configurationId() : blankToNull(channelConfigurationId);
+        String configured = ReceiverContextKey.configured(guid, configurationId);
 
-        if(configurationId != null)
+        if(configured != null)
         {
-            return "CONFIGURATION:" + configurationId;
+            return configured;
         }
 
         if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
@@ -868,24 +983,18 @@ class P25ActivityLogMapper
             return ":::".equals(key) ? null : "P25:" + key;
         }
 
-        if(frequency != null && frequency > 0)
-        {
-            return contextKind.name() + ":" + protocol + ":" + frequency;
-        }
-
-        String channelName = blankToNull(configuredChannelName);
-        return channelName != null ? contextKind.name() + ":" + protocol + ":" + channelName :
-            null;
+        return ReceiverContextKey.conventional(contextKind, protocol, frequency, configuredChannelName);
     }
 
     private static String activityChannelName(P25ActivityLogRecords.ContextKind contextKind, Channel channel)
     {
-        if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE || channel == null)
+        if(channel == null)
         {
             return null;
         }
 
-        return blankToNull(channel.getName());
+        return contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE ?
+            TrunkedSiteMetadataMapper.configuredSiteName(channel) : blankToNull(channel.getName());
     }
 
     private static String protocolName(Protocol protocol, IdentifierFacts facts, DecoderType decoderType)
@@ -1049,7 +1158,9 @@ class P25ActivityLogMapper
     }
 
     private record IdentifierFacts(String sourceId, String sourceForm, String targetId, String targetForm,
-                                   List<Integer> patchMemberTalkgroupIds, Long frequencyHertz,
+                                   List<Integer> patchMemberTalkgroupIds,
+                                   List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities,
+                                   Long frequencyHertz,
                                    String channelDescriptor, String logicalChannelName, boolean encrypted,
                                    Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn,
                                    Integer systemId, Integer nac, Integer rfss, Integer site, String radresGuid,
@@ -1067,6 +1178,7 @@ class P25ActivityLogMapper
 
             return new IdentifierFacts(Form.RADIO.name().equals(sourceForm) ? value(source) : null, sourceForm,
                 targetValue(target), form(target), patchMemberTalkgroups(target),
+                P25ActivityLogMapper.p25PatchMemberIdentities(target),
                 longValue(first(identifiers, Form.CHANNEL_FREQUENCY)),
                 value(first(identifiers, Form.CHANNEL_DESCRIPTOR)), value(first(identifiers, Form.CHANNEL_NAME)),
                 encryptionIdentifier != null && encryptionIdentifier.isEncrypted(),

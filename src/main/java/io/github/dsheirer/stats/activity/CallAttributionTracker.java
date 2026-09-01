@@ -74,7 +74,24 @@ class CallAttributionTracker
             return AttributionResult.TRACKED_WITHOUT_CHANGE;
         }
 
+        if(previous.destination().isKnown() && observedDestination.isKnown())
+        {
+            List<Integer> patchMembers = mergePatchMembers(previous.destination().patchMembers(),
+                observedDestination.patchMembers());
+            P25ActivityLogRecords.P25TargetIdentity targetIdentity = mergeP25Identity(
+                previous.destination().p25TargetIdentity(), observedDestination.p25TargetIdentity());
+            List<P25ActivityLogRecords.P25PatchMemberIdentity> patchMemberIdentities =
+                mergePatchMemberIdentities(previous.destination().p25PatchMemberIdentities(),
+                    observedDestination.p25PatchMemberIdentities(), patchMembers);
+            observedDestination = observedDestination.withP25IdentityEvidence(patchMembers, targetIdentity,
+                patchMemberIdentities);
+        }
+
         boolean destinationBecameKnown = !previous.destination().isKnown() && observedDestination.isKnown();
+        boolean p25IdentityChanged = previous.destination().isKnown() && observedDestination.isKnown() &&
+            (!Objects.equals(previous.destination().p25TargetIdentity(), observedDestination.p25TargetIdentity()) ||
+                !Objects.equals(previous.destination().p25PatchMemberIdentities(),
+                    observedDestination.p25PatchMemberIdentities()));
         boolean sourceBecameKnown = previous.sourceRadioId() == null && observedSource != null;
         boolean observedEncrypted = continuation.encrypted() || continuation.encryptionAlgorithmId() != null ||
             continuation.encryptionKeyId() != null;
@@ -98,7 +115,7 @@ class CallAttributionTracker
         trim();
 
         if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown &&
-            !encryptionDetailsBecameKnown)
+            !encryptionDetailsBecameKnown && !p25IdentityChanged)
         {
             return AttributionResult.TRACKED_WITHOUT_CHANGE;
         }
@@ -109,7 +126,8 @@ class CallAttributionTracker
             updatedDestination.kind(), updatedDestination.patchMembers(), updatedSource,
             updatedEncryptionAlgorithm, updatedEncryptionKey,
             destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, previous.encrypted(),
-            updatedDomain));
+            updatedDomain, updatedDestination.p25TargetIdentity(),
+            updatedDestination.p25PatchMemberIdentities()));
     }
 
     synchronized void clear()
@@ -183,6 +201,24 @@ class CallAttributionTracker
         }
     }
 
+    private static Integer nonNegative(String value)
+    {
+        if(value == null || value.isBlank())
+        {
+            return null;
+        }
+
+        try
+        {
+            int parsed = Integer.parseInt(value);
+            return parsed >= 0 ? parsed : null;
+        }
+        catch(NumberFormatException e)
+        {
+            return null;
+        }
+    }
+
     private static Integer eligibleSource(P25ActivityLogRecords.ActivityEvent activity)
     {
         Integer source = activity != null ? positive(activity.sourceRadioId()) : null;
@@ -195,6 +231,70 @@ class CallAttributionTracker
     private static Integer firstKnown(Integer existing, Integer observed)
     {
         return existing != null ? existing : observed;
+    }
+
+    private static P25ActivityLogRecords.P25TargetIdentity mergeP25Identity(
+        P25ActivityLogRecords.P25TargetIdentity existing,
+        P25ActivityLogRecords.P25TargetIdentity observed)
+    {
+        existing = existing != null ? existing : P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+        observed = observed != null ? observed : P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+
+        if(existing.state() == P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+        {
+            return observed;
+        }
+        else if(observed.state() == P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+        {
+            return existing;
+        }
+        else if(existing.state() == P25ActivityLogRecords.P25IdentityState.AMBIGUOUS ||
+            observed.state() == P25ActivityLogRecords.P25IdentityState.AMBIGUOUS)
+        {
+            return P25ActivityLogRecords.P25TargetIdentity.AMBIGUOUS;
+        }
+        else if(existing.state() == P25ActivityLogRecords.P25IdentityState.ORDINARY)
+        {
+            return observed;
+        }
+        else if(observed.state() == P25ActivityLogRecords.P25IdentityState.ORDINARY)
+        {
+            return existing;
+        }
+
+        return existing.equals(observed) ? existing : P25ActivityLogRecords.P25TargetIdentity.AMBIGUOUS;
+    }
+
+    private static List<Integer> mergePatchMembers(List<Integer> existing, List<Integer> observed)
+    {
+        return observed != null && !observed.isEmpty() ? List.copyOf(observed) :
+            existing != null ? List.copyOf(existing) : List.of();
+    }
+
+    private static List<P25ActivityLogRecords.P25PatchMemberIdentity> mergePatchMemberIdentities(
+        List<P25ActivityLogRecords.P25PatchMemberIdentity> existing,
+        List<P25ActivityLogRecords.P25PatchMemberIdentity> observed, List<Integer> currentMembers)
+    {
+        Map<Integer,P25ActivityLogRecords.P25TargetIdentity> merged = new LinkedHashMap<>();
+
+        if(existing != null)
+        {
+            existing.stream()
+                .filter(member -> currentMembers.contains(member.localTalkgroupId()))
+                .forEach(member -> merged.put(member.localTalkgroupId(), member.targetIdentity()));
+        }
+
+        if(observed != null)
+        {
+            observed.stream()
+                .filter(member -> currentMembers.contains(member.localTalkgroupId()))
+                .forEach(member -> merged.merge(member.localTalkgroupId(), member.targetIdentity(),
+                    CallAttributionTracker::mergeP25Identity));
+        }
+
+        return merged.entrySet().stream()
+            .map(entry -> new P25ActivityLogRecords.P25PatchMemberIdentity(entry.getKey(), entry.getValue()))
+            .toList();
     }
 
     private record ResourceKey(String contextKey, String channel, int timeslot)
@@ -222,34 +322,55 @@ class CallAttributionTracker
         private static final AttributionResult TRACKED_WITHOUT_CHANGE = new AttributionResult(true, null);
     }
 
-    private record Destination(int identityId, String kind, List<Integer> patchMembers)
+    private record Destination(int identityId, String kind, List<Integer> patchMembers,
+                               P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity,
+                               List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities)
     {
         private boolean isKnown()
         {
             return identityId > 0 && (Form.TALKGROUP.name().equals(kind) ||
-                Form.PATCH_GROUP.name().equals(kind) || Form.RADIO.name().equals(kind));
+                Form.PATCH_GROUP.name().equals(kind) || Form.RADIO.name().equals(kind)) ||
+                identityId == 0 && Form.TALKGROUP.name().equals(kind) &&
+                    p25TargetIdentity.isStableFullyQualified();
         }
 
         private boolean sameIdentity(Destination other)
         {
-            return other != null && identityId == other.identityId() && Objects.equals(kind, other.kind());
+            return other != null && identityId == other.identityId() && Objects.equals(kind, other.kind()) &&
+                (identityId != 0 || Objects.equals(p25TargetIdentity, other.p25TargetIdentity()));
+        }
+
+        private Destination withP25IdentityEvidence(List<Integer> patchMemberIds,
+                                                    P25ActivityLogRecords.P25TargetIdentity identity,
+                                                    List<P25ActivityLogRecords.P25PatchMemberIdentity>
+                                                        identityMembers)
+        {
+            return new Destination(identityId, kind, patchMemberIds, identity, identityMembers);
         }
 
         private static Destination from(P25ActivityLogRecords.ActivityEvent activity)
         {
-            Integer identity = activity != null ? positive(activity.targetId()) : null;
+            Integer identity = activity != null ? nonNegative(activity.targetId()) : null;
             Integer kind = activity != null ? TrunkedIdentityPolicy.identityKindCode(activity.targetKind()) : null;
             int protocol = activity != null ? TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol()) : 0;
 
-            if(identity != null && kind != null &&
-                TrunkedIdentityPolicy.isDirectoryIdentity(protocol, activity.identityDomain(), kind, identity))
+            boolean directoryIdentity = identity != null && identity > 0 && kind != null &&
+                TrunkedIdentityPolicy.isDirectoryIdentity(protocol, activity.identityDomain(), kind, identity);
+            boolean zeroLocalFullyQualified = identity != null && identity == 0 &&
+                protocol == TrunkedIdentityPolicy.PROTOCOL_P25 &&
+                Integer.valueOf(TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP).equals(kind) &&
+                activity.p25TargetIdentity().isStableFullyQualified();
+
+            if(directoryIdentity || zeroLocalFullyQualified)
             {
                 return new Destination(identity, activity.targetKind(),
                     activity.patchMemberTalkgroupIds() != null ?
-                        List.copyOf(activity.patchMemberTalkgroupIds()) : List.of());
+                        List.copyOf(activity.patchMemberTalkgroupIds()) : List.of(), activity.p25TargetIdentity(),
+                    activity.p25PatchMemberIdentities());
             }
 
-            return new Destination(0, null, List.of());
+            return new Destination(0, null, List.of(), P25ActivityLogRecords.P25TargetIdentity.UNKNOWN,
+                List.of());
         }
     }
 }
