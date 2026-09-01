@@ -12,14 +12,15 @@
 package io.github.dsheirer.stats.activity;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
-import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
-import io.github.dsheirer.metadata.site.SiteMetadataEvent;
-import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
@@ -29,22 +30,31 @@ import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
-import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
-import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.function.BiConsumer;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,6 +66,10 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogService.class);
     private static final long DEDUPE_RETENTION_MILLISECONDS = 60000;
     static final long PROTOCOL_SIGNAL_DEDUPE_WINDOW_MILLISECONDS = 500;
+    static final int OBSERVATION_QUEUE_SIZE = 4_096;
+    private static final int MAXIMUM_DRAIN_PER_RUN = 1_024;
+    private static final Object SINGLE_OBSERVATION = new Object();
+    private static final long DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS = 2_000;
 
     private final UserPreferences mUserPreferences;
     private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
@@ -69,16 +83,104 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
     private final List<P25ActivityCommitListener> mCommitListeners = new CopyOnWriteArrayList<>();
+    /* One preallocated queue per collection epoch preserves callback order across all observation types. */
+    private volatile BoundedMpscPairQueue<Object,Object> mObservationIngress =
+        new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+    private final ExecutorService mObservationWorker = Executors.newSingleThreadExecutor(
+        new ObserverThreadFactory("sdrtrunk activity observation mapper"));
+    private final Semaphore mObservationWakeup = new Semaphore(0);
+    private final AtomicLong mObservationDrops = new AtomicLong();
+    private final AtomicBoolean mDisposed = new AtomicBoolean();
+    private final AtomicBoolean mObservationStateClearRequested = new AtomicBoolean();
+    private final AtomicBoolean mWriterTransitionActive = new AtomicBoolean();
+    private final AtomicReference<WriterTransition> mWriterTransition = new AtomicReference<>();
+    private final long mDisposeTimeoutMilliseconds;
+    private final Runnable mAfterIngressSnapshotForTest;
+    private final Runnable mBeforeWriterActivationForTest;
     private volatile P25ActivityLogWriter mWriter;
     private volatile boolean mCollectionEnabled;
+    private volatile boolean mObservationWorkerStarted;
+    private BoundedMpscPairQueue<Object,Object> mWorkerObservationIngress;
     private Path mCurrentDatabasePath;
     private P25ActivityLogWriter.WriterStatus mLastWriterStatus;
 
     public P25ActivityLogService(UserPreferences userPreferences)
     {
+        this(userPreferences, DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS, null, null);
+    }
+
+    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit)
+    {
+        this(userPreferences, disposeTimeout, unit, null, null);
+    }
+
+    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+                          Runnable afterIngressSnapshotForTest)
+    {
+        this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest, null);
+    }
+
+    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+                          Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest)
+    {
         mUserPreferences = userPreferences;
+        java.util.Objects.requireNonNull(unit, "unit cannot be null");
+        mDisposeTimeoutMilliseconds = Math.max(0, unit.toMillis(disposeTimeout));
+        mAfterIngressSnapshotForTest = afterIngressSnapshotForTest;
+        mBeforeWriterActivationForTest = beforeWriterActivationForTest;
         MyEventBus.getGlobalEventBus().register(this);
         updateWriterState();
+        mObservationWorkerStarted = true;
+        mObservationWorker.execute(this::runObservationWorker);
+    }
+
+    private void runObservationWorker()
+    {
+        try
+        {
+            while(!mDisposed.get())
+            {
+                WriterTransition writerTransition = mWriterTransition.getAndSet(null);
+
+                if(writerTransition != null)
+                {
+                    replaceWriterOnWorker(writerTransition);
+                    continue;
+                }
+                else if(mCollectionEnabled)
+                {
+                    drainObservationsSafely();
+                }
+                else if(mObservationStateClearRequested.compareAndSet(true, false))
+                {
+                    clearObservationStateOnWorker();
+                }
+
+                try
+                {
+                    if(mCollectionEnabled)
+                    {
+                        mObservationWakeup.tryAcquire(10, TimeUnit.MILLISECONDS);
+                    }
+                    else
+                    {
+                        mObservationWakeup.acquire();
+                    }
+
+                    mObservationWakeup.drainPermits();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            cleanupObservationsOnWorker();
+            stopWriter();
+        }
     }
 
     /**
@@ -106,22 +208,34 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
     {
+        offerObservation(call != null ? call.snapshot() : null, output);
+    }
+
+    private void processCallOutput(AudioCallSnapshot snapshot, P25ActivityLogRecords.CallOutput output)
+    {
         P25ActivityLogWriter writer = getCollectionWriter();
 
-        if(writer != null)
+        if(writer == null)
         {
-            P25ActivityLogRecords.CompletedCallOutput completedCallOutput =
-                mMapper.mapCompletedCallOutput(call, output);
+            return;
+        }
 
-            if(completedCallOutput != null &&
-                mCallOutputDeduplicator.firstOutput(call.snapshot(), output, System.currentTimeMillis()))
-            {
-                writer.enqueue(completedCallOutput);
-            }
+        P25ActivityLogRecords.CompletedCallOutput completedCallOutput =
+            mMapper.mapCompletedCallOutput(snapshot, output);
+
+        if(completedCallOutput != null &&
+            mCallOutputDeduplicator.firstOutput(snapshot, output, System.currentTimeMillis()))
+        {
+            enqueueObservation(writer, completedCallOutput);
         }
     }
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        offerObservation(snapshot);
+    }
+
+    private void processControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -143,7 +257,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         if(writer != null && shouldPersistControlChannelQuality(snapshot, observedTrunkedSite) &&
             snapshot.active() && snapshot.guid() != null && !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
         {
-            writer.enqueue(new P25ActivityLogRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
+            enqueueObservation(writer, new P25ActivityLogRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
                 snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
                 snapshot.minimumSignalDbfs(), snapshot.maximumSignalDbfs(), snapshot.decodeHealthPercent(),
                 snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
@@ -234,9 +348,34 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     public void dispose()
     {
+        synchronized(this)
+        {
+            if(!mDisposed.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            mCollectionEnabled = false;
+            mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+        }
+
         MyEventBus.getGlobalEventBus().unregister(this);
-        mGrantFactConfirmationTracker.reset();
-        stopWriter();
+        mCommitListeners.clear();
+        //The observer worker remains the only ingress consumer and owns state cleanup, even when disposal times out.
+        mObservationWakeup.release();
+        mObservationWorker.shutdown();
+
+        try
+        {
+            if(!mObservationWorker.awaitTermination(mDisposeTimeoutMilliseconds, TimeUnit.MILLISECONDS))
+            {
+                mLog.warn("Timed out waiting for statistics observer cleanup");
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Subscribe
@@ -250,37 +389,127 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private synchronized void updateWriterState()
     {
+        if(mDisposed.get())
+        {
+            return;
+        }
+
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
         boolean collectionEnabled = preference.isStatsLoggingEnabled();
-        boolean collectionWasEnabled = mCollectionEnabled;
-        mCollectionEnabled = collectionEnabled;
-
         Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
         int retentionDays = preference.getStatsLoggingRetentionDays();
         boolean detailedEventHistoryEnabled = preference.isStatsDetailedHistoryEnabled();
+        WriterTransition transition = new WriterTransition(databasePath, retentionDays,
+            detailedEventHistoryEnabled, collectionEnabled);
+        P25ActivityLogWriter writer = mWriter;
+        boolean replaceWriter = mWriterTransitionActive.get() || writer == null ||
+            !databasePath.equals(mCurrentDatabasePath) ||
+            writer.getStatus().state() == P25ActivityLogStatus.State.FAILED ||
+            writer.getStatus().state() == P25ActivityLogStatus.State.STOPPED;
 
-        if(mWriter != null && databasePath.equals(mCurrentDatabasePath) &&
-            mWriter.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
-            mWriter.getStatus().state() != P25ActivityLogStatus.State.STOPPED)
+        if(replaceWriter)
         {
-            mWriter.setRetentionDays(retentionDays);
-            mWriter.setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
-
-            if(collectionWasEnabled && !collectionEnabled)
+            if(!mObservationWorkerStarted)
             {
-                clearDedupeKeys();
-                mObservedTrunkedSites.clear();
+                installInitialWriter(transition);
+            }
+            else
+            {
+                beginWriterTransition(transition);
             }
 
             return;
         }
 
-        stopWriter();
-        mCurrentDatabasePath = databasePath;
-        mWriter = new P25ActivityLogWriter(databasePath, retentionDays, detailedEventHistoryEnabled,
+        writer.setRetentionDays(retentionDays);
+        writer.setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
+        updateCollectionEpoch(collectionEnabled);
+    }
+
+    private void installInitialWriter(WriterTransition transition)
+    {
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(transition.databasePath(),
+            transition.retentionDays(), transition.detailedEventHistoryEnabled(),
             this::notifyActivityCommitted);
-        mWriter.start();
-        mLog.info("Stats database writer started for collection and retention maintenance [{}]", databasePath);
+        writer.start();
+        mCurrentDatabasePath = transition.databasePath();
+        mWriter = writer;
+        mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+        mCollectionEnabled = transition.collectionEnabled();
+        mLog.info("Stats database writer started for collection and retention maintenance [{}]",
+            transition.databasePath());
+    }
+
+    private void beginWriterTransition(WriterTransition transition)
+    {
+        //An inactive queue catches callbacks that began during the transition and is never used as the next active
+        //epoch. The observer worker owns state clearing and writer replacement.
+        mCollectionEnabled = false;
+        mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+        mWriterTransitionActive.set(true);
+        mWriterTransition.set(transition);
+        mObservationWakeup.release();
+    }
+
+    private void updateCollectionEpoch(boolean collectionEnabled)
+    {
+        if(mCollectionEnabled && !collectionEnabled)
+        {
+            mCollectionEnabled = false;
+            mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            requestObservationStateClear();
+        }
+        else if(!mCollectionEnabled && collectionEnabled)
+        {
+            //Never reuse the disabled queue: a callback may have captured it before observing the disabled flag.
+            mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            mCollectionEnabled = true;
+            mObservationWakeup.release();
+        }
+    }
+
+    private void replaceWriterOnWorker(WriterTransition transition)
+    {
+        clearObservationStateOnWorker();
+        mObservationStateClearRequested.set(false);
+        stopWriter();
+
+        if(mDisposed.get())
+        {
+            return;
+        }
+
+        P25ActivityLogWriter nextWriter = new P25ActivityLogWriter(transition.databasePath(),
+            transition.retentionDays(), transition.detailedEventHistoryEnabled(),
+            this::notifyActivityCommitted);
+        nextWriter.start();
+        beforeWriterActivationForTest();
+        boolean installed = false;
+
+        synchronized(this)
+        {
+            if(!mDisposed.get() && mWriterTransition.get() == null)
+            {
+                mCurrentDatabasePath = transition.databasePath();
+                mWriter = nextWriter;
+                //The inactive transition queue is always abandoned. Publish a distinct active epoch before enabling.
+                mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+                mCollectionEnabled = transition.collectionEnabled();
+                mWriterTransitionActive.set(false);
+                installed = true;
+            }
+        }
+
+        if(installed)
+        {
+            mLog.info("Stats database writer started for collection and retention maintenance [{}]",
+                transition.databasePath());
+            mObservationWakeup.release();
+        }
+        else
+        {
+            nextWriter.close();
+        }
     }
 
     private synchronized void stopWriter()
@@ -292,14 +521,27 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             mWriter = null;
             mCurrentDatabasePath = null;
 
-            clearDedupeKeys();
-            mObservedTrunkedSites.clear();
-
             mLog.info("Stats database writer stopped");
         }
     }
 
     private void receiveDecodeEvent(Channel channel, IDecodeEvent event)
+    {
+        BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
+        afterIngressSnapshotForTest();
+
+        if(channel == null || event == null || !mCollectionEnabled || mDisposed.get())
+        {
+            return;
+        }
+
+        if(!ingress.offer(channel, event))
+        {
+            mObservationDrops.incrementAndGet();
+        }
+    }
+
+    private void processDecodeEvent(Channel channel, IDecodeEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -316,18 +558,233 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
             if(attribution.attribution() != null)
             {
-                writer.enqueue(attribution.attribution());
+                enqueueObservation(writer, attribution.attribution());
             }
 
             if(!attribution.tracked() && shouldLog(record))
+            {
+                enqueueObservation(writer, record);
+            }
+        }
+    }
+
+    private void offerObservation(Object observation)
+    {
+        offerObservation(observation, SINGLE_OBSERVATION);
+    }
+
+    private void offerObservation(Object first, Object second)
+    {
+        BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
+        afterIngressSnapshotForTest();
+
+        if(first == null || second == null || !mCollectionEnabled || mDisposed.get())
+        {
+            return;
+        }
+
+        if(!ingress.offer(first, second))
+        {
+            mObservationDrops.incrementAndGet();
+        }
+    }
+
+    private void drainObservationsSafely()
+    {
+        try
+        {
+            drainObservations();
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.warn("Error processing a statistics observation", exception);
+        }
+    }
+
+    private void cleanupObservationsOnWorker()
+    {
+        mObservationIngress.clear();
+        clearObservationStateOnWorker();
+    }
+
+    private void afterIngressSnapshotForTest()
+    {
+        if(mAfterIngressSnapshotForTest != null)
+        {
+            mAfterIngressSnapshotForTest.run();
+        }
+    }
+
+    private void beforeWriterActivationForTest()
+    {
+        if(mBeforeWriterActivationForTest != null)
+        {
+            mBeforeWriterActivationForTest.run();
+        }
+    }
+
+    private void requestObservationStateClear()
+    {
+        mObservationStateClearRequested.set(true);
+        mObservationWakeup.release();
+    }
+
+    private void clearObservationStateOnWorker()
+    {
+        mGrantFactConfirmationTracker.reset();
+        mCallAttributionTracker.clear();
+        mCallOutputDeduplicator.clear();
+        mRecentDedupeKeys.clear();
+        mObservedTrunkedSites.clear();
+    }
+
+    private void drainObservations()
+    {
+        if(mObservationStateClearRequested.compareAndSet(true, false))
+        {
+            clearObservationStateOnWorker();
+        }
+
+        BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
+        int drained = 0;
+
+        while(!mDisposed.get() && drained++ < MAXIMUM_DRAIN_PER_RUN)
+        {
+            BoundedMpscPairQueue.Entry<Object,Object> observation = ingress.poll();
+
+            if(observation == null)
+            {
+                break;
+            }
+
+            if(ingress != mObservationIngress || !mCollectionEnabled)
+            {
+                break;
+            }
+
+            mWorkerObservationIngress = ingress;
+
+            try
+            {
+                if(observation.second() == SINGLE_OBSERVATION)
+                {
+                    processObservation(observation.first());
+                }
+                else if(observation.first() instanceof Channel channel &&
+                    observation.second() instanceof IDecodeEvent event)
+                {
+                    processDecodeEvent(channel, event);
+                }
+                else if(observation.first() instanceof AudioCallSnapshot snapshot &&
+                    observation.second() instanceof P25ActivityLogRecords.CallOutput output)
+                {
+                    processCallOutput(snapshot, output);
+                }
+            }
+            finally
+            {
+                mWorkerObservationIngress = null;
+            }
+        }
+    }
+
+    private void enqueueObservation(P25ActivityLogWriter writer, P25ActivityLogRecord record)
+    {
+        synchronized(this)
+        {
+            if(writer != null && record != null && writer == mWriter && mCollectionEnabled && !mDisposed.get() &&
+                !mWriterTransitionActive.get() && mWorkerObservationIngress == mObservationIngress)
             {
                 writer.enqueue(record);
             }
         }
     }
 
+    private void processObservation(Object observation)
+    {
+        if(observation instanceof ControlChannelQualitySnapshot quality)
+        {
+            processControlChannelQuality(quality);
+        }
+        else if(observation instanceof P25CallStartEvent callStart)
+        {
+            processCallStart(callStart);
+        }
+        else if(observation instanceof TrunkedCallStartEvent callStart)
+        {
+            processTrunkedCallStart(callStart);
+        }
+        else if(observation instanceof TrunkedCallAttributionEvent attribution)
+        {
+            processTrunkedCallAttribution(attribution);
+        }
+        else if(observation instanceof DMRConventionalCallEvent dmrCall)
+        {
+            processDmrConventionalCall(dmrCall);
+        }
+        else if(observation instanceof NXDNConventionalCallEvent nxdnCall)
+        {
+            processNxdnConventionalCall(nxdnCall);
+        }
+        else if(observation instanceof P25TrafficChannelConfirmationEvent confirmation)
+        {
+            processTrafficChannelConfirmation(confirmation);
+        }
+        else if(observation instanceof P25GrantObservationEvent grant)
+        {
+            processGrantObservation(grant);
+        }
+        else if(observation instanceof TrunkedTalkerAliasEvent alias)
+        {
+            processTalkerAlias(alias);
+        }
+        else if(observation instanceof SiteMetadataEvent siteMetadata)
+        {
+            processSiteMetadata(siteMetadata);
+        }
+        else if(observation instanceof ProtocolSiteMetadataEvent protocolSiteMetadata)
+        {
+            processProtocolSiteMetadata(protocolSiteMetadata);
+        }
+    }
+
+    long getObservationDropCount()
+    {
+        return mObservationDrops.get();
+    }
+
+    int getPendingObservationCount()
+    {
+        return mObservationIngress.size();
+    }
+
+    BoundedMpscPairQueue<Object,Object> getObservationIngressForTest()
+    {
+        return mObservationIngress;
+    }
+
+    boolean isWriterTransitionActiveForTest()
+    {
+        return mWriterTransitionActive.get();
+    }
+
+    synchronized Path getCurrentDatabasePathForTest()
+    {
+        return mCurrentDatabasePath;
+    }
+
+    boolean isObservationWorkerTerminated()
+    {
+        return mObservationWorker.isTerminated();
+    }
+
     @Subscribe
     public void receiveCallStart(P25CallStartEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processCallStart(P25CallStartEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -341,7 +798,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         if(record != null)
         {
             mCallAttributionTracker.register(record);
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
         }
     }
 
@@ -351,6 +808,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
      */
     @Subscribe
     public void receiveTrunkedCallStart(TrunkedCallStartEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processTrunkedCallStart(TrunkedCallStartEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -363,7 +825,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
         }
     }
 
@@ -372,6 +834,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
      */
     @Subscribe
     public void receiveTrunkedCallAttribution(TrunkedCallAttributionEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processTrunkedCallAttribution(TrunkedCallAttributionEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -384,7 +851,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
         }
     }
 
@@ -393,6 +860,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
      */
     @Subscribe
     public void receiveDmrConventionalCall(DMRConventionalCallEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processDmrConventionalCall(DMRConventionalCallEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -405,7 +877,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
         }
     }
 
@@ -414,6 +886,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
      */
     @Subscribe
     public void receiveNxdnConventionalCall(NXDNConventionalCallEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processNxdnConventionalCall(NXDNConventionalCallEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -426,12 +903,17 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
         }
     }
 
     @Subscribe
     public void receiveTrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processTrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -439,13 +921,18 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         {
             for(P25ActivityLogRecords.ChannelFact channelFact: mGrantFactConfirmationTracker.confirm(event))
             {
-                writer.enqueue(channelFact);
+                enqueueObservation(writer, channelFact);
             }
         }
     }
 
     @Subscribe
     public void receiveGrantObservation(P25GrantObservationEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processGrantObservation(P25GrantObservationEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -458,19 +945,24 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
             P25ActivityLogRecords.ChannelFact channelFact =
                 mGrantFactConfirmationTracker.observe(event, record);
 
             if(channelFact != null)
             {
-                writer.enqueue(channelFact);
+                enqueueObservation(writer, channelFact);
             }
         }
     }
 
     @Subscribe
     public void receiveTalkerAlias(TrunkedTalkerAliasEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processTalkerAlias(TrunkedTalkerAliasEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -483,12 +975,17 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(update != null && shouldLogTalkerAlias(update))
         {
-            writer.enqueue(update);
+            enqueueObservation(writer, update);
         }
     }
 
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processSiteMetadata(SiteMetadataEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -501,12 +998,17 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            writer.enqueue(record);
+            enqueueObservation(writer, record);
         }
     }
 
     @Override
     public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
+    {
+        offerObservation(event);
+    }
+
+    private void processProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -540,7 +1042,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
                         channel != null ? channel.getDecodeConfiguration() : null, decoderType(channel)));
             }
 
-            writer.enqueue(new P25ActivityLogRecords.TrunkedSiteSnapshot(
+            enqueueObservation(writer, new P25ActivityLogRecords.TrunkedSiteSnapshot(
                 snapshot.observedAtEpochMilliseconds(), snapshot));
         }
         else if(guid != null && !guid.isBlank())
@@ -559,7 +1061,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Subscribe
     public void receiveMaintenanceRequest(StatsDatabaseMaintenanceRequest request)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = !mDisposed.get() ? mWriter : null;
 
         if(writer != null)
         {
@@ -574,18 +1076,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private P25ActivityLogWriter getCollectionWriter()
     {
-        return mCollectionEnabled ? mWriter : null;
-    }
-
-    private void clearDedupeKeys()
-    {
-        synchronized(mRecentDedupeKeys)
-        {
-            mRecentDedupeKeys.clear();
-        }
-
-        mCallOutputDeduplicator.clear();
-        mCallAttributionTracker.clear();
+        return mCollectionEnabled && !mDisposed.get() ? mWriter : null;
     }
 
     private boolean shouldLog(P25ActivityLogRecords.ActivityEvent record)
@@ -652,9 +1143,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     public void addActivityCommitListener(P25ActivityCommitListener listener)
     {
-        if(listener != null)
+        if(listener != null && !mDisposed.get())
         {
             mCommitListeners.add(listener);
+
+            if(mDisposed.get())
+            {
+                mCommitListeners.remove(listener);
+            }
         }
     }
 
@@ -689,7 +1185,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
             lastSuccessfulWriteMs = writerStatus.lastSuccessfulWriteMs();
             recordsWritten = writerStatus.recordsWritten();
-            recordsDropped = writerStatus.recordsDropped();
+            recordsDropped = writerStatus.recordsDropped() + mObservationDrops.get();
             lastError = writerStatus.lastError();
             historyWriterEnabled = writerStatus.detailedHistoryEnabled();
         }
@@ -704,10 +1200,23 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void notifyActivityCommitted(List<Long> rowIds)
     {
+        if(mDisposed.get())
+        {
+            return;
+        }
+
         for(P25ActivityCommitListener listener: mCommitListeners)
         {
-            listener.activityCommitted(rowIds);
+            if(!mDisposed.get())
+            {
+                listener.activityCommitted(rowIds);
+            }
         }
+    }
+
+    private record WriterTransition(Path databasePath, int retentionDays,
+                                    boolean detailedEventHistoryEnabled, boolean collectionEnabled)
+    {
     }
 
 }

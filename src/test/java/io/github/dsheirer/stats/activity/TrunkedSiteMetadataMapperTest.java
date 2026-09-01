@@ -116,6 +116,11 @@ class TrunkedSiteMetadataMapperTest
         TrunkedSiteSchema.Snapshot renamed = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 7_000L));
         assertNotEquals(mapped.snapshotHash(), renamed.snapshotHash());
+
+        channel.setSite(" ");
+        TrunkedSiteSchema.Snapshot fallback = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(channel, source, 8_000L));
+        assertEquals("Control", fallback.channelName());
     }
 
     @Test

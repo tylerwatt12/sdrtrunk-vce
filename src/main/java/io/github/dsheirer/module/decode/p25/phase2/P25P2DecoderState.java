@@ -123,6 +123,8 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToU
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToUnitVoiceChannelGrantUpdateExtendedLCCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToUnitVoiceChannelGrantUpdateExtendedVCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitDeRegistrationAcknowledge;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitRegistrationResponseAbbreviated;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitRegistrationResponseExtended;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisGroupRegroupExplicitEncryptionCommand;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisTalkerAlias;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisTalkerGpsLocation;
@@ -1854,8 +1856,20 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         switch(mac.getOpcode())
         {
             case PHASE1_6C_UNIT_REGISTRATION_RESPONSE_ABBREVIATED:
+                if(mac instanceof UnitRegistrationResponseAbbreviated response)
+                {
+                    broadcastAffiliation(message, mac, DecodeEventType.REGISTER,
+                        "UNIT REGISTRATION " + response.getResponse(),
+                        P25AffiliationEvent.Outcome.from(response.getResponse()), response.getTargetAddress(), null);
+                }
+                break;
             case PHASE1_EC_UNIT_REGISTRATION_RESPONSE_EXTENDED:
-                broadcast(message, mac, getCurrentChannel(), DecodeEventType.RESPONSE, UNIT_REGISTRATION_LABEL);
+                if(mac instanceof UnitRegistrationResponseExtended response)
+                {
+                    broadcastAffiliation(message, mac, DecodeEventType.REGISTER,
+                        "UNIT REGISTRATION " + response.getResponse(),
+                        P25AffiliationEvent.Outcome.from(response.getResponse()), response.getTargetAddress(), null);
+                }
                 break;
             case PHASE1_6D_UNIT_REGISTRATION_COMMAND_ABBREVIATED:
                 broadcast(message, mac, getCurrentChannel(), DecodeEventType.COMMAND, "UNIT REGISTER");

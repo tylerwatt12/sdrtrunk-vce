@@ -831,8 +831,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case OSP_UNIT_REGISTRATION_RESPONSE:
                     if(ambtc instanceof AMBTCUnitRegistrationResponse urr)
                     {
-                        broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REGISTER,
-                                urr.getResponse() + " UNIT REGISTRATION");
+                        broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REGISTER,
+                            urr.getResponse() + " UNIT REGISTRATION",
+                            P25AffiliationEvent.Outcome.from(urr.getResponse()), urr.getRegistrationAddress(), null);
                     }
                     break;
                 case OSP_IDENTIFIER_UPDATE_TDMA:
@@ -1842,8 +1843,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof UnitRegistrationResponse urr)
         {
-            broadcastEvent(tsbk, DecodeEventType.REGISTER, urr.getResponse() + " UNIT REGISTRATION - UNIT ID:" +
-                    urr.getRegisteredRadio());
+            broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REGISTER,
+                urr.getResponse() + " UNIT REGISTRATION - UNIT ID:" + urr.getRegisteredRadio(),
+                P25AffiliationEvent.Outcome.from(urr.getResponse()), urr.getRegisteredRadio(), null);
         }
     }
 

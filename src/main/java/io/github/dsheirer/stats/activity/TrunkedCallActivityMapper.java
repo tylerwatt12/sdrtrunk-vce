@@ -18,6 +18,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -28,6 +29,7 @@ import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -77,7 +79,7 @@ class TrunkedCallActivityMapper
             configurationId = blankToNull(channel.getConfigurationId());
         }
 
-        String contextKey = contextKey(guid, configurationId);
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
 
         if(contextKey == null)
         {
@@ -98,18 +100,17 @@ class TrunkedCallActivityMapper
             encrypted && encryptionKey != null ? encryptionKey.getAlgorithm() : null,
             encrypted && encryptionKey != null ? encryptionKey.getKey() : null,
             null, intValue(identifiers, Form.SYSTEM), null, null, intValue(identifiers, Form.SITE),
-            null, decoderType != null ? decoderType.name() : protocol.name(),
+            TrunkedSiteMetadataMapper.configuredSiteName(channel),
+            decoderType != null ? decoderType.name() : protocol.name(),
             value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
-            identityDomain(channel, identifiers));
+            identityDomain(channel, identifiers), P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(),
+            blankToNull(channel.getAliasListName()), true);
     }
 
     P25ActivityLogRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
     {
         if(attribution == null || attribution.channel() == null || attribution.protocol() == null ||
-            attribution.callStartEpochMilliseconds() <= 0 ||
-            (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-                !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
-                attribution.encryptionKeyId() == null))
+            attribution.callStartEpochMilliseconds() <= 0)
         {
             return null;
         }
@@ -129,14 +130,22 @@ class TrunkedCallActivityMapper
         Integer destinationId = identityId(target);
         String destinationKind = target != null && target.getForm() != null ? target.getForm().name() : null;
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
+        P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
         String guid = blankToNull(channel.getRadresGuid());
         String configurationId = blankToNull(channel.getConfigurationId());
-        String contextKey = contextKey(guid, configurationId);
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
         IChannelDescriptor descriptor = attribution.channelDescriptor();
         Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
             descriptor.getDownlinkFrequency() : null;
 
         if(contextKey == null)
+        {
+            return null;
+        }
+
+        if(!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
+            !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
+            attribution.encryptionKeyId() == null && !targetIdentity.isStableFullyQualified())
         {
             return null;
         }
@@ -148,13 +157,8 @@ class TrunkedCallActivityMapper
             sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
             attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
-            identityDomain(channel, identifiers));
-    }
-
-    private static String contextKey(String guid, String configurationId)
-    {
-        return guid != null ? "GUID:" + guid :
-            configurationId != null ? "CONFIGURATION:" + configurationId : null;
+            identityDomain(channel, identifiers), targetIdentity,
+            p25PatchMemberIdentities(target, protocol));
     }
 
     private static Integer identityId(Identifier identifier)
@@ -185,6 +189,59 @@ class TrunkedCallActivityMapper
             .distinct()
             .sorted()
             .toList();
+    }
+
+    private static P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity(Identifier identifier,
+                                                                              Protocol protocol)
+    {
+        if(protocol != Protocol.APCO25)
+        {
+            return P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+        }
+
+        Identifier primary = identifier;
+
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+        {
+            primary = patch.getValue().getPatchGroup();
+        }
+
+        if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+        {
+            return P25ActivityLogRecords.P25TargetIdentity.fullyQualified(fullyQualified.getWacn(),
+                fullyQualified.getSystem(), fullyQualified.getTalkgroup());
+        }
+
+        return primary instanceof TalkgroupIdentifier ? P25ActivityLogRecords.P25TargetIdentity.ORDINARY :
+            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+    }
+
+    private static List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(
+        Identifier identifier, Protocol protocol)
+    {
+        if(protocol != Protocol.APCO25 || !(identifier instanceof PatchGroupIdentifier patch) ||
+            patch.getValue() == null)
+        {
+            return List.of();
+        }
+
+        List<P25ActivityLogRecords.P25PatchMemberIdentity> identities = new ArrayList<>();
+        for(TalkgroupIdentifier member: patch.getValue().getPatchedTalkgroupIdentifiers())
+        {
+            if(member == null || member.getValue() == null || member.getValue() <= 0 ||
+                member.getProtocol() != Protocol.APCO25)
+            {
+                continue;
+            }
+
+            P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(member, protocol);
+            if(targetIdentity.state() != P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+            {
+                identities.add(new P25ActivityLogRecords.P25PatchMemberIdentity(member.getValue(), targetIdentity));
+            }
+        }
+
+        return List.copyOf(identities);
     }
 
     private static EncryptionKeyIdentifier encryptionIdentifier(IdentifierCollection identifiers)
@@ -288,7 +345,9 @@ class TrunkedCallActivityMapper
         private boolean matches()
         {
             return protocol == Protocol.DMR && decoderType == DecoderType.DMR ||
-                protocol == Protocol.NXDN && decoderType == DecoderType.NXDN;
+                protocol == Protocol.NXDN && decoderType == DecoderType.NXDN ||
+                protocol == Protocol.APCO25 &&
+                    (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
         }
     }
 }

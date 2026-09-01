@@ -60,8 +60,7 @@ final class TrunkedSiteMetadataMapper
         Long configuredCurrentControl = channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency ?
             null : primaryFrequency;
         String configuredSystem = blankToNull(channel.getSystem());
-        String configuredSite = blankToNull(channel.getSite());
-        String channelName = configuredSite != null ? configuredSite : blankToNull(channel.getName());
+        String channelName = configuredSiteName(channel);
         Object structuralSnapshot = event.snapshot() instanceof DMRNetworkConfigurationSnapshot dmr ?
             dmr.withoutFreshness() : event.snapshot() instanceof NXDNNetworkConfigurationSnapshot nxdn ?
                 nxdn.withoutFreshness() : event.snapshot();
@@ -458,6 +457,20 @@ final class TrunkedSiteMetadataMapper
     private static String safe(Object value)
     {
         return value != null ? value.toString() : "";
+    }
+
+    /**
+     * Uses the configured site as the display name for a trunked site, falling back to the channel name.
+     */
+    static String configuredSiteName(Channel channel)
+    {
+        if(channel == null)
+        {
+            return null;
+        }
+
+        String configuredSite = blankToNull(channel.getSite());
+        return configuredSite != null ? configuredSite : blankToNull(channel.getName());
     }
 
     private static String blankToNull(String value)
