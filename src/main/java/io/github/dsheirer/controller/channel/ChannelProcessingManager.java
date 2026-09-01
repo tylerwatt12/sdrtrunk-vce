@@ -19,7 +19,6 @@
 package io.github.dsheirer.controller.channel;
 
 import com.google.common.eventbus.Subscribe;
-import com.google.common.util.concurrent.MoreExecutors;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
@@ -62,6 +61,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -69,13 +69,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BiConsumer;
 import javafx.application.Platform;
 import org.slf4j.Logger;
@@ -96,6 +101,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final String CONFIGURATION_UNAVAILABLE_DESCRIPTION = "CHANNEL CONFIGURATION UNAVAILABLE";
     private static final long NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS =
         Math.max(0, Long.getLong("sdrtrunk.nowPlaying.trafficChannelHangMs", 5000L));
+    private static final long SITE_METADATA_SHUTDOWN_TIMEOUT_MILLISECONDS = 2000;
+    static final int SITE_METADATA_QUEUE_CAPACITY = 256;
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
 
@@ -117,7 +124,20 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
     private List<ScheduledFuture<?>> mDelayedChannelStartTasks = new ArrayList<>();
-    private final Executor mSiteMetadataExecutor = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
+    private final AtomicBoolean mAcceptingChannelStarts = new AtomicBoolean(true);
+    private final AtomicBoolean mAcceptingSiteMetadata = new AtomicBoolean(true);
+    private final AtomicLong mDroppedSiteMetadataEvents = new AtomicLong();
+    private final ReentrantReadWriteLock mSiteMetadataSubmissionBarrier = new ReentrantReadWriteLock();
+    private final ExecutorService mSiteMetadataExecutor;
+    private final ChannelLifecycle mChannelLifecycle;
+
+    /** Package-private lifecycle seam for deterministic start/shutdown race tests. */
+    interface ChannelLifecycle
+    {
+        void start(ChannelStartProcessingRequest request) throws ChannelException;
+
+        void stopAllChannels();
+    }
 
     /**
      * Constructs the channel processing manager
@@ -130,6 +150,37 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
                                     UserPreferences userPreferences)
     {
+        this(eventLogManager, tunerManager, aliasModel, userPreferences, null, SITE_METADATA_QUEUE_CAPACITY, null);
+    }
+
+    /** Package-private constructor for bounded-queue saturation tests. */
+    ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                             UserPreferences userPreferences, int siteMetadataQueueCapacity)
+    {
+        this(eventLogManager, tunerManager, aliasModel, userPreferences, null, siteMetadataQueueCapacity, null);
+    }
+
+    /** Package-private constructor for deterministic metadata submission/drain race tests. */
+    ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                             UserPreferences userPreferences, ExecutorService siteMetadataExecutor)
+    {
+        this(eventLogManager, tunerManager, aliasModel, userPreferences,
+            Objects.requireNonNull(siteMetadataExecutor, "Site metadata executor cannot be null"),
+            SITE_METADATA_QUEUE_CAPACITY, null);
+    }
+
+    /** Package-private constructor for deterministic channel start/shutdown race tests. */
+    ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                             UserPreferences userPreferences, ChannelLifecycle channelLifecycle)
+    {
+        this(eventLogManager, tunerManager, aliasModel, userPreferences, null, SITE_METADATA_QUEUE_CAPACITY,
+            Objects.requireNonNull(channelLifecycle, "Channel lifecycle cannot be null"));
+    }
+
+    private ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                                     UserPreferences userPreferences, ExecutorService siteMetadataExecutor,
+                                     int siteMetadataQueueCapacity, ChannelLifecycle channelLifecycle)
+    {
         mEventLogManager = eventLogManager;
         mTunerManager = tunerManager;
         mAliasModel = aliasModel;
@@ -137,6 +188,49 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mChannelMetadataModel = new ChannelMetadataModel();
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
         mChannelMetadataModel.addUpdateListener(mChannelActivityModel);
+        mChannelLifecycle = channelLifecycle;
+        mSiteMetadataExecutor = siteMetadataExecutor != null ? siteMetadataExecutor :
+            createSiteMetadataExecutor(siteMetadataQueueCapacity);
+    }
+
+    private ExecutorService createSiteMetadataExecutor(int queueCapacity)
+    {
+        if(queueCapacity <= 0)
+        {
+            throw new IllegalArgumentException("Site metadata queue capacity must be greater than zero");
+        }
+
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(queueCapacity),
+            new ObserverThreadFactory("sdrtrunk site metadata observer"));
+        executor.setRejectedExecutionHandler((task, rejectedExecutor) -> {
+            if(rejectedExecutor.isShutdown())
+            {
+                mDroppedSiteMetadataEvents.incrementAndGet();
+                return;
+            }
+
+            //Keep the newest bounded observer state. Queue operations are non-blocking and never run the task on the
+            //decoder/receiver producer thread.
+            Runnable discarded = rejectedExecutor.getQueue().poll();
+            if(discarded != null)
+            {
+                mDroppedSiteMetadataEvents.incrementAndGet();
+            }
+
+            if(!rejectedExecutor.getQueue().offer(task))
+            {
+                mDroppedSiteMetadataEvents.incrementAndGet();
+            }
+            else if(rejectedExecutor.isShutdown() && rejectedExecutor.getQueue().remove(task))
+            {
+                //A terminal shutdown can race the non-blocking offer after the first state check.  Never leave an
+                //observer task stranded in a terminated executor queue.
+                mDroppedSiteMetadataEvents.incrementAndGet();
+            }
+        });
+        executor.prestartCoreThread();
+        return executor;
     }
 
     /**
@@ -335,7 +429,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         switch(event.getEvent())
         {
             case REQUEST_ENABLE:
-                if(!isProcessing(channel))
+                if(mAcceptingChannelStarts.get() && !isProcessing(channel))
                 {
                     try
                     {
@@ -423,7 +517,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void startChannelRequest(ChannelStartProcessingRequest request)
     {
-        if(!isProcessing(request.getChannel()))
+        if(mAcceptingChannelStarts.get() && !isProcessing(request.getChannel()))
         {
             try
             {
@@ -433,13 +527,26 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 if(request.isPersistentAttempt() && isRunnable(request.getChannel()))
                 {
-                    DelayedChannelStartTask delayedChannelStartTask = new DelayedChannelStartTask(request);
-                    ScheduledFuture<?> future = ThreadPool.SCHEDULED
-                        .schedule(delayedChannelStartTask, 500, TimeUnit.MILLISECONDS);
-                    delayedChannelStartTask.setScheduledFuture(future);
-                    mDelayedChannelStartTasks.add(future);
+                    schedulePersistentChannelStart(request);
                 }
             }
+        }
+    }
+
+    private void schedulePersistentChannelStart(ChannelStartProcessingRequest request)
+    {
+        synchronized(mDelayedChannelStartTasks)
+        {
+            if(!mAcceptingChannelStarts.get())
+            {
+                return;
+            }
+
+            DelayedChannelStartTask delayedChannelStartTask = new DelayedChannelStartTask(request);
+            ScheduledFuture<?> future = ThreadPool.SCHEDULED
+                .schedule(delayedChannelStartTask, 500, TimeUnit.MILLISECONDS);
+            delayedChannelStartTask.setScheduledFuture(future);
+            mDelayedChannelStartTasks.add(future);
         }
     }
 
@@ -481,6 +588,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     private synchronized void startProcessing(ChannelStartProcessingRequest request) throws ChannelException
     {
+        if(!mAcceptingChannelStarts.get())
+        {
+            throw new ChannelException("Channel starts are disabled because the processing manager is shutting down");
+        }
+
         Channel channel = request.getChannel();
 
         if(isProcessing(channel))
@@ -493,6 +605,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mChannelEventBroadcaster.broadcast(new ChannelEvent(channel,
                 ChannelEvent.Event.NOTIFICATION_PROCESSING_START_REJECTED, CONFIGURATION_UNAVAILABLE_DESCRIPTION));
             throw new ChannelException("Channel source or decoder is retired or unsupported");
+        }
+
+        if(mChannelLifecycle != null)
+        {
+            mChannelLifecycle.start(request);
+            return;
         }
 
         //Ensure that we can get a source before we construct a new processing chain
@@ -834,16 +952,41 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Stops all currently processing channels to prepare for shutdown.
+     * Permanently stops channel processing and observer work.  Once shutdown begins, this manager cannot be reused to
+     * start channels or dispatch site metadata.
      */
     public void shutdown()
     {
-        List<ScheduledFuture<?>> delayedTasks = new ArrayList<>(mDelayedChannelStartTasks);
+        //Close the gate before waiting for an already-entered synchronized start. Any start that completed before this
+        //barrier is included in the processing-chain snapshot below; every later start is rejected permanently.
+        mAcceptingChannelStarts.set(false);
+
+        synchronized(this)
+        {
+            //Synchronization barrier for startProcessing().
+        }
+
+        stopAllChannels();
+        stopSiteMetadataObserver();
+    }
+
+    /**
+     * Stops all currently processing channels while leaving this manager available for a configuration reload.
+     */
+    public void stopAllChannels()
+    {
+
+        List<ScheduledFuture<?>> delayedTasks;
+
+        synchronized(mDelayedChannelStartTasks)
+        {
+            delayedTasks = new ArrayList<>(mDelayedChannelStartTasks);
+            mDelayedChannelStartTasks.clear();
+        }
 
         for(ScheduledFuture<?> delayedTask: delayedTasks)
         {
             delayedTask.cancel(true);
-            mDelayedChannelStartTasks.remove(delayedTask);
         }
 
         List<Channel> channelsToStop = new ArrayList<>(mProcessingChainsMap.keySet());
@@ -859,6 +1002,73 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
             }
         }
+
+        if(mChannelLifecycle != null)
+        {
+            mChannelLifecycle.stopAllChannels();
+        }
+    }
+
+    private void stopSiteMetadataObserver()
+    {
+        mAcceptingSiteMetadata.set(false);
+        Lock barrier = mSiteMetadataSubmissionBarrier.writeLock();
+        boolean locked = false;
+        long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(SITE_METADATA_SHUTDOWN_TIMEOUT_MILLISECONDS);
+        long deadline = System.nanoTime() + timeoutNanos;
+
+        try
+        {
+            locked = barrier.tryLock(timeoutNanos, TimeUnit.NANOSECONDS);
+
+            if(!locked)
+            {
+                mLog.warn("Timed out waiting for an in-progress site metadata submission during shutdown");
+            }
+
+            mDroppedSiteMetadataEvents.addAndGet(mSiteMetadataExecutor.shutdownNow().size());
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            mDroppedSiteMetadataEvents.addAndGet(mSiteMetadataExecutor.shutdownNow().size());
+        }
+        finally
+        {
+            if(locked)
+            {
+                barrier.unlock();
+            }
+        }
+
+        try
+        {
+            long remaining = Math.max(0, deadline - System.nanoTime());
+
+            if(!mSiteMetadataExecutor.awaitTermination(remaining, TimeUnit.NANOSECONDS))
+            {
+                mLog.warn("Site metadata observer did not terminate within {} milliseconds",
+                    SITE_METADATA_SHUTDOWN_TIMEOUT_MILLISECONDS);
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            mLog.warn("Interrupted while waiting for site metadata observer shutdown");
+        }
+    }
+
+    int getPendingDelayedChannelStartCount()
+    {
+        synchronized(mDelayedChannelStartTasks)
+        {
+            return mDelayedChannelStartTasks.size();
+        }
+    }
+
+    boolean isAcceptingChannelStarts()
+    {
+        return mAcceptingChannelStarts.get();
     }
 
     /**
@@ -925,7 +1135,108 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(SiteMetadataEvent event)
     {
-        mSiteMetadataExecutor.execute(() -> dispatchSiteMetadata(event));
+        submitSiteMetadata(() -> dispatchSiteMetadata(event));
+    }
+
+    /**
+     * Permanently closes site/protocol metadata ingress and waits for every accepted observer task to finish. The
+     * receiver-side submission path never waits for this barrier: a producer drops its stale observation when the
+     * gate is closed or the brief submission lock is contended.
+     *
+     * @return true only when the observer executor has terminated and can no longer invoke a listener
+     */
+    public boolean suspendSiteMetadataAndAwait(long timeout, TimeUnit unit) throws InterruptedException
+    {
+        if(timeout < 0 || unit == null)
+        {
+            throw new IllegalArgumentException("A non-negative timeout and time unit are required");
+        }
+
+        mAcceptingSiteMetadata.set(false);
+        long remaining = unit.toNanos(timeout);
+        long deadline = System.nanoTime() + remaining;
+        Lock barrier = mSiteMetadataSubmissionBarrier.writeLock();
+
+        if(!barrier.tryLock(remaining, TimeUnit.NANOSECONDS))
+        {
+            return false;
+        }
+
+        try
+        {
+            //The write lock proves that every producer which passed the acceptance check has completed execute().
+            //Executor shutdown therefore establishes a FIFO boundary after every accepted metadata task.
+            mSiteMetadataExecutor.shutdown();
+        }
+        finally
+        {
+            barrier.unlock();
+        }
+
+        remaining = Math.max(0, deadline - System.nanoTime());
+        if(mSiteMetadataExecutor.awaitTermination(remaining, TimeUnit.NANOSECONDS))
+        {
+            return true;
+        }
+
+        mDroppedSiteMetadataEvents.addAndGet(mSiteMetadataExecutor.shutdownNow().size());
+        remaining = Math.max(0, deadline - System.nanoTime());
+        return mSiteMetadataExecutor.awaitTermination(remaining, TimeUnit.NANOSECONDS);
+    }
+
+    private void submitSiteMetadata(Runnable task)
+    {
+        if(!mAcceptingSiteMetadata.get())
+        {
+            mDroppedSiteMetadataEvents.incrementAndGet();
+            return;
+        }
+
+        Lock submission = mSiteMetadataSubmissionBarrier.readLock();
+        if(!submission.tryLock())
+        {
+            mDroppedSiteMetadataEvents.incrementAndGet();
+            return;
+        }
+
+        try
+        {
+            if(!mAcceptingSiteMetadata.get() || mSiteMetadataExecutor.isShutdown())
+            {
+                mDroppedSiteMetadataEvents.incrementAndGet();
+                return;
+            }
+
+            try
+            {
+                mSiteMetadataExecutor.execute(task);
+            }
+            catch(RuntimeException exception)
+            {
+                //A shutdown may win immediately after the state check. Observer loss is preferable to blocking or
+                //running the task on the receiver thread.
+                mDroppedSiteMetadataEvents.incrementAndGet();
+            }
+        }
+        finally
+        {
+            submission.unlock();
+        }
+    }
+
+    long getDroppedSiteMetadataEventCount()
+    {
+        return mDroppedSiteMetadataEvents.get();
+    }
+
+    boolean isAcceptingSiteMetadata()
+    {
+        return mAcceptingSiteMetadata.get();
+    }
+
+    boolean isSiteMetadataObserverTerminated()
+    {
+        return mSiteMetadataExecutor.isTerminated();
     }
 
     private void dispatchSiteMetadata(SiteMetadataEvent event)
@@ -949,7 +1260,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(ProtocolSiteMetadataEvent event)
     {
-        mSiteMetadataExecutor.execute(() -> dispatchProtocolSiteMetadata(event));
+        submitSiteMetadata(() -> dispatchProtocolSiteMetadata(event));
     }
 
     private void dispatchProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
@@ -1111,8 +1422,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             try
             {
-                mDelayedChannelStartTasks.remove(mScheduledFuture);
-                startChannelRequest(mRequest);
+                synchronized(mDelayedChannelStartTasks)
+                {
+                    mDelayedChannelStartTasks.remove(mScheduledFuture);
+                }
+
+                if(mAcceptingChannelStarts.get())
+                {
+                    startChannelRequest(mRequest);
+                }
             }
             catch(Exception _)
             {
