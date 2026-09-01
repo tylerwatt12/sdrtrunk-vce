@@ -11,6 +11,7 @@
 package io.github.dsheirer.alias;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,7 +42,7 @@ class AliasOneToOneTest
         original.setDescription("Primary dispatch");
         original.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         original.setRecordable(true);
-        original.setCallPriority(4);
+        original.setListen(false);
         original.addBroadcastChannel("Stream A");
         original.setStreamTalkgroupAlias(new StreamAsTalkgroup(900));
 
@@ -54,7 +55,7 @@ class AliasOneToOneTest
         assertNotSame(original.getMatchIdentifier(), copy.getMatchIdentifier());
         assertEquals(100, ((Talkgroup)copy.getMatchIdentifier()).getValue());
         assertTrue(copy.isRecordable());
-        assertEquals(4, copy.getPlaybackPriority());
+        assertFalse(copy.isListen());
         assertTrue(copy.hasBroadcastChannel("Stream A"));
         assertEquals(900, copy.getStreamTalkgroupAlias().getValue());
     }

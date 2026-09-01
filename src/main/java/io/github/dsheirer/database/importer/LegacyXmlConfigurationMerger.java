@@ -14,6 +14,7 @@ package io.github.dsheirer.database.importer;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationState;
@@ -21,6 +22,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -116,7 +118,10 @@ public final class LegacyXmlConfigurationMerger
         {
             NameReservation reservation = reserveName(sourceDefinition.getName(), aliasListNames);
             AliasListDefinition importedDefinition =
-                new AliasListDefinition(reservation.name(), sourceDefinition.getFamily());
+                new AliasListDefinition(reservation.name(), sourceDefinition.getFamily(),
+                    sourceDefinition.getUnmatchedTalkgroupPolicy());
+            importedDefinition.setListenToUnmatchedTalkgroups(
+                sourceDefinition.isListenToUnmatchedTalkgroups());
             mergedDefinitions.add(importedDefinition);
             importedDefinitionsByOriginalName.putIfAbsent(normalize(sourceDefinition.getName()), importedDefinition);
 
@@ -147,6 +152,9 @@ public final class LegacyXmlConfigurationMerger
                 renamedStreams++;
             }
         }
+
+        importedDefinitionsByOriginalName.values().forEach(definition ->
+            updateBroadcastRoutes(definition, importedStreamNames));
 
         int importedAliasCount = 0;
 
@@ -222,6 +230,18 @@ public final class LegacyXmlConfigurationMerger
             importedAliasCount, importedChannelCount, importedStreamCount,
             renamedAliasLists, renamedChannels, renamedStreams);
         return new MergeResult(merged, summary);
+    }
+
+    private static void updateBroadcastRoutes(AliasListDefinition definition,
+                                              Map<String,String> importedStreamNames)
+    {
+        UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
+        Set<String> destinations = new LinkedHashSet<>();
+        for(String destination: policy.getStreamDestinationNames())
+        {
+            destinations.add(importedStreamNames.getOrDefault(normalize(destination), destination));
+        }
+        definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(policy.isRecordEnabled(), destinations));
     }
 
     private static void updateBroadcastRoutes(Alias alias, Map<String,String> importedStreamNames)

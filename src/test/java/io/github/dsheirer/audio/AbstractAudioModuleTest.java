@@ -53,7 +53,7 @@ class AbstractAudioModuleTest
         Alias muted = new Alias("Muted");
         muted.setAliasListDefinition(definition);
         muted.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1200));
-        muted.setCallPriority(Priority.DO_NOT_MONITOR);
+        muted.setListen(false);
         aliasList.addAlias(muted);
         TestAudioModule module = new TestAudioModule(aliasList);
         List<AudioCallEvent> events = new ArrayList<>();

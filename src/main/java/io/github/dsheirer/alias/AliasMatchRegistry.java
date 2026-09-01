@@ -81,6 +81,33 @@ public final class AliasMatchRegistry
         return identifier != null && identifier.isValid() && supports(definition, identifier);
     }
 
+    /**
+     * Indicates that an identifier is the retired full-domain range convention for unmatched talkgroups.
+     *
+     * <p>These ranges remain readable so ambiguous legacy imports are never discarded. New aliases must use the
+     * list-owned {@link UnmatchedTalkgroupPolicy} instead, which keeps each received talkgroup as its real identity
+     * while supplying only playback, recording, and streaming behavior.</p>
+     */
+    public static boolean isUnmatchedTalkgroupCatchAll(AliasListDefinition definition, AliasID identifier)
+    {
+        if(definition == null || definition.getFamily() == null ||
+            !(identifier instanceof TalkgroupRange range))
+        {
+            return false;
+        }
+
+        boolean startsAtBeginning = range.getMinTalkgroup() == 0 || range.getMinTalkgroup() == 1;
+
+        return startsAtBeginning && switch(definition.getFamily())
+        {
+            case P25 -> protocolsMatch(Protocol.APCO25, range.getProtocol()) &&
+                range.getMaxTalkgroup() == 0xFFFF;
+            case DMR -> range.getProtocol() == Protocol.DMR && range.getMaxTalkgroup() == 0xFFFFFF;
+            case NXDN -> range.getProtocol() == Protocol.NXDN && range.getMaxTalkgroup() == 0xFFFF;
+            case NBFM -> false;
+        };
+    }
+
     public static AliasListFamily familyFor(DecoderType decoderType)
     {
         return AliasListFamily.from(decoderType);
@@ -111,12 +138,6 @@ public final class AliasMatchRegistry
         List<AliasMatchDescriptor> descriptors = new ArrayList<>();
 
         addProtocolMatchers(descriptors, AliasListFamily.P25, Protocol.APCO25, "P25");
-        descriptors.add(descriptor("P25 Fully Qualified Talkgroup",
-            AliasIDType.P25_FULLY_QUALIFIED_TALKGROUP, Set.of(AliasListFamily.P25),
-            _ -> new P25FullyQualifiedTalkgroup(0, 0, 0), P25FullyQualifiedTalkgroup.class::isInstance));
-        descriptors.add(descriptor("P25 Fully Qualified Radio ID",
-            AliasIDType.P25_FULLY_QUALIFIED_RADIO_ID, Set.of(AliasListFamily.P25),
-            _ -> new P25FullyQualifiedRadio(0, 0, 0), P25FullyQualifiedRadio.class::isInstance));
         addProtocolMatchers(descriptors, AliasListFamily.DMR, Protocol.DMR, "DMR");
         addProtocolMatchers(descriptors, AliasListFamily.NXDN, Protocol.NXDN, "NXDN");
         addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.AM, "AM");

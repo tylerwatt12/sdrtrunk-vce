@@ -13,6 +13,7 @@ package io.github.dsheirer.database.importer;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,6 +26,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -268,6 +270,40 @@ class AliasListDefinitionResolverTest
         assertEquals("Shared [P25]", original.getAliasListName());
         assertEquals(List.of("Shared [P25] 2", "Shared [DMR]", "Shared [P25]"),
             state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+    }
+
+    @Test
+    void convertsOnePlainFullDomainRangeToListOwnedUnmatchedPolicy()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Alias catchAll = alias("Unknown", "Metro", new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+        catchAll.setListen(false);
+        catchAll.setRecordable(true);
+        catchAll.addBroadcastChannel("Calls");
+        state.setAliases(List.of(catchAll));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertTrue(state.getAliases().isEmpty());
+        AliasListDefinition definition = state.getAliasListDefinitions().getFirst();
+        assertFalse(definition.isListenToUnmatchedTalkgroups());
+        assertTrue(definition.getUnmatchedTalkgroupPolicy().isRecordEnabled());
+        assertEquals(List.of("Calls"), definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
+    }
+
+    @Test
+    void preservesAmbiguousFullDomainRangesAsOrdinaryAliases()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setAliases(List.of(
+            alias("Unknown A", "Metro", new TalkgroupRange(Protocol.APCO25, 0, 0xFFFF)),
+            alias("Unknown B", "Metro", new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF))));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(2, state.getAliases().size());
+        assertEquals(List.of(), state.getAliasListDefinitions().getFirst().getUnmatchedTalkgroupPolicy()
+            .getStreamDestinationNames());
     }
 
     @Test

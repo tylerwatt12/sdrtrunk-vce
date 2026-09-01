@@ -21,7 +21,6 @@ package io.github.dsheirer.alias;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import java.awt.Color;
 import java.util.Collection;
@@ -56,8 +55,8 @@ public class Alias
     private final BooleanProperty mRecordable = new SimpleBooleanProperty();
     private final BooleanProperty mStreamable = new SimpleBooleanProperty();
     private final BooleanProperty mOverlap = new SimpleBooleanProperty();
+    private final BooleanProperty mListen = new SimpleBooleanProperty(true);
     private final IntegerProperty mColor = new SimpleIntegerProperty();
-    private final IntegerProperty mPriority = new SimpleIntegerProperty(Priority.DEFAULT_PRIORITY);
     private final StringProperty mAliasListName = new SimpleStringProperty();
     private final StringProperty mDescription = new SimpleStringProperty();
     private final StringProperty mGroup = new SimpleStringProperty();
@@ -151,13 +150,18 @@ public class Alias
 
     public void setMatchIdentifier(AliasID identifier)
     {
+        if(identifier != null)
+        {
+            identifier.updateValueProperty();
+        }
+
         mMatchIdentifier.set(identifier);
     }
 
     @JsonIgnore
-    public IntegerProperty priorityProperty()
+    public BooleanProperty listenProperty()
     {
-        return mPriority;
+        return mListen;
     }
 
     @JsonIgnore
@@ -327,27 +331,18 @@ public class Alias
     }
 
     @JsonIgnore
-    public int getPlaybackPriority()
+    public boolean isListen()
     {
-        return mPriority.get();
+        return mListen.get();
     }
 
-    public boolean hasCallPriority()
+    /**
+     * Swing projection of this Alias's membership in the Default scan list. The normalized scan-list tables remain
+     * authoritative; ConfigurationManager synchronizes this projection whenever it loads or commits a snapshot.
+     */
+    public void setListen(boolean listen)
     {
-        return getPlaybackPriority() != Priority.DEFAULT_PRIORITY;
-    }
-
-    public void setCallPriority(int priority)
-    {
-        if(priority == Priority.DO_NOT_MONITOR ||
-            (Priority.MIN_PRIORITY <= priority && priority < Priority.MAX_PRIORITY))
-        {
-            mPriority.set(priority);
-        }
-        else
-        {
-            mPriority.set(Priority.DEFAULT_PRIORITY);
-        }
+        mListen.set(listen);
     }
 
     @JsonIgnore
@@ -433,7 +428,7 @@ public class Alias
         //bind to overlapProperty() directly, so it must not be a structural model invalidation signal.
         return alias -> new Observable[] {alias.recordableProperty(), alias.streamableProperty(),
             alias.colorProperty(), alias.aliasListNameProperty(), alias.descriptionProperty(), alias.groupProperty(),
-            alias.iconNameProperty(), alias.nameProperty(), alias.priorityProperty(),
+            alias.iconNameProperty(), alias.nameProperty(), alias.listenProperty(),
             alias.streamTalkgroupAliasProperty(), alias.matchIdentifierProperty(), alias.broadcastChannels()};
     }
 }

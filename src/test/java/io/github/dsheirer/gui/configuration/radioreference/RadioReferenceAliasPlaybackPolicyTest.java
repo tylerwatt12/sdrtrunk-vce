@@ -20,11 +20,11 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RadioReferenceAliasPlaybackPolicyTest
 {
@@ -36,7 +36,7 @@ class RadioReferenceAliasPlaybackPolicyTest
 
         RadioReferenceAliasPlaybackPolicy.apply(alias, talkgroup, true);
 
-        assertEquals(Priority.DO_NOT_MONITOR, alias.getPlaybackPriority());
+        assertFalse(alias.isListen());
     }
 
     @Test
@@ -44,11 +44,11 @@ class RadioReferenceAliasPlaybackPolicyTest
     {
         Alias partial = new Alias("Partial");
         RadioReferenceAliasPlaybackPolicy.apply(partial, talkgroup(TalkgroupEncryption.PARTIAL), true);
-        assertEquals(Priority.DEFAULT_PRIORITY, partial.getPlaybackPriority());
+        assertTrue(partial.isListen());
 
         Alias disabled = new Alias("Disabled");
         RadioReferenceAliasPlaybackPolicy.apply(disabled, talkgroup(TalkgroupEncryption.FULL), false);
-        assertEquals(Priority.DEFAULT_PRIORITY, disabled.getPlaybackPriority());
+        assertTrue(disabled.isListen());
     }
 
     private static Talkgroup talkgroup(TalkgroupEncryption encryption)

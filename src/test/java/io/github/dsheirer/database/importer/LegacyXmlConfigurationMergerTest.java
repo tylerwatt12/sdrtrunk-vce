@@ -123,7 +123,7 @@ class LegacyXmlConfigurationMergerTest
         sourceAlias.setDescription("Primary dispatch");
         sourceAlias.setGroup("Dispatch");
         sourceAlias.setRecordable(true);
-        sourceAlias.setCallPriority(25);
+        sourceAlias.setListen(false);
 
         Channel sourceChannel = imported.getChannels().getFirst();
         sourceChannel.setConfigurationId(EXISTING_CONFIGURATION_ID);
@@ -148,7 +148,7 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("Primary dispatch", copiedAlias.getDescription());
         assertEquals("Dispatch", copiedAlias.getGroup());
         assertTrue(copiedAlias.isRecordable());
-        assertEquals(25, copiedAlias.getPlaybackPriority());
+        assertFalse(copiedAlias.isListen());
         assertTrue(copiedAlias.hasBroadcastChannel("Metro Calls"));
         assertEquals(1234, ((Talkgroup)copiedAlias.getMatchIdentifier()).getValue());
 

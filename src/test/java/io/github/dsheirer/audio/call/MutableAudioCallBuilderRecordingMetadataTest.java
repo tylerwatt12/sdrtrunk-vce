@@ -41,11 +41,9 @@ class MutableAudioCallBuilderRecordingMetadataTest
         recorded.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         recorded.setRecordable(true);
         recorded.addBroadcastChannel("Recorded Stream");
-        recorded.setCallPriority(10);
         Alias notRecorded = new Alias("Not Recorded");
         notRecorded.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 200));
         notRecorded.addBroadcastChannel("Not Recorded Stream");
-        notRecorded.setCallPriority(50);
         AliasList aliasList = new AliasList(new AliasListDefinition("Primary", AliasListFamily.P25));
         aliasList.addAlias(recorded);
         aliasList.addAlias(notRecorded);
@@ -55,7 +53,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertTrue(builder.isRecordAudio());
         assertTrue(builder.getRecordingMetadata().destinationTalkgroupRecordEnabled());
         assertEquals(Set.of(new BroadcastChannel("Recorded Stream")), builder.getBroadcastChannels());
-        assertEquals(10, builder.getMonitorPriority());
+        assertEquals(100, builder.getMonitorPriority());
 
         builder.addIdentifiers(List.of(APCO25Talkgroup.create(200)));
 
@@ -63,7 +61,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals("Not Recorded", builder.getRecordingMetadata().destinationAlias());
         assertFalse(builder.getRecordingMetadata().destinationTalkgroupRecordEnabled());
         assertEquals(Set.of(new BroadcastChannel("Not Recorded Stream")), builder.getBroadcastChannels());
-        assertEquals(50, builder.getMonitorPriority());
+        assertEquals(100, builder.getMonitorPriority());
     }
 
     @Test

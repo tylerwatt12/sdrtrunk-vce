@@ -22,7 +22,7 @@ public enum AliasListFamily
     P25("P25"),
     DMR("DMR"),
     NXDN("NXDN"),
-    NBFM("NBFM");
+    NBFM("Conventional Analog (AM/NBFM)");
 
     private final String mLabel;
 

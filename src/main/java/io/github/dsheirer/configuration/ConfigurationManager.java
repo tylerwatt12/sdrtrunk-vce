@@ -34,6 +34,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
 import io.github.dsheirer.icon.IconModel;
@@ -41,6 +42,8 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.service.radioreference.RadioReference;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
@@ -80,6 +83,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private RadioReference mRadioReference;
     private AliasDatabaseStore mAliasDatabaseStore;
     private ConfigurationDatabaseStore mConfigurationDatabaseStore;
+    private ScanListDatabaseStore mScanListDatabaseStore;
+    private final ScanListModel mScanListModel;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
     private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final Object mHeadlessWebConfigurationLock = new Object();
@@ -108,6 +113,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mIconModel = iconModel;
         mAliasDatabaseStore = new AliasDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mConfigurationDatabaseStore = new ConfigurationDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mScanListDatabaseStore = new ScanListDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mScanListModel = new ScanListModel(this::scheduleAliasSave);
+        mAliasModel.setScanListModel(mScanListModel);
 
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
         mRadioReference = new RadioReference();
@@ -225,6 +233,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public AliasModel getAliasModel()
     {
         return mAliasModel;
+    }
+
+    public ScanListModel getScanListModel()
+    {
+        return mScanListModel;
     }
 
     /**
@@ -368,7 +381,25 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             try
             {
                 mAliasDatabaseStore.replaceAliases(connection, aliases, definitions);
+                ConfigurationState state = new ConfigurationState();
+                state.setAliases(aliases);
+                state.setAliasListDefinitions(definitions);
+                state.setScanListConfiguration(mScanListModel.configuration());
+                ScanListConfiguration projected = ConfigurationSnapshotDatabaseStore
+                    .projectDefaultMembership(mScanListModel.configuration(), state);
+                mScanListDatabaseStore.replaceConfiguration(connection, projected);
                 connection.commit();
+
+                boolean wasLoading = mConfigurationLoading;
+                mConfigurationLoading = true;
+                try
+                {
+                    mScanListModel.replaceConfiguration(projected);
+                }
+                finally
+                {
+                    mConfigurationLoading = wasLoading;
+                }
                 return true;
             }
             catch(Exception e)
@@ -399,8 +430,10 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         for(AliasListDefinition definition: mAliasModel.aliasListDefinitions())
         {
-            AliasListDefinition copy = new AliasListDefinition(definition.getName(), definition.getFamily());
+            AliasListDefinition copy = new AliasListDefinition(definition.getName(), definition.getFamily(),
+                definition.getUnmatchedTalkgroupPolicy());
             copy.setId(definition.getId());
+            copy.setListenToUnmatchedTalkgroups(definition.isListenToUnmatchedTalkgroups());
             copies.add(copy);
         }
 
@@ -757,6 +790,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         ConfigurationState configurationState = loadConfigurationState();
         AliasSnapshot aliasSnapshot = loadAliases();
+        ScanListConfiguration scanListConfiguration = loadScanLists();
+        synchronizeListenProjection(aliasSnapshot, scanListConfiguration);
         validateAliasListAssignments(configurationState, aliasSnapshot.definitions());
 
         clearModels();
@@ -765,6 +800,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
+            mScanListModel.replaceConfiguration(scanListConfiguration);
             mAliasModel.setAliasListDefinitions(aliasSnapshot.definitions());
             mAliasModel.addAliases(aliasSnapshot.aliases());
             mBroadcastModel.addBroadcastConfigurations(configurationState.getBroadcastConfigurations());
@@ -969,6 +1005,37 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
+    private ScanListConfiguration loadScanLists()
+    {
+        try
+        {
+            ScanListConfiguration configuration = mScanListDatabaseStore.loadConfiguration();
+            mLog.debug("Loaded [{}] scan lists from SQLite [{}]", configuration.scanLists().size(),
+                mScanListDatabaseStore.getDatabasePath());
+            return configuration;
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error loading scan lists from SQLite database [" +
+                mScanListDatabaseStore.getDatabasePath() + "]", e);
+            throw new ConfigurationLoadException("Unable to load validated scan-list configuration from SQLite", e);
+        }
+    }
+
+    private static void synchronizeListenProjection(AliasSnapshot snapshot, ScanListConfiguration configuration)
+    {
+        long defaultId = configuration.defaultScanList().getId();
+        for(Alias alias: snapshot.aliases())
+        {
+            alias.setListen(configuration.scanListIdsForAlias(alias.getId()).contains(defaultId));
+        }
+        for(AliasListDefinition definition: snapshot.definitions())
+        {
+            definition.setListenToUnmatchedTalkgroups(
+                configuration.scanListIdsForUnmatchedTalkgroups(definition.getId()).contains(defaultId));
+        }
+    }
+
     private boolean saveConfigurationSnapshotToDatabase()
     {
         return saveConfigurationSnapshotToDatabase(new ArrayList<>(mAliasModel.getAliases()));
@@ -988,11 +1055,22 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             ConfigurationState databaseState = new ConfigurationState();
             databaseState.setAliases(new ArrayList<>(aliases));
             databaseState.setAliasListDefinitions(new ArrayList<>(definitions));
+            databaseState.setScanListConfiguration(mScanListModel.configuration());
             databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
             validateAliasListAssignments(databaseState, databaseState.getAliasListDefinitions());
             new ConfigurationSnapshotDatabaseStore(mConfigurationDatabaseStore.getDatabasePath())
                 .replace(databaseState);
+            boolean wasLoading = mConfigurationLoading;
+            mConfigurationLoading = true;
+            try
+            {
+                mScanListModel.replaceConfiguration(databaseState.getScanListConfiguration());
+            }
+            finally
+            {
+                mConfigurationLoading = wasLoading;
+            }
             return true;
         }
         catch(Exception e)
