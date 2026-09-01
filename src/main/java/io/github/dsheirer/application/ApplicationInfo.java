@@ -18,8 +18,6 @@ public final class ApplicationInfo
     private static final String PRODUCT_NAME = "sdrtrunk-vce";
     private static final String VERSION = "Implementation-Version";
     private static final String BUILD_TIMESTAMP = "Build-Timestamp";
-    private static final String BUILD_JDK = "Build-JDK";
-    private static final String BUILD_OS = "Build-OS";
     private static final String UPDATE_TRACK = "Update-Track";
     private static final String UPDATE_BUILD = "Update-Build";
     private static final Manifest MANIFEST = manifest();
@@ -34,29 +32,9 @@ public final class ApplicationInfo
         return DISPLAY_NAME;
     }
 
-    public static String getProductName()
-    {
-        return PRODUCT_NAME;
-    }
-
     public static String getVersion()
     {
         return manifestValue(VERSION);
-    }
-
-    public static String getBuildTimestamp()
-    {
-        return manifestValue(BUILD_TIMESTAMP);
-    }
-
-    public static String getBuildJdk()
-    {
-        return manifestValue(BUILD_JDK);
-    }
-
-    public static String getBuildOs()
-    {
-        return manifestValue(BUILD_OS);
     }
 
     public static String getUpdateTrack()

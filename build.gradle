@@ -273,7 +273,6 @@ dependencies {
     implementation 'com.github.wendykierp:JTransforms:3.1'
     implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'com.google.guava:guava:33.5.0-jre'
-    implementation 'com.github.oshi:oshi-core:7.4.0'
     implementation 'com.jidesoft:jide-oss:3.6.18'
     implementation 'com.miglayout:miglayout-swing:11.4.2'
     implementation 'com.mpatric:mp3agic:0.9.1'
@@ -441,7 +440,7 @@ def applicationJvmArgs = javafxPlatform == "win" ? jvmArgsWindows : (javafxPlatf
 def jpmsJvmArgsMac =
         ['--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls', //Needed for controls-fx.jar
          '-Dsdrtrunk.stats.web.root=$APPDIR/stats-web',
-         '--enable-native-access=com.sun.jna,javafx.graphics,usb4java,sdr.trunk,org.xerial.sqlitejdbc'] +
+         '--enable-native-access=javafx.graphics,usb4java,sdr.trunk,org.xerial.sqlitejdbc'] +
         commonPerformanceJvmArgs
 
 application {
