@@ -141,7 +141,10 @@ public final class Format1TestDatabase
         statement.executeUpdate("""
             INSERT INTO configuration_channel(
                 sort_order, name, frequency_count, recording_enabled, event_logging_enabled, config_json
-            ) VALUES (90, 'Fixture Channel', 1, 1, 1, '{"fixture":true}')
+            ) VALUES (
+                90, 'Fixture Channel', 1, 1, 1,
+                '{"configurationId":"11111111-2222-4333-8444-555555555556","fixture":true}'
+            )
             """);
         statement.executeUpdate("""
             INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)

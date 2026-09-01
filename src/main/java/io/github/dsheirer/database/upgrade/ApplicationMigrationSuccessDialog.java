@@ -156,14 +156,15 @@ public final class ApplicationMigrationSuccessDialog
     }
 
     public static String replacementImportReport(ApplicationMigrationService.MigrationResult migration,
-                                                 Path sourceDatabase)
+                                                 Path sourceDatabase, boolean automaticRestart)
     {
         return "SQLite database import complete. The selected database replaced the active database after staged " +
             "migration and validation. The selected source file and its neighboring files were left unchanged.\n\n" +
             "Stored portable paths were not remapped.\n\n" + migration.helperOutput() +
             "\n\nSelected source:\n" + sourceDatabase.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + migration.safetyBackup() +
-            "\n\nSDRTrunk will restart automatically.";
+            (automaticRestart ? "\n\nSDRTrunk will restart automatically." :
+                "\n\nSDRTrunk will now exit. Use its normal launcher if it does not restart automatically.");
     }
 
     /** Lightweight view kept separate from the top-level window so button and countdown wiring is testable headless. */

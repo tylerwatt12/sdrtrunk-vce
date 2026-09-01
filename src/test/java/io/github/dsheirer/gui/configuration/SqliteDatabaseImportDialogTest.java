@@ -42,8 +42,8 @@ class SqliteDatabaseImportDialogTest
         assertTrue(application.contains("new JMenuItem(\"Import SQLite Database...\")"));
         assertTrue(application.contains("SqliteDatabaseImportDialog.choose(mMainGui"));
         assertTrue(application.contains("replaceCurrentDatabase(prepared.sourceDatabase()"));
-        assertTrue(application.contains("ApplicationRelauncher.relaunch()"));
-        assertTrue(application.contains("processShutdown(false)"));
+        assertTrue(application.contains("ApplicationRelauncher.relaunch(relaunchPlan)"));
+        assertTrue(application.contains("processShutdownForDatabaseReplacement()"));
         assertTrue(application.contains("if(mDatabaseReplacementInProgress)"));
         assertTrue(application.contains("WindowConstants.DO_NOTHING_ON_CLOSE"));
         assertTrue(application.contains("quitResponse.cancelQuit()"));

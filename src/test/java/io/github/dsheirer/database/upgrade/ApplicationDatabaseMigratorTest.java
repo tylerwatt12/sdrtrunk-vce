@@ -82,7 +82,8 @@ class ApplicationDatabaseMigratorTest
     {
         Path database = Format1TestDatabase.create(newStagedDatabase());
         assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-        assertEquals("{\"fixture\":true}", scalar(database,
+        assertEquals("{\"configurationId\":\"11111111-2222-4333-8444-555555555556\",\"fixture\":true}",
+            scalar(database,
             "SELECT config_json FROM configuration_channel WHERE name='Fixture Channel'"));
 
         CommandResult result = run(database);
@@ -91,9 +92,13 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains("PLAN STEP: 1 -> 2 [format-1-to-2]"));
         assertTrue(result.output().contains("COMPLETED STEP: 1 -> 2 [format-1-to-2]"));
         assertEquals(DatabaseFormatCatalog.current().fingerprint(), fingerprint(database));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM p25_radio_affiliation"));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM sqlite_schema
+            WHERE type='table' AND name='p25_radio_affiliation'
+            """));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
-        assertEquals("{\"fixture\":true}", scalar(database,
+        assertEquals("{\"configurationId\":\"11111111-2222-4333-8444-555555555556\",\"fixture\":true}",
+            scalar(database,
             "SELECT config_json FROM configuration_channel WHERE name='Fixture Channel'"));
     }
 
@@ -168,7 +173,8 @@ class ApplicationDatabaseMigratorTest
         assertEquals("{invalid", scalar(database, """
             SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
             """));
-        assertEquals("{\"fixture\":true}", scalar(database,
+        assertEquals("{\"configurationId\":\"11111111-2222-4333-8444-555555555556\",\"fixture\":true}",
+            scalar(database,
             "SELECT config_json FROM configuration_channel WHERE name='Fixture Channel'"));
     }
 
