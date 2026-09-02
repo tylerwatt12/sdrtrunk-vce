@@ -21,7 +21,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.github.dsheirer.audio.call.LogicalCallId;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
@@ -3434,7 +3434,7 @@ class P25ActivityLogWriterTest
      */
     private static void createTestDatabase(Path database) throws Exception
     {
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             java.sql.PreparedStatement statement = connection.prepareStatement("""

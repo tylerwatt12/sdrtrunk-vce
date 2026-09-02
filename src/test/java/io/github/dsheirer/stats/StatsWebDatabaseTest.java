@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanChannelType;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideBand;
@@ -148,7 +148,7 @@ class StatsWebDatabaseTest
     void setUp() throws Exception
     {
         mDatabasePath = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(mDatabasePath);
+        SdrTrunkTestDatabase.create(mDatabasePath);
         seed(mDatabasePath);
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
     }
