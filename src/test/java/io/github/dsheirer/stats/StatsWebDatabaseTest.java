@@ -13,10 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
 import java.net.URI;
@@ -60,7 +58,7 @@ class StatsWebDatabaseTest
     void setUp() throws Exception
     {
         mDatabasePath = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        createDatabase(mDatabasePath);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(mDatabasePath);
         seed(mDatabasePath);
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
     }
@@ -3075,17 +3073,6 @@ class StatsWebDatabaseTest
             statement.setDouble(9, decode);
             statement.setLong(10, observedAt);
             statement.executeUpdate();
-        }
-    }
-
-    private static void createDatabase(Path database) throws Exception
-    {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-        {
-            SdrTrunkDatabaseSchema.create(connection);
-            P25ActivityLogSchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
         }
     }
 
