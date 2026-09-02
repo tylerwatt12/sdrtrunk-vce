@@ -83,15 +83,25 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Package Linux and macOS releases
-        run: >-
-          ./gradlew --no-configuration-cache runtimeZipOthers
-          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
-
       - name: Package Windows releases
         run: >-
-          ./gradlew --no-configuration-cache runtimeZipWindows
+          ./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win
           -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
+
+      - name: Preserve Windows release packages
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/sdrtrunk-vce-windows-packages"
+          cp build/image/sdrtrunk-vce-windows-*.zip "${RUNNER_TEMP}/sdrtrunk-vce-windows-packages/"
+
+      - name: Package Linux and macOS releases
+        run: >-
+          ./gradlew --no-configuration-cache clean runtimeZipOthers
+          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
+
+      - name: Restore Windows release packages
+        shell: bash
+        run: cp "${RUNNER_TEMP}/sdrtrunk-vce-windows-packages/"*.zip build/image/
 
       - name: Refuse an out-of-order nightly publication
         shell: bash

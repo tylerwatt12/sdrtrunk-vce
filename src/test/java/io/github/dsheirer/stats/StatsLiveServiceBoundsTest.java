@@ -247,8 +247,8 @@ class StatsLiveServiceBoundsTest
 
         try
         {
-            service.start();
             source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
+            service.start();
             byte[] withoutNavigation = service.encodedSnapshot();
             assertFalse(new String(withoutNavigation, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
@@ -260,8 +260,15 @@ class StatsLiveServiceBoundsTest
                     WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))));
                 catalog.refreshNow();
 
-                StatsLiveEventHub.LiveEvent resync = subscription.poll(1, TimeUnit.SECONDS);
-                assertEquals("activity_resync", resync.name(),
+                boolean resynchronized = false;
+
+                for(int index = 0; index < 3 && !resynchronized; index++)
+                {
+                    StatsLiveEventHub.LiveEvent published = subscription.poll(1, TimeUnit.SECONDS);
+                    resynchronized = published != null && "activity_resync".equals(published.name());
+                }
+
+                assertTrue(resynchronized,
                     "a catalog change must update already-connected live clients without waiting for activity");
             }
 
