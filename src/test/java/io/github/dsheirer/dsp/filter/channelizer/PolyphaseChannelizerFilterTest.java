@@ -15,10 +15,12 @@ import io.github.dsheirer.vector.calibrate.Implementation;
 import java.util.Arrays;
 import java.util.Random;
 import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.VectorSpecies;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 class PolyphaseChannelizerFilterTest
@@ -36,9 +38,9 @@ class PolyphaseChannelizerFilterTest
         Random random = new Random(0x5D2C_2026L);
         int[] tapsPerChannel = new int[]{1, 9, 12};
 
-        //All counts represent an even number of complex channels.  12 and 100 exercise scalar tails for the 256- and
-        //512-bit species, while the larger counts represent common tuner sample rates.
-        int[] subChannelCounts = new int[]{4, 12, 80, 100, 192, 256, 800};
+        //All counts represent an even number of complex channels.  The values around each lane boundary exercise the
+        //full-vector and scalar-tail transitions, while the larger counts represent common tuner sample rates.
+        int[] subChannelCounts = new int[]{2, 4, 6, 8, 10, 12, 14, 16, 18, 30, 32, 34, 80, 100, 192, 256, 800};
 
         for(int taps: tapsPerChannel)
         {
@@ -65,6 +67,20 @@ class PolyphaseChannelizerFilterTest
                     "coefficient input must remain unchanged");
             }
         }
+    }
+
+    /**
+     * Java 25 only reliably intrinsifies these loops when every vector operation receives a static species constant.
+     * A generic hot method accepting VectorSpecies produced correct answers but allocated each vector intermediate
+     * and was tens of times slower on receiver hardware.
+     */
+    @Test
+    void vectorHotKernelsDoNotAcceptDynamicSpecies()
+    {
+        Arrays.stream(VectorPolyphaseChannelizerFilter.class.getDeclaredMethods())
+            .flatMap(method -> Arrays.stream(method.getParameterTypes()))
+            .forEach(parameterType -> assertNotEquals(VectorSpecies.class, parameterType,
+                "hot vector kernels must use FloatVector.SPECIES_* constants directly"));
     }
 
     @Test

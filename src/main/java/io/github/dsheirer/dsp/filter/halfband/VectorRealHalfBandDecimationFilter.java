@@ -37,7 +37,8 @@ import jdk.incubator.vector.VectorSpecies;
 abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilter
 {
     private final int mVectorBitSize;
-    private final float[] mCoefficients;
+    private final int mCoefficientCount;
+    private final FloatVector[] mCoefficientVectors;
     private final int mBufferOverlap;
     private final int mTailPadding;
     private float[] mBuffer;
@@ -71,9 +72,16 @@ abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilt
 
         VectorUtilities.checkSpecies(species);
         mVectorBitSize = requireSupportedVectorBitSize(species);
+        mCoefficientCount = coefficients.length;
         int laneCount = species.length();
         int paddedCoefficientCount = Math.ceilDiv(coefficients.length, laneCount) * laneCount;
-        mCoefficients = Arrays.copyOf(coefficients, paddedCoefficientCount);
+        float[] paddedCoefficients = Arrays.copyOf(coefficients, paddedCoefficientCount);
+        mCoefficientVectors = new FloatVector[paddedCoefficientCount / laneCount];
+
+        for(int x = 0; x < mCoefficientVectors.length; x++)
+        {
+            mCoefficientVectors[x] = FloatVector.fromArray(species, paddedCoefficients, x * laneCount);
+        }
 
         mBufferOverlap = coefficients.length - 1;
         mTailPadding = paddedCoefficientCount - coefficients.length;
@@ -92,10 +100,24 @@ abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilt
 
         switch(mVectorBitSize)
         {
-            case 64 -> filter64(mCoefficients, mBuffer, filtered);
-            case 128 -> filter128(mCoefficients, mBuffer, filtered);
-            case 256 -> filter256(mCoefficients, mBuffer, filtered);
-            case 512 -> filter512(mCoefficients, mBuffer, filtered);
+            case 64 -> filter64(mCoefficientVectors, mBuffer, filtered);
+            case 128 -> filter128(mCoefficientVectors, mBuffer, filtered);
+            case 256 ->
+            {
+                if(mCoefficientCount == 23)
+                {
+                    filter23Tap256(mCoefficientVectors, mBuffer, filtered);
+                }
+                else if(mCoefficientCount == 63)
+                {
+                    filter63Tap256(mCoefficientVectors, mBuffer, filtered);
+                }
+                else
+                {
+                    filter256(mCoefficientVectors, mBuffer, filtered);
+                }
+            }
+            case 512 -> filter512(mCoefficientVectors, mBuffer, filtered);
             default -> throw new IllegalStateException("Unsupported half-band vector width: " + mVectorBitSize);
         }
 
@@ -127,76 +149,132 @@ abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilt
     }
 
     /** See {@link io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter} for the constant-species requirement. */
-    private static void filter64(float[] coefficients, float[] samples, float[] filtered)
+    private static void filter64(FloatVector[] coefficients, float[] samples, float[] filtered)
     {
         for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
         {
             int bufferPointer = outputPointer * 2;
             FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_64);
 
-            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
-                coefficientPointer += FloatVector.SPECIES_64.length())
+            for(int coefficientIndex = 0; coefficientIndex < coefficients.length; coefficientIndex++)
             {
-                accumulator = FloatVector.fromArray(FloatVector.SPECIES_64, coefficients, coefficientPointer).fma(
-                    FloatVector.fromArray(FloatVector.SPECIES_64, samples, bufferPointer + coefficientPointer),
-                    accumulator);
+                int coefficientPointer = coefficientIndex * FloatVector.SPECIES_64.length();
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_64, samples,
+                    bufferPointer + coefficientPointer).fma(coefficients[coefficientIndex], accumulator);
             }
 
             filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
         }
     }
 
-    private static void filter128(float[] coefficients, float[] samples, float[] filtered)
+    private static void filter128(FloatVector[] coefficients, float[] samples, float[] filtered)
     {
         for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
         {
             int bufferPointer = outputPointer * 2;
             FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_128);
 
-            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
-                coefficientPointer += FloatVector.SPECIES_128.length())
+            for(int coefficientIndex = 0; coefficientIndex < coefficients.length; coefficientIndex++)
             {
-                accumulator = FloatVector.fromArray(FloatVector.SPECIES_128, coefficients, coefficientPointer).fma(
-                    FloatVector.fromArray(FloatVector.SPECIES_128, samples, bufferPointer + coefficientPointer),
-                    accumulator);
+                int coefficientPointer = coefficientIndex * FloatVector.SPECIES_128.length();
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_128, samples,
+                    bufferPointer + coefficientPointer).fma(coefficients[coefficientIndex], accumulator);
             }
 
             filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
         }
     }
 
-    private static void filter256(float[] coefficients, float[] samples, float[] filtered)
+    private static void filter256(FloatVector[] coefficients, float[] samples, float[] filtered)
     {
         for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
         {
             int bufferPointer = outputPointer * 2;
             FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_256);
 
-            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
-                coefficientPointer += FloatVector.SPECIES_256.length())
+            for(int coefficientIndex = 0; coefficientIndex < coefficients.length; coefficientIndex++)
             {
-                accumulator = FloatVector.fromArray(FloatVector.SPECIES_256, coefficients, coefficientPointer).fma(
-                    FloatVector.fromArray(FloatVector.SPECIES_256, samples, bufferPointer + coefficientPointer),
-                    accumulator);
+                int coefficientPointer = coefficientIndex * FloatVector.SPECIES_256.length();
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                    bufferPointer + coefficientPointer).fma(coefficients[coefficientIndex], accumulator);
             }
 
             filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
         }
     }
 
-    private static void filter512(float[] coefficients, float[] samples, float[] filtered)
+    /**
+     * The production 23-tap filter occupies exactly three 256-bit vectors.  Binding those vectors before the sample
+     * loop restores the fixed-shape kernel that HotSpot can keep in registers while retaining the shared stream-state
+     * implementation.
+     */
+    private static void filter23Tap256(FloatVector[] coefficients, float[] samples, float[] filtered)
+    {
+        FloatVector coefficient0 = coefficients[0];
+        FloatVector coefficient1 = coefficients[1];
+        FloatVector coefficient2 = coefficients[2];
+
+        for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
+        {
+            int bufferPointer = outputPointer * 2;
+            FloatVector product0 = FloatVector.fromArray(FloatVector.SPECIES_256, samples, bufferPointer)
+                .mul(coefficient0);
+            FloatVector product1 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + FloatVector.SPECIES_256.length()).mul(coefficient1);
+            FloatVector product2 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 2 * FloatVector.SPECIES_256.length()).mul(coefficient2);
+            filtered[outputPointer] = product0.add(product1).add(product2).reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    /** The production 63-tap filter occupies exactly eight 256-bit vectors. */
+    private static void filter63Tap256(FloatVector[] coefficients, float[] samples, float[] filtered)
+    {
+        FloatVector coefficient0 = coefficients[0];
+        FloatVector coefficient1 = coefficients[1];
+        FloatVector coefficient2 = coefficients[2];
+        FloatVector coefficient3 = coefficients[3];
+        FloatVector coefficient4 = coefficients[4];
+        FloatVector coefficient5 = coefficients[5];
+        FloatVector coefficient6 = coefficients[6];
+        FloatVector coefficient7 = coefficients[7];
+
+        for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
+        {
+            int bufferPointer = outputPointer * 2;
+            FloatVector accumulator0 = FloatVector.fromArray(FloatVector.SPECIES_256, samples, bufferPointer)
+                .mul(coefficient0);
+            FloatVector accumulator1 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + FloatVector.SPECIES_256.length()).mul(coefficient1);
+            FloatVector accumulator2 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 2 * FloatVector.SPECIES_256.length()).mul(coefficient2);
+            FloatVector accumulator3 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 3 * FloatVector.SPECIES_256.length()).mul(coefficient3);
+            accumulator0 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 4 * FloatVector.SPECIES_256.length()).fma(coefficient4, accumulator0);
+            accumulator1 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 5 * FloatVector.SPECIES_256.length()).fma(coefficient5, accumulator1);
+            accumulator2 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 6 * FloatVector.SPECIES_256.length()).fma(coefficient6, accumulator2);
+            accumulator3 = FloatVector.fromArray(FloatVector.SPECIES_256, samples,
+                bufferPointer + 7 * FloatVector.SPECIES_256.length()).fma(coefficient7, accumulator3);
+            filtered[outputPointer] = accumulator0.add(accumulator1).add(accumulator2).add(accumulator3)
+                .reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter512(FloatVector[] coefficients, float[] samples, float[] filtered)
     {
         for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
         {
             int bufferPointer = outputPointer * 2;
             FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_512);
 
-            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
-                coefficientPointer += FloatVector.SPECIES_512.length())
+            for(int coefficientIndex = 0; coefficientIndex < coefficients.length; coefficientIndex++)
             {
-                accumulator = FloatVector.fromArray(FloatVector.SPECIES_512, coefficients, coefficientPointer).fma(
-                    FloatVector.fromArray(FloatVector.SPECIES_512, samples, bufferPointer + coefficientPointer),
-                    accumulator);
+                int coefficientPointer = coefficientIndex * FloatVector.SPECIES_512.length();
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_512, samples,
+                    bufferPointer + coefficientPointer).fma(coefficients[coefficientIndex], accumulator);
             }
 
             filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);

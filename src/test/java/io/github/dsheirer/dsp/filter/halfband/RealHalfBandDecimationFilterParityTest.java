@@ -8,6 +8,7 @@ package io.github.dsheirer.dsp.filter.halfband;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
@@ -15,6 +16,7 @@ import io.github.dsheirer.dsp.window.WindowType;
 import java.lang.reflect.Modifier;
 import java.util.List;
 import java.util.function.Function;
+import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
 import org.junit.jupiter.api.Test;
 
@@ -31,11 +33,15 @@ class RealHalfBandDecimationFilterParityTest
     };
 
     @Test
-    void sharedKernelDoesNotRetainRuntimeVectorSpecies()
+    void sharedKernelCachesCoefficientsWithoutRetainingRuntimeVectorSpecies()
     {
-        assertFalse(List.of(VectorRealHalfBandDecimationFilter.class.getDeclaredFields()).stream().anyMatch(field ->
+        List<java.lang.reflect.Field> fields = List.of(VectorRealHalfBandDecimationFilter.class.getDeclaredFields());
+        assertFalse(fields.stream().anyMatch(field ->
             !Modifier.isStatic(field.getModifiers()) && VectorSpecies.class.isAssignableFrom(field.getType())),
             "A runtime VectorSpecies field prevents reliable SIMD intrinsic lowering in the half-band hot loop");
+        assertTrue(fields.stream().anyMatch(field -> !Modifier.isStatic(field.getModifiers()) &&
+            field.getType().equals(FloatVector[].class)),
+            "Half-band coefficients should be converted to vectors once instead of reloaded for every output sample");
     }
 
     @Test

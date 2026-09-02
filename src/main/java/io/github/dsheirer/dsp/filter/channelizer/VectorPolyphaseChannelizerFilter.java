@@ -12,7 +12,6 @@
 package io.github.dsheirer.dsp.filter.channelizer;
 
 import jdk.incubator.vector.FloatVector;
-import jdk.incubator.vector.VectorSpecies;
 
 /**
  * Explicit Java Vector API implementation of the polyphase channelizer filter.
@@ -30,50 +29,104 @@ final class VectorPolyphaseChannelizerFilter
     static void filter64(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
                          int subChannelCount)
     {
-        filter(FloatVector.SPECIES_64, samples, coefficients, accumulator, tapsPerChannel, subChannelCount);
-    }
+        int vectorUpperBound = FloatVector.SPECIES_64.loopBound(subChannelCount);
 
-    static void filter128(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
-                          int subChannelCount)
-    {
-        filter(FloatVector.SPECIES_128, samples, coefficients, accumulator, tapsPerChannel, subChannelCount);
-    }
-
-    static void filter256(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
-                          int subChannelCount)
-    {
-        filter(FloatVector.SPECIES_256, samples, coefficients, accumulator, tapsPerChannel, subChannelCount);
-    }
-
-    static void filter512(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
-                          int subChannelCount)
-    {
-        filter(FloatVector.SPECIES_512, samples, coefficients, accumulator, tapsPerChannel, subChannelCount);
-    }
-
-    private static void filter(VectorSpecies<Float> species, float[] samples, float[] coefficients,
-                               float[] accumulator, int tapsPerChannel, int subChannelCount)
-    {
-        int vectorUpperBound = species.loopBound(subChannelCount);
-
-        //Keep each lane's accumulator in a vector register while visiting taps in the original ascending order.
-        for(int channel = 0; channel < vectorUpperBound; channel += species.length())
+        for(int channel = 0; channel < vectorUpperBound; channel += FloatVector.SPECIES_64.length())
         {
-            FloatVector accumulated = FloatVector.zero(species);
+            FloatVector accumulated = FloatVector.zero(FloatVector.SPECIES_64);
 
             for(int tap = 0; tap < tapsPerChannel; tap++)
             {
                 int index = tap * subChannelCount + channel;
-                FloatVector sample = FloatVector.fromArray(species, samples, index);
-                FloatVector coefficient = FloatVector.fromArray(species, coefficients, index);
+                FloatVector sample = FloatVector.fromArray(FloatVector.SPECIES_64, samples, index);
+                FloatVector coefficient = FloatVector.fromArray(FloatVector.SPECIES_64, coefficients, index);
                 accumulated = accumulated.add(sample.mul(coefficient));
             }
 
             accumulated.intoArray(accumulator, channel);
         }
 
-        //The channel count is not guaranteed to fill the widest vector species.
-        for(int channel = vectorUpperBound; channel < subChannelCount; channel++)
+        filterScalarTail(samples, coefficients, accumulator, tapsPerChannel, subChannelCount, vectorUpperBound);
+    }
+
+    static void filter128(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
+                          int subChannelCount)
+    {
+        int vectorUpperBound = FloatVector.SPECIES_128.loopBound(subChannelCount);
+
+        for(int channel = 0; channel < vectorUpperBound; channel += FloatVector.SPECIES_128.length())
+        {
+            FloatVector accumulated = FloatVector.zero(FloatVector.SPECIES_128);
+
+            for(int tap = 0; tap < tapsPerChannel; tap++)
+            {
+                int index = tap * subChannelCount + channel;
+                FloatVector sample = FloatVector.fromArray(FloatVector.SPECIES_128, samples, index);
+                FloatVector coefficient = FloatVector.fromArray(FloatVector.SPECIES_128, coefficients, index);
+                accumulated = accumulated.add(sample.mul(coefficient));
+            }
+
+            accumulated.intoArray(accumulator, channel);
+        }
+
+        filterScalarTail(samples, coefficients, accumulator, tapsPerChannel, subChannelCount, vectorUpperBound);
+    }
+
+    static void filter256(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
+                          int subChannelCount)
+    {
+        int vectorUpperBound = FloatVector.SPECIES_256.loopBound(subChannelCount);
+
+        for(int channel = 0; channel < vectorUpperBound; channel += FloatVector.SPECIES_256.length())
+        {
+            FloatVector accumulated = FloatVector.zero(FloatVector.SPECIES_256);
+
+            for(int tap = 0; tap < tapsPerChannel; tap++)
+            {
+                int index = tap * subChannelCount + channel;
+                FloatVector sample = FloatVector.fromArray(FloatVector.SPECIES_256, samples, index);
+                FloatVector coefficient = FloatVector.fromArray(FloatVector.SPECIES_256, coefficients, index);
+                accumulated = accumulated.add(sample.mul(coefficient));
+            }
+
+            accumulated.intoArray(accumulator, channel);
+        }
+
+        filterScalarTail(samples, coefficients, accumulator, tapsPerChannel, subChannelCount, vectorUpperBound);
+    }
+
+    static void filter512(float[] samples, float[] coefficients, float[] accumulator, int tapsPerChannel,
+                          int subChannelCount)
+    {
+        int vectorUpperBound = FloatVector.SPECIES_512.loopBound(subChannelCount);
+
+        for(int channel = 0; channel < vectorUpperBound; channel += FloatVector.SPECIES_512.length())
+        {
+            FloatVector accumulated = FloatVector.zero(FloatVector.SPECIES_512);
+
+            for(int tap = 0; tap < tapsPerChannel; tap++)
+            {
+                int index = tap * subChannelCount + channel;
+                FloatVector sample = FloatVector.fromArray(FloatVector.SPECIES_512, samples, index);
+                FloatVector coefficient = FloatVector.fromArray(FloatVector.SPECIES_512, coefficients, index);
+                accumulated = accumulated.add(sample.mul(coefficient));
+            }
+
+            accumulated.intoArray(accumulator, channel);
+        }
+
+        filterScalarTail(samples, coefficients, accumulator, tapsPerChannel, subChannelCount, vectorUpperBound);
+    }
+
+    /**
+     * Finishes channels that do not fill the selected vector width.  Keeping the species constants in the four hot
+     * kernels above is intentional: passing a species object through this shared helper caused Java 25 to allocate
+     * vector intermediates instead of lowering them to SIMD instructions on x64 receivers.
+     */
+    private static void filterScalarTail(float[] samples, float[] coefficients, float[] accumulator,
+                                         int tapsPerChannel, int subChannelCount, int firstChannel)
+    {
+        for(int channel = firstChannel; channel < subChannelCount; channel++)
         {
             float accumulated = 0.0f;
 
