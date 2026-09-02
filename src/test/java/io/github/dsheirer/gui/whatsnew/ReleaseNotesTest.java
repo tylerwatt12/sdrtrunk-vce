@@ -16,11 +16,11 @@ class ReleaseNotesTest
     @Test
     void loadsVersionedRichTextDocument()
     {
-        ReleaseNotes notes = ReleaseNotes.load("0.6.2-alpha-11").orElseThrow();
+        ReleaseNotes notes = ReleaseNotes.load("0.6.2-alpha-12").orElseThrow();
 
-        assertEquals("0.6.2-alpha-11", notes.version());
-        assertEquals("sdrtrunk-vce 0.6.2 Alpha 11", notes.title());
-        assertTrue(notes.html().contains("<h1>What’s New in sdrtrunk-vce 0.6.2 Alpha 11</h1>"));
+        assertEquals("0.6.2-alpha-12", notes.version());
+        assertEquals("sdrtrunk-vce 0.6.2 Alpha 12", notes.title());
+        assertTrue(notes.html().contains("<h1>What’s New in sdrtrunk-vce 0.6.2 Alpha 12</h1>"));
     }
 
     @Test
@@ -30,14 +30,14 @@ class ReleaseNotesTest
         assertFalse(ReleaseNotes.isPublicVersion("nightly"));
         assertFalse(ReleaseNotes.isPublicVersion("0.6.2-SNAPSHOT"));
         assertFalse(ReleaseNotes.isPublicVersion("local-dev"));
-        assertTrue(ReleaseNotes.isPublicVersion("0.6.2-alpha-11"));
+        assertTrue(ReleaseNotes.isPublicVersion("0.6.2-alpha-12"));
     }
 
     @Test
     void showsOnlyWhenVersionChanges()
     {
-        assertTrue(ReleaseNotes.shouldShow("0.6.2-alpha-11", null));
-        assertTrue(ReleaseNotes.shouldShow("0.6.2-alpha-11", "0.6.2-alpha-10"));
-        assertFalse(ReleaseNotes.shouldShow("0.6.2-alpha-11", "0.6.2-alpha-11"));
+        assertTrue(ReleaseNotes.shouldShow("0.6.2-alpha-12", null));
+        assertTrue(ReleaseNotes.shouldShow("0.6.2-alpha-12", "0.6.2-alpha-11"));
+        assertFalse(ReleaseNotes.shouldShow("0.6.2-alpha-12", "0.6.2-alpha-12"));
     }
 }

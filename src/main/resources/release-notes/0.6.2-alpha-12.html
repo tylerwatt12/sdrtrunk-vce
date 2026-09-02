@@ -1,0 +1,47 @@
+<h1>What’s New in sdrtrunk-vce 0.6.2 Alpha 12</h1>
+<h2>What</h2>
+<p>Alpha 12 is a focused Windows packaging repair. Alpha 11’s Windows archives omitted the launcher settings needed
+to find the SDRplay API and use the native Windows look and feel. Its fallback loader also checked a filename without
+the required <code>.dll</code> suffix. Together, those defects could make an installed SDRplay tuner appear unavailable.
+Alpha 12 corrects both paths and verifies the finished Windows archives before they can be released.</p>
+<h2>Added</h2>
+<ul>
+<li><strong>Windows package self-checks.</strong> Both x86-64 and ARM64 archives must contain the SDRplay API search path and
+the required Windows desktop export. The packaged application JAR is also checked to ensure it does not contain the
+non-Windows compatibility class.</li>
+</ul>
+<h2>Changed</h2>
+<ul>
+<li><strong>Windows cross-packaging starts clean and targets Windows explicitly.</strong> This prevents files produced for
+Linux or macOS from being reused in a Windows archive.</li>
+<li><strong>SDRplay load diagnostics are clearer.</strong> The log now distinguishes a missing API file from a file that
+exists but could not be loaded.</li>
+</ul>
+<h2>Fixed</h2>
+<ul>
+<li><strong>SDRplay API discovery on Windows.</strong> The fallback loader now resolves the real mapped filename,
+<code>sdrplay_api.dll</code>, under the standard 64-bit SDRplay API folder in Program Files.</li>
+<li><strong>All supported SDRplay models use the repair.</strong> The shared loader covers RSP1, RSP1A, RSP1B, RSP2, both
+RSPduo tuners, RSPdx, and RSPdx-R2.</li>
+<li><strong>Windows launcher consistency.</strong> The required JIDE Windows export is restored, and Windows packages no
+longer carry the non-Windows look-and-feel compatibility class.</li>
+<li><strong>Other tuner implementations are unchanged.</strong> This release does not change Airspy, HackRF, HydraSDR, or
+RTL-SDR tuner code.</li>
+</ul>
+<h2>Removed</h2>
+<ul>
+<li>No supported features were removed in Alpha 12.</li>
+</ul>
+<h2>Before You Upgrade</h2>
+<ul>
+<li>Stop sdrtrunk-vce, back up the complete portable <code>data</code> folder, and install Alpha 12 in a new empty folder.</li>
+<li>The database remains at format 2. Alpha 11 data does not need a new schema migration for this update.</li>
+<li>On Windows, install the 64-bit SDRplay API in its standard Program Files location before starting sdrtrunk-vce.</li>
+<li>After upgrading, confirm that each SDRplay device appears in the Tuners tab and can start normally. Also verify
+your usual channels, recording, streaming, and website access before leaving the receiver unattended.</li>
+<li>Keep Alpha 11 and its original data available for rollback until Alpha 12 has passed those checks.</li>
+</ul>
+<h2>Downloads</h2>
+<p>Choose the download for your operating system and processor. Java 25 is included. JMBE is set up separately under
+<strong>Preferences &gt; Decoder &gt; JMBE Audio Library</strong>. Verify the ZIP’s SHA-256 checksum against
+<code>SHA256SUMS.txt</code>.</p>
