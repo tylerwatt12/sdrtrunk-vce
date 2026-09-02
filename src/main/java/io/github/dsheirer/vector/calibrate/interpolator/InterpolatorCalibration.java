@@ -27,6 +27,7 @@ import io.github.dsheirer.dsp.filter.interpolator.InterpolatorVector64;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -41,7 +42,7 @@ public class InterpolatorCalibration extends Calibration
     private static final int BUFFER_SIZE = 32;
     private static final int INTERPOLATION_POINT_COUNT = 2048;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final int BENCHMARK_BATCH_SIZE = 1;
     private static final float ABSOLUTE_TOLERANCE = 0.000_001f;
     private static final float RELATIVE_TOLERANCE = 0.000_001f;
@@ -64,30 +65,28 @@ public class InterpolatorCalibration extends Calibration
 
         for(Candidate candidate: candidates)
         {
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new InterpolatorOperation(candidate.interpolator(), samples, interpolationPoints));
+            measure(candidate, samples, interpolationPoints, WARMUP_DURATION);
         }
 
-        Candidate best = candidates.get(0);
-        double bestScore = 0.0d;
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            candidate -> measure(candidate, samples, interpolationPoints, TEST_TRIAL_DURATION));
 
-        for(Candidate candidate: candidates)
+        for(int index = 0; index < candidates.size(); index++)
         {
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new InterpolatorOperation(candidate.interpolator(), samples, interpolationPoints))
-                .operationsPerSecond();
-            mLog.info("INTERPOLATOR - {}: {} full interpolation sweeps/second", candidate.label(),
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                best = candidate;
-                bestScore = score;
-            }
+            Candidate candidate = candidates.get(index);
+            mLog.info("INTERPOLATOR - {}: {} median full interpolation sweeps/second", candidate.label(),
+                DECIMAL_FORMAT.format(scores[index]));
         }
 
-        setImplementation(best.implementation());
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)).implementation());
         mLog.info("INTERPOLATOR - SET OPTIMAL IMPLEMENTATION TO: " + getImplementation());
+    }
+
+    private static double measure(Candidate candidate, float[] samples, float[] interpolationPoints,
+                                  Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new InterpolatorOperation(candidate.interpolator(), samples, interpolationPoints)).operationsPerSecond();
     }
 
     private List<Candidate> candidates()

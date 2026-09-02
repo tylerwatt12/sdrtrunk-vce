@@ -20,8 +20,8 @@
 package io.github.dsheirer.dsp.oscillator;
 
 import io.github.dsheirer.sample.complex.ComplexSamples;
-import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.VectorShuffle;
 import jdk.incubator.vector.VectorSpecies;
 import org.apache.commons.math3.util.FastMath;
 
@@ -35,12 +35,18 @@ import org.apache.commons.math3.util.FastMath;
 public class VectorComplexOscillator extends AbstractOscillator implements IComplexOscillator
 {
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_PREFERRED;
+    private static final int GAIN_CORRECTION_INTERVAL = 10;
+    private static final VectorShuffle<Float> INTERLEAVE_LOW = VectorShuffle.fromOp(VECTOR_SPECIES, lane ->
+        (lane & 1) == 0 ? lane / 2 : VECTOR_SPECIES.length() + (lane / 2));
+    private static final VectorShuffle<Float> INTERLEAVE_HIGH = VectorShuffle.fromOp(VECTOR_SPECIES, lane ->
+    {
+        int sourceLane = (VECTOR_SPECIES.length() / 2) + (lane / 2);
+        return (lane & 1) == 0 ? sourceLane : VECTOR_SPECIES.length() + sourceLane;
+    });
 
     private final float[] mPreviousInphases;
     private final float[] mPreviousQuadratures;
-    private final float[] mGainInitials; //Set to 3.0f as the first constant in the gain calculation
-    private final int[] mInphaseIndexes;
-    private final int[] mQuadratureIndexes;
+    private int mGainCorrectionCounter;
 
     /*
      * Deliberately has no field initializer. AbstractOscillator invokes update() from its constructor before subclass
@@ -64,17 +70,32 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
         mPreviousQuadratures = new float[laneCount];
         mPreviousInphases[laneCount - 1] = 1.0f;
 
-        mGainInitials = new float[VECTOR_SPECIES.length()];
-        Arrays.fill(mGainInitials, 3.0f);
+    }
 
-        mInphaseIndexes = new int[laneCount];
-        mQuadratureIndexes = new int[laneCount];
-
-        for(int x = 0; x < laneCount; x++)
+    /**
+     * Indicates when the oscillator bank needs its inexpensive magnitude correction.  Correcting every vector block
+     * is unnecessary for float precision and makes the SIMD path substantially more expensive than the scalar path,
+     * which also corrects periodically.  Keep the counter across calls so small streaming buffers do not postpone
+     * correction indefinitely.
+     */
+    private boolean shouldCorrectGain()
+    {
+        if(++mGainCorrectionCounter >= GAIN_CORRECTION_INTERVAL)
         {
-            mInphaseIndexes[x] = 2 * x;
-            mQuadratureIndexes[x] = (2 * x) + 1;
+            mGainCorrectionCounter = 0;
+            return true;
         }
+
+        return false;
+    }
+
+    /**
+     * Newton magnitude correction, expressed with multiply/FMA operations that map directly to SIMD instructions.
+     */
+    private static FloatVector getGain(FloatVector inphase, FloatVector quadrature)
+    {
+        FloatVector magnitudeSquared = inphase.fma(inphase, quadrature.mul(quadrature));
+        return magnitudeSquared.neg().add(3.0f).mul(0.5f);
     }
 
     /**
@@ -146,7 +167,6 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
         float[] samples = new float[sampleCount * 2];
         FloatVector previousInphase = FloatVector.fromArray(VECTOR_SPECIES, mPreviousInphases, 0);
         FloatVector previousQuadrature = FloatVector.fromArray(VECTOR_SPECIES, mPreviousQuadratures, 0);
-        FloatVector gainInitials = FloatVector.fromArray(VECTOR_SPECIES, mGainInitials, 0);
 
         //Sine and cosine angle per sample, with the rotation angle multiplied by the SIMD lane width
         float cosAngle = (float)(FastMath.cos(anglePerSample * VECTOR_SPECIES.length()));
@@ -156,14 +176,13 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
         FloatVector inphase;
         FloatVector quadrature;
 
-        int gainCounter = 0;
         int vectorBound = VECTOR_SPECIES.loopBound(sampleCount);
 
         for(int samplePointer = 0; samplePointer < vectorBound; samplePointer += VECTOR_SPECIES.length())
         {
-            if(++gainCounter % 10 == 0)
+            if(shouldCorrectGain())
             {
-                gain = gainInitials.sub(previousInphase.pow(2.0f).add(previousQuadrature.pow(2.0f))).div(2.0f);
+                gain = getGain(previousInphase, previousQuadrature);
                 inphase = previousInphase.mul(cosAngle).sub(previousQuadrature.mul(sinAngle)).mul(gain);
                 quadrature = previousInphase.mul(sinAngle).add(previousQuadrature.mul(cosAngle)).mul(gain);
             }
@@ -174,8 +193,9 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
             }
 
             int outputOffset = samplePointer * 2;
-            inphase.intoArray(samples, outputOffset, mInphaseIndexes, 0);
-            quadrature.intoArray(samples, outputOffset, mQuadratureIndexes, 0);
+            inphase.rearrange(INTERLEAVE_LOW, quadrature).intoArray(samples, outputOffset);
+            inphase.rearrange(INTERLEAVE_HIGH, quadrature).intoArray(samples,
+                outputOffset + VECTOR_SPECIES.length());
 
             previousInphase = inphase;
             previousQuadrature = quadrature;
@@ -233,7 +253,6 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
 
         FloatVector previousInphase = FloatVector.fromArray(VECTOR_SPECIES, mPreviousInphases, 0);
         FloatVector previousQuadrature = FloatVector.fromArray(VECTOR_SPECIES, mPreviousQuadratures, 0);
-        FloatVector gainInitials = FloatVector.fromArray(VECTOR_SPECIES, mGainInitials, 0);
 
         //Sine and cosine angle per sample, with the rotation angle multiplied by the SIMD lane width
         float cosAngle = (float)(FastMath.cos(anglePerSample * VECTOR_SPECIES.length()));
@@ -246,9 +265,17 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
 
         for(int samplePointer = 0; samplePointer < vectorBound; samplePointer += VECTOR_SPECIES.length())
         {
-            gain = gainInitials.sub(previousInphase.pow(2.0f).add(previousQuadrature.pow(2.0f))).div(2.0f);
-            inphase = previousInphase.mul(cosAngle).sub(previousQuadrature.mul(sinAngle)).mul(gain);
-            quadrature = previousInphase.mul(sinAngle).add(previousQuadrature.mul(cosAngle)).mul(gain);
+            if(shouldCorrectGain())
+            {
+                gain = getGain(previousInphase, previousQuadrature);
+                inphase = previousInphase.mul(cosAngle).sub(previousQuadrature.mul(sinAngle)).mul(gain);
+                quadrature = previousInphase.mul(sinAngle).add(previousQuadrature.mul(cosAngle)).mul(gain);
+            }
+            else
+            {
+                inphase = previousInphase.mul(cosAngle).sub(previousQuadrature.mul(sinAngle));
+                quadrature = previousInphase.mul(sinAngle).add(previousQuadrature.mul(cosAngle));
+            }
 
             inphase.intoArray(iSamples, samplePointer);
             quadrature.intoArray(qSamples, samplePointer);

@@ -26,9 +26,11 @@ import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
+import java.util.List;
 import java.util.function.LongSupplier;
 
 /** Calculates the optimal scalar or preferred-width vector implementation for repeatedly applying an FFT window. */
@@ -36,7 +38,7 @@ public class WindowCalibration extends Calibration
 {
     private static final int WINDOW_SIZE = 8192;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final int BENCHMARK_BATCH_SIZE = 16;
 
     public WindowCalibration()
@@ -60,22 +62,21 @@ public class WindowCalibration extends Calibration
 
         Window scalar = new ScalarWindow(benchmarkCoefficients);
         Window vector = new VectorWindow(benchmarkCoefficients);
-        measure(scalar, samples, WARMUP_DURATION);
-        measure(vector, samples, WARMUP_DURATION);
-        double scalarScore = measure(scalar, samples, TEST_DURATION);
-        double vectorScore = measure(vector, samples, TEST_DURATION);
+        List<Window> candidates = List.of(scalar, vector);
 
-        mLog.info("WINDOW - SCALAR: {} buffers/second", DECIMAL_FORMAT.format(scalarScore));
-        mLog.info("WINDOW - VECTOR: {} buffers/second", DECIMAL_FORMAT.format(vectorScore));
+        for(Window candidate: candidates)
+        {
+            measure(candidate, samples, WARMUP_DURATION);
+        }
 
-        if(scalarScore > vectorScore)
-        {
-            setImplementation(Implementation.SCALAR);
-        }
-        else
-        {
-            setImplementation(Implementation.VECTOR_SIMD_PREFERRED);
-        }
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            candidate -> measure(candidate, samples, TEST_TRIAL_DURATION));
+
+        mLog.info("WINDOW - SCALAR: {} median buffers/second", DECIMAL_FORMAT.format(scores[0]));
+        mLog.info("WINDOW - VECTOR: {} median buffers/second", DECIMAL_FORMAT.format(scores[1]));
+
+        setImplementation(CalibrationSelector.selectFastestReliableCandidate(scores) == 1 ?
+            Implementation.VECTOR_SIMD_PREFERRED : Implementation.SCALAR);
 
         mLog.info("WINDOW - OPTIMAL IMPLEMENTATION SET TO: " + getImplementation());
     }

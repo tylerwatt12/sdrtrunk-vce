@@ -17,6 +17,7 @@ import io.github.dsheirer.source.tuner.sdrplay.VectorRspSampleConverter;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -33,7 +34,7 @@ public class RspSampleConverterCalibration extends Calibration
     private static final int CORRECTNESS_BUFFER_SIZE = BUFFER_SIZE + 3;
     private static final int BATCH_SIZE = 4;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
 
     public RspSampleConverterCalibration()
     {
@@ -55,31 +56,36 @@ public class RspSampleConverterCalibration extends Calibration
         insertEdgeValues(iSamples);
         insertEdgeValues(qSamples);
 
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = getCandidates();
 
-        for(Implementation implementation: getCandidates())
+        for(Implementation implementation: candidates)
         {
             IRspSampleConverter converter = RspSampleConverterFactory.getConverter(implementation);
             requireCorrect(implementation, expected, convert(converter, correctnessI, correctnessQ));
-            ConverterOperation operation = new ConverterOperation(converter, iSamples, qSamples);
-
-            CalibrationBenchmark.measure(WARMUP_DURATION, BATCH_SIZE, operation);
-            CalibrationBenchmark.Result result = CalibrationBenchmark.measure(TEST_DURATION, BATCH_SIZE, operation);
-            double score = result.operationsPerSecond();
-            mLog.info("SDRPLAY RSP SAMPLE CONVERTER - {}: {} paired conversions/second", implementation,
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, iSamples, qSamples, WARMUP_DURATION);
         }
 
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, iSamples, qSamples, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("SDRPLAY RSP SAMPLE CONVERTER - {}: {} median paired conversions/second", candidates.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        Implementation bestImplementation = candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores));
         setImplementation(bestImplementation);
         RspSampleConverterFactory.setImplementation(bestImplementation);
         mLog.info("SDRPLAY RSP SAMPLE CONVERTER - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, short[] iSamples, short[] qSamples,
+                                  Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BATCH_SIZE,
+            new ConverterOperation(RspSampleConverterFactory.getConverter(implementation), iSamples, qSamples))
+            .operationsPerSecond();
     }
 
     /**

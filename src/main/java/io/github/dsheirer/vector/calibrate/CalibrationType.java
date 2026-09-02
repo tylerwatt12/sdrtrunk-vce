@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.vector.calibrate;
 
+import java.util.Objects;
+
 /**
  * Calibrations used by the system
  *
@@ -88,6 +90,52 @@ public enum CalibrationType
     public int getVersion()
     {
         return mVersion;
+    }
+
+    /**
+     * Indicates whether this calibration can persist the supplied implementation.  This is the common contract
+     * between each calibration's measured candidates and the production factory that consumes its result.  Keeping
+     * the whitelist here prevents a stale or manually edited preference from selecting a vector implementation that
+     * was never measured for this calibration type.
+     */
+    boolean supportsImplementation(Implementation implementation)
+    {
+        Objects.requireNonNull(implementation, "Implementation cannot be null");
+
+        if(implementation == Implementation.SCALAR || implementation == Implementation.UNCALIBRATED)
+        {
+            return true;
+        }
+
+        return switch(this)
+        {
+            case OSCILLATOR_COMPLEX, GAIN_COMPLEX, MIXER_COMPLEX, OSCILLATOR_REAL,
+                 SAMPLE_UNPACKED_BYTE_CONVERTER, WINDOW ->
+                implementation == Implementation.VECTOR_SIMD_PREFERRED;
+            case AM_DEMODULATOR, RSP_SAMPLE_CONVERTER, FILTER_FIR_PULSE_SHAPING ->
+                implementation == Implementation.VECTOR_SIMD_PREFERRED ||
+                    implementation == Implementation.VECTOR_SIMD_64 ||
+                    implementation == Implementation.VECTOR_SIMD_128 ||
+                    implementation == Implementation.VECTOR_SIMD_256;
+            case POLYPHASE_CHANNELIZER_FILTER, DMR_SOFT_SYNC_DETECTOR, DIFFERENTIAL_DEMODULATOR,
+                 FILTER_HALF_BAND_REAL_11_TAP, FILTER_HALF_BAND_REAL_15_TAP,
+                 FILTER_HALF_BAND_REAL_23_TAP, FILTER_HALF_BAND_REAL_63_TAP, FM_DEMODULATOR,
+                 NXDN_SOFT_SYNC_DETECTOR, P25P1_SOFT_SYNC_DETECTOR, SAMPLE_UNPACKED_INTERLEAVED_ITERATOR,
+                 SAMPLE_UNPACKED_ITERATOR -> implementation == Implementation.VECTOR_SIMD_64 ||
+                    implementation == Implementation.VECTOR_SIMD_128 ||
+                    implementation == Implementation.VECTOR_SIMD_256 ||
+                    implementation == Implementation.VECTOR_SIMD_512;
+            case FILTER_FIR -> implementation != Implementation.SCALAR &&
+                implementation != Implementation.UNCALIBRATED;
+            case FILTER_HALF_BAND_REAL_DEFAULT -> implementation == Implementation.VECTOR_SIMD_PREFERRED ||
+                implementation == Implementation.VECTOR_SIMD_64 ||
+                implementation == Implementation.VECTOR_SIMD_128 ||
+                implementation == Implementation.VECTOR_SIMD_256 ||
+                implementation == Implementation.VECTOR_SIMD_512;
+            case INTERPOLATOR -> implementation == Implementation.VECTOR_SIMD_64 ||
+                implementation == Implementation.VECTOR_SIMD_128 ||
+                implementation == Implementation.VECTOR_SIMD_256;
+        };
     }
 
     @Override public String toString()

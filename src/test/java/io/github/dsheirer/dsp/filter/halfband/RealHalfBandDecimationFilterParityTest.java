@@ -7,12 +7,15 @@
 package io.github.dsheirer.dsp.filter.halfband;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.window.WindowType;
+import java.lang.reflect.Modifier;
 import java.util.List;
 import java.util.function.Function;
+import jdk.incubator.vector.VectorSpecies;
 import org.junit.jupiter.api.Test;
 
 /** Verifies arithmetic, vector tails and retained stream history for every real half-band SIMD implementation. */
@@ -26,6 +29,14 @@ class RealHalfBandDecimationFilterParityTest
         samples(2, 4116),
         samples(514, 4118)
     };
+
+    @Test
+    void sharedKernelDoesNotRetainRuntimeVectorSpecies()
+    {
+        assertFalse(List.of(VectorRealHalfBandDecimationFilter.class.getDeclaredFields()).stream().anyMatch(field ->
+            !Modifier.isStatic(field.getModifiers()) && VectorSpecies.class.isAssignableFrom(field.getType())),
+            "A runtime VectorSpecies field prevents reliable SIMD intrinsic lowering in the half-band hot loop");
+    }
 
     @Test
     void everySpecializedWidthMatchesScalarAcrossConsecutiveBuffersAndTails()

@@ -28,9 +28,12 @@ import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloatVector64;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.LongSupplier;
 import jdk.incubator.vector.FloatVector;
 
@@ -44,7 +47,7 @@ public class DifferentialDemodulatorCalibration extends Calibration
     private static final int SYMBOL_RATE = 4_800;
     private static final int BENCHMARK_BATCH_SIZE = 1;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.000002f;
     private static final float RELATIVE_TOLERANCE = 0.000002f;
     private static final Implementation[] CANDIDATES = {
@@ -75,16 +78,10 @@ public class DifferentialDemodulatorCalibration extends Calibration
             getFloatSamples(BUFFER_SIZE, "quadrature-buffer-b")
         };
         float[][] expected = demodulateSequence(createDemodulator(Implementation.SCALAR), i, q);
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = getCandidates();
 
-        for(Implementation implementation: CANDIDATES)
+        for(Implementation implementation: candidates)
         {
-            if(!isSupported(implementation))
-            {
-                continue;
-            }
-
             float[][] actual = demodulateSequence(createDemodulator(implementation), i, q);
 
             for(int x = 0; x < expected.length; x++)
@@ -93,21 +90,41 @@ public class DifferentialDemodulatorCalibration extends Calibration
                     actual[x], ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
             }
 
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new DemodulatorOperation(createDemodulator(implementation), i, q));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new DemodulatorOperation(createDemodulator(implementation), i, q)).operationsPerSecond();
-            mLog.info("DQPSK DEMODULATOR - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
+            measure(implementation, i, q, WARMUP_DURATION);
+        }
 
-            if(score > bestScore)
+        double[] medianScores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, i, q, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("DQPSK DEMODULATOR - {}: {} median buffers/second", candidates.get(x),
+                DECIMAL_FORMAT.format(medianScores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(medianScores)));
+        mLog.info("DQPSK DEMODULATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static List<Implementation> getCandidates()
+    {
+        List<Implementation> candidates = new ArrayList<>();
+
+        for(Implementation implementation: CANDIDATES)
+        {
+            if(isSupported(implementation))
             {
-                bestScore = score;
-                bestImplementation = implementation;
+                candidates.add(implementation);
             }
         }
 
-        setImplementation(bestImplementation);
-        mLog.info("DQPSK DEMODULATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+        return candidates;
+    }
+
+    private static double measure(Implementation implementation, float[][] i, float[][] q, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new DemodulatorOperation(createDemodulator(implementation), i, q)).operationsPerSecond();
     }
 
     private static boolean isSupported(Implementation implementation)

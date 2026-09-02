@@ -14,8 +14,10 @@ package io.github.dsheirer.source.tuner.sdrplay;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.util.Objects;
 import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorShuffle;
 import jdk.incubator.vector.VectorSpecies;
 
 /**
@@ -24,10 +26,18 @@ import jdk.incubator.vector.VectorSpecies;
  */
 public class VectorRspSampleConverter implements IRspSampleConverter
 {
-    private final VectorSpecies<Float> mFloatSpecies;
-    private final VectorSpecies<Short> mShortSpecies;
-    private final int[] mEvenOutputIndexes;
-    private final int[] mOddOutputIndexes;
+    private static final VectorShuffle<Float> ZIP_64_0 = VectorShuffle.makeZip(FloatVector.SPECIES_64, 0);
+    private static final VectorShuffle<Float> ZIP_64_1 = VectorShuffle.makeZip(FloatVector.SPECIES_64, 1);
+    private static final VectorShuffle<Float> ZIP_128_0 = VectorShuffle.makeZip(FloatVector.SPECIES_128, 0);
+    private static final VectorShuffle<Float> ZIP_128_1 = VectorShuffle.makeZip(FloatVector.SPECIES_128, 1);
+    private static final VectorShuffle<Float> ZIP_256_0 = VectorShuffle.makeZip(FloatVector.SPECIES_256, 0);
+    private static final VectorShuffle<Float> ZIP_256_1 = VectorShuffle.makeZip(FloatVector.SPECIES_256, 1);
+    private static final VectorShuffle<Float> ZIP_512_0 = VectorShuffle.makeZip(FloatVector.SPECIES_512, 0);
+    private static final VectorShuffle<Float> ZIP_512_1 = VectorShuffle.makeZip(FloatVector.SPECIES_512, 1);
+
+    private final int mVectorBitSize;
+    private final int mShortLaneCount;
+    private final int mFloatLaneCount;
 
     /**
      * Constructs an instance for an explicit SIMD implementation.
@@ -47,24 +57,24 @@ public class VectorRspSampleConverter implements IRspSampleConverter
      */
     VectorRspSampleConverter(VectorSpecies<Short> shortSpecies, VectorSpecies<Float> floatSpecies)
     {
-        mShortSpecies = Objects.requireNonNull(shortSpecies, "Short species cannot be null");
-        mFloatSpecies = Objects.requireNonNull(floatSpecies, "Float species cannot be null");
+        Objects.requireNonNull(shortSpecies, "Short species cannot be null");
+        Objects.requireNonNull(floatSpecies, "Float species cannot be null");
 
-        if(mShortSpecies.vectorBitSize() != mFloatSpecies.vectorBitSize() ||
-            mShortSpecies.length() != 2 * mFloatSpecies.length())
+        if(shortSpecies.vectorBitSize() != floatSpecies.vectorBitSize() ||
+            shortSpecies.length() != 2 * floatSpecies.length())
         {
             throw new IllegalArgumentException("RSP sample conversion requires equal-width short and float species " +
-                "with exactly two short lanes per float lane: short=" + mShortSpecies + " float=" + mFloatSpecies);
+                "with exactly two short lanes per float lane: short=" + shortSpecies + " float=" + floatSpecies);
         }
 
-        mEvenOutputIndexes = new int[mFloatSpecies.length()];
-        mOddOutputIndexes = new int[mFloatSpecies.length()];
-
-        for(int x = 0; x < mFloatSpecies.length(); x++)
+        mVectorBitSize = floatSpecies.vectorBitSize();
+        if(mVectorBitSize != 64 && mVectorBitSize != 128 && mVectorBitSize != 256 && mVectorBitSize != 512)
         {
-            mEvenOutputIndexes[x] = 2 * x;
-            mOddOutputIndexes[x] = 2 * x + 1;
+            throw new IllegalArgumentException("Unsupported RSP vector width: " + mVectorBitSize);
         }
+
+        mShortLaneCount = shortSpecies.length();
+        mFloatLaneCount = floatSpecies.length();
     }
 
     /**
@@ -112,39 +122,33 @@ public class VectorRspSampleConverter implements IRspSampleConverter
      */
     int getVectorBitSize()
     {
-        return mFloatSpecies.vectorBitSize();
+        return mVectorBitSize;
     }
 
     int getShortLaneCount()
     {
-        return mShortSpecies.length();
+        return mShortLaneCount;
     }
 
     int getFloatLaneCount()
     {
-        return mFloatSpecies.length();
+        return mFloatLaneCount;
     }
 
     @Override
     public void convert(short[] iSamples, short[] qSamples, float[] iOutput, float[] qOutput)
     {
         RspSampleConverterFactory.validate(iSamples, qSamples, iOutput, qOutput);
-        int x = 0;
-        int vectorBound = mShortSpecies.loopBound(iSamples.length);
-        int floatLaneCount = mFloatSpecies.length();
-
-        for(; x < vectorBound; x += mShortSpecies.length())
+        int vectorBound = switch(mVectorBitSize)
         {
-            ShortVector iVector = ShortVector.fromArray(mShortSpecies, iSamples, x);
-            ShortVector qVector = ShortVector.fromArray(mShortSpecies, qSamples, x);
+            case 64 -> convert64(iSamples, qSamples, iOutput, qOutput);
+            case 128 -> convert128(iSamples, qSamples, iOutput, qOutput);
+            case 256 -> convert256(iSamples, qSamples, iOutput, qOutput);
+            case 512 -> convert512(iSamples, qSamples, iOutput, qOutput);
+            default -> throw new IllegalStateException("Unsupported RSP vector width: " + mVectorBitSize);
+        };
 
-            widenAndScale(iVector, 0).intoArray(iOutput, x);
-            widenAndScale(iVector, 1).intoArray(iOutput, x + floatLaneCount);
-            widenAndScale(qVector, 0).intoArray(qOutput, x);
-            widenAndScale(qVector, 1).intoArray(qOutput, x + floatLaneCount);
-        }
-
-        for(; x < iSamples.length; x++)
+        for(int x = vectorBound; x < iSamples.length; x++)
         {
             iOutput[x] = iSamples[x] * SAMPLE_TO_FLOAT;
             qOutput[x] = qSamples[x] * SAMPLE_TO_FLOAT;
@@ -155,35 +159,255 @@ public class VectorRspSampleConverter implements IRspSampleConverter
     public void convertInterleaved(short[] iSamples, short[] qSamples, float[] output)
     {
         RspSampleConverterFactory.validateInterleaved(iSamples, qSamples, output);
-        int x = 0;
-        int vectorBound = mShortSpecies.loopBound(iSamples.length);
-        int floatLaneCount = mFloatSpecies.length();
-
-        for(; x < vectorBound; x += mShortSpecies.length())
+        int vectorBound = switch(mVectorBitSize)
         {
-            ShortVector iVector = ShortVector.fromArray(mShortSpecies, iSamples, x);
-            ShortVector qVector = ShortVector.fromArray(mShortSpecies, qSamples, x);
-            int firstOutputOffset = 2 * x;
-            int secondOutputOffset = 2 * (x + floatLaneCount);
+            case 64 -> convertInterleaved64(iSamples, qSamples, output);
+            case 128 -> convertInterleaved128(iSamples, qSamples, output);
+            case 256 -> convertInterleaved256(iSamples, qSamples, output);
+            case 512 -> convertInterleaved512(iSamples, qSamples, output);
+            default -> throw new IllegalStateException("Unsupported RSP vector width: " + mVectorBitSize);
+        };
 
-            widenAndScale(iVector, 0).intoArray(output, firstOutputOffset, mEvenOutputIndexes, 0);
-            widenAndScale(qVector, 0).intoArray(output, firstOutputOffset, mOddOutputIndexes, 0);
-            widenAndScale(iVector, 1).intoArray(output, secondOutputOffset, mEvenOutputIndexes, 0);
-            widenAndScale(qVector, 1).intoArray(output, secondOutputOffset, mOddOutputIndexes, 0);
-        }
+        int outputPointer = 2 * vectorBound;
 
-        int outputPointer = 2 * x;
-
-        for(; x < iSamples.length; x++)
+        for(int x = vectorBound; x < iSamples.length; x++)
         {
             output[outputPointer++] = iSamples[x] * SAMPLE_TO_FLOAT;
             output[outputPointer++] = qSamples[x] * SAMPLE_TO_FLOAT;
         }
     }
 
-    private FloatVector widenAndScale(ShortVector vector, int part)
+    /**
+     * The Vector API can intrinsify these operations only when the species is a constant at the hot call site.
+     * Keeping the selected species in an instance field caused the conversion intermediates to escape as heap
+     * objects on Java 25.  The public switch retains runtime calibration while these kernels retain constant species.
+     */
+    private static int convert64(short[] iSamples, short[] qSamples, float[] iOutput, float[] qOutput)
     {
-        return ((FloatVector)vector.convertShape(VectorOperators.S2F, mFloatSpecies, part)).mul(SAMPLE_TO_FLOAT);
+        int vectorBound = ShortVector.SPECIES_64.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_64.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_64.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_64, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_64, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            iEven.rearrange(ZIP_64_0, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x);
+            iEven.rearrange(ZIP_64_1, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x + floatLaneCount);
+            qEven.rearrange(ZIP_64_0, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x);
+            qEven.rearrange(ZIP_64_1, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x + floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convert128(short[] iSamples, short[] qSamples, float[] iOutput, float[] qOutput)
+    {
+        int vectorBound = ShortVector.SPECIES_128.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_128.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_128.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_128, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_128, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            iEven.rearrange(ZIP_128_0, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x);
+            iEven.rearrange(ZIP_128_1, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x + floatLaneCount);
+            qEven.rearrange(ZIP_128_0, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x);
+            qEven.rearrange(ZIP_128_1, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x + floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convert256(short[] iSamples, short[] qSamples, float[] iOutput, float[] qOutput)
+    {
+        int vectorBound = ShortVector.SPECIES_256.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_256.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_256.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_256, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_256, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            iEven.rearrange(ZIP_256_0, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x);
+            iEven.rearrange(ZIP_256_1, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x + floatLaneCount);
+            qEven.rearrange(ZIP_256_0, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x);
+            qEven.rearrange(ZIP_256_1, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x + floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convert512(short[] iSamples, short[] qSamples, float[] iOutput, float[] qOutput)
+    {
+        int vectorBound = ShortVector.SPECIES_512.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_512.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_512.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_512, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_512, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            iEven.rearrange(ZIP_512_0, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x);
+            iEven.rearrange(ZIP_512_1, iOdd).mul(SAMPLE_TO_FLOAT).intoArray(iOutput, x + floatLaneCount);
+            qEven.rearrange(ZIP_512_0, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x);
+            qEven.rearrange(ZIP_512_1, qOdd).mul(SAMPLE_TO_FLOAT).intoArray(qOutput, x + floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convertInterleaved64(short[] iSamples, short[] qSamples, float[] output)
+    {
+        int vectorBound = ShortVector.SPECIES_64.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_64.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_64.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_64, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_64, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_64, 0));
+            FloatVector i0 = iEven.rearrange(ZIP_64_0, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector i1 = iEven.rearrange(ZIP_64_1, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q0 = qEven.rearrange(ZIP_64_0, qOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q1 = qEven.rearrange(ZIP_64_1, qOdd).mul(SAMPLE_TO_FLOAT);
+            int outputOffset = 2 * x;
+            i0.rearrange(ZIP_64_0, q0).intoArray(output, outputOffset);
+            i0.rearrange(ZIP_64_1, q0).intoArray(output, outputOffset + floatLaneCount);
+            i1.rearrange(ZIP_64_0, q1).intoArray(output, outputOffset + 2 * floatLaneCount);
+            i1.rearrange(ZIP_64_1, q1).intoArray(output, outputOffset + 3 * floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convertInterleaved128(short[] iSamples, short[] qSamples, float[] output)
+    {
+        int vectorBound = ShortVector.SPECIES_128.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_128.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_128.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_128, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_128, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_128, 0));
+            FloatVector i0 = iEven.rearrange(ZIP_128_0, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector i1 = iEven.rearrange(ZIP_128_1, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q0 = qEven.rearrange(ZIP_128_0, qOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q1 = qEven.rearrange(ZIP_128_1, qOdd).mul(SAMPLE_TO_FLOAT);
+            int outputOffset = 2 * x;
+            i0.rearrange(ZIP_128_0, q0).intoArray(output, outputOffset);
+            i0.rearrange(ZIP_128_1, q0).intoArray(output, outputOffset + floatLaneCount);
+            i1.rearrange(ZIP_128_0, q1).intoArray(output, outputOffset + 2 * floatLaneCount);
+            i1.rearrange(ZIP_128_1, q1).intoArray(output, outputOffset + 3 * floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convertInterleaved256(short[] iSamples, short[] qSamples, float[] output)
+    {
+        int vectorBound = ShortVector.SPECIES_256.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_256.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_256.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_256, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_256, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_256, 0));
+            FloatVector i0 = iEven.rearrange(ZIP_256_0, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector i1 = iEven.rearrange(ZIP_256_1, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q0 = qEven.rearrange(ZIP_256_0, qOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q1 = qEven.rearrange(ZIP_256_1, qOdd).mul(SAMPLE_TO_FLOAT);
+            int outputOffset = 2 * x;
+            i0.rearrange(ZIP_256_0, q0).intoArray(output, outputOffset);
+            i0.rearrange(ZIP_256_1, q0).intoArray(output, outputOffset + floatLaneCount);
+            i1.rearrange(ZIP_256_0, q1).intoArray(output, outputOffset + 2 * floatLaneCount);
+            i1.rearrange(ZIP_256_1, q1).intoArray(output, outputOffset + 3 * floatLaneCount);
+        }
+
+        return vectorBound;
+    }
+
+    private static int convertInterleaved512(short[] iSamples, short[] qSamples, float[] output)
+    {
+        int vectorBound = ShortVector.SPECIES_512.loopBound(iSamples.length);
+        int floatLaneCount = FloatVector.SPECIES_512.length();
+
+        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_512.length())
+        {
+            IntVector iPacked = ShortVector.fromArray(ShortVector.SPECIES_512, iSamples, x).reinterpretAsInts();
+            IntVector qPacked = ShortVector.fromArray(ShortVector.SPECIES_512, qSamples, x).reinterpretAsInts();
+            FloatVector iEven = ((FloatVector)iPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector iOdd = ((FloatVector)iPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector qEven = ((FloatVector)qPacked.lanewise(VectorOperators.LSHL, 16)
+                .lanewise(VectorOperators.ASHR, 16).convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector qOdd = ((FloatVector)qPacked.lanewise(VectorOperators.ASHR, 16)
+                .convertShape(VectorOperators.I2F, FloatVector.SPECIES_512, 0));
+            FloatVector i0 = iEven.rearrange(ZIP_512_0, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector i1 = iEven.rearrange(ZIP_512_1, iOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q0 = qEven.rearrange(ZIP_512_0, qOdd).mul(SAMPLE_TO_FLOAT);
+            FloatVector q1 = qEven.rearrange(ZIP_512_1, qOdd).mul(SAMPLE_TO_FLOAT);
+            int outputOffset = 2 * x;
+            i0.rearrange(ZIP_512_0, q0).intoArray(output, outputOffset);
+            i0.rearrange(ZIP_512_1, q0).intoArray(output, outputOffset + floatLaneCount);
+            i1.rearrange(ZIP_512_0, q1).intoArray(output, outputOffset + 2 * floatLaneCount);
+            i1.rearrange(ZIP_512_1, q1).intoArray(output, outputOffset + 3 * floatLaneCount);
+        }
+
+        return vectorBound;
     }
 
     private static SpeciesPair getSpeciesPair(Implementation implementation)

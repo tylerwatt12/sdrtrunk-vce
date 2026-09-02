@@ -29,6 +29,7 @@ import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -48,7 +49,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
     private static final float SAMPLES_PER_MILLISECOND = 2_048.0f;
     private static final int BENCHMARK_BATCH_SIZE = 1;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.00002f;
     private static final float RELATIVE_TOLERANCE = 0.00002f;
     private static final Implementation[] CANDIDATES = {
@@ -75,8 +76,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
         short[] residualQ = createUnsigned12BitFixture(SampleBufferIterator.Q_OVERLAP, "quadrature-residual");
         List<InterleavedComplexSamples> expected = collect(createIterator(Implementation.SCALAR, samples.clone(),
             residualI.clone(), residualQ.clone()));
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = new ArrayList<>();
 
         for(Implementation implementation: CANDIDATES)
         {
@@ -85,26 +85,33 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
                 continue;
             }
 
+            candidates.add(implementation);
+
             List<InterleavedComplexSamples> actual = collect(createIterator(implementation, samples.clone(),
                 residualI.clone(), residualQ.clone()));
             requireEquivalent(implementation, expected, actual);
 
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new IteratorOperation(implementation, samples, residualI, residualQ));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new IteratorOperation(implementation, samples, residualI, residualQ)).operationsPerSecond();
-            mLog.info("UNPACKED INTERLEAVED SAMPLE ITERATOR - {}: {} buffers/second", implementation,
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, samples, residualI, residualQ, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, samples, residualI, residualQ, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("UNPACKED INTERLEAVED SAMPLE ITERATOR - {}: {} median buffers/second", candidates.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("UNPACKED INTERLEAVED SAMPLE ITERATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, short[] samples, short[] residualI,
+                                  short[] residualQ, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new IteratorOperation(implementation, samples, residualI, residualQ)).operationsPerSecond();
     }
 
     private static short[] createUnsigned12BitFixture(int size, String fixtureName)

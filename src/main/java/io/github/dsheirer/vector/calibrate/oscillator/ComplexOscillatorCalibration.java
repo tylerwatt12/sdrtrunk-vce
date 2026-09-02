@@ -26,9 +26,11 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
+import java.util.List;
 import java.util.function.LongSupplier;
 import jdk.incubator.vector.FloatVector;
 
@@ -50,7 +52,7 @@ public class ComplexOscillatorCalibration extends Calibration
     };
     private static final int BENCHMARK_BATCH_SIZE = 2;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.001f;
     private static final float RELATIVE_TOLERANCE = 0.001f;
     private static final Implementation[] CANDIDATES = {
@@ -71,10 +73,9 @@ public class ComplexOscillatorCalibration extends Calibration
     {
         float[][] expectedInterleaved = generateInterleaved(createOscillator(Implementation.SCALAR));
         ComplexSamples[] expectedDeinterleaved = generateDeinterleaved(createOscillator(Implementation.SCALAR));
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = List.of(CANDIDATES);
 
-        for(Implementation implementation: CANDIDATES)
+        for(Implementation implementation: candidates)
         {
             float[][] actualInterleaved = generateInterleaved(createOscillator(implementation));
             ComplexSamples[] actualDeinterleaved = generateDeinterleaved(createOscillator(implementation));
@@ -91,21 +92,26 @@ public class ComplexOscillatorCalibration extends Calibration
                     RELATIVE_TOLERANCE);
             }
 
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new OscillatorOperation(createOscillator(implementation)));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new OscillatorOperation(createOscillator(implementation))).operationsPerSecond();
-            mLog.info("COMPLEX OSCILLATOR - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("COMPLEX OSCILLATOR - {}: {} median buffers/second", candidates.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("COMPLEX OSCILLATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new OscillatorOperation(createOscillator(implementation))).operationsPerSecond();
     }
 
     private static IComplexOscillator createOscillator(Implementation implementation)

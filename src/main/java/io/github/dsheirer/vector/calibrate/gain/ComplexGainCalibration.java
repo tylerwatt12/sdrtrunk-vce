@@ -26,9 +26,11 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
+import java.util.List;
 import java.util.function.LongSupplier;
 
 /**
@@ -38,10 +40,12 @@ public class ComplexGainCalibration extends Calibration
 {
     private static final int BUFFER_SIZE = 2048;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final int BENCHMARK_BATCH_SIZE = 16;
     private static final float GAIN = 0.99f;
     private static final float INVERSE_GAIN = 1.0f / GAIN;
+    private static final List<Implementation> CANDIDATES = List.of(Implementation.SCALAR,
+        Implementation.VECTOR_SIMD_PREFERRED);
 
     /**
      * Constructs an instance
@@ -57,22 +61,21 @@ public class ComplexGainCalibration extends Calibration
         float[] q = getFloatSamples(BUFFER_SIZE, "quadrature");
         verifyImplementations(i, q);
 
-        testScalar(i, q, WARMUP_DURATION);
-        testVector(i, q, WARMUP_DURATION);
-        double scalarScore = testScalar(i, q, TEST_DURATION);
-        double vectorScore = testVector(i, q, TEST_DURATION);
-        mLog.info("COMPLEX GAIN - SCALAR: {} buffers/second", DECIMAL_FORMAT.format(scalarScore));
-        mLog.info("COMPLEX GAIN - VECTOR: {} buffers/second", DECIMAL_FORMAT.format(vectorScore));
-
-        if(scalarScore > vectorScore)
+        for(Implementation implementation: CANDIDATES)
         {
-            setImplementation(Implementation.SCALAR);
-        }
-        else
-        {
-            setImplementation(Implementation.VECTOR_SIMD_PREFERRED);
+            measure(implementation, i, q, WARMUP_DURATION);
         }
 
+        double[] scores = CalibrationSelector.alternatingMedians(CANDIDATES,
+            implementation -> measure(implementation, i, q, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < CANDIDATES.size(); x++)
+        {
+            mLog.info("COMPLEX GAIN - {}: {} median buffers/second", CANDIDATES.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        setImplementation(CANDIDATES.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("COMPLEX GAIN - SET IMPLEMENTATION TO:" + getImplementation());
     }
 
@@ -91,14 +94,11 @@ public class ComplexGainCalibration extends Calibration
         CalibrationBenchmark.requireExact("Vector complex gain Q", expectedQ, actualQ);
     }
 
-    private double testScalar(float[] i, float[] q, Duration duration)
+    private double measure(Implementation implementation, float[] i, float[] q, Duration duration)
     {
-        return test(new ScalarComplexGain(GAIN), new ScalarComplexGain(INVERSE_GAIN), i, q, duration);
-    }
-
-    private double testVector(float[] i, float[] q, Duration duration)
-    {
-        return test(new VectorComplexGain(GAIN), new VectorComplexGain(INVERSE_GAIN), i, q, duration);
+        return implementation == Implementation.VECTOR_SIMD_PREFERRED ?
+            test(new VectorComplexGain(GAIN), new VectorComplexGain(INVERSE_GAIN), i, q, duration) :
+            test(new ScalarComplexGain(GAIN), new ScalarComplexGain(INVERSE_GAIN), i, q, duration);
     }
 
     private double test(ComplexGain forward, ComplexGain reverse, float[] i, float[] q, Duration duration)

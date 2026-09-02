@@ -34,6 +34,7 @@ class VectorComplexOscillatorTest
     };
     private static final float TOLERANCE = 0.001f;
     private static final double PHASE_TOLERANCE = 0.002d;
+    private static final double MAGNITUDE_TOLERANCE = 0.000_1d;
 
     @Test
     void interleavedGenerationMatchesScalarPhaseAndContinuity()
@@ -93,6 +94,38 @@ class VectorComplexOscillatorTest
         {
             assertEquivalent(scalar.generateComplexSamples(bufferSize, 1_000L),
                 vector.generateComplexSamples(bufferSize, 1_000L));
+        }
+    }
+
+    @Test
+    void periodicGainCorrectionKeepsLongInterleavedStreamOnUnitCircle()
+    {
+        VectorComplexOscillator oscillator = new VectorComplexOscillator(FREQUENCY, SAMPLE_RATE);
+
+        for(int buffer = 0; buffer < 250; buffer++)
+        {
+            float[] samples = oscillator.generate((VECTOR_LENGTH * 19) + 3);
+
+            for(int x = 0; x < samples.length; x += 2)
+            {
+                assertUnitMagnitude(samples[x], samples[x + 1]);
+            }
+        }
+    }
+
+    @Test
+    void periodicGainCorrectionKeepsLongDeinterleavedStreamOnUnitCircle()
+    {
+        VectorComplexOscillator oscillator = new VectorComplexOscillator(FREQUENCY, SAMPLE_RATE);
+
+        for(int buffer = 0; buffer < 250; buffer++)
+        {
+            ComplexSamples samples = oscillator.generateComplexSamples((VECTOR_LENGTH * 19) + 3, buffer);
+
+            for(int x = 0; x < samples.i().length; x++)
+            {
+                assertUnitMagnitude(samples.i()[x], samples.q()[x]);
+            }
         }
     }
 
@@ -174,6 +207,12 @@ class VectorComplexOscillatorTest
         double dotProduct = (previousInphase * inphase) + (previousQuadrature * quadrature);
         double crossProduct = (previousInphase * quadrature) - (previousQuadrature * inphase);
         return Math.atan2(crossProduct, dotProduct);
+    }
+
+    private static void assertUnitMagnitude(float inphase, float quadrature)
+    {
+        double magnitude = Math.hypot(inphase, quadrature);
+        assertEquals(1.0d, magnitude, MAGNITUDE_TOLERANCE);
     }
 
     private static void await(CountDownLatch latch)

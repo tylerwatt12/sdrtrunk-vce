@@ -20,10 +20,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import io.github.dsheirer.vector.calibrate.Implementation;
+import java.lang.reflect.Modifier;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Random;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.ShortVector;
+import jdk.incubator.vector.VectorSpecies;
 import org.junit.jupiter.api.Test;
 
 class RspSampleConverterTest
@@ -38,6 +41,14 @@ class RspSampleConverterTest
         Implementation.VECTOR_SIMD_512,
         Implementation.VECTOR_SIMD_PREFERRED
     };
+
+    @Test
+    void converterDoesNotRetainRuntimeVectorSpecies()
+    {
+        assertFalse(List.of(VectorRspSampleConverter.class.getDeclaredFields()).stream().anyMatch(field ->
+            !Modifier.isStatic(field.getModifiers()) && VectorSpecies.class.isAssignableFrom(field.getType())),
+            "A runtime VectorSpecies field prevents reliable SIMD intrinsic lowering in the converter hot loop");
+    }
 
     @Test
     void preferredSpeciesUsesTheWidestSupportedCommonBitWidth()

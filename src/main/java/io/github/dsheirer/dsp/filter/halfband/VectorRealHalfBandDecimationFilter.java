@@ -36,8 +36,8 @@ import jdk.incubator.vector.VectorSpecies;
  */
 abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilter
 {
-    private final VectorSpecies<Float> mSpecies;
-    private final FloatVector[] mCoefficientVectors;
+    private final int mVectorBitSize;
+    private final float[] mCoefficients;
     private final int mBufferOverlap;
     private final int mTailPadding;
     private float[] mBuffer;
@@ -69,17 +69,11 @@ abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilt
                 "(length = [x * 4 + 3])");
         }
 
-        mSpecies = species;
-        VectorUtilities.checkSpecies(mSpecies);
-        int laneCount = mSpecies.length();
+        VectorUtilities.checkSpecies(species);
+        mVectorBitSize = requireSupportedVectorBitSize(species);
+        int laneCount = species.length();
         int paddedCoefficientCount = Math.ceilDiv(coefficients.length, laneCount) * laneCount;
-        float[] paddedCoefficients = Arrays.copyOf(coefficients, paddedCoefficientCount);
-        mCoefficientVectors = new FloatVector[paddedCoefficientCount / laneCount];
-
-        for(int x = 0; x < mCoefficientVectors.length; x++)
-        {
-            mCoefficientVectors[x] = FloatVector.fromArray(mSpecies, paddedCoefficients, x * laneCount);
-        }
+        mCoefficients = Arrays.copyOf(coefficients, paddedCoefficientCount);
 
         mBufferOverlap = coefficients.length - 1;
         mTailPadding = paddedCoefficientCount - coefficients.length;
@@ -95,20 +89,14 @@ abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilt
 
         prepareBuffer(samples);
         float[] filtered = new float[samples.length / 2];
-        int laneCount = mSpecies.length();
 
-        for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
+        switch(mVectorBitSize)
         {
-            FloatVector accumulator = FloatVector.zero(mSpecies);
-
-            for(int vectorIndex = 0; vectorIndex < mCoefficientVectors.length; vectorIndex++)
-            {
-                FloatVector buffer = FloatVector.fromArray(mSpecies, mBuffer,
-                    bufferPointer + vectorIndex * laneCount);
-                accumulator = mCoefficientVectors[vectorIndex].fma(buffer, accumulator);
-            }
-
-            filtered[bufferPointer / 2] = accumulator.reduceLanes(VectorOperators.ADD);
+            case 64 -> filter64(mCoefficients, mBuffer, filtered);
+            case 128 -> filter128(mCoefficients, mBuffer, filtered);
+            case 256 -> filter256(mCoefficients, mBuffer, filtered);
+            case 512 -> filter512(mCoefficients, mBuffer, filtered);
+            default -> throw new IllegalStateException("Unsupported half-band vector width: " + mVectorBitSize);
         }
 
         return filtered;
@@ -136,5 +124,93 @@ abstract class VectorRealHalfBandDecimationFilter implements IRealDecimationFilt
         }
 
         System.arraycopy(samples, 0, mBuffer, mBufferOverlap, samples.length);
+    }
+
+    /** See {@link io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter} for the constant-species requirement. */
+    private static void filter64(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
+        {
+            int bufferPointer = outputPointer * 2;
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_64);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_64.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_64, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_64, samples, bufferPointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter128(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
+        {
+            int bufferPointer = outputPointer * 2;
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_128);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_128.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_128, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_128, samples, bufferPointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter256(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
+        {
+            int bufferPointer = outputPointer * 2;
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_256);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_256.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_256, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_256, samples, bufferPointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter512(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int outputPointer = 0; outputPointer < filtered.length; outputPointer++)
+        {
+            int bufferPointer = outputPointer * 2;
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_512);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_512.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_512, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_512, samples, bufferPointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[outputPointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static int requireSupportedVectorBitSize(VectorSpecies<Float> species)
+    {
+        int vectorBitSize = species.vectorBitSize();
+
+        return switch(vectorBitSize)
+        {
+            case 64, 128, 256, 512 -> vectorBitSize;
+            default -> throw new IllegalArgumentException("Unsupported half-band vector width: " + vectorBitSize);
+        };
     }
 }

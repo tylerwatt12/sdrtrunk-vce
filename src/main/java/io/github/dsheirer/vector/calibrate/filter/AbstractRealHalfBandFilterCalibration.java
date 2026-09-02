@@ -25,6 +25,7 @@ import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -46,7 +47,7 @@ abstract class AbstractRealHalfBandFilterCalibration extends Calibration
     private static final int BUFFER_SIZE = 2048;
     private static final int BENCHMARK_BATCH_SIZE = 4;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.000_02f;
     private static final float RELATIVE_TOLERANCE = 0.000_02f;
     private final int mTapCount;
@@ -78,32 +79,27 @@ abstract class AbstractRealHalfBandFilterCalibration extends Calibration
 
         for(Candidate candidate: candidates)
         {
-            CalibrationBenchmark.Result warmup = CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new FilterOperation(createFilter(candidate.implementation(), coefficients.clone()), fixtures));
-            mLog.info("{} WARMUP - {}: {} buffers/second", mLabel, candidate.label(),
-                DECIMAL_FORMAT.format(warmup.operationsPerSecond()));
+            measure(candidate, coefficients, fixtures, WARMUP_DURATION);
         }
 
-        Candidate best = candidates.get(0);
-        double bestScore = 0.0d;
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            candidate -> measure(candidate, coefficients, fixtures, TEST_TRIAL_DURATION));
 
-        for(Candidate candidate: candidates)
+        for(int x = 0; x < candidates.size(); x++)
         {
-            CalibrationBenchmark.Result measurement = CalibrationBenchmark.measure(TEST_DURATION,
-                BENCHMARK_BATCH_SIZE,
-                new FilterOperation(createFilter(candidate.implementation(), coefficients.clone()), fixtures));
-            double score = measurement.operationsPerSecond();
-            mLog.info("{} - {}: {} buffers/second", mLabel, candidate.label(), DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                best = candidate;
-                bestScore = score;
-            }
+            mLog.info("{} - {}: {} median buffers/second", mLabel, candidates.get(x).label(),
+                DECIMAL_FORMAT.format(scores[x]));
         }
 
-        setImplementation(best.implementation());
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)).implementation());
         mLog.info("{} - SET OPTIMAL IMPLEMENTATION TO: {}", mLabel, getImplementation());
+    }
+
+    private double measure(Candidate candidate, float[] coefficients, List<Fixture> fixtures, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new FilterOperation(createFilter(candidate.implementation(), coefficients.clone()), fixtures))
+            .operationsPerSecond();
     }
 
     /**

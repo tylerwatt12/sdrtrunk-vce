@@ -26,9 +26,11 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
+import java.util.List;
 import java.util.function.LongSupplier;
 
 /**
@@ -41,7 +43,7 @@ public class ComplexMixerCalibration extends Calibration
     private static final int BUFFER_SIZE = 2048;
     private static final int BENCHMARK_BATCH_SIZE = 2;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.000001f;
     private static final float RELATIVE_TOLERANCE = 0.000001f;
     private static final Implementation[] CANDIDATES = {
@@ -69,10 +71,9 @@ public class ComplexMixerCalibration extends Calibration
             getFloatSamples(BUFFER_SIZE, "quadrature-buffer-b")
         };
         ComplexSamples[] expected = mixSequence(createMixer(Implementation.SCALAR), i, q);
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = List.of(CANDIDATES);
 
-        for(Implementation implementation: CANDIDATES)
+        for(Implementation implementation: candidates)
         {
             ComplexSamples[] actual = mixSequence(createMixer(implementation), i, q);
 
@@ -84,21 +85,26 @@ public class ComplexMixerCalibration extends Calibration
                     actual[x].q(), ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
             }
 
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new MixerOperation(createMixer(implementation), i, q));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new MixerOperation(createMixer(implementation), i, q)).operationsPerSecond();
-            mLog.info("COMPLEX MIXER - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, i, q, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, i, q, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("COMPLEX MIXER - {}: {} median buffers/second", candidates.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("COMPLEX MIXER - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, float[][] i, float[][] q, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new MixerOperation(createMixer(implementation), i, q)).operationsPerSecond();
     }
 
     private static ComplexMixer createMixer(Implementation implementation)

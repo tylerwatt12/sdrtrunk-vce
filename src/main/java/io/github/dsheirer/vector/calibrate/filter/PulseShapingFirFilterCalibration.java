@@ -24,6 +24,7 @@ import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -43,7 +44,7 @@ import jdk.incubator.vector.FloatVector;
 public class PulseShapingFirFilterCalibration extends Calibration
 {
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final int BENCHMARK_BATCH_SIZE = 4;
     private static final int[] BUFFER_LENGTHS = {256, 1024, 2048};
     private static final float ABSOLUTE_TOLERANCE = 0.000_01f;
@@ -66,29 +67,27 @@ public class PulseShapingFirFilterCalibration extends Calibration
 
         for(Candidate candidate: candidates)
         {
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new PulseShapingOperation(candidate.implementation(), profiles, buffers));
+            measure(candidate, profiles, buffers, WARMUP_DURATION);
         }
 
-        Candidate best = candidates.get(0);
-        double bestScore = 0.0d;
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            candidate -> measure(candidate, profiles, buffers, TEST_TRIAL_DURATION));
 
-        for(Candidate candidate: candidates)
+        for(int x = 0; x < candidates.size(); x++)
         {
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new PulseShapingOperation(candidate.implementation(), profiles, buffers)).operationsPerSecond();
-            mLog.info("PULSE-SHAPING FIR - {}: {} buffers/second", candidate.label(),
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                best = candidate;
-                bestScore = score;
-            }
+            mLog.info("PULSE-SHAPING FIR - {}: {} median buffers/second", candidates.get(x).label(),
+                DECIMAL_FORMAT.format(scores[x]));
         }
 
-        setImplementation(best.implementation());
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)).implementation());
         mLog.info("PULSE-SHAPING FIR - SET OPTIMAL IMPLEMENTATION TO: " + getImplementation());
+    }
+
+    private static double measure(Candidate candidate, List<FilterProfile> profiles, float[][] buffers,
+                                  Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new PulseShapingOperation(candidate.implementation(), profiles, buffers)).operationsPerSecond();
     }
 
     /** Production-shaped coefficient profiles spanning the decoder configurations that consume this result. */

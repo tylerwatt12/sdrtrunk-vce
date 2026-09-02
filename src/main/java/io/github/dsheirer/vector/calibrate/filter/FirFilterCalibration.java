@@ -32,9 +32,12 @@ import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.LongSupplier;
 import jdk.incubator.vector.FloatVector;
 
@@ -47,7 +50,7 @@ public class FirFilterCalibration extends Calibration
     private static final int[] TAP_COUNTS = {31, 63};
     private static final int BENCHMARK_BATCH_SIZE = 1;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.00002f;
     private static final float RELATIVE_TOLERANCE = 0.0002f;
     private static final Implementation[] CANDIDATES = {
@@ -80,8 +83,7 @@ public class FirFilterCalibration extends Calibration
         }
 
         float[][][] expected = filterSequences(Implementation.SCALAR, coefficients, samples);
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = new ArrayList<>();
 
         for(Implementation implementation: CANDIDATES)
         {
@@ -89,6 +91,8 @@ public class FirFilterCalibration extends Calibration
             {
                 continue;
             }
+
+            candidates.add(implementation);
 
             float[][][] actual = filterSequences(implementation, coefficients, samples);
 
@@ -102,21 +106,27 @@ public class FirFilterCalibration extends Calibration
                 }
             }
 
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new FilterOperation(implementation, coefficients, samples));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new FilterOperation(implementation, coefficients, samples)).operationsPerSecond();
-            mLog.info("FIR FILTER - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, coefficients, samples, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, coefficients, samples, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("FIR FILTER - {}: {} median buffers/second", candidates.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("FIR FILTER - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, float[][] coefficients, float[][][] samples,
+                                  Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new FilterOperation(implementation, coefficients, samples)).operationsPerSecond();
     }
 
     private float[][] createCoefficientFixtures() throws CalibrationException

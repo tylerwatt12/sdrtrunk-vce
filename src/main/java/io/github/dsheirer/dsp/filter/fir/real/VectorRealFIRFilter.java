@@ -25,8 +25,8 @@ import jdk.incubator.vector.VectorSpecies;
  */
 public abstract class VectorRealFIRFilter implements IRealFilter
 {
-    private final VectorSpecies<Float> mSpecies;
-    private final FloatVector[] mCoefficientVectors;
+    private final int mVectorBitSize;
+    private final float[] mCoefficients;
     private final int mHistoryLength;
     private final int mWorkspacePadding;
     private final float[] mHistory;
@@ -46,7 +46,7 @@ public abstract class VectorRealFIRFilter implements IRealFilter
         }
 
         VectorUtilities.checkSpecies(species);
-        mSpecies = species;
+        mVectorBitSize = requireSupportedVectorBitSize(species);
         mHistoryLength = coefficients.length - 1;
         int paddedCoefficientLength = species.loopBound(coefficients.length);
 
@@ -63,13 +63,7 @@ public abstract class VectorRealFIRFilter implements IRealFilter
             reversedPaddedCoefficients[x] = coefficients[coefficients.length - 1 - x];
         }
 
-        mCoefficientVectors = new FloatVector[paddedCoefficientLength / species.length()];
-
-        for(int x = 0; x < mCoefficientVectors.length; x++)
-        {
-            mCoefficientVectors[x] = FloatVector.fromArray(species, reversedPaddedCoefficients,
-                x * species.length());
-        }
+        mCoefficients = reversedPaddedCoefficients;
 
         mHistory = new float[mHistoryLength];
         mWorkspace = new float[mHistoryLength + mWorkspacePadding];
@@ -96,18 +90,13 @@ public abstract class VectorRealFIRFilter implements IRealFilter
 
         float[] filtered = new float[samples.length];
 
-        for(int samplePointer = 0; samplePointer < samples.length; samplePointer++)
+        switch(mVectorBitSize)
         {
-            FloatVector accumulator = FloatVector.zero(mSpecies);
-
-            for(int coefficientVector = 0; coefficientVector < mCoefficientVectors.length; coefficientVector++)
-            {
-                FloatVector sampleVector = FloatVector.fromArray(mSpecies, mWorkspace,
-                    samplePointer + coefficientVector * mSpecies.length());
-                accumulator = mCoefficientVectors[coefficientVector].fma(sampleVector, accumulator);
-            }
-
-            filtered[samplePointer] = accumulator.reduceLanes(VectorOperators.ADD);
+            case 64 -> filter64(mCoefficients, mWorkspace, filtered);
+            case 128 -> filter128(mCoefficients, mWorkspace, filtered);
+            case 256 -> filter256(mCoefficients, mWorkspace, filtered);
+            case 512 -> filter512(mCoefficients, mWorkspace, filtered);
+            default -> throw new IllegalStateException("Unsupported FIR vector width: " + mVectorBitSize);
         }
 
         if(mHistoryLength > 0)
@@ -117,5 +106,94 @@ public abstract class VectorRealFIRFilter implements IRealFilter
         }
 
         return filtered;
+    }
+
+    /**
+     * Vector API species must be compile-time constants at each hot call site.  Passing a species through an instance
+     * field prevents reliable intrinsic lowering on some JDK/CPU combinations and causes every temporary vector in
+     * the inner loop to be allocated on the heap.  These width-specific kernels keep the shared streaming state while
+     * retaining constant species at the vector operations.
+     */
+    private static void filter64(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int samplePointer = 0; samplePointer < filtered.length; samplePointer++)
+        {
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_64);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_64.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_64, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_64, samples, samplePointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[samplePointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter128(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int samplePointer = 0; samplePointer < filtered.length; samplePointer++)
+        {
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_128);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_128.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_128, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_128, samples, samplePointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[samplePointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter256(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int samplePointer = 0; samplePointer < filtered.length; samplePointer++)
+        {
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_256);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_256.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_256, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_256, samples, samplePointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[samplePointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static void filter512(float[] coefficients, float[] samples, float[] filtered)
+    {
+        for(int samplePointer = 0; samplePointer < filtered.length; samplePointer++)
+        {
+            FloatVector accumulator = FloatVector.zero(FloatVector.SPECIES_512);
+
+            for(int coefficientPointer = 0; coefficientPointer < coefficients.length;
+                coefficientPointer += FloatVector.SPECIES_512.length())
+            {
+                accumulator = FloatVector.fromArray(FloatVector.SPECIES_512, coefficients, coefficientPointer).fma(
+                    FloatVector.fromArray(FloatVector.SPECIES_512, samples, samplePointer + coefficientPointer),
+                    accumulator);
+            }
+
+            filtered[samplePointer] = accumulator.reduceLanes(VectorOperators.ADD);
+        }
+    }
+
+    private static int requireSupportedVectorBitSize(VectorSpecies<Float> species)
+    {
+        int vectorBitSize = species.vectorBitSize();
+
+        return switch(vectorBitSize)
+        {
+            case 64, 128, 256, 512 -> vectorBitSize;
+            default -> throw new IllegalArgumentException("Unsupported FIR vector width: " + vectorBitSize);
+        };
     }
 }

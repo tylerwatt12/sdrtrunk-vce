@@ -16,6 +16,7 @@ import io.github.dsheirer.dsp.fm.IDemodulator;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -32,7 +33,7 @@ public class AmplitudeDemodulatorCalibration extends Calibration
     private static final int BUFFER_SIZE = 2048;
     private static final int BATCH_SIZE = 4;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final float ABSOLUTE_TOLERANCE = 0.000001f;
     private static final float RELATIVE_TOLERANCE = 0.000001f;
     public AmplitudeDemodulatorCalibration()
@@ -46,32 +47,35 @@ public class AmplitudeDemodulatorCalibration extends Calibration
         float[] i = getFloatSamples(BUFFER_SIZE, "inphase");
         float[] q = getFloatSamples(BUFFER_SIZE, "quadrature");
         float[] expected = AmplitudeDemodulatorFactory.getDemodulator(Implementation.SCALAR).demodulate(i, q);
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = getCandidates();
 
-        for(Implementation implementation: getCandidates())
+        for(Implementation implementation: candidates)
         {
             IDemodulator demodulator = AmplitudeDemodulatorFactory.getDemodulator(implementation);
             float[] actual = demodulator.demodulate(i, q);
             CalibrationBenchmark.requireEquivalent(implementation.name(), expected, actual, ABSOLUTE_TOLERANCE,
                 RELATIVE_TOLERANCE);
-
-            DemodulatorOperation operation = new DemodulatorOperation(demodulator, i, q);
-            CalibrationBenchmark.measure(WARMUP_DURATION, BATCH_SIZE, operation);
-            CalibrationBenchmark.Result result = CalibrationBenchmark.measure(TEST_DURATION, BATCH_SIZE, operation);
-            double score = result.operationsPerSecond();
-            mLog.info("AM DEMODULATOR - {}: {} operations/second", implementation,
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, i, q, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] medianScores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, i, q, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("AM DEMODULATOR - {}: {} median operations/second", candidates.get(x),
+                DECIMAL_FORMAT.format(medianScores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(medianScores)));
         mLog.info("AM DEMODULATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, float[] i, float[] q, Duration duration)
+    {
+        IDemodulator demodulator = AmplitudeDemodulatorFactory.getDemodulator(implementation);
+        return CalibrationBenchmark.measure(duration, BATCH_SIZE, new DemodulatorOperation(demodulator, i, q))
+            .operationsPerSecond();
     }
 
     /** Benchmarks each distinct native shape without spending calibration time on wider emulated vectors. */

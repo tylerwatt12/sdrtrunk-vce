@@ -16,10 +16,12 @@ import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelizerFilterFacto
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.function.LongSupplier;
 import jdk.incubator.vector.FloatVector;
 
@@ -30,7 +32,7 @@ public class PolyphaseChannelizerFilterCalibration extends Calibration
 {
     private static final int TAPS_PER_CHANNEL = 9;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final int BENCHMARK_BATCH_SIZE = 4;
 
     //Representative 1.0, 1.25, 2.4, 3.2, and 10 MHz channelizer sizes plus the minimum supported size.  Counts 12
@@ -59,6 +61,7 @@ public class PolyphaseChannelizerFilterCalibration extends Calibration
     public void calibrate() throws CalibrationException
     {
         Implementation[] candidates = getSupportedImplementations();
+        List<Implementation> candidateList = List.of(candidates);
 
         for(Implementation candidate: candidates)
         {
@@ -70,23 +73,16 @@ public class PolyphaseChannelizerFilterCalibration extends Calibration
             test(candidate, WARMUP_DURATION);
         }
 
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = -1.0;
+        double[] scores = CalibrationSelector.alternatingMedians(candidateList,
+            candidate -> test(candidate, TEST_TRIAL_DURATION));
 
-        for(Implementation candidate: candidates)
+        for(int x = 0; x < candidateList.size(); x++)
         {
-            double score = test(candidate, TEST_DURATION);
-            mLog.info("POLYPHASE CHANNELIZER FILTER - {}: {} representative shape passes/second", candidate,
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = candidate;
-            }
+            mLog.info("POLYPHASE CHANNELIZER FILTER - {}: {} median representative shape passes/second",
+                candidateList.get(x), DECIMAL_FORMAT.format(scores[x]));
         }
 
-        setImplementation(bestImplementation);
+        setImplementation(candidateList.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("POLYPHASE CHANNELIZER FILTER - SET OPTIMAL IMPLEMENTATION TO: " + getImplementation());
     }
 

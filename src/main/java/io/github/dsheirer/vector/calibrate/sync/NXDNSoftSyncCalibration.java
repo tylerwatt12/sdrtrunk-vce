@@ -29,6 +29,7 @@ import io.github.dsheirer.module.decode.nxdn.layer1.sync.NXDNSyncDetector;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.time.Duration;
@@ -49,7 +50,7 @@ public class NXDNSoftSyncCalibration extends Calibration
     private static final float ABSOLUTE_TOLERANCE = 1.0e-4f;
     private static final float RELATIVE_TOLERANCE = 2.0e-5f;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
 
     /**
      * Constructs an instance.
@@ -64,31 +65,33 @@ public class NXDNSoftSyncCalibration extends Calibration
     {
         float[] fixture = createFixture();
         SyncResult expected = evaluate(createDetector(Implementation.SCALAR), fixture);
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = getCandidates();
 
-        for(Implementation implementation: getCandidates())
+        for(Implementation implementation: candidates)
         {
             validateAnchors(implementation);
             SyncResult actual = evaluate(createDetector(implementation), fixture);
             requireEquivalent(implementation.toString(), expected, actual);
-
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new DetectorOperation(createDetector(implementation), fixture));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new DetectorOperation(createDetector(implementation), fixture)).operationsPerSecond();
-            mLog.info("NXDN SOFT SYNC DETECTOR - {}: {} fixture passes/second", implementation,
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, fixture, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] medianScores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, fixture, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("NXDN SOFT SYNC DETECTOR - {}: {} median fixture passes/second", candidates.get(x),
+                DECIMAL_FORMAT.format(medianScores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(medianScores)));
         mLog.info("NXDN SOFT SYNC DETECTOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, float[] fixture, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new DetectorOperation(createDetector(implementation), fixture)).operationsPerSecond();
     }
 
     private float[] createFixture()

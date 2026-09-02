@@ -7,19 +7,23 @@ package io.github.dsheirer.dsp.filter;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
+import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter;
 import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter128Bit;
 import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter256Bit;
 import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter512Bit;
 import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter64Bit;
 import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilterDefaultBit;
 import io.github.dsheirer.vector.calibrate.Implementation;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+import jdk.incubator.vector.VectorSpecies;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
@@ -27,6 +31,14 @@ import org.junit.jupiter.api.TestFactory;
 class FirFilterFactoryTest
 {
     private static final float TOLERANCE = 0.000_01f;
+
+    @Test
+    void sharedKernelDoesNotRetainRuntimeVectorSpecies()
+    {
+        assertFalse(List.of(VectorRealFIRFilter.class.getDeclaredFields()).stream().anyMatch(field ->
+            !Modifier.isStatic(field.getModifiers()) && VectorSpecies.class.isAssignableFrom(field.getType())),
+            "A runtime VectorSpecies field prevents reliable SIMD intrinsic lowering in the FIR hot loop");
+    }
 
     @Test
     void mapsEveryCalibrationResultWithoutMutatingCallerCoefficients()

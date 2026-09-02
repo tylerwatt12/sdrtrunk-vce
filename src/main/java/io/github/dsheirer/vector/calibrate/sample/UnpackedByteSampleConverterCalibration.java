@@ -25,10 +25,12 @@ import io.github.dsheirer.buffer.sample.VectorUnpackedSampleConverter;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
+import io.github.dsheirer.vector.calibrate.CalibrationSelector;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.List;
 import java.util.function.LongSupplier;
 
 /**
@@ -41,7 +43,7 @@ public class UnpackedByteSampleConverterCalibration extends Calibration
     private static final int CORRECTNESS_STREAM_BUFFER_COUNT = 8;
     private static final int BENCHMARK_BATCH_SIZE = 1;
     private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
-    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final Duration TEST_TRIAL_DURATION = Duration.ofMillis(200);
     private static final Implementation[] CANDIDATES = {
         Implementation.SCALAR,
         Implementation.VECTOR_SIMD_PREFERRED
@@ -60,27 +62,30 @@ public class UnpackedByteSampleConverterCalibration extends Calibration
     {
         byte[] fixture = createUnsigned12BitFixture();
         verifyImplementations(fixture);
-        Implementation bestImplementation = Implementation.SCALAR;
-        double bestScore = 0.0d;
+        List<Implementation> candidates = List.of(CANDIDATES);
 
-        for(Implementation implementation: CANDIDATES)
+        for(Implementation implementation: candidates)
         {
-            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
-                new ConverterOperation(createConverter(implementation), fixture));
-            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
-                new ConverterOperation(createConverter(implementation), fixture)).operationsPerSecond();
-            mLog.info("UNPACKED BYTE SAMPLE CONVERTER - {}: {} buffers/second", implementation,
-                DECIMAL_FORMAT.format(score));
-
-            if(score > bestScore)
-            {
-                bestScore = score;
-                bestImplementation = implementation;
-            }
+            measure(implementation, fixture, WARMUP_DURATION);
         }
 
-        setImplementation(bestImplementation);
+        double[] scores = CalibrationSelector.alternatingMedians(candidates,
+            implementation -> measure(implementation, fixture, TEST_TRIAL_DURATION));
+
+        for(int x = 0; x < candidates.size(); x++)
+        {
+            mLog.info("UNPACKED BYTE SAMPLE CONVERTER - {}: {} median buffers/second", candidates.get(x),
+                DECIMAL_FORMAT.format(scores[x]));
+        }
+
+        setImplementation(candidates.get(CalibrationSelector.selectFastestReliableCandidate(scores)));
         mLog.info("UNPACKED BYTE SAMPLE CONVERTER - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private static double measure(Implementation implementation, byte[] fixture, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new ConverterOperation(createConverter(implementation), fixture)).operationsPerSecond();
     }
 
     /**
