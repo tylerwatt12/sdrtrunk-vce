@@ -838,9 +838,9 @@ class StatsWebInteractionUiContractTest
     @Test
     void providesOneResponsiveScannerShellWithoutAdministratorAudioControls() throws Exception
     {
-        String html = Files.readString(INDEX_HTML);
+        String html = readText(INDEX_HTML);
         String source = source();
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
         String scanner = function(source, "function renderScanner()");
         String scannerCall = function(source, "function renderScannerCall(host, state, site)");
         String networkSite = function(source, "function scannerNetworkSiteIdentity(call)");
