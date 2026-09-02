@@ -226,10 +226,16 @@ Other package tasks:
 ./gradlew --no-configuration-cache clean runtimeZipOthers -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
 
-Each cross-platform package command starts from a clean build. If you are collecting every platform package, copy
-the first command's ZIP files outside `build/image` before running the second command, then restore them afterward.
-
 Build output is written under `build/image`.
+
+GitHub Actions is the authoritative multi-platform release path. It tests a commit once, builds Windows separately
+from Linux and macOS, starts the native x86-64 packages in a read-only self-test, verifies the complete finished ZIP
+set, and publishes only those checked files. For a manual **Build and Release** run, choose `practice` to create an
+unpublished rehearsal. Choose `publish-alpha` on the Alpha maintenance branch only after the exact commit has passed
+`Alpha CI gate` and its version-matched release notes have been approved. The bundled HTML is the one approved notes
+document and the exact GitHub release body; its approval checksum makes later wording changes fail closed. Numbered
+Alpha files are uploaded to a draft, downloaded and checked, and then made public. Only after that does the protected
+Alpha updater move to the new release.
 
 ## More Information
 

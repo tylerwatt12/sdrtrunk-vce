@@ -21,6 +21,7 @@ package io.github.dsheirer.gui;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.application.PackageSelfTest;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
@@ -1551,6 +1552,13 @@ public class SDRTrunk implements Listener<TunerEvent>
     public static void main(String[] args)
     {
         System.setProperty("apple.awt.application.name", "sdrtrunk-vce");
+
+        if(PackageSelfTest.isRequested(args))
+        {
+            PackageSelfTest.run(System.out);
+            return;
+        }
+
         PortableDataRootLock dataRootLock = null;
 
         try

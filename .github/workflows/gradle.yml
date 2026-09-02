@@ -1,35 +1,1065 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-# This workflow will build a Java project with Gradle and cache/restore any dependencies to improve the workflow execution time
-# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-gradle
-
-name: Java CI with Gradle
+name: Build and Release
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - release/0.6.2-alpha
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - release/0.6.2-alpha
+  workflow_dispatch:
+    inputs:
+      release_action:
+        description: Choose practice, or publish the approved Alpha from its maintenance branch
+        required: true
+        default: choose-one
+        type: choice
+        options:
+          - choose-one
+          - practice
+          - publish-alpha
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
 
 jobs:
-  build:
+  prepare:
+    name: Prepare exact build identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      line: ${{ steps.identity.outputs.line }}
+      run_tests: ${{ steps.identity.outputs.run_tests }}
+      package: ${{ steps.identity.outputs.package }}
+      publish: ${{ steps.identity.outputs.publish }}
+      resume_alpha: ${{ steps.identity.outputs.resume_alpha }}
+      version: ${{ steps.identity.outputs.version }}
+      track: ${{ steps.identity.outputs.track }}
+      update_build: ${{ steps.identity.outputs.update_build }}
+      include_mac_app: ${{ steps.identity.outputs.include_mac_app }}
+      release_tag: ${{ steps.identity.outputs.release_tag }}
+      release_title: ${{ steps.identity.outputs.release_title }}
+      release_notes: ${{ steps.identity.outputs.release_notes }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Select and validate the build identity
+        id: identity
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RELEASE_ACTION: ${{ inputs.release_action || 'automatic' }}
+          ALPHA_FEED_AUTOMATION: ${{ vars.ALPHA_FEED_AUTOMATION }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          property() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^${key}=//p" "$file" | tail -n 1
+          }
+
+          require_equal() {
+            if [[ "$1" != "$2" ]]; then
+              echo "$3: found '$1', expected '$2'" >&2
+              exit 1
+            fi
+          }
+
+          line=main
+          run_tests=true
+          package=false
+          publish=false
+          resume_alpha=false
+          version=main-dev
+          track=none
+          update_build=0
+          include_mac_app=false
+          release_tag=
+          release_title=
+          release_notes=
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if [[ "$BASE_REF" == "release/0.6.2-alpha" ]]; then
+              line=alpha
+              version=alpha-dev
+              all_changes="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+              if [[ "$all_changes" == .github/update.properties ]]; then
+                run_tests=false
+                echo "This generated updater-only pull request uses the release job's exact package gate."
+              fi
+            fi
+
+            if [[ "$run_tests" == true ]]; then
+              release_changes="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+                .gitattributes .github/workflows/gradle.yml .github/workflows/nightly.yml \
+                build.gradle gradle.properties \
+                scripts/verify_release_archives.py \
+                src/main/java/io/github/dsheirer/application/PackageSelfTest.java \
+                src/main/java/io/github/dsheirer/gui/SDRTrunk.java)"
+              if [[ -n "$release_changes" ]]; then
+                package=true
+                version="0.0.0-release-check-dev-${RUN_ID}"
+                if [[ "$line" == alpha ]]; then
+                  include_mac_app=true
+                fi
+              fi
+            fi
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$RELEASE_ACTION" == choose-one ]]; then
+              echo "Choose 'practice' or 'publish-alpha'. No build was started." >&2
+              exit 1
+            elif [[ "$RELEASE_ACTION" == publish-alpha ]]; then
+              if [[ "$REF" != "refs/heads/release/0.6.2-alpha" ]]; then
+                echo "An Alpha can be published only from release/0.6.2-alpha" >&2
+                exit 1
+              fi
+
+              line=alpha
+              run_tests=false
+              package=true
+              publish=true
+              include_mac_app=true
+              version="$(property gradle.properties projectVersion)"
+              track="$(property gradle.properties updateTrack)"
+              update_build="$(property gradle.properties updateBuild)"
+              release_tag="v${version}"
+              release_notes="src/main/resources/release-notes/${version}.html"
+              notes_metadata="src/main/resources/release-notes/${version}.properties"
+              update_manifest=".github/update.properties"
+
+              [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha-[0-9]+$ ]] || {
+                echo "Invalid Alpha projectVersion: $version" >&2
+                exit 1
+              }
+              [[ "$update_build" =~ ^[1-9][0-9]*$ ]] || {
+                echo "Invalid Alpha updateBuild: $update_build" >&2
+                exit 1
+              }
+              require_equal "$track" "alpha" "Alpha update track is invalid"
+              test -f "$release_notes"
+              test -f "$notes_metadata"
+              require_equal "$(property "$notes_metadata" version)" "$version" "Release-note version does not match"
+              require_equal "$(property "$notes_metadata" status)" "approved" "Release notes are not approved"
+              approved_notes_hash="$(property "$notes_metadata" approved-sha256)"
+              [[ "$approved_notes_hash" =~ ^[0-9a-f]{64}$ ]] || {
+                echo "Approved release-note SHA-256 is missing or invalid" >&2
+                exit 1
+              }
+              require_equal "$(sha256sum "$release_notes" | cut -d ' ' -f 1)" "$approved_notes_hash" \
+                "Release notes changed after approval"
+              release_title="$(property "$notes_metadata" title)"
+              test -n "$release_title"
+              require_equal "$(property "$update_manifest" format)" "2" "Published Alpha update manifest format is invalid"
+              require_equal "$(property "$update_manifest" track)" "alpha" "Published Alpha update track is invalid"
+
+              published_build="$(property "$update_manifest" build)"
+              published_version="$(property "$update_manifest" version)"
+              [[ "$published_build" =~ ^[1-9][0-9]*$ ]] || {
+                echo "Invalid published Alpha update build: $published_build" >&2
+                exit 1
+              }
+              [[ "$published_version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-alpha-([0-9]+)$ ]] || {
+                echo "Invalid published Alpha version: $published_version" >&2
+                exit 1
+              }
+              published_base="${BASH_REMATCH[1]}"
+              published_alpha_number="${BASH_REMATCH[2]}"
+              require_equal "$(git rev-parse HEAD)" "$(git rev-parse origin/release/0.6.2-alpha)" \
+                "The checked-out Alpha is not the maintenance branch tip"
+
+              tag_exists=false
+              if git ls-remote --exit-code --tags origin "refs/tags/${release_tag}" >/dev/null 2>&1; then
+                git fetch --force --no-tags origin \
+                  "+refs/tags/${release_tag}:refs/tags/${release_tag}"
+                tag_exists=true
+                tag_commit="$(git rev-parse "${release_tag}^{commit}")"
+              fi
+
+              candidate_release=missing
+              if gh release view "$release_tag" >/dev/null 2>&1; then
+                if [[ "$(gh release view "$release_tag" --json isDraft --jq .isDraft)" == true ]]; then
+                  candidate_release=draft
+                else
+                  candidate_release=public
+                fi
+              fi
+
+              if [[ "$published_version" == "$version" && "$published_build" == "$update_build" ]]; then
+                require_equal "$(property "$update_manifest" url)" \
+                  "https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/${release_tag}" \
+                  "Completed Alpha update URL does not match"
+                require_equal "$tag_exists" "true" "Completed Alpha tag is missing"
+                require_equal "$candidate_release" "public" "Completed Alpha release is not public"
+                git merge-base --is-ancestor "$tag_commit" "$GITHUB_SHA"
+                package=false
+                publish=false
+                include_mac_app=false
+                echo "$version is already public and its updater is current. Nothing was rebuilt."
+              else
+                require_equal "$ALPHA_FEED_AUTOMATION" "enabled" \
+                  "Alpha feed automation is not enabled for this repository"
+                [[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-alpha-([0-9]+)$ ]]
+                candidate_base="${BASH_REMATCH[1]}"
+                candidate_alpha_number="${BASH_REMATCH[2]}"
+                require_equal "$candidate_base" "$published_base" \
+                  "Alpha version line does not match the published feed"
+                if (( candidate_alpha_number != published_alpha_number + 1 )); then
+                  echo "Alpha number must follow $published_version exactly; found $version" >&2
+                  exit 1
+                fi
+                if (( update_build <= published_build )); then
+                  echo "Alpha update build must be greater than published build $published_build" >&2
+                  exit 1
+                fi
+                require_equal "$(property "$update_manifest" url)" \
+                  "https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/v${published_version}" \
+                  "Published Alpha update URL does not match"
+                require_equal "$(gh release view "v${published_version}" --json isDraft --jq .isDraft)" "false" \
+                  "The prior Alpha release is missing or still a draft"
+
+                if [[ "$tag_exists" == true ]]; then
+                  require_equal "$tag_commit" "$GITHUB_SHA" \
+                    "Existing Alpha tag points to a different commit"
+                fi
+
+                passed_gate="$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
+                  --jq '[.check_runs[] | select(.name == "Alpha CI gate" and .conclusion == "success")] | length')"
+                if [[ "$passed_gate" == 0 ]]; then
+                  echo "Alpha CI gate has not passed for exact commit $GITHUB_SHA." >&2
+                  exit 1
+                fi
+
+                if [[ "$candidate_release" == public ]]; then
+                  require_equal "$tag_exists" "true" "Public Alpha release tag is missing"
+                  package=false
+                  resume_alpha=true
+                  echo "$version is already public. Reusing its release files and resuming the updater only."
+                fi
+              fi
+            elif [[ "$RELEASE_ACTION" == practice ]]; then
+              package=true
+              version="0.0.0-release-check-dev-${RUN_ID}"
+
+              if [[ "$REF" == "refs/heads/release/0.6.2-alpha" ]]; then
+                line=alpha
+                include_mac_app=true
+              elif [[ "$REF" != "refs/heads/main" ]]; then
+                echo "Release checks can run only from main or release/0.6.2-alpha" >&2
+                exit 1
+              fi
+            else
+              echo "Unsupported manual release action: $RELEASE_ACTION" >&2
+              exit 1
+            fi
+          elif [[ "$REF" == "refs/heads/main" ]]; then
+            git fetch --no-tags origin main
+            if [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]]; then
+              package=true
+              publish=true
+              version=nightly
+              track=nightly
+              update_build="$RUN_ID"
+              release_tag=nightly
+              release_title="SDRTrunk VCE Nightly"
+            else
+              run_tests=false
+              echo "A newer main commit already exists. This superseded run will stop here."
+            fi
+          elif [[ "$REF" == "refs/heads/release/0.6.2-alpha" ]]; then
+            line=alpha
+            version=alpha-dev
+          else
+            echo "Unsupported build ref: $REF" >&2
+            exit 1
+          fi
+
+          {
+            echo "line=$line"
+            echo "run_tests=$run_tests"
+            echo "package=$package"
+            echo "publish=$publish"
+            echo "resume_alpha=$resume_alpha"
+            echo "version=$version"
+            echo "track=$track"
+            echo "update_build=$update_build"
+            echo "include_mac_app=$include_mac_app"
+            echo "release_tag=$release_tag"
+            echo "release_title=$release_title"
+            echo "release_notes=$release_notes"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Test the release archive verifier
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+  test:
+    name: Build (${{ matrix.name }})
+    needs: prepare
+    if: ${{ needs.prepare.outputs.run_tests == 'true' }}
     strategy:
       fail-fast: false
-      matrix: 
-        os: [ubuntu-latest, macos-latest, windows-latest]
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            gradle_command: ./gradlew
+          - name: macOS
+            os: macos-latest
+            gradle_command: ./gradlew
+          - name: Windows
+            os: windows-latest
+            gradle_command: .\gradlew.bat
     runs-on: ${{ matrix.os }}
-
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
       - name: Set up JDK 25
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v5
         with:
           java-version: '25'
-          distribution: 'liberica'
-          java-package: 'jdk+fx'
-      - name: Build with Gradle
-        uses: gradle/gradle-build-action@v2
+          distribution: liberica
+          java-package: jdk+fx
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          arguments: clean build
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build and test once
+        run: >-
+          ${{ matrix.gradle_command }} --no-configuration-cache clean build
+          -PprojectVersion=${{ needs.prepare.outputs.version }}
+          -PupdateTrack=${{ needs.prepare.outputs.track }}
+          -PupdateBuild=${{ needs.prepare.outputs.update_build }}
+
+  main_gate:
+    name: Main CI gate
+    needs:
+      - prepare
+      - test
+    if: ${{ always() && needs.prepare.outputs.run_tests == 'true' && needs.prepare.outputs.line == 'main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every main platform build
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = "success"
+
+  alpha_gate:
+    name: Alpha CI gate
+    needs:
+      - prepare
+      - test
+    if: ${{ always() && needs.prepare.outputs.run_tests == 'true' && needs.prepare.outputs.line == 'alpha' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Alpha platform build
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = "success"
+
+  package_windows:
+    name: Package Windows independently
+    needs: prepare
+    if: ${{ needs.prepare.outputs.package == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: liberica
+          java-package: jdk+fx
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build only the Windows packages
+        run: >-
+          ./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win
+          -PprojectVersion=${{ needs.prepare.outputs.version }}
+          -PupdateTrack=${{ needs.prepare.outputs.track }}
+          -PupdateBuild=${{ needs.prepare.outputs.update_build }}
+
+      - name: Save the exact Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: build/image/sdrtrunk-vce-windows-*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+
+  package_others:
+    name: Package Linux and macOS independently
+    needs: prepare
+    if: ${{ needs.prepare.outputs.package == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: liberica
+          java-package: jdk+fx
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build only the Linux and macOS packages
+        run: >-
+          ./gradlew --no-configuration-cache clean runtimeZipOthers
+          -PprojectVersion=${{ needs.prepare.outputs.version }}
+          -PupdateTrack=${{ needs.prepare.outputs.track }}
+          -PupdateBuild=${{ needs.prepare.outputs.update_build }}
+
+      - name: Save the exact Linux and macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-others
+          path: |
+            build/image/sdrtrunk-vce-linux-*.zip
+            build/image/sdrtrunk-vce-osx-*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+
+  package_alpha_mac:
+    name: Package and test the Alpha macOS app
+    needs: prepare
+    if: ${{ needs.prepare.outputs.package == 'true' && needs.prepare.outputs.include_mac_app == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: liberica
+          java-package: jdk+fx
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build only the native Alpha macOS app
+        shell: bash
+        run: >-
+          test "$(uname -m)" = arm64 &&
+          ./gradlew --no-configuration-cache clean macAppZip
+          -PprojectVersion=${{ needs.prepare.outputs.version }}
+          -PupdateTrack=${{ needs.prepare.outputs.track }}
+          -PupdateBuild=${{ needs.prepare.outputs.update_build }}
+
+      - name: Start the packaged Alpha macOS app without creating data
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="build/image/sdrtrunk-vce-macos-app-aarch64-v${{ needs.prepare.outputs.version }}.zip"
+          mkdir smoke
+          ditto -x -k "$archive" smoke
+          launcher="smoke/sdrtrunk-vce.app/Contents/MacOS/sdrtrunk-vce"
+          test -x "$launcher"
+          codesign --verify --deep --strict --verbose=2 smoke/sdrtrunk-vce.app
+          output="$("$launcher" --package-self-test)"
+          echo "$output"
+          grep -F "PACKAGE SELF-TEST PASSED" <<< "$output"
+          test ! -e "smoke/sdrtrunk-vce-data"
+
+      - name: Save the exact Alpha macOS app package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-alpha-mac
+          path: build/image/sdrtrunk-vce-macos-app-aarch64-*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+
+  smoke_unix:
+    name: Start packaged ${{ matrix.name }} application
+    needs:
+      - prepare
+      - package_others
+    if: ${{ needs.prepare.outputs.package == 'true' && needs.package_others.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            os: ubuntu-latest
+            target: linux-x86_64
+          - name: macOS x86-64
+            os: macos-15-intel
+            target: osx-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Download the finished packages
+        uses: actions/download-artifact@v4
+        with:
+          name: release-others
+          path: packages
+
+      - name: Start through the real packaged launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="packages/sdrtrunk-vce-${{ matrix.target }}-v${{ needs.prepare.outputs.version }}.zip"
+          test -f "$archive"
+          mkdir smoke
+          unzip -q "$archive" -d smoke
+          launcher="$(find smoke -type f -path '*/bin/sdrtrunk-vce' -print -quit)"
+          test -n "$launcher"
+          application_root="$(dirname "$(dirname "$launcher")")"
+          test ! -e "$application_root/data"
+          output="$("$launcher" --package-self-test)"
+          echo "$output"
+          grep -F "PACKAGE SELF-TEST PASSED" <<< "$output"
+          test ! -e "$application_root/data"
+
+  smoke_windows:
+    name: Start packaged Windows x86-64 application
+    needs:
+      - prepare
+      - package_windows
+    if: ${{ needs.prepare.outputs.package == 'true' && needs.package_windows.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the finished packages
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: packages
+
+      - name: Start through the real packaged launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = 'packages/sdrtrunk-vce-windows-x86_64-v${{ needs.prepare.outputs.version }}.zip'
+          if (-not (Test-Path $archive)) { throw "Missing package: $archive" }
+          Expand-Archive -Path $archive -DestinationPath smoke
+          $launcher = Get-ChildItem smoke -Recurse -File -Filter sdrtrunk-vce.bat | Select-Object -First 1
+          if ($null -eq $launcher) { throw 'Packaged Windows launcher is missing' }
+          $applicationRoot = Split-Path $launcher.DirectoryName -Parent
+          if (Test-Path (Join-Path $applicationRoot data)) { throw 'Package contains portable data' }
+          $output = & $launcher.FullName --package-self-test 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Write-Host
+          if ($exitCode -ne 0) { throw "Package self-test exited with $exitCode" }
+          if (($output -join "`n") -notmatch 'PACKAGE SELF-TEST PASSED') { throw 'Package self-test did not pass' }
+          if (Test-Path (Join-Path $applicationRoot data)) { throw 'Package self-test created portable data' }
+
+  assemble:
+    name: Verify the complete release file set
+    needs:
+      - prepare
+      - package_windows
+      - package_others
+      - package_alpha_mac
+    if: >-
+      ${{ always() && needs.prepare.outputs.package == 'true' &&
+          needs.package_windows.result == 'success' && needs.package_others.result == 'success' &&
+          (needs.package_alpha_mac.result == 'success' || needs.package_alpha_mac.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Download every independently built package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: build/image
+          merge-multiple: true
+
+      - name: Verify finished archives and create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          arguments=(
+            --directory build/image
+            --version '${{ needs.prepare.outputs.version }}'
+            --track '${{ needs.prepare.outputs.track }}'
+            --build '${{ needs.prepare.outputs.update_build }}'
+            --checksum-file build/image/SHA256SUMS.txt
+          )
+          if [[ '${{ needs.prepare.outputs.include_mac_app }}' == 'true' ]]; then
+            arguments+=(--include-mac-app)
+          fi
+          python3 scripts/verify_release_archives.py "${arguments[@]}"
+
+      - name: Create exact build information
+        shell: bash
+        run: |
+          printf 'channel: %s\nref: %s\ncommit: %s\nupdate-build: %s\nbuilt-at: %s\n' \
+            '${{ needs.prepare.outputs.track }}' \
+            "$GITHUB_REF" \
+            "$GITHUB_SHA" \
+            '${{ needs.prepare.outputs.update_build }}' \
+            "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            > build/image/build_info.txt
+
+      - name: Create the rolling Nightly updater file
+        if: ${{ needs.prepare.outputs.track == 'nightly' }}
+        shell: bash
+        run: |
+          nightly_version="nightly-${{ needs.prepare.outputs.update_build }}-${GITHUB_SHA:0:7}"
+          printf 'format=2\ntrack=nightly\nbuild=%s\nversion=%s\nurl=%s\n' \
+            '${{ needs.prepare.outputs.update_build }}' \
+            "$nightly_version" \
+            'https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly' \
+            > build/image/update.properties
+
+      - name: Save the checked release without recompressing it
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-release-${{ github.sha }}
+          path: build/image
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          overwrite: true
+
+  release_gate:
+    name: Finished package gate
+    needs:
+      - prepare
+      - main_gate
+      - alpha_gate
+      - package_alpha_mac
+      - smoke_unix
+      - smoke_windows
+      - assemble
+    if: ${{ always() && needs.prepare.outputs.package == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require tests, package checks, and native startup checks
+        shell: bash
+        env:
+          LINE: ${{ needs.prepare.outputs.line }}
+          RUN_TESTS: ${{ needs.prepare.outputs.run_tests }}
+          MAIN_GATE: ${{ needs.main_gate.result }}
+          ALPHA_GATE: ${{ needs.alpha_gate.result }}
+          MAC_APP: ${{ needs.package_alpha_mac.result }}
+          INCLUDE_MAC_APP: ${{ needs.prepare.outputs.include_mac_app }}
+          UNIX_SMOKE: ${{ needs.smoke_unix.result }}
+          WINDOWS_SMOKE: ${{ needs.smoke_windows.result }}
+          ASSEMBLE: ${{ needs.assemble.result }}
+        run: |
+          set -euo pipefail
+          test "$ASSEMBLE" = success
+          test "$UNIX_SMOKE" = success
+          test "$WINDOWS_SMOKE" = success
+
+          if [[ "$RUN_TESTS" == true && "$LINE" == main ]]; then
+            test "$MAIN_GATE" = success
+          elif [[ "$RUN_TESTS" == true && "$LINE" == alpha ]]; then
+            test "$ALPHA_GATE" = success
+          fi
+
+          if [[ "$INCLUDE_MAC_APP" == true ]]; then
+            test "$MAC_APP" = success
+          else
+            test "$MAC_APP" = skipped
+          fi
+
+  publish:
+    name: Publish the already tested files
+    needs:
+      - prepare
+      - assemble
+      - release_gate
+    if: >-
+      ${{ always() && needs.prepare.outputs.publish == 'true' &&
+          (needs.release_gate.result == 'success' || needs.prepare.outputs.resume_alpha == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      checks: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download the exact checked release
+        if: ${{ needs.prepare.outputs.resume_alpha != 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: verified-release-${{ github.sha }}
+          path: build/image
+
+      - name: Confirm the source branch has not moved
+        id: source
+        shell: bash
+        env:
+          TRACK: ${{ needs.prepare.outputs.track }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          UPDATE_BUILD: ${{ needs.prepare.outputs.update_build }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          current=true
+
+          if [[ "$TRACK" == nightly ]]; then
+            git fetch --no-tags origin main
+            if [[ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]]; then
+              echo "A newer main commit exists. This older Nightly will not be published."
+              current=false
+            fi
+          else
+            git fetch --no-tags origin release/0.6.2-alpha
+            alpha_tip="$(git rev-parse origin/release/0.6.2-alpha)"
+            if [[ "$alpha_tip" != "$GITHUB_SHA" ]]; then
+              manifest=".github/update.properties"
+              expected_manifest="$(mktemp)"
+              actual_manifest="$(mktemp)"
+              printf '%s\n' \
+                '# Update manifest format. Keep Alpha builds on the Alpha channel.' \
+                'format=2' \
+                'track=alpha' \
+                '# Latest published Alpha build. Increment build for each published Alpha.' \
+                "build=${UPDATE_BUILD}" \
+                "version=${VERSION}" \
+                "url=https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/${TAG}" \
+                > "$expected_manifest"
+              git show "${alpha_tip}:${manifest}" > "$actual_manifest"
+              test "$(git rev-parse "${alpha_tip}^")" = "$GITHUB_SHA"
+              test "$(git diff --name-only "$GITHUB_SHA" "$alpha_tip")" = "$manifest"
+              diff -u "$expected_manifest" "$actual_manifest"
+              echo "The public Alpha and its updater were already completed."
+              current=false
+            fi
+          fi
+
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Reuse and verify an already public Alpha
+        if: >-
+          ${{ needs.prepare.outputs.track == 'alpha' && steps.source.outputs.current == 'true' &&
+              needs.prepare.outputs.resume_alpha == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TRACK: ${{ needs.prepare.outputs.track }}
+          UPDATE_BUILD: ${{ needs.prepare.outputs.update_build }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/image
+          gh release download "$TAG" --dir build/image
+          cp build/image/SHA256SUMS.txt expected-SHA256SUMS.txt
+          (cd build/image && sha256sum -c SHA256SUMS.txt)
+          python3 scripts/verify_release_archives.py \
+            --directory build/image \
+            --version "$VERSION" \
+            --track "$TRACK" \
+            --build "$UPDATE_BUILD" \
+            --include-mac-app \
+            --checksum-file build/image/SHA256SUMS.txt
+          diff -u expected-SHA256SUMS.txt build/image/SHA256SUMS.txt
+          test "$(sed -n 's/^channel: //p' build/image/build_info.txt)" = alpha
+          test "$(sed -n 's/^commit: //p' build/image/build_info.txt)" = "$GITHUB_SHA"
+          test "$(sed -n 's/^update-build: //p' build/image/build_info.txt)" = "$UPDATE_BUILD"
+
+      - name: Refuse an out-of-order Nightly publication
+        if: ${{ needs.prepare.outputs.track == 'nightly' && steps.source.outputs.current == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_manifest="$(mktemp)"
+          if curl --fail --silent --show-error --location \
+            https://github.com/tylerwatt12/sdrtrunk-vce/releases/download/nightly/update.properties \
+            --output "$remote_manifest"
+          then
+            remote_track="$(sed -n 's/^track=//p' "$remote_manifest")"
+            remote_build="$(sed -n 's/^build=//p' "$remote_manifest")"
+            if [[ "$remote_track" == nightly && "$remote_build" =~ ^[0-9]+$ ]] && \
+              (( remote_build > ${{ needs.prepare.outputs.update_build }} ))
+            then
+              echo "Refusing stale Nightly build ${{ needs.prepare.outputs.update_build }}; published build is $remote_build."
+              exit 1
+            fi
+          fi
+
+      - name: Create or resume the numbered Alpha draft
+        id: alpha_draft
+        if: >-
+          ${{ needs.prepare.outputs.track == 'alpha' && steps.source.outputs.current == 'true' &&
+              needs.prepare.outputs.resume_alpha != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+          RELEASE_NOTES: ${{ needs.prepare.outputs.release_notes }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin release/0.6.2-alpha
+          test "$(git rev-parse origin/release/0.6.2-alpha)" = "$GITHUB_SHA"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git fetch --force --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+            test "$(git rev-parse "${TAG}^{commit}")" = "$GITHUB_SHA"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$TAG" "$GITHUB_SHA" -m "$RELEASE_TITLE"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" == true ]]; then
+              gh release edit "$TAG" --draft --prerelease --latest=false \
+                --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES"
+            fi
+          else
+            gh release create "$TAG" --draft --prerelease --latest=false --verify-tag \
+              --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES"
+            is_draft=true
+          fi
+
+          echo "is_draft=$is_draft" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the rolling Nightly
+        if: ${{ needs.prepare.outputs.track == 'nightly' && steps.source.outputs.current == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          target_commitish: ${{ github.sha }}
+          name: SDRTrunk VCE Nightly
+          prerelease: true
+          body: |
+            Rolling build of the current `main` branch. Nightlies contain the newest completed features and fixes.
+
+            For the more conservative line, use a numbered Alpha release. The in-app updater remains on the channel embedded in the installed package.
+          files: |
+            build/image/*.zip
+            build/image/SHA256SUMS.txt
+            build/image/build_info.txt
+            build/image/update.properties
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Point the rolling Nightly tag to the published files
+        if: ${{ needs.prepare.outputs.track == 'nightly' && steps.source.outputs.current == 'true' }}
+        run: |
+          git tag --force nightly "$GITHUB_SHA"
+          git push --force origin refs/tags/nightly
+
+      - name: Upload and verify every Alpha release file
+        if: ${{ needs.prepare.outputs.track == 'alpha' && steps.source.outputs.current == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          IS_DRAFT: ${{ steps.alpha_draft.outputs.is_draft }}
+        run: |
+          set -euo pipefail
+          if [[ "$IS_DRAFT" == true ]]; then
+            gh release upload "$TAG" build/image/*.zip build/image/SHA256SUMS.txt build/image/build_info.txt --clobber
+          fi
+
+          expected_names="$(mktemp)"
+          actual_names="$(mktemp)"
+          expected_hashes="$(mktemp)"
+          downloaded="$(mktemp -d)"
+          find build/image -maxdepth 1 -type f \
+            \( -name '*.zip' -o -name SHA256SUMS.txt -o -name build_info.txt \) \
+            -exec basename {} \; | sort > "$expected_names"
+          (cd build/image && xargs sha256sum < "$expected_names") > "$expected_hashes"
+          gh release download "$TAG" --dir "$downloaded"
+          find "$downloaded" -maxdepth 1 -type f -exec basename {} \; | sort > "$actual_names"
+          diff -u "$expected_names" "$actual_names"
+          (cd "$downloaded" && sha256sum -c "$expected_hashes")
+
+      - name: Publish the verified Alpha draft
+        if: >-
+          ${{ needs.prepare.outputs.track == 'alpha' && steps.source.outputs.current == 'true' &&
+              steps.alpha_draft.outputs.is_draft == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: gh release edit "$TAG" --draft=false --prerelease --latest=false
+
+      - name: Verify the public Alpha uses the approved notes
+        if: ${{ needs.prepare.outputs.track == 'alpha' && steps.source.outputs.current == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+          RELEASE_NOTES: ${{ needs.prepare.outputs.release_notes }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json isDraft,name,body > release.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          release = json.loads(Path("release.json").read_text(encoding="utf-8"))
+          expected_body = Path(os.environ["RELEASE_NOTES"]).read_text(encoding="utf-8").strip()
+          if release["isDraft"]:
+              raise SystemExit("Alpha release is still a draft")
+          if release["name"] != os.environ["RELEASE_TITLE"]:
+              raise SystemExit("Alpha release title does not match the approved title")
+          if release["body"].strip() != expected_body:
+              raise SystemExit("Alpha release body does not match the approved bundled notes")
+          PY
+
+      - name: Advance the Alpha updater through its protected branch
+        if: ${{ needs.prepare.outputs.track == 'alpha' && steps.source.outputs.current == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          UPDATE_BUILD: ${{ needs.prepare.outputs.update_build }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          manifest=".github/update.properties"
+          feed_branch="automation/alpha-feed-${VERSION}"
+          printf '%s\n' \
+            '# Update manifest format. Keep Alpha builds on the Alpha channel.' \
+            'format=2' \
+            'track=alpha' \
+            '# Latest published Alpha build. Increment build for each published Alpha.' \
+            "build=${UPDATE_BUILD}" \
+            "version=${VERSION}" \
+            "url=https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/${TAG}" \
+            > "$manifest"
+
+          git fetch --no-tags origin release/0.6.2-alpha
+          remote_tip="$(git rev-parse origin/release/0.6.2-alpha)"
+          if [[ "$remote_tip" != "$GITHUB_SHA" ]]; then
+            remote_manifest="$(mktemp)"
+            git show "${remote_tip}:${manifest}" > "$remote_manifest"
+            diff -u "$manifest" "$remote_manifest"
+            test "$(git rev-parse "${remote_tip}^")" = "$GITHUB_SHA"
+            test "$(git diff --name-only "$GITHUB_SHA" "$remote_tip")" = "$manifest"
+            echo "The Alpha updater already points to $VERSION."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "refs/heads/${feed_branch}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "+refs/heads/${feed_branch}:refs/remotes/origin/${feed_branch}"
+            feed_sha="$(git rev-parse "origin/${feed_branch}")"
+            test "$(git rev-parse "${feed_sha}^")" = "$GITHUB_SHA"
+            test "$(git diff --name-only "$GITHUB_SHA" "$feed_sha")" = "$manifest"
+            remote_manifest="$(mktemp)"
+            git show "${feed_sha}:${manifest}" > "$remote_manifest"
+            diff -u "$manifest" "$remote_manifest"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git switch -c "$feed_branch"
+            git add "$manifest"
+            test "$(git diff --cached --name-only)" = "$manifest"
+            git commit -m "Publish ${VERSION} update feed"
+            feed_sha="$(git rev-parse HEAD)"
+            git push origin "HEAD:refs/heads/${feed_branch}"
+          fi
+
+          pr_number="$(gh pr list --head "$feed_branch" --base release/0.6.2-alpha --state open \
+            --json number --jq '.[0].number // empty')"
+          if [[ -z "$pr_number" ]]; then
+            pr_url="$(gh pr create --head "$feed_branch" --base release/0.6.2-alpha \
+              --title "Publish ${VERSION} update feed" \
+              --body "Advances the Alpha updater after the verified numbered release is public. This changes only the generated update manifest.")"
+            pr_number="${pr_url##*/}"
+          fi
+
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Alpha CI gate' \
+            -f head_sha="$feed_sha" \
+            -f status=completed \
+            -f conclusion=success \
+            -f 'output[title]=Verified post-release updater change' \
+            -f 'output[summary]=The parent commit passed Alpha CI and package checks. This child changes only the generated update manifest after the public release was verified.' \
+            >/dev/null
+
+          for attempt in {1..12}; do
+            if gh pr merge "$pr_number" --rebase --delete-branch; then
+              break
+            fi
+            if [[ "$attempt" == 12 ]]; then
+              echo "The protected updater pull request could not be merged." >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          git fetch --no-tags origin release/0.6.2-alpha
+          merged_tip="$(git rev-parse origin/release/0.6.2-alpha)"
+          test "$(git rev-parse "${merged_tip}^")" = "$GITHUB_SHA"
+          test "$(git diff --name-only "$GITHUB_SHA" "$merged_tip")" = "$manifest"
+          merged_manifest="$(mktemp)"
+          git show "${merged_tip}:${manifest}" > "$merged_manifest"
+          diff -u "$manifest" "$merged_manifest"
