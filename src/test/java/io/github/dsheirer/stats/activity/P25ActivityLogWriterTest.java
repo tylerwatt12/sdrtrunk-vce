@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -60,7 +60,7 @@ class P25ActivityLogWriterTest
     void writesActivityEvent() throws Exception
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
@@ -107,7 +107,7 @@ class P25ActivityLogWriterTest
     void closeDrainsACollectingPartialBatch() throws Exception
     {
         Path database = mTemporaryFolder.resolve("close-drains.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         writer.start();
         writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
@@ -125,7 +125,7 @@ class P25ActivityLogWriterTest
     void writesEachCompletedDmrConventionalCallExactlyOnce() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
         P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
             1_000L, 2_000L, "GUID:dmr-writer", "dmr-writer", "DMR Repeater",
@@ -168,7 +168,7 @@ class P25ActivityLogWriterTest
     void reportsDetailedDmrConventionalActivityOnlyAfterCommit() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional-detailed.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         AtomicReference<List<Long>> committed = new AtomicReference<>();
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
         writer.start();
@@ -226,7 +226,7 @@ class P25ActivityLogWriterTest
     void reportsDetailedNxdnConventionalActivityOnlyAfterCommit() throws Exception
     {
         Path database = mTemporaryFolder.resolve("nxdn-conventional-detailed.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         AtomicReference<List<Long>> committed = new AtomicReference<>();
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
         writer.start();
@@ -293,7 +293,7 @@ class P25ActivityLogWriterTest
     void bucketsDmrPrivateCallAndOutputsByCallStartForBothIdentities() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-private-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "dmr-private";
         String contextKey = "GUID:" + guid;
 
@@ -328,7 +328,7 @@ class P25ActivityLogWriterTest
     void failsAndRollsBackBatchContainingInvalidDmrIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("invalid-dmr.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
@@ -361,7 +361,7 @@ class P25ActivityLogWriterTest
     void failsAndRollsBackBatchContainingInvalidNxdnIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("invalid-nxdn.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
         writer.start();
         writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
@@ -415,7 +415,7 @@ class P25ActivityLogWriterTest
     void learnsVoiceChannelsFromControlChannelGrants() throws Exception
     {
         Path database = mTemporaryFolder.resolve("voice-channel.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -442,7 +442,7 @@ class P25ActivityLogWriterTest
     void accumulatesVoiceAndDataEvidenceWithoutChangingEncryptedDataStatus() throws Exception
     {
         Path database = mTemporaryFolder.resolve("mixed-service-channel.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -487,7 +487,7 @@ class P25ActivityLogWriterTest
     void reportsDetailedActivityOnlyAfterCommit() throws Exception
     {
         Path database = mTemporaryFolder.resolve("committed.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         AtomicReference<List<Long>> committed = new AtomicReference<>();
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
         writer.start();
@@ -515,7 +515,7 @@ class P25ActivityLogWriterTest
     void appliesRetentionCleanup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retention.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -549,7 +549,7 @@ class P25ActivityLogWriterTest
     void storesBucketsAndDeletesExpiredControlChannelQuality() throws Exception
     {
         Path database = mTemporaryFolder.resolve("quality-retention.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -578,7 +578,7 @@ class P25ActivityLogWriterTest
     void qualityRetentionDrainsMoreThanOneBoundedBatch() throws Exception
     {
         Path database = mTemporaryFolder.resolve("quality-retention-batches.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -610,7 +610,7 @@ class P25ActivityLogWriterTest
     void representativeVolumeQualityRetentionSelectionUsesCoveringTimeIndex() throws Exception
     {
         Path database = mTemporaryFolder.resolve("quality-retention-query-plan.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -660,7 +660,7 @@ class P25ActivityLogWriterTest
     void representativeVolumeIdentityRankingUsesTimeLeadingIndex() throws Exception
     {
         Path database = mTemporaryFolder.resolve("identity-ranking-query-plan.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -716,7 +716,7 @@ class P25ActivityLogWriterTest
     void maintenanceDeletesExpiredRowsAndUpdatesStatus() throws Exception
     {
         Path database = mTemporaryFolder.resolve("maintenance.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         long now = System.currentTimeMillis();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -769,7 +769,7 @@ class P25ActivityLogWriterTest
     void maintenanceCheckReportsOk() throws Exception
     {
         Path database = mTemporaryFolder.resolve("check.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         P25ActivityLogMaintenance.Result result =
             P25ActivityLogMaintenance.run(database, 30, P25ActivityLogMaintenance.Operation.CHECK);
@@ -787,7 +787,7 @@ class P25ActivityLogWriterTest
     void clearsOnlySelectedSiteStatistics() throws Exception
     {
         Path database = mTemporaryFolder.resolve("clear-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String clearedGuid = "123e4567-e89b-12d3-a456-426614174000";
         String retainedGuid = "223e4567-e89b-12d3-a456-426614174000";
 
@@ -849,7 +849,7 @@ class P25ActivityLogWriterTest
     void storesSchemaVersionInDatabaseMetadata() throws Exception
     {
         Path database = mTemporaryFolder.resolve("schema-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -903,7 +903,7 @@ class P25ActivityLogWriterTest
     void callIdentitySchemaEnforcesIdentityAndOwnershipContract() throws Exception
     {
         Path database = mTemporaryFolder.resolve("call-identity-schema.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -983,7 +983,7 @@ class P25ActivityLogWriterTest
     void rejectsAStaleResolvedActivityView() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stale-resolved-view.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -998,7 +998,7 @@ class P25ActivityLogWriterTest
     void storesReplacesAndClearsCurrentRadioAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("affiliation.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1023,7 +1023,7 @@ class P25ActivityLogWriterTest
     void olderAffiliationCannotReplaceNewerState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("affiliation-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String siteA = "123e4567-e89b-12d3-a456-42661417400a";
         String siteB = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1047,7 +1047,7 @@ class P25ActivityLogWriterTest
     void registrationOnlyMovesSitePresenceWithoutReplacingTalkgroupAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("registration-moves-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String siteA = "123e4567-e89b-12d3-a456-42661417400a";
         String siteB = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1072,7 +1072,7 @@ class P25ActivityLogWriterTest
     void equalTimestampPresenceUsesEvidenceThenContextAndTalkgroupTieBreaks() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-equal-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String siteA = "123e4567-e89b-12d3-a456-42661417400a";
         String siteB = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1108,7 +1108,7 @@ class P25ActivityLogWriterTest
     void staleAndNewerClearsRespectConfirmedTimestamps() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-clear-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1128,7 +1128,7 @@ class P25ActivityLogWriterTest
     void clearWatermarkPreventsStaleAndEqualConfirmationsFromResurrectingState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-clear-watermark.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1172,7 +1172,7 @@ class P25ActivityLogWriterTest
     void clearingOneSiteRemovesItsPresenceButRetainsSystemAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("presence-site-clear.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String clearedSite = "123e4567-e89b-12d3-a456-42661417400a";
         String retainedSite = "123e4567-e89b-12d3-a456-42661417400b";
 
@@ -1197,7 +1197,7 @@ class P25ActivityLogWriterTest
     void ordinaryCallsNeverCreateAuthoritativeRadioState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("calls-do-not-create-presence.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1214,7 +1214,7 @@ class P25ActivityLogWriterTest
     void keepsReservedP25IdentitiesInActivityButOutOfDirectoryProjections() throws Exception
     {
         Path database = mTemporaryFolder.resolve("reserved-identities.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         int validRadio = 1_811_524;
         int validTalkgroup = 56_138;
         int[] invalidTalkgroups = {0, 0xFFFF, 0x10000};
@@ -1281,7 +1281,7 @@ class P25ActivityLogWriterTest
     void updatesAggregateSummaries() throws Exception
     {
         Path database = mTemporaryFolder.resolve("summaries.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1339,7 +1339,7 @@ class P25ActivityLogWriterTest
     void lateTalkerAliasUpdateDoesNotInflateActivityCounters() throws Exception
     {
         Path database = mTemporaryFolder.resolve("talker-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1376,7 +1376,7 @@ class P25ActivityLogWriterTest
     void onlyExplicitTalkerAliasUpdatesDurableRadioAlias() throws Exception
     {
         Path database = mTemporaryFolder.resolve("explicit-talker-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1415,7 +1415,7 @@ class P25ActivityLogWriterTest
     void activityAndTalkerAliasCannotEstablishSystemIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("untrusted-activity-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1447,7 +1447,7 @@ class P25ActivityLogWriterTest
     void activityWithMismatchedSystemIdentityIsRejectedAfterSiteSnapshot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stable-site-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1483,7 +1483,7 @@ class P25ActivityLogWriterTest
     void conventionalCallCountersAndOptionalAnalogHistoryCountEachCall() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-hits.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1505,7 +1505,7 @@ class P25ActivityLogWriterTest
     void trunkedActivityDoesNotStoreLogicalChannelAsContextName() throws Exception
     {
         Path database = mTemporaryFolder.resolve("context-name.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1533,7 +1533,7 @@ class P25ActivityLogWriterTest
     void upsertsStableSiteEntities() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1609,7 +1609,7 @@ class P25ActivityLogWriterTest
     void createsNewSystemAndSiteWithCurrentAndAlternateControlChannels() throws Exception
     {
         Path database = mTemporaryFolder.resolve("new-system-site-controls.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "323e4567-e89b-12d3-a456-426614174000";
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("primary_control", "2-1328", 770_306_250L,
@@ -1672,7 +1672,7 @@ class P25ActivityLogWriterTest
     void mergesDuplicateLogicalSiteChannelsWithoutStoppingWriter() throws Exception
     {
         Path database = mTemporaryFolder.resolve("duplicate-site-channels.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         writer.start();
         writer.enqueue(siteSnapshotWithDuplicateChannels(1000L));
@@ -1759,7 +1759,7 @@ class P25ActivityLogWriterTest
     void warnsOnlyWhenDuplicateLogicalSiteChannelFactsConflict() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-channel-conflicts.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Logger logger = (Logger)LoggerFactory.getLogger(P25ActivityLogSchema.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
@@ -1791,7 +1791,7 @@ class P25ActivityLogWriterTest
     void replacesCurrentSiteFactsButKeepsHistoricalObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1817,7 +1817,7 @@ class P25ActivityLogWriterTest
     void timingOnlyHeartbeatRefreshesCurrentFactsWithoutRecountingSummaries() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-timing-heartbeat.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1862,7 +1862,7 @@ class P25ActivityLogWriterTest
     void invalidSynchronizationDateClearsPersistedClockAndKeepsMicroslots() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-invalid-sync-date.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1886,7 +1886,7 @@ class P25ActivityLogWriterTest
     void olderSiteSnapshotIsRejectedBeforeItCanRegressCurrentOrRetainedFacts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-out-of-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1928,7 +1928,7 @@ class P25ActivityLogWriterTest
     void mergesSystemEntitiesAcrossSiteGuidsButKeepsSiteBucketsSeparate() throws Exception
     {
         Path database = mTemporaryFolder.resolve("multi-site.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1967,7 +1967,7 @@ class P25ActivityLogWriterTest
     void usesEstablishedGuidSystemWhenTrafficEventOmitsSystemIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("established-system.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -1985,7 +1985,7 @@ class P25ActivityLogWriterTest
     void writesAllStatsRecordTypes() throws Exception
     {
         Path database = mTemporaryFolder.resolve("all-stats.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
@@ -2016,7 +2016,7 @@ class P25ActivityLogWriterTest
     void fansOutEncryptedPatchCallAndOutputsWithoutInflatingPhysicalTotals() throws Exception
     {
         Path database = mTemporaryFolder.resolve("patch-call.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         writer.start();
@@ -2146,7 +2146,7 @@ class P25ActivityLogWriterTest
     void attributesLateP25IdentityAndEncryptionAcrossLegacySummariesWithoutAnotherPhysicalCall() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-attribution.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
             1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -2227,7 +2227,7 @@ class P25ActivityLogWriterTest
     void fillsLateEncryptionDetailsWithoutIncreasingCallOrEncryptionCounts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-encryption-details.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         P25ActivityLogRecords.ActivityEvent encryptedCall = new P25ActivityLogRecords.ActivityEvent(
             1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -2285,7 +2285,7 @@ class P25ActivityLogWriterTest
     void lateP25PatchAttributionLinksRetainedActivityToEachValidMemberTalkgroup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-patch-attribution.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
             1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -2322,7 +2322,7 @@ class P25ActivityLogWriterTest
     void lateAttributionUpdatesOnlyTheMatchingDmrTimeslot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-late-attribution-slot.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "123e4567-e89b-12d3-a456-426614174001";
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -2355,7 +2355,7 @@ class P25ActivityLogWriterTest
     void aggregatesSuccessfulCallOutputsWithoutChangingTrackedCalls() throws Exception
     {
         Path database = mTemporaryFolder.resolve("call-outputs.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2409,7 +2409,7 @@ class P25ActivityLogWriterTest
     void aggregatesConventionalOutputsIntoTheTrackedCallHour() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-call-outputs.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2448,7 +2448,7 @@ class P25ActivityLogWriterTest
     void createsCompactSummaryForOutputOnlyTalkgroup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("output-only-talkgroup.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2479,7 +2479,7 @@ class P25ActivityLogWriterTest
     void dropsOldestWhenQueueIsFull() throws Exception
     {
         Path database = mTemporaryFolder.resolve("overflow.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1);
         writer.start();
 
@@ -2502,7 +2502,7 @@ class P25ActivityLogWriterTest
     void siteSnapshotsAuthoritativelyRemoveAliasListsAndP25ContextFields() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site-alias-removal.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "123e4567-e89b-12d3-a456-426614174099";
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -2550,7 +2550,7 @@ class P25ActivityLogWriterTest
     void persistsConfiguredMetadataForP25AndAnalogConventionalContexts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("configured-conventional-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -2632,7 +2632,7 @@ class P25ActivityLogWriterTest
     void persistsConfiguredMetadataForDmrAndNxdnTrunkedSites() throws Exception
     {
         Path database = mTemporaryFolder.resolve("configured-trunked-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String dmrGuid = "123e4567-e89b-12d3-a456-426614174092";
         String nxdnGuid = "123e4567-e89b-12d3-a456-426614174093";
 
@@ -2691,7 +2691,7 @@ class P25ActivityLogWriterTest
     void clearSiteWaitsForEarlierObservationsAndPrecedesLaterObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer-clear-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         String retainedGuid = "223e4567-e89b-12d3-a456-426614174000";
         long now = System.currentTimeMillis();
@@ -2750,7 +2750,7 @@ class P25ActivityLogWriterTest
     void resetStatsWaitsForEarlierObservationsAndPrecedesLaterObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer-reset-order.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         long now = System.currentTimeMillis();
         String dmrGuid = "123e4567-e89b-12d3-a456-426614174000";
         String nxdnGuid = "223e4567-e89b-12d3-a456-426614174000";
@@ -2818,7 +2818,7 @@ class P25ActivityLogWriterTest
     void loweringRetentionRequestsPromptCleanupOnWriter() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer-retention-reduction.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         long now = System.currentTimeMillis();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))

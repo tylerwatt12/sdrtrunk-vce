@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
@@ -58,7 +58,7 @@ class StatsWebDatabaseTest
     void setUp() throws Exception
     {
         mDatabasePath = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(mDatabasePath);
+        SdrTrunkTestDatabase.create(mDatabasePath);
         seed(mDatabasePath);
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
     }
