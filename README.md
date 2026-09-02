@@ -7,7 +7,7 @@ controls, long-term statistics, and performance improvements.
 
 This project has two release channels. Back up your receiver data before installing or upgrading.
 
-- [Download Alpha 11](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/v0.6.2-alpha-11): the more stable,
+- [Download Alpha 12](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/v0.6.2-alpha-12): the more stable,
   deliberately maintained line. Alphas receive selected fixes after review and testing and can intentionally omit
   newer Nightly features.
 - [Download the current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly): the rolling build
@@ -33,19 +33,17 @@ This project has two release channels. Back up your receiver data before install
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems.
 - **Improved listening:** Desktop audio adds Hold, Avoid, Clear, saved mute state, a queue counter, and a queue limit.
 
-## What’s New in Alpha 11
+## What’s New in Alpha 12
 
-Alpha 11 focuses on receiver reliability and a clearer upgrade process.
+Alpha 12 is a focused repair for Windows SDRplay support and release packaging.
 
-- **USB tuner recovery is more reliable,** and the Tuners tab can rescan for reconnected devices.
-- **AM conventional decoding is restored,** with Activity, CSV, and website statistics support.
-- **RadioReference Import All** previews and imports every loaded talkgroup while preserving local choices.
-- **Alias listening uses a simple Listen setting** stored in the Default list.
-- **P25 control learning, activity, completed-call handling, and recording names are more accurate.**
-- **The Application Migrator shows progress and supports post-setup SQLite database replacement** with a safety backup
-  and validation.
+- **Windows packages again include the SDRplay API search path** used by every supported RSP model.
+- **The SDRplay fallback loader now resolves the actual `sdrplay_api.dll` filename** in the standard 64-bit API folder.
+- **Both Windows processor packages are checked before release** for the required launcher settings and Windows UI
+  classes.
+- **Other tuner implementations, decoders, and the database format are unchanged.**
 
-Read the complete [Alpha 11 What’s New](docs/whats-new-0.6.2-alpha-11.md) before upgrading.
+Read the complete [Alpha 12 What’s New](docs/whats-new-0.6.2-alpha-12.md) before upgrading.
 
 ## Screenshots
 
