@@ -202,7 +202,7 @@ tasks.register('verifyApprovedReleaseNotes') {
     inputs.property('releaseVersion', releaseVersion)
 
     if(isNumberedPublicRelease(releaseVersion)) {
-        inputs.file(releaseNotesMetadataFile)
+        inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile)
     }
 
     doLast {
@@ -215,6 +215,15 @@ tasks.register('verifyApprovedReleaseNotes') {
 
         if(!metadata.getProperty('status', '').trim().equalsIgnoreCase('approved')) {
             throw new GradleException("Release notes for ${releaseVersion} are still a draft. Stop, obtain user approval, then set status=approved in ${releaseNotesMetadataFile}.")
+        }
+
+        def approvedHash = metadata.getProperty('approved-sha256', '').trim().toLowerCase(Locale.US)
+        def actualHash = java.security.MessageDigest.getInstance('SHA-256')
+                .digest(releaseNotesHtmlFile.bytes).encodeHex().toString()
+
+        if(!(approvedHash ==~ /[0-9a-f]{64}/) || approvedHash != actualHash) {
+            throw new GradleException("Release notes for ${releaseVersion} do not match their approved SHA-256. " +
+                    "Show the exact HTML to the release owner again before updating approved-sha256.")
         }
     }
 }

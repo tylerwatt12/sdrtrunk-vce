@@ -22,6 +22,7 @@ import com.google.common.eventbus.Subscribe;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.application.PackageSelfTest;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
@@ -1391,6 +1392,13 @@ public class SDRTrunk
     {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         System.setProperty("apple.awt.application.name", "sdrtrunk-vce");
+
+        if(PackageSelfTest.isRequested(args))
+        {
+            PackageSelfTest.run(System.out);
+            return;
+        }
+
         PortableDataRootLock dataRootLock = null;
 
         try
