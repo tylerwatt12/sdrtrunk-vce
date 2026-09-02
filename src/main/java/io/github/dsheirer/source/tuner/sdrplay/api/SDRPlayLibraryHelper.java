@@ -46,47 +46,50 @@ public class SDRPlayLibraryHelper
     private static final String SDRPLAY_API_PATH_LINUX = "/usr/local/lib/libsdrplay_api.so";
     private static final String SDRPLAY_API_PATH_MAC_OS = "/usr/local/lib/libsdrplay_api.dylib";
     private static final String SDRPLAY_API_PATH_MAC_OS_ALTERNATE = "/usr/local/lib/libsdrplay_api.so";
-    private static final String SDRPLAY_API_PATH_WINDOWS = System.getenv("ProgramFiles") +
-            "\\SDRplay\\API\\x64\\" + SDRPLAY_API_LIBRARY_NAME;
 
     public static final boolean LOADED;
     public static final boolean LOADED_FROM_PATH;
-    public static final Path LIBRARY_PATH = Path.of(getSDRplayLibraryPath());
+    public static final Path LIBRARY_PATH;
 
     static
     {
         boolean loaded = false;
         boolean loadedFromPath = false;
+        Path libraryPath = resolveSDRplayLibraryPath();
+        LIBRARY_PATH = libraryPath != null ? libraryPath : Path.of("");
 
         try
         {
             System.loadLibrary(SDRPLAY_API_LIBRARY_NAME);
-            mLog.info("SDRPLay API library loaded by name [" + SDRPLAY_API_LIBRARY_NAME + "]");
+            mLog.info("SDRPlay API library loaded by name [" + SDRPLAY_API_LIBRARY_NAME + "]");
             loaded = true;
         }
         catch(Throwable t)
         {
-            String libraryPath = getSDRplayLibraryPath();
-            Path path = Path.of(libraryPath);
-            boolean exists = Files.exists(path);
-
-            if(exists)
+            if(libraryPath != null && Files.isRegularFile(libraryPath))
             {
                 try
                 {
-                    System.load(libraryPath);
-                    mLog.info("SDRPLay API library loaded by path [" + libraryPath + "]");
+                    System.load(libraryPath.toString());
+                    mLog.info("SDRPlay API library loaded by path [" + libraryPath + "]");
                     loaded = true;
                     loadedFromPath = true;
                 }
                 catch(Throwable t2)
                 {
-                    mLog.info("SDRPlay API native library not found at " + libraryPath);
+                    mLog.warn("SDRPlay API native library was found but could not be loaded from [" + libraryPath + "]");
+                    mLog.debug("SDRPlay API native library load failure", t2);
                 }
+            }
+            else if(libraryPath != null)
+            {
+                mLog.info("SDRPlay API native library not found at: " + libraryPath);
+                mLog.debug("SDRPlay API native library was not available by name", t);
             }
             else
             {
-                mLog.info("SDRPlay API native library not found at: " + libraryPath);
+                mLog.info("SDRPlay API native library path is unavailable for this operating system");
+                mLog.debug("SDRPlay API native library was not available by name", t);
             }
         }
 
@@ -99,28 +102,37 @@ public class SDRPlayLibraryHelper
      */
     public static String getSDRplayLibraryPath()
     {
+        return LIBRARY_PATH.toString();
+    }
+
+    /**
+     * Resolves the platform-specific SDRplay native library path.
+     */
+    private static Path resolveSDRplayLibraryPath()
+    {
         if(SystemUtils.IS_OS_WINDOWS)
         {
-            return SDRPLAY_API_PATH_WINDOWS;
+            return SDRPlayLibraryPathResolver.resolveWindows(System.getenv("ProgramFiles"), System::mapLibraryName)
+                    .orElse(null);
         }
         else if(SystemUtils.IS_OS_LINUX)
         {
-            return SDRPLAY_API_PATH_LINUX;
+            return Path.of(SDRPLAY_API_PATH_LINUX);
         }
         else if(SystemUtils.IS_OS_MAC_OSX)
         {
             //API versions 3.14 and earlier used a (.so) extension and 3.15 and later use the (.dylib) extension
             if(Files.exists(Path.of(SDRPLAY_API_PATH_MAC_OS)))
             {
-                return SDRPLAY_API_PATH_MAC_OS;
+                return Path.of(SDRPLAY_API_PATH_MAC_OS);
             }
             else
             {
-                return SDRPLAY_API_PATH_MAC_OS_ALTERNATE;
+                return Path.of(SDRPLAY_API_PATH_MAC_OS_ALTERNATE);
             }
         }
 
         mLog.error("Unrecognized operating system.  Cannot identify sdrplay api library path");
-        return "";
+        return null;
     }
 }

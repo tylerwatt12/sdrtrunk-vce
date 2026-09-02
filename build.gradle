@@ -24,6 +24,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 
 
 
@@ -46,7 +47,7 @@ import java.util.zip.ZipFile
  * Note: release images are located in the /build/image/ directory
  *
  * Scenario 4: create release for Windows operating system using downloaded JDK
- * command: ./gradlew runtimeZipWindows
+ * command: ./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win
  * Note: release image is located in the /build/image/ directory
  */
 plugins {
@@ -66,6 +67,17 @@ def bouncyCastleVersion = "1.84"
 def currentJavafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
     (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
 def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlatform
+def requestedTaskNames = gradle.startParameter.taskNames.collect { taskName ->
+    taskName.tokenize(':').last()
+}
+def configurationCacheRequested = gradle.startParameter.configurationCacheRequested
+
+if(requestedTaskNames.contains('runtimeZipWindows') &&
+        (javafxPlatform != 'win' || configurationCacheRequested ||
+                requestedTaskNames != ['clean', 'runtimeZipWindows'])) {
+    throw new GradleException('runtimeZipWindows must run by itself as a clean Windows-target invocation: ' +
+            './gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win ...')
+}
 
 //JIDE 3.6.18 references the Windows look-and-feel class directly.  Non-Windows JDKs need the
 //compatibility stub, while Windows must use the real java.desktop class to avoid a split package.
@@ -407,6 +419,13 @@ test {
 }
 
 jar {
+    inputs.property('javafxPlatform', javafxPlatform)
+
+    if(javafxPlatform == 'win') {
+        //A stale non-Windows compilation must never place this compatibility class in a Windows application JAR.
+        exclude 'com/sun/java/swing/plaf/windows/WindowsLookAndFeel.class'
+    }
+
     manifest {
         attributes (
                 'Implementation-Title'  : 'sdrtrunk-vce project',
@@ -934,6 +953,53 @@ def windowsArchiveDescriptors = { org.beryx.runtime.RuntimeZipTask runtimeZipTas
     descriptors
 }
 
+def verifyWindowsApplicationArchive = { ZipFile zip, Map<String, Object> descriptor ->
+    String archiveRuntimeRoot = descriptor.archiveRuntimeRoot as String
+    String archiveApplicationRoot = archiveRuntimeRoot.substring(0,
+            archiveRuntimeRoot.length() - 'bin/'.length())
+    String launcherEntryName = "${archiveApplicationRoot}bin/${project.name}.bat"
+    def launcherEntry = zip.getEntry(launcherEntryName)
+
+    if(launcherEntry == null || launcherEntry.directory) {
+        throw new GradleException("Windows launcher is missing from ZIP: ${launcherEntryName}")
+    }
+
+    String launcherText
+    zip.getInputStream(launcherEntry).withCloseable { input ->
+        launcherText = input.getText('UTF-8')
+    }
+
+    [
+        '--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED',
+        '-Djava.library.path=c:\\Program Files\\SDRplay\\API\\x64'
+    ].each { requiredArgument ->
+        if(!launcherText.contains(requiredArgument)) {
+            throw new GradleException("Windows launcher ${launcherEntryName} is missing ${requiredArgument}")
+        }
+    }
+
+    String applicationJarEntryName = "${archiveApplicationRoot}lib/${project.name}-${version}.jar"
+    def applicationJarEntry = zip.getEntry(applicationJarEntryName)
+
+    if(applicationJarEntry == null || applicationJarEntry.directory) {
+        throw new GradleException("Windows application JAR is missing from ZIP: ${applicationJarEntryName}")
+    }
+
+    String compatibilityEntryName = 'com/sun/java/swing/plaf/windows/WindowsLookAndFeel.class'
+    zip.getInputStream(applicationJarEntry).withCloseable { input ->
+        new ZipInputStream(input).withCloseable { applicationJar ->
+            def nestedEntry
+
+            while((nestedEntry = applicationJar.nextEntry) != null) {
+                if(nestedEntry.name == compatibilityEntryName) {
+                    throw new GradleException("Windows application JAR contains non-Windows compatibility class: " +
+                            compatibilityEntryName)
+                }
+            }
+        }
+    }
+}
+
 /* Verify the bytes that were actually written to each Windows archive, not only the intermediate runtime image. */
 tasks.withType(org.beryx.runtime.RuntimeZipTask).configureEach { runtimeZipTask ->
     inputs.files(providers.provider {
@@ -955,6 +1021,8 @@ tasks.withType(org.beryx.runtime.RuntimeZipTask).configureEach { runtimeZipTask 
             ZipFile zip = new ZipFile(archive)
 
             try {
+                verifyWindowsApplicationArchive(zip, descriptor)
+
                 zip.entries().toList().findAll { entry ->
                     !entry.directory && entry.name.startsWith(archiveRuntimeRoot) &&
                         (entry.name.toLowerCase(Locale.ROOT).endsWith('.exe') ||
@@ -1040,11 +1108,14 @@ tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
  *
  * Note: you cannot create both Windows and Linux releases at the same time due to limitations of the Runtime plugin
  *
- * Usage: gradle runtimeZipWindows
- * Usage: gradlew runtimeZipWindows   (windows - using gradlew)
- * Usage: ./gradlew runtimeZipWindows   (linux - using gradlew)
+ * Usage: gradle --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win
+ * Usage: gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win   (windows)
+ * Usage: ./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win   (linux/macOS)
  */
 tasks.register('runtimeZipWindows', org.beryx.runtime.RuntimeZipTask) {rt ->
+    outputs.upToDateWhen { false }
+    mustRunAfter(tasks.named('clean'))
+
     //Windows aarch64
     if(file(jdk_windows_aarch64).exists()) {
         rt.extension.targetPlatform(targetWindowsAarch64, jdk_windows_aarch64, [])
@@ -1065,6 +1136,28 @@ tasks.register('runtimeZipWindows', org.beryx.runtime.RuntimeZipTask) {rt ->
     }
 
     configure(rt, jvmArgsWindows, true)
+
+    doFirst {
+        def cleanTask = tasks.named('clean').get()
+
+        if(javafxPlatform != 'win' || configurationCacheRequested ||
+                requestedTaskNames != ['clean', 'runtimeZipWindows'] ||
+                !cleanTask.state.executed || cleanTask.state.failure != null) {
+            throw new GradleException('runtimeZipWindows must run by itself as a clean Windows-target invocation: ' +
+                    './gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win ...')
+        }
+
+        Set<String> expectedTargets = [targetWindowsAarch64, targetWindowsX86_64] as Set
+        Set<String> actualTargets = rt.extension.targetPlatforms.get().keySet() as Set
+
+        if(actualTargets != expectedTargets) {
+            throw new GradleException("runtimeZipWindows has unexpected target platforms: ${actualTargets}")
+        }
+
+        if(rt.extension.launcherData.get().jvmArgsOrDefault != jvmArgsWindows) {
+            throw new GradleException('runtimeZipWindows does not contain the required Windows launcher arguments')
+        }
+    }
 }
 
 /**
