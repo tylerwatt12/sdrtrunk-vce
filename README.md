@@ -224,9 +224,12 @@ Other package tasks:
 ```bash
 ./gradlew image
 ./gradlew macAppZip
-./gradlew --no-configuration-cache runtimeZipWindows
-./gradlew --no-configuration-cache runtimeZipOthers
+./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+./gradlew --no-configuration-cache clean runtimeZipOthers -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
+
+Each cross-platform package command starts from a clean build. If you are collecting every platform package, copy
+the first command's ZIP files outside `build/image` before running the second command, then restore them afterward.
 
 Build output is written under `build/image`.
 
