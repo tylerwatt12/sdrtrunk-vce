@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2024 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,268 +25,356 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSoftSyncDetectorVector128;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSoftSyncDetectorVector256;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSoftSyncDetectorVector512;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSoftSyncDetectorVector64;
+import io.github.dsheirer.module.decode.dmr.sync.DMRSyncDetectMode;
+import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.LongSupplier;
+import jdk.incubator.vector.FloatVector;
 
 /**
- * DMR Soft Sync Detector calibration
+ * DMR soft-sync detector calibration.  Each candidate is checked against an independent scalar detector over exact,
+ * near-threshold and noisy streaming fixtures before its correlation work is timed.
  */
 public class DMRSoftSyncCalibration extends Calibration
 {
     private static final int BUFFER_SIZE = 2048;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
-    private final DMRSoftSyncDetector mScalarDetector = new DMRSoftSyncDetectorScalar();
-    private final DMRSoftSyncDetector mVectorDetector64 = new DMRSoftSyncDetectorVector64();
-    private final DMRSoftSyncDetector mVectorDetector128 = new DMRSoftSyncDetectorVector128();
-    private final DMRSoftSyncDetector mVectorDetector256 = new DMRSoftSyncDetectorVector256();
-    private final DMRSoftSyncDetector mVectorDetector512 = new DMRSoftSyncDetectorVector512();
+    private static final int BENCHMARK_BATCH_SIZE = 2;
+    private static final float DETECTION_THRESHOLD = 60.0f;
+    private static final float[] PRODUCTION_THRESHOLDS = {DETECTION_THRESHOLD, 80.0f, 100.0f};
+    private static final float ABSOLUTE_TOLERANCE = 1.0e-4f;
+    private static final float RELATIVE_TOLERANCE = 2.0e-5f;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final DMRSyncDetectMode[] MODES = DMRSyncDetectMode.values();
+    private static final DMRSyncPattern[] PATTERNS = {
+        DMRSyncPattern.BASE_STATION_DATA,
+        DMRSyncPattern.BASE_STATION_VOICE,
+        DMRSyncPattern.MOBILE_STATION_DATA,
+        DMRSyncPattern.MOBILE_STATION_VOICE,
+        DMRSyncPattern.DIRECT_DATA_TIMESLOT_1,
+        DMRSyncPattern.DIRECT_DATA_TIMESLOT_2,
+        DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1,
+        DMRSyncPattern.DIRECT_VOICE_TIMESLOT_2
+    };
 
     /**
-     * Constructs an instance
+     * Constructs an instance.
      */
     public DMRSoftSyncCalibration()
     {
         super(CalibrationType.DMR_SOFT_SYNC_DETECTOR);
     }
 
-    @Override public void calibrate() throws CalibrationException
+    @Override
+    public void calibrate() throws CalibrationException
     {
-        float[] samples = getFloatSamples(BUFFER_SIZE);
+        float[] fixture = createFixture();
+        DMRResult[] expected = evaluateAllModes(Implementation.SCALAR, fixture);
+        Implementation bestImplementation = Implementation.SCALAR;
+        double bestScore = 0.0d;
 
-        Mean scalarMean = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        for(Implementation implementation: getCandidates())
         {
-            long score = testScalar(samples);
-            scalarMean.increment(score);
-        }
+            validateAnchors(implementation);
+            DMRResult[] actual = evaluateAllModes(implementation, fixture);
 
-        mLog.info("DMR SOFT SYNC DETECTOR WARMUP - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        Mean vectorMean64 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector64(samples);
-            vectorMean64.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR WARMUP - VECTOR 64: " + DECIMAL_FORMAT.format(vectorMean64.getResult()));
-
-        Mean vectorMean128 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector128(samples);
-            vectorMean128.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR WARMUP - VECTOR 128: " + DECIMAL_FORMAT.format(vectorMean128.getResult()));
-
-        Mean vectorMean256 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector256(samples);
-            vectorMean256.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR WARMUP - VECTOR 256: " + DECIMAL_FORMAT.format(vectorMean256.getResult()));
-
-        Mean vectorMean512 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector512(samples);
-            vectorMean512.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR WARMUP - VECTOR 512: " + DECIMAL_FORMAT.format(vectorMean512.getResult()));
-
-        //Start tests
-        scalarMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testScalar(samples);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        vectorMean64.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector64(samples);
-            vectorMean64.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR - VECTOR 64: " + DECIMAL_FORMAT.format(vectorMean64.getResult()));
-
-        vectorMean128.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector128(samples);
-            vectorMean128.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR - VECTOR 128: " + DECIMAL_FORMAT.format(vectorMean128.getResult()));
-
-        vectorMean256.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector256(samples);
-            vectorMean256.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR - VECTOR 256: " + DECIMAL_FORMAT.format(vectorMean256.getResult()));
-
-        vectorMean512.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector512(samples);
-            vectorMean512.increment(score);
-        }
-
-        mLog.info("DMR SOFT SYNC DETECTOR - VECTOR 512: " + DECIMAL_FORMAT.format(vectorMean512.getResult()));
-
-        Implementation best = Implementation.SCALAR;
-        double bestScore = scalarMean.getResult();
-
-        if(vectorMean64.getResult() > bestScore)
-        {
-            bestScore = vectorMean64.getResult();
-            best = Implementation.VECTOR_SIMD_64;
-        }
-
-        if(vectorMean128.getResult() > bestScore)
-        {
-            bestScore = vectorMean128.getResult();
-            best = Implementation.VECTOR_SIMD_128;
-        }
-
-        if(vectorMean256.getResult() > bestScore)
-        {
-            bestScore = vectorMean256.getResult();
-            best = Implementation.VECTOR_SIMD_256;
-        }
-
-        if(vectorMean512.getResult() > bestScore)
-        {
-            best = Implementation.VECTOR_SIMD_512;
-        }
-
-        setImplementation(best);
-
-        mLog.info("DMR SOFT SYNC DETECTOR - SET OPTIMAL IMPLEMENTATION TO:" + getImplementation());
-    }
-
-    private long testScalar(float[] samples)
-    {
-        long count = 0;
-
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
-        {
-            for(float sample : samples)
+            for(int mode = 0; mode < MODES.length; mode++)
             {
-                mScalarDetector.process(sample);
+                requireEquivalent(implementation + " " + MODES[mode], expected[mode], actual[mode]);
             }
-            count++;
-        }
 
-        return count;
-    }
+            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
+                new DetectorOperation(implementation, fixture));
+            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
+                new DetectorOperation(implementation, fixture)).operationsPerSecond();
+            mLog.info("DMR SOFT SYNC DETECTOR - {}: {} fixture passes/second", implementation,
+                DECIMAL_FORMAT.format(score));
 
-    private long testVector64(float[] samples)
-    {
-        long count = 0;
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
-        {
-            for(float sample : samples)
+            if(score > bestScore)
             {
-                mVectorDetector64.process(sample);
+                bestScore = score;
+                bestImplementation = implementation;
             }
-            count++;
         }
 
-        return count;
+        setImplementation(bestImplementation);
+        mLog.info("DMR SOFT SYNC DETECTOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
     }
 
-    private long testVector128(float[] samples)
+    /**
+     * Creates a deterministic stream with low-level background symbols plus exact and near-threshold examples of
+     * every selectable DMR sync pattern.
+     */
+    private float[] createFixture()
     {
-        long count = 0;
-        long start = System.currentTimeMillis();
+        float[] fixture = getFloatSamples(BUFFER_SIZE, "representative-soft-symbol-stream");
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int x = 0; x < fixture.length; x++)
         {
-            for(float sample : samples)
+            fixture[x] *= 0.25f;
+        }
+
+        for(int pattern = 0; pattern < PATTERNS.length; pattern++)
+        {
+            float[] symbols = PATTERNS[pattern].toSymbols();
+            int offset = 16 + pattern * 248;
+            System.arraycopy(symbols, 0, fixture, offset, symbols.length);
+            System.arraycopy(SoftSyncCalibrationHelper.createNearSync(symbols, DETECTION_THRESHOLD - 0.75f), 0,
+                fixture, offset + 72, symbols.length);
+            System.arraycopy(SoftSyncCalibrationHelper.createNearSync(symbols, DETECTION_THRESHOLD + 0.75f), 0,
+                fixture, offset + 144, symbols.length);
+        }
+
+        return fixture;
+    }
+
+    /**
+     * Validates explicit detection outcomes on isolated exact and near-threshold patterns.  This makes the calibration
+     * reject a numerically fast implementation that changes a sync-pattern choice or crosses the decoder threshold.
+     */
+    private static void validateAnchors(Implementation implementation) throws CalibrationException
+    {
+        for(DMRSyncDetectMode mode: MODES)
+        {
+            for(DMRSyncPattern pattern: PATTERNS)
             {
-                mVectorDetector128.process(sample);
-            }
-            count++;
-        }
+                if(!supports(mode, pattern))
+                {
+                    continue;
+                }
 
-        return count;
+                float[] exact = pattern.toSymbols();
+                DMRDetection expected = detect(createDetector(Implementation.SCALAR), mode, exact);
+
+                if(expected.pattern() != pattern || !expected.detected())
+                {
+                    throw new CalibrationException("Invalid DMR exact-sync fixture for " + mode + " " + pattern +
+                        ": score=" + expected.score() + ", detected pattern=" + expected.pattern());
+                }
+
+                requireEquivalent(implementation + " " + mode + " exact " + pattern, expected,
+                    detect(createDetector(implementation), mode, exact));
+                for(float threshold: PRODUCTION_THRESHOLDS)
+                {
+                    validateNearAnchor(implementation, mode, pattern, exact, threshold, false);
+                    validateNearAnchor(implementation, mode, pattern, exact, threshold, true);
+                }
+            }
+        }
     }
 
-    private long testVector256(float[] samples)
+    private static void validateNearAnchor(Implementation implementation, DMRSyncDetectMode mode,
+                                           DMRSyncPattern pattern, float[] exact, float threshold,
+                                           boolean shouldDetect)
+        throws CalibrationException
     {
-        long count = 0;
-        long start = System.currentTimeMillis();
+        float target = SoftSyncCalibrationHelper.boundaryTarget(threshold, shouldDetect);
+        float[] near = SoftSyncCalibrationHelper.createNearSync(exact, target);
+        DMRDetection expected = detect(createDetector(Implementation.SCALAR), mode, near, threshold);
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        if(expected.pattern() != pattern || expected.detected() != shouldDetect)
         {
-            for(float sample : samples)
+            throw new CalibrationException("Invalid DMR near-sync fixture for " + mode + " " + pattern +
+                " at threshold " + threshold + ": score=" + expected.score() + ", detected pattern=" +
+                expected.pattern());
+        }
+
+        requireEquivalent(implementation + " " + mode + " near " + pattern + " threshold " + threshold + " " +
+            shouldDetect, expected, detect(createDetector(implementation), mode, near, threshold));
+    }
+
+    private static boolean supports(DMRSyncDetectMode mode, DMRSyncPattern pattern)
+    {
+        return switch(mode)
+        {
+            case AUTOMATIC -> true;
+            case BASE_ONLY -> pattern == DMRSyncPattern.BASE_STATION_DATA ||
+                pattern == DMRSyncPattern.BASE_STATION_VOICE;
+            case MOBILE_ONLY -> pattern == DMRSyncPattern.MOBILE_STATION_DATA ||
+                pattern == DMRSyncPattern.MOBILE_STATION_VOICE;
+            case DIRECT_ONLY -> pattern == DMRSyncPattern.DIRECT_DATA_TIMESLOT_1 ||
+                pattern == DMRSyncPattern.DIRECT_DATA_TIMESLOT_2 ||
+                pattern == DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1 ||
+                pattern == DMRSyncPattern.DIRECT_VOICE_TIMESLOT_2;
+        };
+    }
+
+    private static DMRDetection detect(DMRSoftSyncDetector detector, DMRSyncDetectMode mode, float[] symbols)
+    {
+        return detect(detector, mode, symbols, DETECTION_THRESHOLD);
+    }
+
+    private static DMRDetection detect(DMRSoftSyncDetector detector, DMRSyncDetectMode mode, float[] symbols,
+                                       float threshold)
+    {
+        detector.setMode(mode);
+        float score = 0.0f;
+
+        for(float symbol: symbols)
+        {
+            score = detector.processAndCalculate(symbol);
+        }
+
+        return new DMRDetection(score, detector.getDetectedPattern(), score > threshold);
+    }
+
+    private static DMRResult[] evaluateAllModes(Implementation implementation, float[] fixture)
+    {
+        DMRResult[] results = new DMRResult[MODES.length];
+
+        for(int mode = 0; mode < MODES.length; mode++)
+        {
+            DMRSoftSyncDetector detector = createDetector(implementation);
+            detector.setMode(MODES[mode]);
+            float[] scores = new float[fixture.length];
+            DMRSyncPattern[] patterns = new DMRSyncPattern[fixture.length];
+            boolean[] detected = new boolean[fixture.length];
+
+            for(int x = 0; x < fixture.length; x++)
             {
-                mVectorDetector256.process(sample);
+                scores[x] = detector.processAndCalculate(fixture[x]);
+                patterns[x] = detector.getDetectedPattern();
+                detected[x] = scores[x] > DETECTION_THRESHOLD;
             }
-            count++;
+
+            results[mode] = new DMRResult(scores, patterns, detected);
         }
 
-        return count;
+        return results;
     }
 
-    private long testVector512(float[] samples)
+    private static void requireEquivalent(String candidate, DMRResult expected, DMRResult actual)
+        throws CalibrationException
     {
-        long count = 0;
-        long start = System.currentTimeMillis();
+        CalibrationBenchmark.requireEquivalent(candidate + " scores", expected.scores(), actual.scores(),
+            ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int x = 0; x < expected.patterns().length; x++)
         {
-            for(float sample : samples)
+            boolean decisionChanged = expected.detected()[x] != actual.detected()[x];
+            boolean detectedPatternChanged = expected.detected()[x] && expected.patterns()[x] != actual.patterns()[x];
+
+            if(decisionChanged || detectedPatternChanged)
             {
-                mVectorDetector512.process(sample);
+                throw new CalibrationException(candidate + " changed the DMR sync result at symbol " + x +
+                    ": expected " + expected.patterns()[x] + "/" + expected.detected()[x] + ", actual " +
+                    actual.patterns()[x] + "/" + actual.detected()[x]);
             }
-            count++;
         }
-
-        return count;
     }
 
-    public static void main(String[] args)
+    private static void requireEquivalent(String candidate, DMRDetection expected, DMRDetection actual)
+        throws CalibrationException
     {
-        DMRSoftSyncCalibration calibration = new DMRSoftSyncCalibration();
+        CalibrationBenchmark.requireEquivalent(candidate + " score", new float[]{expected.score()},
+            new float[]{actual.score()}, ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
 
-        try
+        if(expected.pattern() != actual.pattern() || expected.detected() != actual.detected())
         {
-            calibration.calibrate();
+            throw new CalibrationException(candidate + " changed the DMR sync result: expected " +
+                expected.pattern() + "/" + expected.detected() + ", actual " + actual.pattern() + "/" +
+                actual.detected());
         }
-        catch(Exception e)
+    }
+
+    /** Returns fixed-width implementations that fit within the platform's preferred native vector width. */
+    private static List<Implementation> getCandidates()
+    {
+        int preferredBits = FloatVector.SPECIES_PREFERRED.vectorBitSize();
+        List<Implementation> candidates = new ArrayList<>();
+        candidates.add(Implementation.SCALAR);
+
+        if(preferredBits >= 64)
         {
-            mLog.error("Error during calibration", e);
+            candidates.add(Implementation.VECTOR_SIMD_64);
+        }
+
+        if(preferredBits >= 128)
+        {
+            candidates.add(Implementation.VECTOR_SIMD_128);
+        }
+
+        if(preferredBits >= 256)
+        {
+            candidates.add(Implementation.VECTOR_SIMD_256);
+        }
+
+        if(preferredBits >= 512)
+        {
+            candidates.add(Implementation.VECTOR_SIMD_512);
+        }
+
+        return candidates;
+    }
+
+    private static DMRSoftSyncDetector createDetector(Implementation implementation)
+    {
+        return switch(implementation)
+        {
+            case VECTOR_SIMD_64 -> new DMRSoftSyncDetectorVector64();
+            case VECTOR_SIMD_128 -> new DMRSoftSyncDetectorVector128();
+            case VECTOR_SIMD_256 -> new DMRSoftSyncDetectorVector256();
+            case VECTOR_SIMD_512 -> new DMRSoftSyncDetectorVector512();
+            default -> new DMRSoftSyncDetectorScalar();
+        };
+    }
+
+    private record DMRDetection(float score, DMRSyncPattern pattern, boolean detected)
+    {
+    }
+
+    private record DMRResult(float[] scores, DMRSyncPattern[] patterns, boolean[] detected)
+    {
+    }
+
+    /** Benchmarks complete streaming fixture passes with independent detector state for every detection mode. */
+    private static class DetectorOperation implements LongSupplier
+    {
+        private final DMRSoftSyncDetector[] mDetectors = new DMRSoftSyncDetector[MODES.length];
+        private final float[] mFixture;
+
+        private DetectorOperation(Implementation implementation, float[] fixture)
+        {
+            mFixture = fixture;
+
+            for(int mode = 0; mode < MODES.length; mode++)
+            {
+                mDetectors[mode] = createDetector(implementation);
+                mDetectors[mode].setMode(MODES[mode]);
+            }
+        }
+
+        @Override
+        public long getAsLong()
+        {
+            float scoreSum = 0.0f;
+            long resultFingerprint = 0L;
+
+            for(DMRSoftSyncDetector detector: mDetectors)
+            {
+                int detections = 0;
+                int patternFingerprint = 1;
+
+                for(float symbol: mFixture)
+                {
+                    float score = detector.processAndCalculate(symbol);
+                    scoreSum += score;
+                    detections += score > DETECTION_THRESHOLD ? 1 : 0;
+                    patternFingerprint = 31 * patternFingerprint + detector.getDetectedPattern().ordinal();
+                }
+
+                resultFingerprint = CalibrationBenchmark.combine(resultFingerprint,
+                    (Integer.toUnsignedLong(detections) << 32) ^ Integer.toUnsignedLong(patternFingerprint));
+            }
+
+            return CalibrationBenchmark.combine(resultFingerprint, CalibrationBenchmark.fingerprint(scoreSum));
         }
     }
 }

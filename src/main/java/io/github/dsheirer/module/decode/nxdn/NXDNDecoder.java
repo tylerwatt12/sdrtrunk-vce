@@ -25,7 +25,6 @@ import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
@@ -143,7 +142,7 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
         int symbolLength = 26;
         float rrcAlpha = 0.2f;
         float[] rrcTaps = FilterFactory.getRRC(samplesPerSymbol, symbolLength, rrcAlpha);
-        mPulseShapingFilter = new RealFIRFilter(rrcTaps);
+        mPulseShapingFilter = FilterFactory.getPulseShapingFilter(rrcTaps);
         float[] basebandTaps = getBasebandFilter(decimatedSampleRate, mConfig);
         mBasebandFilterI = FilterFactory.getRealFilter(basebandTaps);
         mBasebandFilterQ = FilterFactory.getRealFilter(basebandTaps);

@@ -5,7 +5,7 @@
  */
 package io.github.dsheirer.module.decode.am;
 
-import io.github.dsheirer.dsp.am.AmplitudeDemodulator;
+import io.github.dsheirer.dsp.am.AmplitudeDemodulatorFactory;
 import io.github.dsheirer.dsp.gain.AudioGainAndDcFilter;
 import io.github.dsheirer.dsp.squelch.CarrierSquelch;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -26,7 +26,7 @@ public class AMDecoder extends NBFMDecoder
 
     AMDecoder(DecodeConfigAM config, AudioGainAndDcFilter audioGain)
     {
-        super(config, new AmplitudeDemodulator(), new CarrierSquelch(config.getSquelchNoiseOpenThreshold(),
+        super(config, AmplitudeDemodulatorFactory.getDemodulator(), new CarrierSquelch(config.getSquelchNoiseOpenThreshold(),
             config.getSquelchNoiseCloseThreshold(), config.getSquelchHysteresisOpenThreshold(),
             config.getSquelchHysteresisCloseThreshold()));
         mAudioGain = Objects.requireNonNull(audioGain);

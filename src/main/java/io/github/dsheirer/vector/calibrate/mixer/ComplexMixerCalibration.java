@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2022 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,123 +19,151 @@
 
 package io.github.dsheirer.vector.calibrate.mixer;
 
+import io.github.dsheirer.dsp.mixer.ComplexMixer;
 import io.github.dsheirer.dsp.mixer.ScalarComplexMixer;
 import io.github.dsheirer.dsp.mixer.VectorComplexMixer;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import java.time.Duration;
+import java.util.function.LongSupplier;
 
 /**
- * Calibrates the complex mixer implementations to determine the optimal instance.
+ * Selects the fastest correct complex mixer implementation.
  */
 public class ComplexMixerCalibration extends Calibration
 {
-    private static final double FREQUENCY = 2.0;
-    private static final double SAMPLE_RATE = 10.0;
-    private static final int SAMPLE_SIZE = 2048;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
-    private ScalarComplexMixer mScalarComplexMixer = new ScalarComplexMixer(FREQUENCY, SAMPLE_RATE);
-    private VectorComplexMixer mVectorComplexMixer = new VectorComplexMixer(FREQUENCY, SAMPLE_RATE);
+    private static final double FREQUENCY = 12_500.0d;
+    private static final double SAMPLE_RATE = 50_000.0d;
+    private static final int BUFFER_SIZE = 2048;
+    private static final int BENCHMARK_BATCH_SIZE = 2;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final float ABSOLUTE_TOLERANCE = 0.000001f;
+    private static final float RELATIVE_TOLERANCE = 0.000001f;
+    private static final Implementation[] CANDIDATES = {
+        Implementation.SCALAR,
+        Implementation.VECTOR_SIMD_PREFERRED
+    };
 
     /**
-     * Constructs an instance
+     * Constructs an instance.
      */
     public ComplexMixerCalibration()
     {
         super(CalibrationType.MIXER_COMPLEX);
     }
 
-    @Override public void calibrate() throws CalibrationException
+    @Override
+    public void calibrate() throws CalibrationException
     {
-        float[] i = getFloatSamples(SAMPLE_SIZE);
-        float[] q = getFloatSamples(SAMPLE_SIZE);
+        float[][] i = {
+            getFloatSamples(BUFFER_SIZE, "in-phase-buffer-a"),
+            getFloatSamples(BUFFER_SIZE, "in-phase-buffer-b")
+        };
+        float[][] q = {
+            getFloatSamples(BUFFER_SIZE, "quadrature-buffer-a"),
+            getFloatSamples(BUFFER_SIZE, "quadrature-buffer-b")
+        };
+        ComplexSamples[] expected = mixSequence(createMixer(Implementation.SCALAR), i, q);
+        Implementation bestImplementation = Implementation.SCALAR;
+        double bestScore = 0.0d;
 
-        Mean scalarMean = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        for(Implementation implementation: CANDIDATES)
         {
-            long score = testScalar(i, q);
-            scalarMean.increment(score);
+            ComplexSamples[] actual = mixSequence(createMixer(implementation), i, q);
+
+            for(int x = 0; x < expected.length; x++)
+            {
+                CalibrationBenchmark.requireEquivalent(implementation + " I stream buffer " + x, expected[x].i(),
+                    actual[x].i(), ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
+                CalibrationBenchmark.requireEquivalent(implementation + " Q stream buffer " + x, expected[x].q(),
+                    actual[x].q(), ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
+            }
+
+            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
+                new MixerOperation(createMixer(implementation), i, q));
+            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
+                new MixerOperation(createMixer(implementation), i, q)).operationsPerSecond();
+            mLog.info("COMPLEX MIXER - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
+
+            if(score > bestScore)
+            {
+                bestScore = score;
+                bestImplementation = implementation;
+            }
         }
 
-        mLog.info("COMPLEX MIXER WARMUP - SCALAR:" + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        Mean vectorMean = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector(i, q);
-            vectorMean.increment(score);
-        }
-
-        mLog.info("COMPLEX MIXER WARMUP - VECTOR:" + DECIMAL_FORMAT.format(vectorMean.getResult()));
-
-        scalarMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testScalar(i, q);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("COMPLEX MIXER - SCALAR:" + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        vectorMean.clear();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector(i, q);
-            vectorMean.increment(score);
-        }
-
-        mLog.info("COMPLEX MIXER - VECTOR:" + DECIMAL_FORMAT.format(vectorMean.getResult()));
-
-        if(scalarMean.getResult() > vectorMean.getResult())
-        {
-            setImplementation(Implementation.SCALAR);
-        }
-        else
-        {
-            setImplementation(Implementation.VECTOR_SIMD_PREFERRED);
-        }
-
-        mLog.info("COMPLEX MIXER - IMPLEMENTATION SET TO:" + getImplementation());
+        setImplementation(bestImplementation);
+        mLog.info("COMPLEX MIXER - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
     }
 
-    private long testScalar(float[] i, float[] q)
+    private static ComplexMixer createMixer(Implementation implementation)
     {
-        long start = System.currentTimeMillis();
-        double accumulator = 0.0;
-        long count = 0;
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
-        {
-            ComplexSamples mixed = mScalarComplexMixer.mix(i, q, start);
-            accumulator += mixed.i()[2];
-            count++;
-        }
-
-        return count + (long)(accumulator * 0);
+        return implementation == Implementation.VECTOR_SIMD_PREFERRED ?
+            new VectorComplexMixer(FREQUENCY, SAMPLE_RATE) : new ScalarComplexMixer(FREQUENCY, SAMPLE_RATE);
     }
 
-    private long testVector(float[] i, float[] q)
+    private static ComplexSamples[] mixSequence(ComplexMixer mixer, float[][] i, float[][] q)
     {
-        long start = System.currentTimeMillis();
-        double accumulator = 0.0;
-        long count = 0;
+        ComplexSamples[] mixed = new ComplexSamples[i.length];
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int x = 0; x < i.length; x++)
         {
-            ComplexSamples mixed = mVectorComplexMixer.mix(i, q, start);
-            accumulator += mixed.i()[2];
-            count++;
+            mixed[x] = mixer.mix(i[x], q[x], x * 1_000L);
         }
 
-        return count + (long)(accumulator * 0);
+        return mixed;
+    }
+
+    /**
+     * Alternates two buffers through one mixer so oscillator continuity remains part of the measured operation.
+     */
+    private static class MixerOperation implements LongSupplier
+    {
+        private final ComplexMixer mMixer;
+        private final float[][] mI;
+        private final float[][] mQ;
+        private int mBufferIndex;
+        private int mObservationIndex;
+
+        private MixerOperation(ComplexMixer mixer, float[][] i, float[][] q)
+        {
+            mMixer = mixer;
+            mI = clone(i);
+            mQ = clone(q);
+        }
+
+        @Override
+        public long getAsLong()
+        {
+            ComplexSamples mixed = mMixer.mix(mI[mBufferIndex], mQ[mBufferIndex], mBufferIndex * 1_000L);
+            CalibrationBenchmark.consume(mixed);
+            mBufferIndex = (mBufferIndex + 1) % mI.length;
+            int index = mObservationIndex++;
+
+            if(mObservationIndex >= mixed.i().length)
+            {
+                mObservationIndex = 0;
+            }
+
+            return CalibrationBenchmark.combine(CalibrationBenchmark.fingerprint(mixed.i()[index]),
+                CalibrationBenchmark.fingerprint(mixed.q()[index]));
+        }
+
+        private static float[][] clone(float[][] source)
+        {
+            float[][] copy = new float[source.length][];
+
+            for(int x = 0; x < source.length; x++)
+            {
+                copy[x] = source[x].clone();
+            }
+
+            return copy;
+        }
     }
 }

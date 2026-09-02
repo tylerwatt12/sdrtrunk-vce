@@ -23,7 +23,7 @@ import io.github.dsheirer.buffer.DcCorrectionManager;
 import java.nio.ByteBuffer;
 
 /**
- * Scalar implementation of sample converter for un-packed samples.
+ * Scalar implementation of the packed 12-bit sample converter. Two samples are encoded in each three-byte group.
  */
 public class ScalarPackedSampleConverter implements ISampleConverter
 {
@@ -61,7 +61,7 @@ public class ScalarPackedSampleConverter implements ISampleConverter
                 dcAccumulator += sample;
 
                 sample = (short)(((b2 & 0xF) << 8) | (b3 & 0xFF));
-                samples[x] = sample;
+                samples[x + 1] = sample;
                 dcAccumulator += sample;
             }
 
@@ -81,7 +81,7 @@ public class ScalarPackedSampleConverter implements ISampleConverter
                 samples[x] = sample;
 
                 sample = (short)(((b2 & 0xF) << 8) | (b3 & 0xFF));
-                samples[x] = sample;
+                samples[x + 1] = sample;
             }
         }
 

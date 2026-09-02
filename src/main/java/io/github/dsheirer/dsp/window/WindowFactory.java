@@ -19,11 +19,13 @@
 
 package io.github.dsheirer.dsp.window;
 
+import io.github.dsheirer.vector.calibrate.CalibrationManager;
+import io.github.dsheirer.vector.calibrate.CalibrationType;
+import io.github.dsheirer.vector.calibrate.Implementation;
+import java.util.Arrays;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Arrays;
 
 /**
  * Window factory and corresponding utility methods.
@@ -73,6 +75,50 @@ public class WindowFactory
             default:
                 return getRectangular(length);
         }
+    }
+
+    /**
+     * Creates a reusable scalar or vector window processor using the implementation selected by calibration.
+     * This is intended for repeated application of one window, such as an FFT processor.  One-time filter-design
+     * callers can continue to use {@link #apply(float[], float[])} directly.
+     *
+     * @param type of window
+     * @param length of window
+     * @return calibrated window processor
+     */
+    public static Window getWindowProcessor(WindowType type, int length)
+    {
+        return getWindowProcessor(getWindow(type, length));
+    }
+
+    /**
+     * Creates a reusable scalar or vector window processor using the implementation selected by calibration.
+     *
+     * @param coefficients window coefficients
+     * @return calibrated window processor
+     */
+    public static Window getWindowProcessor(float[] coefficients)
+    {
+        Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.WINDOW);
+        return getWindowProcessor(coefficients, implementation);
+    }
+
+    /**
+     * Creates a reusable window processor for the specified implementation.  Exposed so that implementation parity
+     * can be verified without changing persisted calibration preferences.
+     *
+     * @param coefficients window coefficients
+     * @param implementation to construct
+     * @return window processor
+     */
+    public static Window getWindowProcessor(float[] coefficients, Implementation implementation)
+    {
+        return switch(implementation)
+        {
+            case VECTOR_SIMD_PREFERRED, VECTOR_SIMD_64, VECTOR_SIMD_128, VECTOR_SIMD_256, VECTOR_SIMD_512 ->
+                new VectorWindow(coefficients);
+            case SCALAR, UNCALIBRATED -> new ScalarWindow(coefficients);
+        };
     }
 
     /**

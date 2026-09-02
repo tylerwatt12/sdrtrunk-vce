@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2024 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,244 +25,166 @@ import io.github.dsheirer.dsp.filter.interpolator.InterpolatorVector128;
 import io.github.dsheirer.dsp.filter.interpolator.InterpolatorVector256;
 import io.github.dsheirer.dsp.filter.interpolator.InterpolatorVector64;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.LongSupplier;
 import jdk.incubator.vector.FloatVector;
-import jdk.incubator.vector.VectorSpecies;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
 
-/**
- * Calibration plugin for FIR filters
- */
+/** Calibration plugin for the eight-tap interpolator used by symbol timing recovery. */
 public class InterpolatorCalibration extends Calibration
 {
-    private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_PREFERRED;
-    private static final int BUFFER_SIZE = 8;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
+    private static final int BUFFER_SIZE = 32;
+    private static final int INTERPOLATION_POINT_COUNT = 2048;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final int BENCHMARK_BATCH_SIZE = 1;
+    private static final float ABSOLUTE_TOLERANCE = 0.000_001f;
+    private static final float RELATIVE_TOLERANCE = 0.000_001f;
 
-    private Interpolator mScalar = new InterpolatorScalar();
-    private Interpolator mVector256 = new InterpolatorVector256();
-    private Interpolator mVector128 = new InterpolatorVector128();
-    private Interpolator mVector64 = new InterpolatorVector64();
-
-    /**
-     * Constructs an instance
-     */
     public InterpolatorCalibration()
     {
         super(CalibrationType.INTERPOLATOR);
     }
 
-    /**
-     * Performs calibration to determine optimal (Scalar vs Vector) operation type.
-     * @throws CalibrationException
-     */
     @Override public void calibrate() throws CalibrationException
     {
-        float[] samples = getFloatSamples(BUFFER_SIZE);
-        float[] interpolationPoints = getPositiveFloatSamples(2048);
+        float[] samples = getFloatSamples(BUFFER_SIZE, "samples");
+        float[] interpolationPoints = getPositiveFloatSamples(INTERPOLATION_POINT_COUNT, "interpolation-points");
+        interpolationPoints[0] = 0.0f;
+        interpolationPoints[1] = 0.5f;
+        interpolationPoints[2] = 1.0f;
 
-        Mean scalarMean = new Mean();
+        List<Candidate> candidates = candidates();
+        verifyImplementations(candidates, samples, interpolationPoints);
 
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        for(Candidate candidate: candidates)
         {
-            long score = testScalar(samples, interpolationPoints);
-            scalarMean.increment(score);
+            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
+                new InterpolatorOperation(candidate.interpolator(), samples, interpolationPoints));
         }
 
-        mLog.info("INTERPOLATOR WARMUP - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
+        Candidate best = candidates.get(0);
+        double bestScore = 0.0d;
 
-        Mean vector256Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 8)
+        for(Candidate candidate: candidates)
         {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
+            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
+                new InterpolatorOperation(candidate.interpolator(), samples, interpolationPoints))
+                .operationsPerSecond();
+            mLog.info("INTERPOLATOR - {}: {} full interpolation sweeps/second", candidate.label(),
+                DECIMAL_FORMAT.format(score));
+
+            if(score > bestScore)
             {
-                long score = testVector256(samples, interpolationPoints);
-                vector256Mean.increment(score);
-            }
-
-            mLog.info("INTERPOLATOR WARMUP - VECTOR 256: " + DECIMAL_FORMAT.format(vector256Mean.getResult()));
-        }
-
-        Mean vector128Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 4)
-        {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
-            {
-                long score = testVector128(samples, interpolationPoints);
-                vector128Mean.increment(score);
-            }
-
-            mLog.info("INTERPOLATOR WARMUP - VECTOR 128: " + DECIMAL_FORMAT.format(vector128Mean.getResult()));
-        }
-
-        Mean vector64Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 2)
-        {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
-            {
-                long score = testVector64(samples, interpolationPoints);
-                vector64Mean.increment(score);
-            }
-
-            mLog.info("INTERPOLATOR WARMUP - VECTOR 64: " + DECIMAL_FORMAT.format(vector64Mean.getResult()));
-        }
-
-        //Test starts ...
-        scalarMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testScalar(samples, interpolationPoints);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("INTERPOLATOR - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        double bestScore = scalarMean.getResult();
-        setImplementation(Implementation.SCALAR);
-
-        if(VECTOR_SPECIES.length() >= 8)
-        {
-            vector256Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector256(samples, interpolationPoints);
-                vector256Mean.increment(score);
-            }
-
-            mLog.info("INTERPOLATOR - VECTOR 256: " + DECIMAL_FORMAT.format(vector256Mean.getResult()));
-
-            if(vector256Mean.getResult() > bestScore)
-            {
-                bestScore = vector256Mean.getResult();
-                setImplementation(Implementation.VECTOR_SIMD_256);
+                best = candidate;
+                bestScore = score;
             }
         }
 
-        if(VECTOR_SPECIES.length() >= 4)
-        {
-            vector128Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector128(samples, interpolationPoints);
-                vector128Mean.increment(score);
-            }
-
-            mLog.info("INTERPOLATOR - VECTOR 128: " + DECIMAL_FORMAT.format(vector128Mean.getResult()));
-
-            if(vector128Mean.getResult() > bestScore)
-            {
-                bestScore = vector128Mean.getResult();
-                setImplementation(Implementation.VECTOR_SIMD_128);
-            }
-        }
-
-        if(VECTOR_SPECIES.length() >= 2)
-        {
-            vector64Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector64(samples, interpolationPoints);
-                vector64Mean.increment(score);
-            }
-
-            mLog.info("INTERPOLATOR - VECTOR 64: " + DECIMAL_FORMAT.format(vector64Mean.getResult()));
-
-            if(vector64Mean.getResult() > bestScore)
-            {
-                setImplementation(Implementation.VECTOR_SIMD_64);
-            }
-        }
-
+        setImplementation(best.implementation());
         mLog.info("INTERPOLATOR - SET OPTIMAL IMPLEMENTATION TO: " + getImplementation());
     }
 
-    private long testScalar(float[] samples, float[] interpolationPoints)
+    private List<Candidate> candidates()
     {
-        double accumulator = 0.0f;
-        long count = 0;
+        int preferredLanes = FloatVector.SPECIES_PREFERRED.length();
+        List<Candidate> candidates = new ArrayList<>();
+        candidates.add(new Candidate("SCALAR", Implementation.SCALAR, new InterpolatorScalar()));
 
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        if(preferredLanes >= 8)
         {
-            for(int x = 0; x < interpolationPoints.length; x++)
-            {
-                accumulator += mScalar.filter(samples, 0, interpolationPoints[x]);
-            }
-
-            count++;
+            candidates.add(new Candidate("VECTOR 256", Implementation.VECTOR_SIMD_256,
+                new InterpolatorVector256()));
         }
 
-        return count + (long)(accumulator * 0);
+        if(preferredLanes >= 4)
+        {
+            candidates.add(new Candidate("VECTOR 128", Implementation.VECTOR_SIMD_128,
+                new InterpolatorVector128()));
+        }
+
+        if(preferredLanes >= 2)
+        {
+            candidates.add(new Candidate("VECTOR 64", Implementation.VECTOR_SIMD_64,
+                new InterpolatorVector64()));
+        }
+
+        return candidates;
     }
 
-    private long testVector64(float[] samples, float[] interpolationPoints)
+    private void verifyImplementations(List<Candidate> candidates, float[] samples, float[] interpolationPoints)
+        throws CalibrationException
     {
-        double accumulator = 0.0f;
+        float[] expected = output(candidates.get(0).interpolator(), samples, interpolationPoints);
 
-        long start = System.currentTimeMillis();
-        long count = 0;
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int x = 1; x < candidates.size(); x++)
         {
-            for(int x = 0; x < interpolationPoints.length; x++)
-            {
-                accumulator += mVector64.filter(samples, 0, interpolationPoints[x]);
-            }
-
-            count++;
+            Candidate candidate = candidates.get(x);
+            float[] actual = output(candidate.interpolator(), samples, interpolationPoints);
+            CalibrationBenchmark.requireEquivalent(candidate.label(), expected, actual, ABSOLUTE_TOLERANCE,
+                RELATIVE_TOLERANCE);
         }
-
-        return count + (long)(accumulator * 0);
     }
 
-    private long testVector128(float[] samples, float[] interpolationPoints)
+    private float[] output(Interpolator interpolator, float[] samples, float[] interpolationPoints)
     {
-        double accumulator = 0.0f;
-        long count = 0;
+        int offsetCount = samples.length - Interpolator.NTAPS + 1;
+        float[] output = new float[offsetCount * interpolationPoints.length];
+        int pointer = 0;
 
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int offset = 0; offset < offsetCount; offset++)
         {
-            for(int x = 0; x < interpolationPoints.length; x++)
+            for(float interpolationPoint: interpolationPoints)
             {
-                accumulator += mVector128.filter(samples, 0, interpolationPoints[x]);
+                output[pointer++] = interpolator.filter(samples, offset, interpolationPoint);
             }
-
-            count++;
         }
 
-        return count + (long)(accumulator * 0);
+        return output;
     }
 
-    private long testVector256(float[] samples, float[] interpolationPoints)
+    private record Candidate(String label, Implementation implementation, Interpolator interpolator)
     {
-        double accumulator = 0.0f;
-        long count = 0;
+    }
 
-        long start = System.currentTimeMillis();
+    private static class InterpolatorOperation implements LongSupplier
+    {
+        private final Interpolator mInterpolator;
+        private final float[] mSamples;
+        private final float[] mInterpolationPoints;
+        private final int mOffsetCount;
+        private int mOffset;
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        private InterpolatorOperation(Interpolator interpolator, float[] samples, float[] interpolationPoints)
         {
-            for(int x = 0; x < interpolationPoints.length; x++)
-            {
-                accumulator += mVector256.filter(samples, 0, interpolationPoints[x]);
-            }
-            count++;
+            mInterpolator = interpolator;
+            mSamples = samples;
+            mInterpolationPoints = interpolationPoints;
+            mOffsetCount = samples.length - Interpolator.NTAPS + 1;
         }
 
-        return count + (long)(accumulator * 0);
+        @Override public long getAsLong()
+        {
+            float accumulator = 0.0f;
+
+            for(float interpolationPoint: mInterpolationPoints)
+            {
+                accumulator += mInterpolator.filter(mSamples, mOffset, interpolationPoint);
+            }
+
+            mOffset++;
+
+            if(mOffset >= mOffsetCount)
+            {
+                mOffset = 0;
+            }
+
+            return CalibrationBenchmark.fingerprint(accumulator);
+        }
     }
 }

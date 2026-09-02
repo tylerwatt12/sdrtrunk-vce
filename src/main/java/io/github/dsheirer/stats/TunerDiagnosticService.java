@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.buffer.INativeBuffer;
+import io.github.dsheirer.dsp.window.Window;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.sample.Listener;
@@ -984,7 +985,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         private ProcessorConfiguration mApplied;
         private NativeBufferManager<INativeBuffer> mBufferManager;
         private DiagnosticComplexFft mFft;
-        private float[] mWindow;
+        private Window mWindow;
         private float[] mSourceSamples;
         private final Map<Integer,float[]> mSourceWorkspaces = new HashMap<>();
         private float[] mFftSamples;
@@ -1194,7 +1195,7 @@ public final class TunerDiagnosticService implements AutoCloseable
 
                 mBufferManager.get(mSourceSamples.length / 2, mSourceSamples);
                 prepareFftSamples(requested.plan());
-                WindowFactory.apply(mWindow, mFftSamples);
+                mWindow.apply(mFftSamples);
                 mFft.forward(mFftSamples);
                 DiagnosticZoomDsp.decibels(mFftSamples, mDecibelBins);
 
@@ -1227,7 +1228,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             if(mFft == null || mFftSamples == null || mFftSamples.length != fftSize * 2)
             {
                 mFft = mFftFactory.create(fftSize);
-                mWindow = WindowFactory.getWindow(WindowType.BLACKMAN_HARRIS_7, fftSize * 2);
+                mWindow = WindowFactory.getWindowProcessor(WindowType.BLACKMAN_HARRIS_7, fftSize * 2);
                 mFftSamples = new float[fftSize * 2];
                 mDecibelBins = new float[fftSize];
                 mInitializationThread = Thread.currentThread();

@@ -25,7 +25,6 @@ import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFactory;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloat;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
@@ -94,8 +93,8 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
     private IRealFilter mQBasebandFilter;
     private IRealDecimationFilter mDecimationFilterI;
     private IRealDecimationFilter mDecimationFilterQ;
-    private RealFIRFilter mRRCFilterI;
-    private RealFIRFilter mRRCFilterQ;
+    private IRealFilter mRRCFilterI;
+    private IRealFilter mRRCFilterQ;
     private final PowerMonitor mPowerMonitor = new PowerMonitor();
     /**
      * Constructs an instance
@@ -162,8 +161,8 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         }
 
         float[] taps = FilterFactory.getRootRaisedCosine(decimatedSampleRate / SYMBOL_RATE, symbolLength, rrcAlpha);
-        mRRCFilterI = new RealFIRFilter(taps);
-        mRRCFilterQ = new RealFIRFilter(taps);
+        mRRCFilterI = FilterFactory.getPulseShapingFilter(taps);
+        mRRCFilterQ = FilterFactory.getPulseShapingFilter(taps);
 
         mDemodulator = DifferentialDemodulatorFactory.getFloatDemodulator(decimatedSampleRate, SYMBOL_RATE);
         mSymbolProcessor.setSamplesPerSymbol(mDemodulator.getSamplesPerSymbol());

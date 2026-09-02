@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2025 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,262 +26,172 @@ import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloatVector256;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloatVector512;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloatVector64;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import java.time.Duration;
+import java.util.function.LongSupplier;
+import jdk.incubator.vector.FloatVector;
 
 /**
- * Calibrates differential demodulator options
+ * Selects the fastest correct differential phase demodulator for the current CPU.
  */
 public class DifferentialDemodulatorCalibration extends Calibration
 {
     private static final int BUFFER_SIZE = 2048;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
-    private DifferentialDemodulatorFloat mScalarDemodulator = new DifferentialDemodulatorFloatScalar(50000.0, 4800);
-    private final DifferentialDemodulatorFloat mVectorDemodulator64 = new DifferentialDemodulatorFloatVector64(50000.0, 4800);
-    private final DifferentialDemodulatorFloat mVectorDemodulator128 = new DifferentialDemodulatorFloatVector128(50000.0, 4800);
-    private final DifferentialDemodulatorFloat mVectorDemodulator256 = new DifferentialDemodulatorFloatVector256(50000.0, 4800);
-    private final DifferentialDemodulatorFloat mVectorDemodulator512 = new DifferentialDemodulatorFloatVector512(50000.0, 4800);
+    private static final double SAMPLE_RATE = 50_000.0d;
+    private static final int SYMBOL_RATE = 4_800;
+    private static final int BENCHMARK_BATCH_SIZE = 1;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final float ABSOLUTE_TOLERANCE = 0.000002f;
+    private static final float RELATIVE_TOLERANCE = 0.000002f;
+    private static final Implementation[] CANDIDATES = {
+        Implementation.SCALAR,
+        Implementation.VECTOR_SIMD_64,
+        Implementation.VECTOR_SIMD_128,
+        Implementation.VECTOR_SIMD_256,
+        Implementation.VECTOR_SIMD_512
+    };
 
     /**
-     * Constructs an instance
+     * Constructs an instance.
      */
     public DifferentialDemodulatorCalibration()
     {
         super(CalibrationType.DIFFERENTIAL_DEMODULATOR);
     }
 
-    @Override public void calibrate() throws CalibrationException
+    @Override
+    public void calibrate() throws CalibrationException
     {
-        float[] i = getFloatSamples(BUFFER_SIZE);
-        float[] q = getFloatSamples(BUFFER_SIZE);
+        float[][] i = {
+            getFloatSamples(BUFFER_SIZE, "in-phase-buffer-a"),
+            getFloatSamples(BUFFER_SIZE, "in-phase-buffer-b")
+        };
+        float[][] q = {
+            getFloatSamples(BUFFER_SIZE, "quadrature-buffer-a"),
+            getFloatSamples(BUFFER_SIZE, "quadrature-buffer-b")
+        };
+        float[][] expected = demodulateSequence(createDemodulator(Implementation.SCALAR), i, q);
+        Implementation bestImplementation = Implementation.SCALAR;
+        double bestScore = 0.0d;
 
-        Mean scalarMean = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        for(Implementation implementation: CANDIDATES)
         {
-            long score = testScalar(i, q);
-            scalarMean.increment(score);
+            if(!isSupported(implementation))
+            {
+                continue;
+            }
+
+            float[][] actual = demodulateSequence(createDemodulator(implementation), i, q);
+
+            for(int x = 0; x < expected.length; x++)
+            {
+                CalibrationBenchmark.requireEquivalent(implementation + " stream buffer " + x, expected[x],
+                    actual[x], ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
+            }
+
+            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
+                new DemodulatorOperation(createDemodulator(implementation), i, q));
+            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
+                new DemodulatorOperation(createDemodulator(implementation), i, q)).operationsPerSecond();
+            mLog.info("DQPSK DEMODULATOR - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
+
+            if(score > bestScore)
+            {
+                bestScore = score;
+                bestImplementation = implementation;
+            }
         }
 
-        mLog.info("DQPSK DEMODULATOR WARMUP - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        Mean vectorMean64 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector64(i, q);
-            vectorMean64.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR WARMUP - VECTOR 64: " + DECIMAL_FORMAT.format(vectorMean64.getResult()));
-
-        Mean vectorMean128 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector128(i, q);
-            vectorMean128.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR WARMUP - VECTOR 128: " + DECIMAL_FORMAT.format(vectorMean128.getResult()));
-
-        Mean vectorMean256 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector256(i, q);
-            vectorMean256.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR WARMUP - VECTOR 256: " + DECIMAL_FORMAT.format(vectorMean256.getResult()));
-
-        Mean vectorMean512 = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector512(i, q);
-            vectorMean512.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR WARMUP - VECTOR 512: " + DECIMAL_FORMAT.format(vectorMean512.getResult()));
-
-        //Start tests
-        scalarMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testScalar(i, q);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        vectorMean64.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector64(i, q);
-            vectorMean64.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR - VECTOR 64: " + DECIMAL_FORMAT.format(vectorMean64.getResult()));
-
-        vectorMean128.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector128(i, q);
-            vectorMean128.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR - VECTOR 128: " + DECIMAL_FORMAT.format(vectorMean128.getResult()));
-
-        vectorMean256.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector256(i, q);
-            vectorMean256.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR - VECTOR 256: " + DECIMAL_FORMAT.format(vectorMean256.getResult()));
-
-        vectorMean512.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector512(i, q);
-            vectorMean512.increment(score);
-        }
-
-        mLog.info("DQPSK DEMODULATOR - VECTOR 512: " + DECIMAL_FORMAT.format(vectorMean512.getResult()));
-
-        Implementation best = Implementation.SCALAR;
-        double bestScore = scalarMean.getResult();
-
-        if(vectorMean64.getResult() > bestScore)
-        {
-            bestScore = vectorMean64.getResult();
-            best = Implementation.VECTOR_SIMD_64;
-        }
-
-        if(vectorMean128.getResult() > bestScore)
-        {
-            bestScore = vectorMean128.getResult();
-            best = Implementation.VECTOR_SIMD_128;
-        }
-
-        if(vectorMean256.getResult() > bestScore)
-        {
-            bestScore = vectorMean256.getResult();
-            best = Implementation.VECTOR_SIMD_256;
-        }
-
-        if(vectorMean512.getResult() > bestScore)
-        {
-            best = Implementation.VECTOR_SIMD_512;
-        }
-
-        setImplementation(best);
-
-        mLog.info("DQPSK DEMODULATOR - SET OPTIMAL IMPLEMENTATION TO:" + getImplementation());
+        setImplementation(bestImplementation);
+        mLog.info("DQPSK DEMODULATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
     }
 
-    private long testScalar(float[] i, float[] q)
+    private static boolean isSupported(Implementation implementation)
     {
-        long count = 0;
-        float accumulator = 0;
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        int requiredLanes = switch(implementation)
         {
-            float[] demodulated = mScalarDemodulator.demodulate(i, q);
-            accumulator += demodulated[1];
-            count++;
-        }
+            case VECTOR_SIMD_64 -> FloatVector.SPECIES_64.length();
+            case VECTOR_SIMD_128 -> FloatVector.SPECIES_128.length();
+            case VECTOR_SIMD_256 -> FloatVector.SPECIES_256.length();
+            case VECTOR_SIMD_512 -> FloatVector.SPECIES_512.length();
+            default -> 0;
+        };
 
-        return count + (long)(accumulator * 0);
+        return requiredLanes <= FloatVector.SPECIES_PREFERRED.length();
     }
 
-    private long testVector64(float[] i, float[] q)
+    private static DifferentialDemodulatorFloat createDemodulator(Implementation implementation)
     {
-        long count = 0;
-        float accumulator = 0;
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        return switch(implementation)
         {
-            float[] demodulated = mVectorDemodulator64.demodulate(i, q);
-            accumulator += demodulated[1];
-            count++;
-        }
-
-        return count + (long)(accumulator * 0);
+            case VECTOR_SIMD_64 -> new DifferentialDemodulatorFloatVector64(SAMPLE_RATE, SYMBOL_RATE);
+            case VECTOR_SIMD_128 -> new DifferentialDemodulatorFloatVector128(SAMPLE_RATE, SYMBOL_RATE);
+            case VECTOR_SIMD_256 -> new DifferentialDemodulatorFloatVector256(SAMPLE_RATE, SYMBOL_RATE);
+            case VECTOR_SIMD_512 -> new DifferentialDemodulatorFloatVector512(SAMPLE_RATE, SYMBOL_RATE);
+            default -> new DifferentialDemodulatorFloatScalar(SAMPLE_RATE, SYMBOL_RATE);
+        };
     }
 
-    private long testVector128(float[] i, float[] q)
+    private static float[][] demodulateSequence(DifferentialDemodulatorFloat demodulator, float[][] i, float[][] q)
     {
-        long count = 0;
-        float accumulator = 0;
-        long start = System.currentTimeMillis();
+        float[][] demodulated = new float[i.length][];
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int x = 0; x < i.length; x++)
         {
-            float[] demodulated = mVectorDemodulator128.demodulate(i, q);
-            accumulator += demodulated[1];
-            count++;
+            demodulated[x] = demodulator.demodulate(i[x], q[x]);
         }
 
-        return count + (long)(accumulator * 0);
+        return demodulated;
     }
 
-    private long testVector256(float[] i, float[] q)
+    /**
+     * Alternates two input buffers through one fresh stateful demodulator and observes a rotating output element.
+     */
+    private static class DemodulatorOperation implements LongSupplier
     {
-        long count = 0;
-        float accumulator = 0;
-        long start = System.currentTimeMillis();
+        private final DifferentialDemodulatorFloat mDemodulator;
+        private final float[][] mI;
+        private final float[][] mQ;
+        private int mBufferIndex;
+        private int mObservationIndex;
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        private DemodulatorOperation(DifferentialDemodulatorFloat demodulator, float[][] i, float[][] q)
         {
-            float[] demodulated = mVectorDemodulator256.demodulate(i, q);
-            accumulator += demodulated[1];
-            count++;
+            mDemodulator = demodulator;
+            mI = clone(i);
+            mQ = clone(q);
         }
 
-        return count + (long)(accumulator * 0);
-    }
-
-    private long testVector512(float[] i, float[] q)
-    {
-        long count = 0;
-        float accumulator = 0;
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        @Override
+        public long getAsLong()
         {
-            float[] demodulated = mVectorDemodulator512.demodulate(i, q);
-            accumulator += demodulated[1];
-            count++;
+            float[] demodulated = mDemodulator.demodulate(mI[mBufferIndex], mQ[mBufferIndex]);
+            CalibrationBenchmark.consume(demodulated);
+            mBufferIndex = (mBufferIndex + 1) % mI.length;
+            int index = mObservationIndex++;
+
+            if(mObservationIndex >= demodulated.length)
+            {
+                mObservationIndex = 0;
+            }
+
+            return CalibrationBenchmark.fingerprint(demodulated[index]);
         }
 
-        return count + (long)(accumulator * 0);
-    }
-
-    public static void main(String[] args)
-    {
-        DifferentialDemodulatorCalibration calibration = new DifferentialDemodulatorCalibration();
-
-        try
+        private static float[][] clone(float[][] source)
         {
-            calibration.calibrate();
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error during calibration", e);
+            float[][] copy = new float[source.length][];
+
+            for(int x = 0; x < source.length; x++)
+            {
+                copy[x] = source[x].clone();
+            }
+
+            return copy;
         }
     }
 }

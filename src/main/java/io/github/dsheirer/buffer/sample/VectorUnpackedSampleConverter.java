@@ -26,7 +26,7 @@ import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 /**
- * Scalar implementation of sample converter for un-packed samples.
+ * Vector implementation of the unpacked 12-bit sample converter.
  */
 public class VectorUnpackedSampleConverter implements ISampleConverter
 {
@@ -74,8 +74,14 @@ public class VectorUnpackedSampleConverter implements ISampleConverter
 
                 vector = ShortVector.fromArray(VECTOR_SPECIES, bytes1, 0)
                         .or(ShortVector.fromArray(VECTOR_SPECIES, bytes2, 0).lanewise(VectorOperators.LSHL, 8));
-                dcAccumulator += vector.reduceLanes(VectorOperators.ADD);
                 vector.intoArray(samples, samplesOffset);
+
+                //A short-lane ADD reduction can overflow above 32,767. Accumulate the widened stored values so the
+                //periodic DC estimate remains identical to the scalar converter for the full unsigned 12-bit range.
+                for(int x = samplesOffset; x < samplesOffset + VECTOR_SPECIES.length(); x++)
+                {
+                    dcAccumulator += samples[x];
+                }
             }
 
             for(; samplesOffset < samples.length; samplesOffset++)

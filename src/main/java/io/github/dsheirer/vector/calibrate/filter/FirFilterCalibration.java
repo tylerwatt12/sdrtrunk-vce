@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2022 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,349 +30,232 @@ import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilter64Bit;
 import io.github.dsheirer.dsp.filter.fir.real.VectorRealFIRFilterDefaultBit;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
+import java.time.Duration;
+import java.util.function.LongSupplier;
 import jdk.incubator.vector.FloatVector;
-import jdk.incubator.vector.VectorSpecies;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
 
 /**
- * Calibration plugin for FIR filters
+ * Selects the fastest correct general-purpose real FIR filter for the current CPU.
  */
 public class FirFilterCalibration extends Calibration
 {
-    private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_PREFERRED;
     private static final int BUFFER_SIZE = 2048;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
-
-    private IRealFilter mScalar;
-    private IRealFilter mVectorPreferred;
-    private IRealFilter mVector512;
-    private IRealFilter mVector256;
-    private IRealFilter mVector128;
-    private IRealFilter mVector64;
-
+    private static final int[] TAP_COUNTS = {31, 63};
+    private static final int BENCHMARK_BATCH_SIZE = 1;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final float ABSOLUTE_TOLERANCE = 0.00002f;
+    private static final float RELATIVE_TOLERANCE = 0.0002f;
+    private static final Implementation[] CANDIDATES = {
+        Implementation.SCALAR,
+        Implementation.VECTOR_SIMD_PREFERRED,
+        Implementation.VECTOR_SIMD_64,
+        Implementation.VECTOR_SIMD_128,
+        Implementation.VECTOR_SIMD_256,
+        Implementation.VECTOR_SIMD_512
+    };
 
     /**
-     * Constructs an instance
+     * Constructs an instance.
      */
     public FirFilterCalibration()
     {
         super(CalibrationType.FILTER_FIR);
+    }
 
-        float[] coefficients;
+    @Override
+    public void calibrate() throws CalibrationException
+    {
+        float[][] coefficients = createCoefficientFixtures();
+        float[][][] samples = new float[TAP_COUNTS.length][2][];
+
+        for(int shape = 0; shape < TAP_COUNTS.length; shape++)
+        {
+            samples[shape][0] = getFloatSamples(BUFFER_SIZE, "tap-" + TAP_COUNTS[shape] + "-buffer-a");
+            samples[shape][1] = getFloatSamples(BUFFER_SIZE, "tap-" + TAP_COUNTS[shape] + "-buffer-b");
+        }
+
+        float[][][] expected = filterSequences(Implementation.SCALAR, coefficients, samples);
+        Implementation bestImplementation = Implementation.SCALAR;
+        double bestScore = 0.0d;
+
+        for(Implementation implementation: CANDIDATES)
+        {
+            if(!isSupported(implementation))
+            {
+                continue;
+            }
+
+            float[][][] actual = filterSequences(implementation, coefficients, samples);
+
+            for(int shape = 0; shape < TAP_COUNTS.length; shape++)
+            {
+                for(int buffer = 0; buffer < samples[shape].length; buffer++)
+                {
+                    CalibrationBenchmark.requireEquivalent(implementation + " " + TAP_COUNTS[shape] +
+                        "-tap stream buffer " + buffer, expected[shape][buffer], actual[shape][buffer],
+                        ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
+                }
+            }
+
+            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
+                new FilterOperation(implementation, coefficients, samples));
+            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
+                new FilterOperation(implementation, coefficients, samples)).operationsPerSecond();
+            mLog.info("FIR FILTER - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
+
+            if(score > bestScore)
+            {
+                bestScore = score;
+                bestImplementation = implementation;
+            }
+        }
+
+        setImplementation(bestImplementation);
+        mLog.info("FIR FILTER - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
+
+    private float[][] createCoefficientFixtures() throws CalibrationException
+    {
+        float[][] coefficients = new float[TAP_COUNTS.length][];
 
         try
         {
-            coefficients = FilterFactory.getSinc(0.25, 31, WindowType.BLACKMAN);
-            mScalar = new RealFIRFilter(coefficients);
-            mVectorPreferred = new VectorRealFIRFilterDefaultBit(coefficients);
-            mVector64 = new VectorRealFIRFilter64Bit(coefficients);
-            mVector128 = new VectorRealFIRFilter128Bit(coefficients);
-            mVector256 = new VectorRealFIRFilter256Bit(coefficients);
-            mVector512 = new VectorRealFIRFilter512Bit(coefficients);
+            for(int x = 0; x < TAP_COUNTS.length; x++)
+            {
+                coefficients[x] = FilterFactory.getSinc(0.25d, TAP_COUNTS[x], WindowType.BLACKMAN);
+            }
         }
-        catch(FilterDesignException fde)
+        catch(FilterDesignException exception)
         {
-            mLog.error("Error creating sinc filter for real FIR filter calibration");
+            throw new CalibrationException("Unable to design FIR calibration fixtures", exception);
         }
+
+        return coefficients;
     }
 
     /**
-     * Performs calibration to determine optimal (Scalar vs Vector) operation type.
-     * @throws CalibrationException
+     * The preferred-width implementation represents the CPU's widest hardware species.  Fixed-width candidates are
+     * useful only when narrower than that species; the equal-width fixed candidate would duplicate preferred.
      */
-    @Override public void calibrate() throws CalibrationException
+    private static boolean isSupported(Implementation implementation)
     {
-        if(mScalar == null)
+        int preferredLanes = FloatVector.SPECIES_PREFERRED.length();
+
+        return switch(implementation)
         {
-            return;
-        }
-
-        float[] samples = getFloatSamples(BUFFER_SIZE);
-
-        Mean scalarMean = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testScalar(samples);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("FIR FILTER WARMUP - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        Mean vectorPreferredMean = new Mean();
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVectorPreferred(samples);
-            vectorPreferredMean.increment(score);
-        }
-
-        mLog.info("FIR FILTER WARMUP - VECTOR PREFERRED: " + DECIMAL_FORMAT.format(vectorPreferredMean.getResult()));
-
-        Mean vector512Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 16)
-        {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
-            {
-                long score = testVector512(samples);
-                vector512Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER WARMUP - VECTOR 512: " + DECIMAL_FORMAT.format(vector512Mean.getResult()));
-        }
-
-        Mean vector256Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 8)
-        {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
-            {
-                long score = testVector256(samples);
-                vector256Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER WARMUP - VECTOR 256: " + DECIMAL_FORMAT.format(vector256Mean.getResult()));
-        }
-
-        Mean vector128Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 4)
-        {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
-            {
-                long score = testVector128(samples);
-                vector128Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER WARMUP - VECTOR 128: " + DECIMAL_FORMAT.format(vector128Mean.getResult()));
-        }
-
-        Mean vector64Mean = new Mean();
-
-        if(VECTOR_SPECIES.length() >= 2)
-        {
-            for(int x = 0; x < WARMUP_ITERATIONS; x++)
-            {
-                long score = testVector64(samples);
-                vector64Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER WARMUP - VECTOR 64: " + DECIMAL_FORMAT.format(vector64Mean.getResult()));
-        }
-
-        //Test starts ...
-        scalarMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testScalar(samples);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("FIR FILTER - SCALAR: " + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        double bestScore = scalarMean.getResult();
-        setImplementation(Implementation.SCALAR);
-
-        vectorPreferredMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVectorPreferred(samples);
-            vectorPreferredMean.increment(score);
-        }
-
-        mLog.info("FIR FILTER - VECTOR PREFERRED: " + DECIMAL_FORMAT.format(vectorPreferredMean.getResult()));
-
-        if(vectorPreferredMean.getResult() > bestScore)
-        {
-            bestScore = vectorPreferredMean.getResult();
-            setImplementation(Implementation.VECTOR_SIMD_PREFERRED);
-        }
-
-        if(VECTOR_SPECIES.length() >= 16)
-        {
-            vector512Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector512(samples);
-                vector512Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER - VECTOR 512: " + DECIMAL_FORMAT.format(vector512Mean.getResult()));
-
-            if(vector512Mean.getResult() > bestScore)
-            {
-                bestScore = vector512Mean.getResult();
-                setImplementation(Implementation.VECTOR_SIMD_512);
-            }
-        }
-
-        if(VECTOR_SPECIES.length() >= 8)
-        {
-            vector256Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector256(samples);
-                vector256Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER - VECTOR 256: " + DECIMAL_FORMAT.format(vector256Mean.getResult()));
-
-            if(vector256Mean.getResult() > bestScore)
-            {
-                bestScore = vector256Mean.getResult();
-                setImplementation(Implementation.VECTOR_SIMD_256);
-            }
-        }
-
-        if(VECTOR_SPECIES.length() >= 4)
-        {
-            vector128Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector128(samples);
-                vector128Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER - VECTOR 128: " + DECIMAL_FORMAT.format(vector128Mean.getResult()));
-
-            if(vector128Mean.getResult() > bestScore)
-            {
-                bestScore = vector128Mean.getResult();
-                setImplementation(Implementation.VECTOR_SIMD_128);
-            }
-        }
-
-        if(VECTOR_SPECIES.length() >= 2)
-        {
-            vector64Mean.clear();
-
-            for(int x = 0; x < TEST_ITERATIONS; x++)
-            {
-                long score = testVector64(samples);
-                vector64Mean.increment(score);
-            }
-
-            mLog.info("FIR FILTER - VECTOR 64: " + DECIMAL_FORMAT.format(vector64Mean.getResult()));
-
-            if(vector64Mean.getResult() > bestScore)
-            {
-                setImplementation(Implementation.VECTOR_SIMD_64);
-            }
-        }
-
-        mLog.info("FIR FILTER - SET OPTIMAL IMPLEMENTATION TO: " + getImplementation());
+            case VECTOR_SIMD_64 -> FloatVector.SPECIES_64.length() < preferredLanes;
+            case VECTOR_SIMD_128 -> FloatVector.SPECIES_128.length() < preferredLanes;
+            case VECTOR_SIMD_256 -> FloatVector.SPECIES_256.length() < preferredLanes;
+            case VECTOR_SIMD_512 -> FloatVector.SPECIES_512.length() < preferredLanes;
+            default -> true;
+        };
     }
 
-    private long testScalar(float[] samples)
+    private static IRealFilter createFilter(Implementation implementation, float[] coefficients)
     {
-        double accumulator = 0.0f;
-        long count = 0;
+        //All current FIR implementations reverse the supplied coefficient array in place.  Give every filter a
+        //private copy so contestant construction cannot alter another contestant's coefficients.
+        float[] privateCoefficients = coefficients.clone();
 
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        return switch(implementation)
         {
-            float[] filtered = mScalar.filter(samples);
-            accumulator += filtered[0];
-            count++;
-        }
-
-        return count + (long)(accumulator * 0);
+            case VECTOR_SIMD_PREFERRED -> new VectorRealFIRFilterDefaultBit(privateCoefficients);
+            case VECTOR_SIMD_64 -> new VectorRealFIRFilter64Bit(privateCoefficients);
+            case VECTOR_SIMD_128 -> new VectorRealFIRFilter128Bit(privateCoefficients);
+            case VECTOR_SIMD_256 -> new VectorRealFIRFilter256Bit(privateCoefficients);
+            case VECTOR_SIMD_512 -> new VectorRealFIRFilter512Bit(privateCoefficients);
+            default -> new RealFIRFilter(privateCoefficients);
+        };
     }
 
-    private long testVector64(float[] samples)
+    private static IRealFilter[] createFilters(Implementation implementation, float[][] coefficients)
     {
-        double accumulator = 0.0f;
+        IRealFilter[] filters = new IRealFilter[coefficients.length];
 
-        long start = System.currentTimeMillis();
-        long count = 0;
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int x = 0; x < coefficients.length; x++)
         {
-            float[] filtered = mVector64.filter(samples);
-            accumulator += filtered[0];
-            count++;
+            filters[x] = createFilter(implementation, coefficients[x]);
         }
 
-        return count + (long)(accumulator * 0);
+        return filters;
     }
 
-    private long testVector128(float[] samples)
+    private static float[][][] filterSequences(Implementation implementation, float[][] coefficients,
+                                                float[][][] samples)
     {
-        double accumulator = 0.0f;
-        long count = 0;
+        IRealFilter[] filters = createFilters(implementation, coefficients);
+        float[][][] filtered = new float[samples.length][][];
 
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        for(int shape = 0; shape < samples.length; shape++)
         {
-            float[] filtered = mVector128.filter(samples);
-            accumulator += filtered[0];
-            count++;
+            filtered[shape] = new float[samples[shape].length][];
+
+            for(int buffer = 0; buffer < samples[shape].length; buffer++)
+            {
+                filtered[shape][buffer] = filters[shape].filter(samples[shape][buffer]);
+            }
         }
 
-        return count + (long)(accumulator * 0);
+        return filtered;
     }
 
-    private long testVector256(float[] samples)
+    /**
+     * Gives 31- and 63-tap filters equal turns on independent stream state and observes rotating output positions.
+     */
+    private static class FilterOperation implements LongSupplier
     {
-        double accumulator = 0.0f;
-        long count = 0;
+        private final IRealFilter[] mFilters;
+        private final float[][][] mSamples;
+        private final int[] mBufferIndexes;
+        private int mShapeIndex;
+        private int mObservationIndex;
 
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        private FilterOperation(Implementation implementation, float[][] coefficients, float[][][] samples)
         {
-            float[] filtered = mVector256.filter(samples);
-            accumulator += filtered[0];
-            count++;
+            mFilters = createFilters(implementation, coefficients);
+            mSamples = clone(samples);
+            mBufferIndexes = new int[samples.length];
         }
 
-        return count + (long)(accumulator * 0);
-    }
-
-    private long testVector512(float[] samples)
-    {
-        double accumulator = 0.0f;
-        long count = 0;
-
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        @Override
+        public long getAsLong()
         {
-            float[] filtered = mVector512.filter(samples);
-            accumulator += filtered[0];
-            count++;
+            int shape = mShapeIndex;
+            int buffer = mBufferIndexes[shape];
+            float[] filtered = mFilters[shape].filter(mSamples[shape][buffer]);
+            CalibrationBenchmark.consume(filtered);
+            mBufferIndexes[shape] = (buffer + 1) % mSamples[shape].length;
+            mShapeIndex = (shape + 1) % mFilters.length;
+            int index = mObservationIndex++;
+
+            if(mObservationIndex >= filtered.length)
+            {
+                mObservationIndex = 0;
+            }
+
+            return CalibrationBenchmark.fingerprint(filtered[index]);
         }
 
-        return count + (long)(accumulator * 0);
-    }
-
-    private long testVectorPreferred(float[] samples)
-    {
-        double accumulator = 0.0f;
-        long count = 0;
-
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        private static float[][][] clone(float[][][] source)
         {
-            float[] filtered = mVectorPreferred.filter(samples);
-            accumulator += filtered[0];
-            count++;
-        }
+            float[][][] copy = new float[source.length][][];
 
-        return count + (long)(accumulator * 0);
+            for(int x = 0; x < source.length; x++)
+            {
+                copy[x] = new float[source[x].length][];
+
+                for(int y = 0; y < source[x].length; y++)
+                {
+                    copy[x][y] = source[x][y].clone();
+                }
+            }
+
+            return copy;
+        }
     }
 }

@@ -21,10 +21,13 @@ package io.github.dsheirer.vector.calibrate;
 
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
+import io.github.dsheirer.source.tuner.sdrplay.RspSampleConverterFactory;
+import io.github.dsheirer.vector.calibrate.demodulator.AmplitudeDemodulatorCalibration;
 import io.github.dsheirer.vector.calibrate.demodulator.DifferentialDemodulatorCalibration;
 import io.github.dsheirer.vector.calibrate.demodulator.FmDemodulatorCalibration;
 import io.github.dsheirer.vector.calibrate.filter.FirFilterCalibration;
-import io.github.dsheirer.vector.calibrate.filter.RealDcRemovalCalibration;
+import io.github.dsheirer.vector.calibrate.filter.PolyphaseChannelizerFilterCalibration;
+import io.github.dsheirer.vector.calibrate.filter.PulseShapingFirFilterCalibration;
 import io.github.dsheirer.vector.calibrate.filter.RealHalfBand11TapFilterCalibration;
 import io.github.dsheirer.vector.calibrate.filter.RealHalfBand15TapFilterCalibration;
 import io.github.dsheirer.vector.calibrate.filter.RealHalfBand23TapFilterCalibration;
@@ -32,11 +35,11 @@ import io.github.dsheirer.vector.calibrate.filter.RealHalfBand63TapFilterCalibra
 import io.github.dsheirer.vector.calibrate.filter.RealHalfBandDefaultFilterCalibration;
 import io.github.dsheirer.vector.calibrate.gain.ComplexGainCalibration;
 import io.github.dsheirer.vector.calibrate.interpolator.InterpolatorCalibration;
-import io.github.dsheirer.vector.calibrate.magnitude.MagnitudeCalibration;
 import io.github.dsheirer.vector.calibrate.mixer.ComplexMixerCalibration;
 import io.github.dsheirer.vector.calibrate.oscillator.ComplexOscillatorCalibration;
 import io.github.dsheirer.vector.calibrate.oscillator.RealOscillatorCalibration;
-import io.github.dsheirer.vector.calibrate.sample.PackedSampleConverterCalibration;
+import io.github.dsheirer.vector.calibrate.sample.RspSampleConverterCalibration;
+import io.github.dsheirer.vector.calibrate.sample.UnpackedByteSampleConverterCalibration;
 import io.github.dsheirer.vector.calibrate.sample.UnpackedInterleavedSampleConverterCalibration;
 import io.github.dsheirer.vector.calibrate.sample.UnpackedSampleConverterCalibration;
 import io.github.dsheirer.vector.calibrate.sync.DMRSoftSyncCalibration;
@@ -49,6 +52,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.prefs.Preferences;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,8 +62,11 @@ import org.slf4j.LoggerFactory;
 @SuppressWarnings("java:S6548")
 public class CalibrationManager
 {
+    private static final String PREFERENCE_KEY_CALIBRATION_ENVIRONMENT = "calibration.environment.signature";
     private static final Logger mLog = LoggerFactory.getLogger(CalibrationManager.class);
     private Map<CalibrationType, Calibration> mCalibrationMap = new HashMap<>();
+    private final CalibrationEnvironment mCalibrationEnvironment = CalibrationEnvironment.current();
+    private final Preferences mPreferences = Preferences.userNodeForPackage(CalibrationManager.class);
     private static CalibrationManager sInstance;
     private static VectorCalibrationPreference sVectorCalibrationPreference;
 
@@ -100,29 +107,33 @@ public class CalibrationManager
 
             sInstance = new CalibrationManager();
 
-            sInstance.add(new PackedSampleConverterCalibration());
+            sInstance.add(new UnpackedByteSampleConverterCalibration());
+            sInstance.add(new RspSampleConverterCalibration());
             sInstance.add(new UnpackedSampleConverterCalibration());
             sInstance.add(new UnpackedInterleavedSampleConverterCalibration());
             sInstance.add(new ComplexGainCalibration());
             sInstance.add(new ComplexOscillatorCalibration());
             sInstance.add(new ComplexMixerCalibration());
+            sInstance.add(new AmplitudeDemodulatorCalibration());
             sInstance.add(new DMRSoftSyncCalibration());
             sInstance.add(new DifferentialDemodulatorCalibration());
             sInstance.add(new FirFilterCalibration());
+            sInstance.add(new PulseShapingFirFilterCalibration());
+            sInstance.add(new PolyphaseChannelizerFilterCalibration());
             sInstance.add(new FmDemodulatorCalibration());
             sInstance.add(new InterpolatorCalibration());
-            sInstance.add(new MagnitudeCalibration());
             sInstance.add(new NXDNSoftSyncCalibration());
             sInstance.add(new P25P1SoftSyncCalibration());
-            sInstance.add(new RealDcRemovalCalibration());
             sInstance.add(new RealHalfBand11TapFilterCalibration());
             sInstance.add(new RealHalfBand15TapFilterCalibration());
             sInstance.add(new RealHalfBand23TapFilterCalibration());
             sInstance.add(new RealHalfBand63TapFilterCalibration());
             sInstance.add(new RealHalfBandDefaultFilterCalibration());
             sInstance.add(new RealOscillatorCalibration());
-//            sInstance.add(new HilbertCalibration()); //Not currently used
-            sInstance.add(new WindowCalibration()); //Not currently used
+            sInstance.add(new WindowCalibration());
+            sInstance.initializeCalibrationEnvironment();
+            RspSampleConverterFactory.setImplementation(
+                sInstance.getImplementation(CalibrationType.RSP_SAMPLE_CONVERTER));
         }
 
         return sInstance;
@@ -141,6 +152,34 @@ public class CalibrationManager
         }
 
         mCalibrationMap.put(calibration.getType(), calibration);
+    }
+
+    /**
+     * Invalidates portable calibration results when the host/JVM SIMD environment changes and rejects any persisted
+     * fixed width that is wider than the current host's native preferred species.
+     */
+    private void initializeCalibrationEnvironment()
+    {
+        String currentSignature = mCalibrationEnvironment.signature();
+        String storedSignature = mPreferences.get(PREFERENCE_KEY_CALIBRATION_ENVIRONMENT, null);
+
+        if(mCalibrationEnvironment.invalidateIfChanged(storedSignature, mCalibrationMap.values()))
+        {
+            mPreferences.put(PREFERENCE_KEY_CALIBRATION_ENVIRONMENT, currentSignature);
+            mLog.info("CPU calibration environment changed; all SIMD calibrations will be rerun.");
+        }
+
+        for(Calibration calibration: mCalibrationMap.values())
+        {
+            Implementation implementation = calibration.getImplementation();
+
+            if(!mCalibrationEnvironment.supports(calibration.getType(), implementation))
+            {
+                mLog.warn("Ignoring unsupported calibration implementation [{}] for [{}] on this host",
+                    implementation, calibration.getType());
+                calibration.reset();
+            }
+        }
     }
 
     /**
@@ -174,7 +213,14 @@ public class CalibrationManager
 
             if(calibration != null)
             {
-                return calibration.getImplementation();
+                Implementation implementation = calibration.getImplementation();
+
+                if(mCalibrationEnvironment.supports(type, implementation))
+                {
+                    return implementation;
+                }
+
+                return Implementation.SCALAR;
             }
 
             return Implementation.UNCALIBRATED;

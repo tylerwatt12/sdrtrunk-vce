@@ -7,6 +7,15 @@ public class CalibrationException extends Exception
 {
     /**
      * Constructs a new instance
+     * @param description of the calibration error
+     */
+    public CalibrationException(String description)
+    {
+        super(description);
+    }
+
+    /**
+     * Constructs a new instance
      * @param description of the error
      * @param error nested
      */

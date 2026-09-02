@@ -22,7 +22,6 @@ package io.github.dsheirer.dsp.squelch;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.sample.Listener;
 import java.util.Arrays;
@@ -240,7 +239,7 @@ public class NoiseSquelch implements IAnalogSquelch
     public void setSampleRate(double sampleRate)
     {
         float[] coefficients = FilterFactory.getHighPass((int)sampleRate, 3000, 31, WindowType.BLACKMAN_HARRIS_7);
-        mHighPassFilter = new RealFIRFilter(coefficients);
+        mHighPassFilter = FilterFactory.getRealFilter(coefficients);
         mVarianceWindowSize = (int)(sampleRate * (VARIANCE_CALCULATION_WINDOW_MILLISECONDS / 1000.0));
 
         //Offset for the filter delay between the audio buffer and the filtered audio noise detection buffer.

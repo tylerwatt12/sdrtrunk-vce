@@ -30,11 +30,13 @@ public abstract class VectorInterpolator extends Interpolator
     public float filter(float[] samples, int offset, float mu)
     {
         /* Ensure we have enough samples in the array */
-        Validate.isTrue(samples.length >= offset + 7, "Offset [" + offset + "] must be 7 less than length[" + samples.length + "]");
+        Validate.isTrue(samples.length >= offset + NTAPS,
+            "Offset [" + offset + "] must leave room for " + NTAPS + " samples in length[" + samples.length + "]");
 
-        //Identify the filter bank that corresponds to mu.  Note: since we're not loading the TAPS in reverse order,
-        //we select the inverse tap index that has the mirrored set of taps, by subtracting from 127.
-        int index = 127 - (int)(NSTEPS * mu);
+        //Identify the filter bank that corresponds to mu.  Since vectors load TAPS in forward order while the scalar
+        //implementation reads them in reverse order, select the mirrored bank.  TAPS includes both endpoint banks,
+        //so the mirror is NSTEPS - index (128 - index), not 127 - index.
+        int index = NSTEPS - (int)(NSTEPS * mu);
         return vectorFilter(samples, offset, index);
     }
 

@@ -19,13 +19,12 @@
 
 package io.github.dsheirer.dsp.filter.hilbert;
 
-import io.github.dsheirer.sample.complex.ComplexSamples;
 import org.apache.commons.math3.util.FastMath;
 
 /**
- * Base Hilbert transform class.
+ * Hilbert-transform coefficient utility used by the calibrated native sample iterators.
  */
-public abstract class HilbertTransform
+public final class HilbertTransform
 {
     /*  Half-band filter coefficients retrieved October 2015 from:
      *  https://github.com/airspy/host/libairspy/src/filters.h
@@ -67,15 +66,8 @@ public abstract class HilbertTransform
     };
     private static final float[] CONVERTED_COEFFICIENTS = convertHalfBandToHilbert(HALF_BAND_FILTER_47_TAP);
 
-    protected float[] mCoefficients;
-    protected int mIOverlap = 11;
-    protected int mQOverlap = 23;
-    protected float[] mIBuffer = new float[mIOverlap];
-    protected float[] mQBuffer = new float[mQOverlap];
-
-    protected HilbertTransform()
+    private HilbertTransform()
     {
-        mCoefficients = CONVERTED_COEFFICIENTS.clone();
     }
 
     /**
@@ -85,14 +77,6 @@ public abstract class HilbertTransform
     {
         return CONVERTED_COEFFICIENTS.clone();
     }
-
-    /**
-     * Converts the real sample array to complex samples as half the sample rate
-     * @param samples to convert
-     * @param timestamp of the first sample
-     * @return converted samples
-     */
-    public abstract ComplexSamples filter(float[] samples, long timestamp);
 
     /**
      * Converts the half-band filter coefficients for use as hilbert transform filter coefficients.  Sets all

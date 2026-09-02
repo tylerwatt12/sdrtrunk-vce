@@ -20,7 +20,6 @@
 package io.github.dsheirer.dsp.oscillator;
 
 import io.github.dsheirer.sample.complex.ComplexSamples;
-import io.github.dsheirer.vector.VectorUtilities;
 import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
@@ -37,9 +36,18 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
 {
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_PREFERRED;
 
-    private float[] mPreviousInphases;
-    private float[] mPreviousQuadratures;
-    private float[] mGainInitials; //Set to 3.0f as the first constant in the gain calculation
+    private final float[] mPreviousInphases;
+    private final float[] mPreviousQuadratures;
+    private final float[] mGainInitials; //Set to 3.0f as the first constant in the gain calculation
+    private final int[] mInphaseIndexes;
+    private final int[] mQuadratureIndexes;
+
+    /*
+     * Deliberately has no field initializer. AbstractOscillator invokes update() from its constructor before subclass
+     * field initializers run, and that initial update publishes the first configured phase increment here.
+     */
+    private volatile float mPendingAnglePerSample;
+    private float mActiveAnglePerSample = Float.NaN;
 
     /**
      * Constructs an instance
@@ -51,37 +59,74 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
     {
         super(frequency, sampleRate);
 
+        int laneCount = VECTOR_SPECIES.length();
+        mPreviousInphases = new float[laneCount];
+        mPreviousQuadratures = new float[laneCount];
+        mPreviousInphases[laneCount - 1] = 1.0f;
+
         mGainInitials = new float[VECTOR_SPECIES.length()];
         Arrays.fill(mGainInitials, 3.0f);
+
+        mInphaseIndexes = new int[laneCount];
+        mQuadratureIndexes = new int[laneCount];
+
+        for(int x = 0; x < laneCount; x++)
+        {
+            mInphaseIndexes[x] = 2 * x;
+            mQuadratureIndexes[x] = (2 * x) + 1;
+        }
     }
 
+    /**
+     * Publishes a new phase increment for the sample-producing thread. The oscillator bank is only mutated by the
+     * producing thread at its next buffer boundary, so a frequency correction cannot race an in-progress SIMD loop.
+     */
     @Override
     protected void update()
     {
         super.update();
+        mPendingAnglePerSample = getAnglePerSample();
+    }
 
-        float cosineAngle = (float)FastMath.cos(getAnglePerSample());
-        float sineAngle = (float)FastMath.sin(getAnglePerSample());
+    /**
+     * Applies the latest published phase increment and preserves the phase of the last generated sample.
+     *
+     * @return phase increment to use for the complete next buffer
+     */
+    private float applyPendingUpdate()
+    {
+        float pendingAnglePerSample = mPendingAnglePerSample;
 
-        if(mPreviousInphases == null || mPreviousQuadratures == null)
+        if(Float.floatToRawIntBits(pendingAnglePerSample) != Float.floatToRawIntBits(mActiveAnglePerSample))
         {
-            mPreviousInphases = new float[VECTOR_SPECIES.length()];
-            mPreviousQuadratures = new float[VECTOR_SPECIES.length()];
-
-            mPreviousInphases[0] = 1.0f;
+            int lastLane = VECTOR_SPECIES.length() - 1;
+            rebuildPreviousBank(mPreviousInphases[lastLane], mPreviousQuadratures[lastLane], pendingAnglePerSample);
+            mActiveAnglePerSample = pendingAnglePerSample;
         }
 
-        float gain;
+        return mActiveAnglePerSample;
+    }
 
-        //Setup the previous sample arrays where each index is offset one sample of rotation from the previous sample.
-        // We don't touch index 0 so that it can maintain the previous phase offset and all other indices are updated
-        // relative to index 0.
-        for(int x = 1; x < VECTOR_SPECIES.length(); x++)
+    /**
+     * Rebuilds the SIMD oscillator bank ending with the supplied most-recent sample. Each preceding lane is one
+     * sample earlier in phase, which lets the next vector rotation produce the next contiguous lane-width of samples.
+     */
+    private void rebuildPreviousBank(float lastInphase, float lastQuadrature, float anglePerSample)
+    {
+        //Preserve the phase of the most recently generated sample and rebuild the preceding SIMD lanes at the newly
+        //configured phase increment.  A vector generation step advances the entire bank by one lane-width, so this
+        //layout causes its first output lane to be exactly one sample after the last output, matching the scalar
+        //oscillator.  The old layout started lane zero at the last output and filled later lanes forward, which made
+        //the first generated vector start lane-width-minus-one samples too far ahead.
+        int lastLane = VECTOR_SPECIES.length() - 1;
+
+        for(int x = 0; x < VECTOR_SPECIES.length(); x++)
         {
-            gain = (3.0f - ((mPreviousInphases[x - 1] * mPreviousInphases[x - 1]) +
-                    (mPreviousQuadratures[x - 1] * mPreviousQuadratures[x - 1]))) / 2.0f;
-            mPreviousInphases[x] = ((mPreviousInphases[x - 1] * cosineAngle) - (mPreviousQuadratures[x - 1] * sineAngle)) * gain;
-            mPreviousQuadratures[x] = ((mPreviousInphases[x - 1] * sineAngle) + (mPreviousQuadratures[x -1] * cosineAngle)) * gain;
+            double offset = (x - lastLane) * anglePerSample;
+            float cosineOffset = (float)FastMath.cos(offset);
+            float sineOffset = (float)FastMath.sin(offset);
+            mPreviousInphases[x] = (lastInphase * cosineOffset) - (lastQuadrature * sineOffset);
+            mPreviousQuadratures[x] = (lastInphase * sineOffset) + (lastQuadrature * cosineOffset);
         }
     }
 
@@ -92,28 +137,29 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
      */
     @Override public float[] generate(int sampleCount)
     {
-        if(sampleCount % VECTOR_SPECIES.length() != 0)
+        if(sampleCount < 0)
         {
-            throw new IllegalArgumentException("Requested sample count [" + sampleCount +
-                    "] must be a power of 2 and a multiple of the SIMD lane width [" + VECTOR_SPECIES.length() + "]");
+            throw new IllegalArgumentException("Sample count cannot be negative: " + sampleCount);
         }
 
+        float anglePerSample = applyPendingUpdate();
         float[] samples = new float[sampleCount * 2];
         FloatVector previousInphase = FloatVector.fromArray(VECTOR_SPECIES, mPreviousInphases, 0);
         FloatVector previousQuadrature = FloatVector.fromArray(VECTOR_SPECIES, mPreviousQuadratures, 0);
         FloatVector gainInitials = FloatVector.fromArray(VECTOR_SPECIES, mGainInitials, 0);
 
         //Sine and cosine angle per sample, with the rotation angle multiplied by the SIMD lane width
-        float cosAngle = (float)(FastMath.cos(getAnglePerSample() * VECTOR_SPECIES.length()));
-        float sinAngle = (float)(FastMath.sin(getAnglePerSample() * VECTOR_SPECIES.length()));
+        float cosAngle = (float)(FastMath.cos(anglePerSample * VECTOR_SPECIES.length()));
+        float sinAngle = (float)(FastMath.sin(anglePerSample * VECTOR_SPECIES.length()));
 
         FloatVector gain;
         FloatVector inphase;
         FloatVector quadrature;
 
         int gainCounter = 0;
+        int vectorBound = VECTOR_SPECIES.loopBound(sampleCount);
 
-        for(int samplePointer = 0; samplePointer < sampleCount; samplePointer += VECTOR_SPECIES.length())
+        for(int samplePointer = 0; samplePointer < vectorBound; samplePointer += VECTOR_SPECIES.length())
         {
             if(++gainCounter % 10 == 0)
             {
@@ -127,15 +173,43 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
                 quadrature = previousInphase.mul(sinAngle).add(previousQuadrature.mul(cosAngle));
             }
 
-            float[] interleaved = VectorUtilities.interleave(inphase, quadrature);
-            System.arraycopy(interleaved, 0, samples, samplePointer * 2, interleaved.length);
+            int outputOffset = samplePointer * 2;
+            inphase.intoArray(samples, outputOffset, mInphaseIndexes, 0);
+            quadrature.intoArray(samples, outputOffset, mQuadratureIndexes, 0);
 
             previousInphase = inphase;
             previousQuadrature = quadrature;
         }
 
-        previousInphase.intoArray(mPreviousInphases, 0);
-        previousQuadrature.intoArray(mPreviousQuadratures, 0);
+        int lastLane = VECTOR_SPECIES.length() - 1;
+        float lastInphase = previousInphase.lane(lastLane);
+        float lastQuadrature = previousQuadrature.lane(lastLane);
+
+        if(vectorBound < sampleCount)
+        {
+            float cosineAngle = (float)FastMath.cos(anglePerSample);
+            float sineAngle = (float)FastMath.sin(anglePerSample);
+
+            for(int samplePointer = vectorBound; samplePointer < sampleCount; samplePointer++)
+            {
+                float tailGain = (3.0f - ((lastInphase * lastInphase) +
+                    (lastQuadrature * lastQuadrature))) / 2.0f;
+                float tailInphase = ((lastInphase * cosineAngle) - (lastQuadrature * sineAngle)) * tailGain;
+                float tailQuadrature = ((lastInphase * sineAngle) + (lastQuadrature * cosineAngle)) * tailGain;
+                int outputOffset = samplePointer * 2;
+                samples[outputOffset] = tailInphase;
+                samples[outputOffset + 1] = tailQuadrature;
+                lastInphase = tailInphase;
+                lastQuadrature = tailQuadrature;
+            }
+
+            rebuildPreviousBank(lastInphase, lastQuadrature, anglePerSample);
+        }
+        else
+        {
+            previousInphase.intoArray(mPreviousInphases, 0);
+            previousQuadrature.intoArray(mPreviousQuadratures, 0);
+        }
 
         return samples;
     }
@@ -148,12 +222,12 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
      */
     @Override public ComplexSamples generateComplexSamples(int sampleCount, long timestamp)
     {
-        if(sampleCount % VECTOR_SPECIES.length() != 0)
+        if(sampleCount < 0)
         {
-            throw new IllegalArgumentException("Requested sample count [" + sampleCount +
-                    "] must be a power of 2 and a multiple of the SIMD lane width [" + VECTOR_SPECIES.length() + "]");
+            throw new IllegalArgumentException("Sample count cannot be negative: " + sampleCount);
         }
 
+        float anglePerSample = applyPendingUpdate();
         float[] iSamples = new float[sampleCount];
         float[] qSamples = new float[sampleCount];
 
@@ -162,14 +236,15 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
         FloatVector gainInitials = FloatVector.fromArray(VECTOR_SPECIES, mGainInitials, 0);
 
         //Sine and cosine angle per sample, with the rotation angle multiplied by the SIMD lane width
-        float cosAngle = (float)(FastMath.cos(getAnglePerSample() * VECTOR_SPECIES.length()));
-        float sinAngle = (float)(FastMath.sin(getAnglePerSample() * VECTOR_SPECIES.length()));
+        float cosAngle = (float)(FastMath.cos(anglePerSample * VECTOR_SPECIES.length()));
+        float sinAngle = (float)(FastMath.sin(anglePerSample * VECTOR_SPECIES.length()));
 
         FloatVector gain;
         FloatVector inphase;
         FloatVector quadrature;
+        int vectorBound = VECTOR_SPECIES.loopBound(sampleCount);
 
-        for(int samplePointer = 0; samplePointer < sampleCount; samplePointer += VECTOR_SPECIES.length())
+        for(int samplePointer = 0; samplePointer < vectorBound; samplePointer += VECTOR_SPECIES.length())
         {
             gain = gainInitials.sub(previousInphase.pow(2.0f).add(previousQuadrature.pow(2.0f))).div(2.0f);
             inphase = previousInphase.mul(cosAngle).sub(previousQuadrature.mul(sinAngle)).mul(gain);
@@ -182,8 +257,34 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
             previousQuadrature = quadrature;
         }
 
-        previousInphase.intoArray(mPreviousInphases, 0);
-        previousQuadrature.intoArray(mPreviousQuadratures, 0);
+        int lastLane = VECTOR_SPECIES.length() - 1;
+        float lastInphase = previousInphase.lane(lastLane);
+        float lastQuadrature = previousQuadrature.lane(lastLane);
+
+        if(vectorBound < sampleCount)
+        {
+            float cosineAngle = (float)FastMath.cos(anglePerSample);
+            float sineAngle = (float)FastMath.sin(anglePerSample);
+
+            for(int samplePointer = vectorBound; samplePointer < sampleCount; samplePointer++)
+            {
+                float tailGain = (3.0f - ((lastInphase * lastInphase) +
+                    (lastQuadrature * lastQuadrature))) / 2.0f;
+                float tailInphase = ((lastInphase * cosineAngle) - (lastQuadrature * sineAngle)) * tailGain;
+                float tailQuadrature = ((lastInphase * sineAngle) + (lastQuadrature * cosineAngle)) * tailGain;
+                iSamples[samplePointer] = tailInphase;
+                qSamples[samplePointer] = tailQuadrature;
+                lastInphase = tailInphase;
+                lastQuadrature = tailQuadrature;
+            }
+
+            rebuildPreviousBank(lastInphase, lastQuadrature, anglePerSample);
+        }
+        else
+        {
+            previousInphase.intoArray(mPreviousInphases, 0);
+            previousQuadrature.intoArray(mPreviousQuadratures, 0);
+        }
 
         return new ComplexSamples(iSamples, qSamples, timestamp);
     }

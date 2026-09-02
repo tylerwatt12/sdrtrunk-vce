@@ -27,7 +27,6 @@ import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
@@ -146,8 +145,8 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
         float rolloff = 0.2f;
 
         float[] taps = FilterFactory.getRootRaisedCosine(decimatedSampleRate / 4800.0, symbolLength, rolloff);
-        mPulseShapingFilterI = new RealFIRFilter(taps);
-        mPulseShapingFilterQ = new RealFIRFilter(taps);
+        mPulseShapingFilterI = FilterFactory.getPulseShapingFilter(taps);
+        mPulseShapingFilterQ = FilterFactory.getPulseShapingFilter(taps);
         mBasebandFilterI = FilterFactory.getRealFilter(getBasebandFilter(decimatedSampleRate));
         mBasebandFilterQ = FilterFactory.getRealFilter(getBasebandFilter(decimatedSampleRate));
         mDemodulator.setSamplesPerSymbol(decimatedSampleRate / SYMBOL_RATE);

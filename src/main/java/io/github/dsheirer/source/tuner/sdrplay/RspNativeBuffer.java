@@ -23,6 +23,7 @@ import io.github.dsheirer.buffer.AbstractNativeBuffer;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import java.util.Iterator;
+import java.util.Objects;
 
 /**
  * Native buffer implementation for RSP tuner I/Q sample buffers.
@@ -31,9 +32,9 @@ import java.util.Iterator;
  */
 public class RspNativeBuffer extends AbstractNativeBuffer
 {
-    private static final float SAMPLE_TO_FLOAT = 1.0f / 32768.0f;
-    private short[] mISamples;
-    private short[] mQSamples;
+    private final short[] mISamples;
+    private final short[] mQSamples;
+    private final IRspSampleConverter mSampleConverter;
 
     /**
      * Constructs an instance
@@ -44,9 +45,20 @@ public class RspNativeBuffer extends AbstractNativeBuffer
      */
     public RspNativeBuffer(short[] i, short[] q, long timestamp, float samplesPerMillisecond)
     {
+        this(i, q, timestamp, samplesPerMillisecond, RspSampleConverterFactory.getConverter());
+    }
+
+    /**
+     * Constructs an instance with an explicit converter for correctness testing.
+     */
+    RspNativeBuffer(short[] i, short[] q, long timestamp, float samplesPerMillisecond,
+                    IRspSampleConverter sampleConverter)
+    {
         super(timestamp, samplesPerMillisecond);
+        RspSampleConverterFactory.validateInputs(i, q);
         mISamples = i;
         mQSamples = q;
+        mSampleConverter = Objects.requireNonNull(sampleConverter, "Sample converter cannot be null");
     }
 
     /**
@@ -91,12 +103,7 @@ public class RspNativeBuffer extends AbstractNativeBuffer
         {
             float[] i = new float[mISamples.length];
             float[] q = new float[mISamples.length];
-
-            for(int x = 0; x < mISamples.length; x++)
-            {
-                i[x] = mISamples[x] * SAMPLE_TO_FLOAT;
-                q[x] = mQSamples[x] * SAMPLE_TO_FLOAT;
-            }
+            mSampleConverter.convert(mISamples, mQSamples, i, q);
 
             mSamplePointer += mISamples.length;
 
@@ -121,14 +128,7 @@ public class RspNativeBuffer extends AbstractNativeBuffer
         public InterleavedComplexSamples next()
         {
             float[] samples = new float[mISamples.length * 2];
-
-            int index = 0;
-
-            for(int x = 0; x < mISamples.length; x++)
-            {
-                samples[index++] = mISamples[x] * SAMPLE_TO_FLOAT;
-                samples[index++] = mQSamples[x] * SAMPLE_TO_FLOAT;
-            }
+            mSampleConverter.convertInterleaved(mISamples, mQSamples, samples);
 
             mSamplePointer += mISamples.length;
 

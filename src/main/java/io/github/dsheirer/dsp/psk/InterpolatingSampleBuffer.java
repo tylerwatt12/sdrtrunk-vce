@@ -18,8 +18,10 @@
  */
 package io.github.dsheirer.dsp.psk;
 
-import io.github.dsheirer.dsp.filter.interpolator.InterpolatorScalar;
+import io.github.dsheirer.dsp.filter.interpolator.Interpolator;
+import io.github.dsheirer.dsp.filter.interpolator.InterpolatorFactory;
 import io.github.dsheirer.sample.complex.Complex;
+import java.util.Objects;
 import org.apache.commons.math3.util.FastMath;
 
 public class InterpolatingSampleBuffer
@@ -42,7 +44,7 @@ public class InterpolatingSampleBuffer
     private float mMaximumSamplesPerSymbol;
     private float mMinimumSamplesPerSymbol;
 
-    private InterpolatorScalar mInterpolator = new InterpolatorScalar(1.0f);
+    private final Interpolator mInterpolator;
 
     /**
      * Buffer to store complex sample data and produce interpolated samples.
@@ -51,6 +53,13 @@ public class InterpolatingSampleBuffer
      */
     public InterpolatingSampleBuffer(float samplesPerSymbol, float sampleCounterGain)
     {
+        this(samplesPerSymbol, sampleCounterGain, InterpolatorFactory.getInterpolator());
+    }
+
+    /** Test seam for verifying complete sample-buffer behavior across interpolator implementations. */
+    InterpolatingSampleBuffer(float samplesPerSymbol, float sampleCounterGain, Interpolator interpolator)
+    {
+        mInterpolator = Objects.requireNonNull(interpolator, "Interpolator cannot be null");
         mSamplingPoint = samplesPerSymbol;
         mDetectedSamplesPerSymbol = samplesPerSymbol;
         mMaximumSamplesPerSymbol = samplesPerSymbol * (1.0f + MAXIMUM_DEVIATION_SAMPLES_PER_SYMBOL);

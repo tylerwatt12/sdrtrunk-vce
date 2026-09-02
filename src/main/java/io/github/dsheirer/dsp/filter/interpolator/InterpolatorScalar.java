@@ -64,7 +64,7 @@ public class InterpolatorScalar extends Interpolator
     public float filter(float[] samples, int offset, float mu)
     {
         /* Ensure we have enough samples in the array */
-        Validate.isTrue(samples.length >= offset + 7);
+        Validate.isTrue(samples.length >= offset + NTAPS);
 
         /* Identify the filter bank that corresponds to mu */
         int index = (int)(NSTEPS * mu);

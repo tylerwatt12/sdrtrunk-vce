@@ -27,7 +27,6 @@ import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFactory;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloat;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
@@ -146,8 +145,8 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
 
         float[] taps = FilterFactory.getRootRaisedCosine(decimatedSampleRate / SYMBOL_RATE,
                 symbolLength, rrcAlpha);
-        mPulseShapingFilterI = new RealFIRFilter(taps);
-        mPulseShapingFilterQ = new RealFIRFilter(taps);
+        mPulseShapingFilterI = FilterFactory.getPulseShapingFilter(taps);
+        mPulseShapingFilterQ = FilterFactory.getPulseShapingFilter(taps);
 
         mBasebandFilterI = FilterFactory.getRealFilter(getBasebandFilter(decimatedSampleRate));
         mBasebandFilterQ = FilterFactory.getRealFilter(getBasebandFilter(decimatedSampleRate));

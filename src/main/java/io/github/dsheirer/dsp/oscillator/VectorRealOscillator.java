@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.dsp.oscillator;
 
-import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -46,17 +45,11 @@ public class VectorRealOscillator extends AbstractOscillator implements IRealOsc
     @Override
     public float[] generate(int sampleCount)
     {
-        int length = sampleCount;
+        float[] samples = new float[sampleCount];
+        int vectorBound = VECTOR_SPECIES.loopBound(sampleCount);
+        int samplePointer = 0;
 
-        //Increase the length until it aligns as a multiple of the vector species length
-        while(length % VECTOR_SPECIES.length() != 0)
-        {
-            length++;
-        }
-
-        float[] samples = new float[length];
-
-        for(int samplePointer = 0; samplePointer < sampleCount; samplePointer += VECTOR_SPECIES.length())
+        for(; samplePointer < vectorBound; samplePointer += VECTOR_SPECIES.length())
         {
             FloatVector generated = FloatVector.fromArray(VECTOR_SPECIES, mOffsets, 0);
             generated = generated.mul(mAnglePerSample);
@@ -67,7 +60,15 @@ public class VectorRealOscillator extends AbstractOscillator implements IRealOsc
             generated.intoArray(samples, samplePointer);
         }
 
-        //Truncate the array to the requested length, if we increased it for SIMD alignment.
-        return Arrays.copyOf(samples, sampleCount);
+        //Advance only through samples actually returned to the caller.  The previous padded implementation advanced
+        //the oscillator by a complete vector for a short tail, shifting every later buffer in the stream.
+        for(; samplePointer < sampleCount; samplePointer++)
+        {
+            mCurrentPhase += mAnglePerSample;
+            mCurrentPhase %= TWO_PI;
+            samples[samplePointer] = (float)Math.sin(mCurrentPhase);
+        }
+
+        return samples;
     }
 }

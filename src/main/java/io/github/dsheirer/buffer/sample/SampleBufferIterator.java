@@ -67,8 +67,8 @@ public abstract class SampleBufferIterator<T> implements Iterator<T>
 
         if(samples.length % requiredInterval != 0)
         {
-            throw new IllegalArgumentException("Samples short array length [" + mSamples.length +
-                    "]must be an integer multiple of " + requiredInterval);
+            throw new IllegalArgumentException("Samples short array length [" + samples.length +
+                    "] must be an integer multiple of " + requiredInterval);
         }
 
         mAverageDc = averageDc;

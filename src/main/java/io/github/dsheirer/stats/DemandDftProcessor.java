@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.buffer.INativeBuffer;
+import io.github.dsheirer.dsp.window.Window;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.sample.Listener;
@@ -53,7 +54,7 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
     private NativeBufferManager<INativeBuffer> mBufferManager;
     private DiagnosticComplexFft mFft;
     private float[] mSamples;
-    private float[] mWindow;
+    private Window mWindow;
     private DFTSize mAppliedDftSize;
     private long mAppliedConfiguration;
     private long mPendingTimestamp;
@@ -189,7 +190,7 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
 
             drainIngress(configuration);
             mBufferManager.get(mSamples.length / 2, mSamples);
-            WindowFactory.apply(mWindow, mSamples);
+            mWindow.apply(mSamples);
             mFft.forward(mSamples);
             float[] converted = ComplexDecibelConverter.convert(mSamples);
 
@@ -220,7 +221,7 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
         mBufferManager = new NativeBufferManager<>(size);
         mFft = mFftFactory.create(size);
         mSamples = new float[size * 2];
-        mWindow = WindowFactory.getWindow(WindowType.BLACKMAN_HARRIS_7, size * 2);
+        mWindow = WindowFactory.getWindowProcessor(WindowType.BLACKMAN_HARRIS_7, size * 2);
         mAppliedDftSize = dftSize;
         mInitializationThread = Thread.currentThread();
     }

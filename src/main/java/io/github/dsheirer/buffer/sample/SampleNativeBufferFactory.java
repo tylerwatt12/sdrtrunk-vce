@@ -78,7 +78,8 @@ public class SampleNativeBufferFactory extends AbstractNativeBufferFactory
         }
         else
         {
-            Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.SAMPLE_PACKED_CONVERTER);
+            Implementation implementation = CalibrationManager.getInstance()
+                .getImplementation(CalibrationType.SAMPLE_UNPACKED_BYTE_CONVERTER);
 
             if(implementation == Implementation.VECTOR_SIMD_PREFERRED)
             {

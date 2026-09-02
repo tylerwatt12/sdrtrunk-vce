@@ -24,10 +24,12 @@ import io.github.dsheirer.dsp.gain.complex.ScalarComplexGain;
 import io.github.dsheirer.dsp.gain.complex.VectorComplexGain;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import java.time.Duration;
+import java.util.function.LongSupplier;
 
 /**
  * Determines the optimal scalar vs vector implementation of complex gain.
@@ -35,10 +37,11 @@ import org.apache.commons.math3.stat.descriptive.moment.Mean;
 public class ComplexGainCalibration extends Calibration
 {
     private static final int BUFFER_SIZE = 2048;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final int BENCHMARK_BATCH_SIZE = 16;
     private static final float GAIN = 0.99f;
+    private static final float INVERSE_GAIN = 1.0f / GAIN;
 
     /**
      * Constructs an instance
@@ -50,55 +53,18 @@ public class ComplexGainCalibration extends Calibration
 
     @Override public void calibrate() throws CalibrationException
     {
-        float[] i = getFloatSamples(BUFFER_SIZE);
-        float[] q = getFloatSamples(BUFFER_SIZE);
+        float[] i = getFloatSamples(BUFFER_SIZE, "in-phase");
+        float[] q = getFloatSamples(BUFFER_SIZE, "quadrature");
+        verifyImplementations(i, q);
 
-        Mean scalarMean = new Mean();
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testScalar(i, q);
-            scalarMean.increment(score);
-        }
+        testScalar(i, q, WARMUP_DURATION);
+        testVector(i, q, WARMUP_DURATION);
+        double scalarScore = testScalar(i, q, TEST_DURATION);
+        double vectorScore = testVector(i, q, TEST_DURATION);
+        mLog.info("COMPLEX GAIN - SCALAR: {} buffers/second", DECIMAL_FORMAT.format(scalarScore));
+        mLog.info("COMPLEX GAIN - VECTOR: {} buffers/second", DECIMAL_FORMAT.format(vectorScore));
 
-        mLog.info("COMPLEX GAIN WARMUP - SCALAR:" + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        i = getFloatSamples(BUFFER_SIZE);
-        q = getFloatSamples(BUFFER_SIZE);
-
-        Mean vectorMean = new Mean();
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            long score = testVector(i, q);
-            vectorMean.increment(score);
-        }
-
-        mLog.info("COMPLEX GAIN WARMUP - VECTOR:" + DECIMAL_FORMAT.format(vectorMean.getResult()));
-
-        i = getFloatSamples(BUFFER_SIZE);
-        q = getFloatSamples(BUFFER_SIZE);
-
-        scalarMean.clear();
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testScalar(i, q);
-            scalarMean.increment(score);
-        }
-
-        mLog.info("COMPLEX GAIN - SCALAR:" + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        i = getFloatSamples(BUFFER_SIZE);
-        q = getFloatSamples(BUFFER_SIZE);
-
-        vectorMean.clear();
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector(i, q);
-            vectorMean.increment(score);
-        }
-
-        mLog.info("COMPLEX GAIN - VECTOR:" + DECIMAL_FORMAT.format(vectorMean.getResult()));
-
-        if(scalarMean.getResult() > vectorMean.getResult())
+        if(scalarScore > vectorScore)
         {
             setImplementation(Implementation.SCALAR);
         }
@@ -110,51 +76,74 @@ public class ComplexGainCalibration extends Calibration
         mLog.info("COMPLEX GAIN - SET IMPLEMENTATION TO:" + getImplementation());
     }
 
-    private long testScalar(float[] i, float[] q)
+    /**
+     * Verifies candidate output before using performance to select an implementation.
+     */
+    private void verifyImplementations(float[] i, float[] q) throws CalibrationException
     {
-        float accumulator = 0.0f;
-        long count = 0;
-
-        ComplexGain scalar = new ScalarComplexGain(GAIN);
-        float[] iCopy = new float[i.length];
-        float[] qCopy = new float[q.length];
-
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
-        {
-            System.arraycopy(i, 0, iCopy, 0, i.length);
-            System.arraycopy(q, 0, qCopy, 0, q.length);
-
-            ComplexSamples amplified = scalar.apply(iCopy, qCopy, start);
-            accumulator += amplified.i()[2];
-            count++;
-        }
-
-        return count + (long)(accumulator * 0);
+        float[] expectedI = i.clone();
+        float[] expectedQ = q.clone();
+        float[] actualI = i.clone();
+        float[] actualQ = q.clone();
+        new ScalarComplexGain(GAIN).apply(expectedI, expectedQ, 0);
+        new VectorComplexGain(GAIN).apply(actualI, actualQ, 0);
+        CalibrationBenchmark.requireExact("Vector complex gain I", expectedI, actualI);
+        CalibrationBenchmark.requireExact("Vector complex gain Q", expectedQ, actualQ);
     }
 
-    private long testVector(float[] i, float[] q)
+    private double testScalar(float[] i, float[] q, Duration duration)
     {
-        float accumulator = 0.0f;
-        long count = 0;
+        return test(new ScalarComplexGain(GAIN), new ScalarComplexGain(INVERSE_GAIN), i, q, duration);
+    }
 
-        ComplexGain vector = new VectorComplexGain(GAIN);
-        float[] iCopy = new float[i.length];
-        float[] qCopy = new float[q.length];
+    private double testVector(float[] i, float[] q, Duration duration)
+    {
+        return test(new VectorComplexGain(GAIN), new VectorComplexGain(INVERSE_GAIN), i, q, duration);
+    }
 
-        long start = System.currentTimeMillis();
+    private double test(ComplexGain forward, ComplexGain reverse, float[] i, float[] q, Duration duration)
+    {
+        GainOperation operation = new GainOperation(forward, reverse, i, q);
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE, operation)
+            .operationsPerSecond();
+    }
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+    /**
+     * Alternates forward and inverse gain so the timed operation measures gain rather than an input-buffer copy and
+     * the samples do not decay toward zero during the benchmark.
+     */
+    private static class GainOperation implements LongSupplier
+    {
+        private final ComplexGain mForward;
+        private final ComplexGain mReverse;
+        private final float[] mI;
+        private final float[] mQ;
+        private boolean mApplyForward = true;
+        private int mObservationIndex;
+
+        private GainOperation(ComplexGain forward, ComplexGain reverse, float[] i, float[] q)
         {
-            System.arraycopy(i, 0, iCopy, 0, i.length);
-            System.arraycopy(q, 0, qCopy, 0, q.length);
-
-            ComplexSamples amplified = vector.apply(iCopy, qCopy, start);
-            accumulator += amplified.i()[2];
-            count++;
+            mForward = forward;
+            mReverse = reverse;
+            mI = i.clone();
+            mQ = q.clone();
         }
 
-        return count + (long)(accumulator * 0);
+        @Override public long getAsLong()
+        {
+            ComplexGain gain = mApplyForward ? mForward : mReverse;
+            mApplyForward = !mApplyForward;
+            ComplexSamples amplified = gain.apply(mI, mQ, 0);
+            CalibrationBenchmark.consume(amplified);
+            int index = mObservationIndex++;
+
+            if(mObservationIndex >= mI.length)
+            {
+                mObservationIndex = 0;
+            }
+
+            return CalibrationBenchmark.combine(CalibrationBenchmark.fingerprint(amplified.i()[index]),
+                CalibrationBenchmark.fingerprint(amplified.q()[index]));
+        }
     }
 }

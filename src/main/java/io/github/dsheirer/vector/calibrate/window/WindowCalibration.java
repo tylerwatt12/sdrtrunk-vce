@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2022 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,82 +24,51 @@ import io.github.dsheirer.dsp.window.VectorWindow;
 import io.github.dsheirer.dsp.window.Window;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import java.time.Duration;
+import java.util.function.LongSupplier;
 
-/**
- * Calculates the optimal (scalar vs vector) implementation for windowing samples.
- */
+/** Calculates the optimal scalar or preferred-width vector implementation for repeatedly applying an FFT window. */
 public class WindowCalibration extends Calibration
 {
     private static final int WINDOW_SIZE = 8192;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
-    private Window mScalarWindow;
-    private Window mVectorWindow;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final int BENCHMARK_BATCH_SIZE = 16;
 
-    /**
-     * Constructs an instance
-     */
     public WindowCalibration()
     {
         super(CalibrationType.WINDOW);
-        float[] window = WindowFactory.getBlackman(WINDOW_SIZE);
-        mScalarWindow = new ScalarWindow(window);
-        mVectorWindow = new VectorWindow(window);
     }
 
     @Override public void calibrate() throws CalibrationException
     {
-        Mean scalarMean = new Mean();
+        float[] samples = getFloatSamples(WINDOW_SIZE, "samples");
+        verifyImplementations(samples);
 
-        float[] samples = getFloatSamples(WINDOW_SIZE);
+        //A real window repeatedly applied to the same array quickly attenuates it to zero.  Unit-magnitude signs keep
+        //the data live across iterations while exercising the identical multiplication, loads, stores and tail path.
+        float[] benchmarkCoefficients = getFloatSamples(WINDOW_SIZE, "benchmark-coefficients");
 
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        for(int x = 0; x < benchmarkCoefficients.length; x++)
         {
-            scalarMean.increment(testScalar(samples));
+            benchmarkCoefficients[x] = benchmarkCoefficients[x] < 0.0f ? -1.0f : 1.0f;
         }
 
-        mLog.info("WINDOW WARMUP - SCALAR: " + scalarMean.getResult());
+        Window scalar = new ScalarWindow(benchmarkCoefficients);
+        Window vector = new VectorWindow(benchmarkCoefficients);
+        measure(scalar, samples, WARMUP_DURATION);
+        measure(vector, samples, WARMUP_DURATION);
+        double scalarScore = measure(scalar, samples, TEST_DURATION);
+        double vectorScore = measure(vector, samples, TEST_DURATION);
 
-        Mean vectorMean = new Mean();
+        mLog.info("WINDOW - SCALAR: {} buffers/second", DECIMAL_FORMAT.format(scalarScore));
+        mLog.info("WINDOW - VECTOR: {} buffers/second", DECIMAL_FORMAT.format(vectorScore));
 
-        samples = getFloatSamples(WINDOW_SIZE);
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            vectorMean.increment(testVector(samples));
-        }
-
-        mLog.info("WINDOW WARMUP - VECTOR: " + vectorMean.getResult());
-
-        //Test starts ...
-        scalarMean.clear();
-
-        samples = getFloatSamples(WINDOW_SIZE);
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            scalarMean.increment(testScalar(samples));
-        }
-
-        mLog.info("WINDOW - SCALAR: " + scalarMean.getResult());
-
-        vectorMean.clear();
-
-        samples = getFloatSamples(WINDOW_SIZE);
-
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
-        {
-            vectorMean.increment(testVector(samples));
-        }
-
-        mLog.info("WINDOW - VECTOR: " + vectorMean.getResult());
-
-        if(scalarMean.getResult() > vectorMean.getResult())
+        if(scalarScore > vectorScore)
         {
             setImplementation(Implementation.SCALAR);
         }
@@ -111,34 +80,46 @@ public class WindowCalibration extends Calibration
         mLog.info("WINDOW - OPTIMAL IMPLEMENTATION SET TO: " + getImplementation());
     }
 
-    private long testScalar(float[] samples)
+    private void verifyImplementations(float[] samples) throws CalibrationException
     {
-        long start = System.currentTimeMillis();
-        double accumulator = 0.0d;
-        long count = 0;
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
-        {
-            mScalarWindow.apply(samples);
-            accumulator += samples[3];
-            count++;
-        }
-
-        return count + (long)(accumulator * 0);
+        float[] coefficients = WindowFactory.getBlackman(WINDOW_SIZE);
+        float[] expected = samples.clone();
+        float[] actual = samples.clone();
+        new ScalarWindow(coefficients).apply(expected);
+        new VectorWindow(coefficients).apply(actual);
+        CalibrationBenchmark.requireExact("Vector window", expected, actual);
     }
-    private long testVector(float[] samples)
-    {
-        long start = System.currentTimeMillis();
-        double accumulator = 0.0d;
-        long count = 0;
 
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+    private double measure(Window window, float[] samples, Duration duration)
+    {
+        return CalibrationBenchmark.measure(duration, BENCHMARK_BATCH_SIZE,
+            new WindowOperation(window, samples)).operationsPerSecond();
+    }
+
+    private static class WindowOperation implements LongSupplier
+    {
+        private final Window mWindow;
+        private final float[] mSamples;
+        private int mObservationIndex;
+
+        private WindowOperation(Window window, float[] samples)
         {
-            mVectorWindow.apply(samples);
-            accumulator += samples[3];
-            count++;
+            mWindow = window;
+            mSamples = samples.clone();
         }
 
-        return count + (long)(accumulator * 0);
+        @Override public long getAsLong()
+        {
+            mWindow.apply(mSamples);
+            CalibrationBenchmark.consume(mSamples);
+            int index = mObservationIndex++;
+
+            if(mObservationIndex >= mSamples.length)
+            {
+                mObservationIndex = 0;
+            }
+
+            return CalibrationBenchmark.fingerprint(mSamples[index]);
+        }
     }
 }

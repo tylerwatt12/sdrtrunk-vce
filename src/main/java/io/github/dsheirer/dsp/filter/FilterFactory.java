@@ -51,6 +51,7 @@ import io.github.dsheirer.dsp.filter.halfband.VectorRealHalfBandDecimationFilter
 import io.github.dsheirer.dsp.filter.halfband.VectorRealHalfBandDecimationFilter63Tap512Bit;
 import io.github.dsheirer.dsp.filter.halfband.VectorRealHalfBandDecimationFilter63Tap64Bit;
 import io.github.dsheirer.dsp.filter.halfband.VectorRealHalfBandDecimationFilter64Bit;
+import io.github.dsheirer.dsp.filter.halfband.VectorRealHalfBandDecimationFilterDefaultBit;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
@@ -1079,24 +1080,45 @@ public class FilterFactory
     public static IRealFilter getRealFilter(float[] coefficients)
     {
         Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.FILTER_FIR);
+        return getRealFilter(coefficients, implementation);
+    }
 
-        switch(implementation)
+    /**
+     * Creates the optimal FIR implementation for decoder pulse-shaping filters.  These filters have a distinct mix
+     * of coefficient lengths from the general 31-tap FIR calibration, so they use their own production-shaped
+     * calibration result.  Selection occurs when a decoder is configured, not from its sample callback.
+     *
+     * @param coefficients for the pulse-shaping filter
+     * @return pulse-shaping fir filter implementation
+     */
+    public static IRealFilter getPulseShapingFilter(float[] coefficients)
+    {
+        Implementation implementation = CalibrationManager.getInstance()
+            .getImplementation(CalibrationType.FILTER_FIR_PULSE_SHAPING);
+        return getRealFilter(coefficients, implementation);
+    }
+
+    /**
+     * Creates a FIR filter using the specified implementation.  Each implementation reverses its private coefficient
+     * copy for convolution order, leaving the caller's coefficients unchanged.
+     *
+     * @param coefficients for the filter
+     * @param implementation to construct
+     * @return fir filter implementation
+     */
+    public static IRealFilter getRealFilter(float[] coefficients, Implementation implementation)
+    {
+        float[] coefficientCopy = coefficients.clone();
+
+        return switch(implementation)
         {
-            case VECTOR_SIMD_PREFERRED:
-                return new VectorRealFIRFilterDefaultBit(coefficients);
-            case VECTOR_SIMD_64:
-                return new VectorRealFIRFilter64Bit(coefficients);
-            case VECTOR_SIMD_128:
-                return new VectorRealFIRFilter128Bit(coefficients);
-            case VECTOR_SIMD_256:
-                return new VectorRealFIRFilter256Bit(coefficients);
-            case VECTOR_SIMD_512:
-                return new VectorRealFIRFilter512Bit(coefficients);
-            case UNCALIBRATED:
-            case SCALAR:
-            default:
-                return new RealFIRFilter(coefficients);
-        }
+            case VECTOR_SIMD_PREFERRED -> new VectorRealFIRFilterDefaultBit(coefficientCopy);
+            case VECTOR_SIMD_64 -> new VectorRealFIRFilter64Bit(coefficientCopy);
+            case VECTOR_SIMD_128 -> new VectorRealFIRFilter128Bit(coefficientCopy);
+            case VECTOR_SIMD_256 -> new VectorRealFIRFilter256Bit(coefficientCopy);
+            case VECTOR_SIMD_512 -> new VectorRealFIRFilter512Bit(coefficientCopy);
+            case UNCALIBRATED, SCALAR -> new RealFIRFilter(coefficientCopy);
+        };
     }
 
     /**
@@ -1179,6 +1201,8 @@ public class FilterFactory
             default:
                 switch(CalibrationManager.getInstance().getImplementation(CalibrationType.FILTER_HALF_BAND_REAL_DEFAULT))
                 {
+                    case VECTOR_SIMD_PREFERRED:
+                        return new VectorRealHalfBandDecimationFilterDefaultBit(coefficients);
                     case VECTOR_SIMD_64:
                         return new VectorRealHalfBandDecimationFilter64Bit(coefficients);
                     case VECTOR_SIMD_128:

@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2022 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,133 +22,150 @@ package io.github.dsheirer.vector.calibrate.oscillator;
 import io.github.dsheirer.dsp.oscillator.IComplexOscillator;
 import io.github.dsheirer.dsp.oscillator.ScalarComplexOscillator;
 import io.github.dsheirer.dsp.oscillator.VectorComplexOscillator;
+import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.vector.calibrate.Calibration;
+import io.github.dsheirer.vector.calibrate.CalibrationBenchmark;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import java.time.Duration;
+import java.util.function.LongSupplier;
+import jdk.incubator.vector.FloatVector;
 
 /**
- * Calibration plugin for complex oscillators
+ * Selects the fastest correct complex oscillator implementation.
  */
 public class ComplexOscillatorCalibration extends Calibration
 {
-    private static final double FREQUENCY = 5.0d;
-    private static final double SAMPLE_RATE = 100.0d;
+    private static final double FREQUENCY = 5_000.0d;
+    private static final double SAMPLE_RATE = 50_000.0d;
     private static final int BUFFER_SIZE = 2048;
-    private static final int ITERATION_DURATION_MS = 1000;
-    private static final int WARMUP_ITERATIONS = 5;
-    private static final int TEST_ITERATIONS = 5;
-
-    private IComplexOscillator mScalarOscillator = new ScalarComplexOscillator(FREQUENCY, SAMPLE_RATE);
-    private IComplexOscillator mVectorOscillator = new VectorComplexOscillator(FREQUENCY, SAMPLE_RATE);
-
+    private static final int SIMD_LANE_COUNT = FloatVector.SPECIES_PREFERRED.length();
+    private static final int[] STREAM_BUFFER_SIZES = {
+        BUFFER_SIZE + 1,
+        SIMD_LANE_COUNT + 1,
+        BUFFER_SIZE - 1,
+        SIMD_LANE_COUNT * 2,
+        (SIMD_LANE_COUNT * 2) + 3
+    };
+    private static final int BENCHMARK_BATCH_SIZE = 2;
+    private static final Duration WARMUP_DURATION = Duration.ofMillis(250);
+    private static final Duration TEST_DURATION = Duration.ofMillis(750);
+    private static final float ABSOLUTE_TOLERANCE = 0.001f;
+    private static final float RELATIVE_TOLERANCE = 0.001f;
+    private static final Implementation[] CANDIDATES = {
+        Implementation.SCALAR,
+        Implementation.VECTOR_SIMD_PREFERRED
+    };
 
     /**
-     * Constructs an instance
+     * Constructs an instance.
      */
     public ComplexOscillatorCalibration()
     {
         super(CalibrationType.OSCILLATOR_COMPLEX);
     }
 
-    /**
-     * Performs calibration to determine optimal (Scalar vs Vector) operation type.
-     * @throws CalibrationException
-     */
-    @Override public void calibrate() throws CalibrationException
+    @Override
+    public void calibrate() throws CalibrationException
     {
-        Mean scalarMean = new Mean();
+        float[][] expectedInterleaved = generateInterleaved(createOscillator(Implementation.SCALAR));
+        ComplexSamples[] expectedDeinterleaved = generateDeinterleaved(createOscillator(Implementation.SCALAR));
+        Implementation bestImplementation = Implementation.SCALAR;
+        double bestScore = 0.0d;
 
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        for(Implementation implementation: CANDIDATES)
         {
-            long score = testScalar();
-            scalarMean.increment(score);
+            float[][] actualInterleaved = generateInterleaved(createOscillator(implementation));
+            ComplexSamples[] actualDeinterleaved = generateDeinterleaved(createOscillator(implementation));
+
+            for(int x = 0; x < STREAM_BUFFER_SIZES.length; x++)
+            {
+                CalibrationBenchmark.requireEquivalent(implementation + " interleaved stream buffer " + x,
+                    expectedInterleaved[x], actualInterleaved[x], ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE);
+                CalibrationBenchmark.requireEquivalent(implementation + " I stream buffer " + x,
+                    expectedDeinterleaved[x].i(), actualDeinterleaved[x].i(), ABSOLUTE_TOLERANCE,
+                    RELATIVE_TOLERANCE);
+                CalibrationBenchmark.requireEquivalent(implementation + " Q stream buffer " + x,
+                    expectedDeinterleaved[x].q(), actualDeinterleaved[x].q(), ABSOLUTE_TOLERANCE,
+                    RELATIVE_TOLERANCE);
+            }
+
+            CalibrationBenchmark.measure(WARMUP_DURATION, BENCHMARK_BATCH_SIZE,
+                new OscillatorOperation(createOscillator(implementation)));
+            double score = CalibrationBenchmark.measure(TEST_DURATION, BENCHMARK_BATCH_SIZE,
+                new OscillatorOperation(createOscillator(implementation))).operationsPerSecond();
+            mLog.info("COMPLEX OSCILLATOR - {}: {} buffers/second", implementation, DECIMAL_FORMAT.format(score));
+
+            if(score > bestScore)
+            {
+                bestScore = score;
+                bestImplementation = implementation;
+            }
         }
 
-        mLog.info("COMPLEX OSCILLATOR WARMUP - SCALAR:" + DECIMAL_FORMAT.format(scalarMean.getResult()));
+        setImplementation(bestImplementation);
+        mLog.info("COMPLEX OSCILLATOR - SET OPTIMAL IMPLEMENTATION TO: {}", getImplementation());
+    }
 
-        Mean vectorMean = new Mean();
+    private static IComplexOscillator createOscillator(Implementation implementation)
+    {
+        return implementation == Implementation.VECTOR_SIMD_PREFERRED ?
+            new VectorComplexOscillator(FREQUENCY, SAMPLE_RATE) :
+            new ScalarComplexOscillator(FREQUENCY, SAMPLE_RATE);
+    }
 
-        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+    private static float[][] generateInterleaved(IComplexOscillator oscillator)
+    {
+        float[][] generated = new float[STREAM_BUFFER_SIZES.length][];
+
+        for(int x = 0; x < STREAM_BUFFER_SIZES.length; x++)
         {
-            long score = testVector();
-            vectorMean.increment(score);
+            generated[x] = oscillator.generate(STREAM_BUFFER_SIZES[x]);
         }
 
-        mLog.info("COMPLEX OSCILLATOR WARMUP - VECTOR:" + DECIMAL_FORMAT.format(vectorMean.getResult()));
+        return generated;
+    }
 
-        scalarMean.clear();
+    private static ComplexSamples[] generateDeinterleaved(IComplexOscillator oscillator)
+    {
+        ComplexSamples[] generated = new ComplexSamples[STREAM_BUFFER_SIZES.length];
 
-        for(int x = 0; x < TEST_ITERATIONS; x++)
+        for(int x = 0; x < STREAM_BUFFER_SIZES.length; x++)
         {
-            long score = testScalar();
-            scalarMean.increment(score);
+            generated[x] = oscillator.generateComplexSamples(STREAM_BUFFER_SIZES[x], x * 1_000L);
         }
 
-        mLog.info("COMPLEX OSCILLATOR - SCALAR:" + DECIMAL_FORMAT.format(scalarMean.getResult()));
-
-        vectorMean.clear();
-
-        for(int x = 0; x < TEST_ITERATIONS; x++)
-        {
-            long score = testVector();
-            vectorMean.increment(score);
-        }
-
-        mLog.info("COMPLEX OSCILLATOR - VECTOR:" + DECIMAL_FORMAT.format(vectorMean.getResult()));
-
-        if(scalarMean.getResult() > vectorMean.getResult())
-        {
-            setImplementation(Implementation.SCALAR);
-        }
-        else
-        {
-            setImplementation(Implementation.VECTOR_SIMD_PREFERRED);
-        }
-
-        mLog.info("COMPLEX OSCILLATOR - SETTING OPTIMAL OPERATION TO:" + getImplementation());
+        return generated;
     }
 
     /**
-     * Calculates the time duration needed to generate the sample buffers of the specified size and iteration count
-     * @return time duration in milliseconds
+     * Measures the deinterleaved generation path used by the production complex mixer and preserves stream state.
      */
-    private long testScalar()
+    private static class OscillatorOperation implements LongSupplier
     {
-        float accumulator = 0.0f;
-        long count = 0;
+        private final IComplexOscillator mOscillator;
+        private int mObservationIndex;
 
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        private OscillatorOperation(IComplexOscillator oscillator)
         {
-            float[] generated = mScalarOscillator.generate(BUFFER_SIZE);
-            accumulator += generated[0];
-            count++;
+            mOscillator = oscillator;
         }
 
-        return count + (long)(accumulator * 0);
-    }
-
-    /**
-     * Calculates the time duration to process the sample buffer with the filter coefficients.
-     * @return time duration in milliseconds
-     */
-    private long testVector()
-    {
-        float accumulator = 0.0f;
-        long count = 0;
-
-        long start = System.currentTimeMillis();
-
-        while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
+        @Override
+        public long getAsLong()
         {
-            float[] generated = mVectorOscillator.generate(BUFFER_SIZE);
-            accumulator += generated[0];
-            count++;
-        }
+            ComplexSamples generated = mOscillator.generateComplexSamples(BUFFER_SIZE, 0L);
+            CalibrationBenchmark.consume(generated);
+            int index = mObservationIndex++;
 
-        return count + (long)(accumulator * 0);
+            if(mObservationIndex >= generated.i().length)
+            {
+                mObservationIndex = 0;
+            }
+
+            return CalibrationBenchmark.combine(CalibrationBenchmark.fingerprint(generated.i()[index]),
+                CalibrationBenchmark.fingerprint(generated.q()[index]));
+        }
     }
 }

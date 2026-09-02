@@ -82,6 +82,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private int mSampleBufferPointer;
     private int mSamplesPerBlock;
     private int mTapsPerChannel;
+    private final IPolyphaseChannelizerFilter mPolyphaseChannelizerFilter;
     private final ConcurrentLinkedQueue<float[]> mChannelResultsPool = new ConcurrentLinkedQueue<>();
     private final AtomicInteger mChannelResultsPoolSize = new AtomicInteger();
     private final AtomicLong mChannelResultsPoolMisses = new AtomicLong();
@@ -107,6 +108,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     public ComplexPolyphaseChannelizerM2(float[] taps, int sampleRate, int channelCount)
     {
         super(sampleRate, channelCount);
+        mPolyphaseChannelizerFilter = PolyphaseChannelizerFilterFactory.getFilter();
 
         if(channelCount % 2 != 0)
         {
@@ -128,6 +130,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     public ComplexPolyphaseChannelizerM2(double sampleRate, int tapsPerChannel) throws FilterDesignException
     {
         super(sampleRate, getChannelCount(sampleRate));
+        mPolyphaseChannelizerFilter = PolyphaseChannelizerFilterFactory.getFilter();
 
         mTapsPerChannel = tapsPerChannel;
 
@@ -396,18 +399,8 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     private float[] process()
     {
-        Arrays.fill(mFilterAccumulator, 0.0f);
-
-        //Accumulate each sample/filter product directly into the I/Q sub-channels.
-        for(int tap = 0; tap < mTapsPerChannel; tap++)
-        {
-            int tapOffset = tap * getSubChannelCount();
-
-            for(int channel = 0; channel < getSubChannelCount(); channel++)
-            {
-                mFilterAccumulator[channel] += mInlineSamples[tapOffset + channel] * mInlineFilter[tapOffset + channel];
-            }
-        }
+        mPolyphaseChannelizerFilter.filter(mInlineSamples, mInlineFilter, mFilterAccumulator, mTapsPerChannel,
+            getSubChannelCount());
 
         float[] processed = acquireChannelResultsArray();
 

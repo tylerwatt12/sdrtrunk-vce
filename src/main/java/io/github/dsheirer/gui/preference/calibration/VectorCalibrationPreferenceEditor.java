@@ -225,7 +225,7 @@ public class VectorCalibrationPreferenceEditor extends HBox
                 getCalibrateButton().setDisable(true);
                 getResetAllButton().setDisable(true);
                 getConsoleTextArea().clear();
-                getConsoleTextArea().appendText("Calibrating.  Each calibration lasts 20 - 40 seconds.");
+                getConsoleTextArea().appendText("Calibrating.  Each item typically takes a few seconds.");
                 enableConsoleLogging();
                 getCalibratingLabel().setVisible(true);
                 getProgressBar().setVisible(true);
