@@ -68,7 +68,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     static final int CHANNEL_RESULTS_BATCH_CAPACITY = 512;
     private static final int IFFT_QUEUE_CAPACITY = 8;
-    static final int CHANNEL_RESULTS_ARENA_CAPACITY = 32;
+    static final int CHANNEL_RESULTS_ARENA_CAPACITY = 16;
     private static final int PROCESSING_WARMUP_ITERATIONS = 16_384;
 
     //Sized to process 40 times per second
