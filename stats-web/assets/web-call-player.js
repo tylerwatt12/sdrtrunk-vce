@@ -42,7 +42,8 @@ export class WebCallPlayer {
     this.feedCursor = null;
     this.loadToken = 0;
     this.loadController = null;
-    this.paused = true;
+    this.stopped = true;
+    this.paused = false;
     this.volume = 1;
     this.statusValue = this.ui.status?.textContent || '';
     this.skippedNotice = false;
@@ -151,8 +152,9 @@ export class WebCallPlayer {
       currentReady: Boolean(this.current && this.currentBuffer),
       replayingLast: this.replayingLast,
       lastCallReady: Boolean(this.lastHeard && this.lastHeardBuffer),
+      stopped: this.stopped,
       paused: this.paused,
-      playing: Boolean(this.source),
+      playing: Boolean(this.source) && !this.paused && !this.stopped,
       targetLabel: this.currentTargetLabel(),
       holdTarget: this.holdTarget,
       queuedCount: this.queuedCount,
@@ -187,7 +189,7 @@ export class WebCallPlayer {
   ensureConnected() {
     if (this.feedActive) return true;
     if (typeof this.feedFetch !== 'function' || !this.feedUrl || !this.scanListCatalogReady ||
-        !this.activeSelectedScanListIds().length || this.paused) return false;
+        !this.activeSelectedScanListIds().length || this.stopped) return false;
     this.feedActive = true;
     this.feedCursor = null;
     const generation = ++this.feedGeneration;
@@ -212,7 +214,7 @@ export class WebCallPlayer {
   }
 
   scheduleFeedPoll(generation, delay) {
-    if (!this.feedActive || this.paused || generation !== this.feedGeneration) return;
+    if (!this.feedActive || this.stopped || generation !== this.feedGeneration) return;
     this.feedTimer = window.setTimeout(() => {
       this.feedTimer = null;
       void this.pollFeed(generation);
@@ -220,19 +222,19 @@ export class WebCallPlayer {
   }
 
   async pollFeed(generation) {
-    if (!this.feedActive || this.paused || generation !== this.feedGeneration) return;
+    if (!this.feedActive || this.stopped || generation !== this.feedGeneration) return;
     const controller = new AbortController();
     this.feedController = controller;
     try {
       const response = await this.requestFeed(controller.signal);
-      if (!this.feedActive || this.paused || generation !== this.feedGeneration) return;
+      if (!this.feedActive || this.stopped || generation !== this.feedGeneration) return;
       this.feedCursor = response.cursor;
       if (response.reset) this.recordSkippedCallNotice();
       response.calls.forEach((call) => this.enqueue(call));
       if (!this.current && !this.queuedCount) this.setStatus('Waiting');
       this.scheduleFeedPoll(generation, WebCallPlayer.FEED_POLL_INTERVAL_MS);
     } catch (error) {
-      if (controller.signal.aborted || !this.feedActive || this.paused || generation !== this.feedGeneration) return;
+      if (controller.signal.aborted || !this.feedActive || this.stopped || generation !== this.feedGeneration) return;
       this.setStatus('Reconnecting');
       this.scheduleFeedPoll(generation, WebCallPlayer.FEED_RETRY_INTERVAL_MS);
     } finally {
@@ -253,8 +255,10 @@ export class WebCallPlayer {
   synchronizeSubscription() {
     if (!this.scanListCatalogReady || !this.activeSelectedScanListIds().length) {
       this.stopFeed();
-      if (!this.paused) {
-        this.paused = true;
+      if (!this.stopped) {
+        this.stopped = true;
+        this.paused = false;
+        this.transportToken++;
         this.clearQueuedCalls();
         this.stopCurrent();
         this.replayingLast = false;
@@ -267,7 +271,7 @@ export class WebCallPlayer {
     if (this.feedActive) {
       this.stopFeed();
       this.ensureConnected();
-    } else if (!this.paused && !this.stopAfterReplay) this.ensureConnected();
+    } else if (!this.stopped && !this.stopAfterReplay) this.ensureConnected();
     else this.setStatus('Ready');
   }
 
@@ -276,7 +280,8 @@ export class WebCallPlayer {
     this.transportToken++;
     this.loadController?.abort();
     this.loadController = null;
-    this.paused = true;
+    this.stopped = true;
+    this.paused = false;
     this.clearQueuedCalls();
     this.avoids.clear();
     this.lastHeard = null;
@@ -452,7 +457,7 @@ export class WebCallPlayer {
     }
 
     this.insertQueuedCall(normalized);
-    if (!this.paused && !this.current) this.playNext();
+    if (!this.stopped && !this.paused && !this.current) this.playNext();
     else this.render();
   }
 
@@ -579,6 +584,7 @@ export class WebCallPlayer {
 
   bindControls() {
     this.ui.play.addEventListener('click', () => this.togglePlayback());
+    this.ui.pause?.addEventListener('click', () => this.togglePause());
     this.ui.skip.addEventListener('click', () => this.skip());
     this.ui.replay.addEventListener('click', () => this.replayLastCall());
     this.ui.hold.addEventListener('click', () => this.toggleHold());
@@ -598,7 +604,7 @@ export class WebCallPlayer {
   }
 
   async togglePlayback() {
-    if (this.paused && this.scanListCatalogReady && !this.activeSelectedScanListIds().length) {
+    if (this.stopped && this.scanListCatalogReady && !this.activeSelectedScanListIds().length) {
       const defaultScanList = this.scanLists.find((item) => item.enabled && item.default);
       if (defaultScanList) {
         this.selectedScanListIds = new Set([defaultScanList.id]);
@@ -611,8 +617,9 @@ export class WebCallPlayer {
     }
 
     const token = ++this.transportToken;
-    if (!this.paused) {
-      this.paused = true;
+    if (!this.stopped) {
+      this.stopped = true;
+      this.paused = false;
       this.stopFeed();
       this.clearQueuedCalls();
       this.lastConversationKey = null;
@@ -621,13 +628,14 @@ export class WebCallPlayer {
       this.replayingLast = false;
       this.stopAfterReplay = false;
       this.clearLossNotice();
-      if (this.audioContext?.state === 'running') await this.audioContext.suspend();
+      if (this.audioContext) await this.audioContext.suspend();
       if (token !== this.transportToken) return;
       this.setStatus('Ready');
     } else {
+      this.stopped = false;
       this.paused = false;
       if (!this.ensureConnected()) {
-        this.paused = true;
+        this.stopped = true;
         this.setStatus('Unavailable');
         this.render();
         return;
@@ -638,6 +646,45 @@ export class WebCallPlayer {
       this.setStatus('Waiting');
     }
 
+    this.render();
+  }
+
+  async togglePause() {
+    if (this.stopped) return;
+    const token = ++this.transportToken;
+    this.paused = !this.paused;
+    this.ensureAudioContext();
+    // Suspending the context preserves both the source and its playback clock. The
+    // completed-call feed stays active; only browser audio and animation stop.
+    try {
+      if (this.paused) {
+        this.stopProgress();
+        this.render();
+        await this.audioContext.suspend();
+      } else {
+        await this.audioContext.resume();
+      }
+    } catch (_) {
+      if (token !== this.transportToken) return;
+      // A rejected browser audio transition must not silently start queued calls.
+      this.paused = true;
+      this.stopProgress();
+      this.render();
+      return;
+    }
+    if (token !== this.transportToken) return;
+    if (!this.paused) {
+      if (this.source) {
+        this.setStatus(this.replayingLast ? 'Replaying last call' : 'Listening');
+        this.startProgress();
+      } else if (this.currentBuffer) {
+        this.startCurrent();
+      } else if (!this.current) {
+        void this.playNext();
+      } else {
+        this.setStatus('Buffering');
+      }
+    }
     this.render();
   }
 
@@ -667,7 +714,7 @@ export class WebCallPlayer {
     if (this.holdTarget === target) this.holdTarget = null;
     this.filterQueuedCalls((call) => call._conversationKey !== target);
     this.stopCurrent();
-    if (this.paused) this.setStatus('Ready');
+    if (this.stopped || this.paused) this.setStatus('Ready');
     else this.playNext();
   }
 
@@ -682,10 +729,14 @@ export class WebCallPlayer {
     else this.takeNextCall();
     if (this.replayingLast) {
       this.replayingLast = false;
-      if (this.stopAfterReplay) this.paused = true;
+      if (this.stopAfterReplay) {
+        this.stopped = true;
+        this.paused = false;
+        this.audioContext?.suspend().catch(() => {});
+      }
       this.stopAfterReplay = false;
     }
-    if (this.paused) {
+    if (this.stopped || this.paused) {
       this.setStatus('Ready');
       this.render();
     } else {
@@ -694,9 +745,9 @@ export class WebCallPlayer {
   }
 
   async replayLastCall() {
-    if (!this.lastHeard || !this.lastHeardBuffer) return false;
-    const wasStopped = this.paused;
-    this.transportToken++;
+    if (this.paused || !this.lastHeard || !this.lastHeardBuffer) return false;
+    const wasStopped = this.stopped;
+    const transportToken = ++this.transportToken;
     this.loadToken++;
     this.loadController?.abort();
     this.loadController = null;
@@ -704,19 +755,19 @@ export class WebCallPlayer {
     this.clearIdleDisplay();
     this.current = this.lastHeard;
     this.currentBuffer = this.lastHeardBuffer;
-    this.paused = false;
+    this.stopped = false;
     this.replayingLast = true;
     this.stopAfterReplay = wasStopped;
     this.ensureAudioContext();
     await this.audioContext.resume();
-    if (!this.replayingLast || !this.currentBuffer) return false;
+    if (transportToken !== this.transportToken || !this.replayingLast || !this.currentBuffer) return false;
     this.setStatus('Replaying last call');
     this.startCurrent();
     return true;
   }
 
   async playNext(completedCall = null) {
-    if (this.paused || this.current) return;
+    if (this.stopped || this.paused || this.current) return;
 
     let next = this.takeNextCall();
     while (next && (!this.callMatchesSelection(next) || !this.isAllowed(next))) {
@@ -766,7 +817,8 @@ export class WebCallPlayer {
       })(), timeoutFailure]);
       if (token !== this.loadToken || this.current !== requested) return;
       this.currentBuffer = buffer;
-      if (!this.paused) this.startCurrent();
+      if (!this.stopped && !this.paused) this.startCurrent();
+      else this.render();
     } catch (error) {
       if (error?.name === 'AbortError' && !loadTimedOut) return;
       if (token === this.loadToken) {
@@ -774,7 +826,7 @@ export class WebCallPlayer {
         this.stopCurrent();
         this.setStatus('Skipped unavailable call');
         setTimeout(() => {
-          if (this.paused) {
+          if (this.stopped || this.paused) {
             this.setStatus('Ready');
             this.render();
           } else {
@@ -789,7 +841,7 @@ export class WebCallPlayer {
   }
 
   startCurrent() {
-    if (!this.current || !this.currentBuffer || this.paused || this.source) return;
+    if (!this.current || !this.currentBuffer || this.stopped || this.paused || this.source) return;
     const token = this.loadToken;
     const source = this.audioContext.createBufferSource();
     source.buffer = this.currentBuffer;
@@ -806,7 +858,8 @@ export class WebCallPlayer {
         this.replayingLast = false;
         this.stopAfterReplay = false;
         if (stopAfterReplay) {
-          this.paused = true;
+          this.stopped = true;
+          this.paused = false;
           if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
           this.setStatus('Ready');
           this.render();
@@ -900,7 +953,7 @@ export class WebCallPlayer {
   startProgress() {
     this.stopProgress();
     const update = () => {
-      if (!this.source) return;
+      if (!this.source || this.paused || this.stopped) return;
       this.renderProgress();
       this.progressFrame = window.requestAnimationFrame(update);
     };
@@ -920,10 +973,10 @@ export class WebCallPlayer {
     const position = hasDuration ? this.getPlaybackPosition() : 0;
     const progress = hasDuration ? Math.min(1, position / duration) : 0;
     const fadeWindow = hasDuration ? Math.min(1.2, Math.max(0.35, duration * 0.12)) : 0;
-    const active = hasDuration && Boolean(this.source);
+    const active = hasDuration && Boolean(this.source) && !this.paused;
     this.ui.progress.style.setProperty('--playback-progress', String(progress));
     this.ui.progress.classList.toggle('active', active);
-    this.ui.progress.classList.toggle('ending', Boolean(this.source) && duration - position <= fadeWindow);
+    this.ui.progress.classList.toggle('ending', active && duration - position <= fadeWindow);
   }
 
   changeVolume(write = false) {
@@ -952,7 +1005,7 @@ export class WebCallPlayer {
   readAudioWaveform(levels) {
     if (!levels?.length) return false;
     levels.fill(0);
-    if (!this.source || !this.analyserNode || this.audioContext?.state !== 'running') return false;
+    if (this.paused || !this.source || !this.analyserNode || this.audioContext?.state !== 'running') return false;
     const sampleCount = this.analyserNode.fftSize;
     if (!this.waveformSamples || this.waveformSamples.length !== sampleCount) {
       this.waveformSamples = new Uint8Array(sampleCount);
@@ -1051,7 +1104,8 @@ export class WebCallPlayer {
 
   renderStatus() {
     if (!this.ui.status) return;
-    this.ui.status.textContent = [this.statusValue, this.skippedNotice ? 'Some calls were skipped' : '']
+    const status = this.paused ? `Paused — ${this.queuedCount} calls queued` : this.statusValue;
+    this.ui.status.textContent = [status, this.skippedNotice ? 'Some calls were skipped' : '']
       .filter(Boolean).join(' · ');
   }
 
@@ -1068,6 +1122,7 @@ export class WebCallPlayer {
 
   render() {
     this.renderVolume();
+    this.renderStatus();
     const currentReady = Boolean(this.current && this.currentBuffer);
     const lastCallReady = Boolean(this.lastHeard && this.lastHeardBuffer);
     const displayedCall = this.displayCall();
@@ -1115,14 +1170,24 @@ export class WebCallPlayer {
       this.ui.queueList.append(empty);
     }
 
-    const playLabel = this.paused ? 'Play browser call audio' : 'Stop browser call audio';
+    const playLabel = this.stopped ? 'Play browser call audio' : 'Stop browser call audio';
     const playIcon = this.ui.play.querySelector('use');
-    if (playIcon) playIcon.setAttribute('href', this.paused ? '#icon-play' : '#icon-stop');
-    this.ui.play.classList.toggle('active', !this.paused);
-    this.ui.play.setAttribute('aria-pressed', String(!this.paused));
+    if (playIcon) playIcon.setAttribute('href', this.stopped ? '#icon-play' : '#icon-stop');
+    this.ui.play.classList.toggle('active', !this.stopped);
+    this.ui.play.setAttribute('aria-pressed', String(!this.stopped));
     this.ui.play.setAttribute('aria-label', playLabel);
     this.ui.play.title = playLabel;
-    this.ui.replay.disabled = !lastCallReady;
+    if (this.ui.pause) {
+      const pauseLabel = this.paused ? 'Resume browser call audio' :
+        'Pause audio and keep collecting calls (queue is limited)';
+      this.ui.pause.disabled = this.stopped;
+      this.ui.pause.classList.toggle('active', this.paused);
+      this.ui.pause.setAttribute('aria-pressed', String(this.paused));
+      this.ui.pause.setAttribute('aria-label', pauseLabel);
+      this.ui.pause.title = pauseLabel;
+      this.ui.pause.querySelector('use')?.setAttribute('href', this.paused ? '#icon-play' : '#icon-pause');
+    }
+    this.ui.replay.disabled = !lastCallReady || this.paused;
     this.ui.replay.setAttribute('aria-label', 'Replay last call');
     this.ui.replay.title = 'Replay last call';
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));

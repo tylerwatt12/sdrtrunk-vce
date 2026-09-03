@@ -131,6 +131,14 @@ Each browser tab owns its own in-memory waiting queue:
   player closer to current activity.
 - **Stop** ends feed requests, stops the current call, and clears the tab's waiting queue. Pressing Play again starts
   at the then-current live edge instead of replaying calls received while stopped.
+- **Pause / Resume** in the full website's Scanner and playback bar freezes the current audio position without
+  clearing the queue. Incoming calls continue queuing up to the same 100-call limit. Resume continues the current
+  call and then the waiting calls; Stop still clears both, even while paused. Pause affects only this browser,
+  not receiver decoding, recordings, external streams, or other listeners.
+- While paused, the status shows the waiting-call count. The shared audio cache can still evict older calls, and
+  queue overflow or unavailable audio produces the existing skipped-call notice. A long pause does not guarantee
+  complete catch-up. Replay Last Call is disabled until Resume or Stop; Skip, Hold, Avoid, and Clear Queue remain
+  available without resuming audio.
 - Refreshing the page, opening a new browser document, or losing playback access also clears the tab's queue. A
   temporary connection interruption preserves calls already in the queue, although calls can be missed before the
   feed resumes. Hold, Avoid, Scan List changes, Skip, and Clear Queue can also remove or bypass waiting calls.
@@ -153,7 +161,9 @@ its fetch exceeds 15 seconds, or fetching or decoding fails, the player skips th
 
 The browser has no server-side listener queue or playback session. It makes one bounded call-feed request at a time;
 one low-priority worker performs Scan List matching, metadata projection, and WAV encoding away from receiver
-callbacks. When nobody is listening, completed calls bypass that browser worker and ring entirely. Receiver decoding,
+callbacks. A paused scanner that continues collecting calls keeps this shared worker and ring active, just as an
+active listener does; pausing does not create a separate server-side audio archive. When no browser is requesting
+calls, completed calls bypass that browser worker and ring entirely. Receiver decoding,
 the bounded handoff, the shared ring, and the network are separately bounded, so the 100-call browser limit is not an
 end-to-end delivery guarantee. When the feed detects a gap, the browser says only that some calls were skipped and
 continues with valid new calls. See [Web API v1](api-v1.md) for the technical limits.

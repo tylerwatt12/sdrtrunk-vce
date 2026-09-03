@@ -284,7 +284,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"108\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"109\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -607,7 +607,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=90"));
+        assertTrue(html.contains("/assets/app.css?v=91"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -719,6 +719,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(play >= 0 && play < skip && skip < replay && replay < hold && hold < avoid);
         assertTrue(html.contains("id=\"icon-replay\""));
         assertTrue(html.contains("id=\"icon-stop\""));
+        assertTrue(html.contains("id=\"icon-pause\""));
+        assertTrue(html.contains("id=\"playback-pause\""));
         assertTrue(html.contains("id=\"playback-replay\" class=\"playback-command playback-icon-command\" " +
             "aria-label=\"Replay last call\""));
         assertTrue(html.contains("<use href=\"#icon-replay\"></use>"));
@@ -733,11 +735,19 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("linear-gradient(180deg, #2c3235 0%, #202528 52%, #171b1d 100%)"));
         assertFalse(html.contains("id=\"playback-mute\""));
         assertFalse(html.contains(">Unmute<"));
-        assertTrue(source.contains("this.paused = true"));
-        assertTrue(enqueue.contains("if (!this.paused && !this.current) this.playNext();"));
+        assertTrue(source.contains("this.stopped = true"));
+        assertTrue(enqueue.contains("if (!this.stopped && !this.paused && !this.current) this.playNext();"));
         assertTrue(enqueue.contains("else this.render();"));
         assertTrue(togglePlayback.contains("this.stopFeed()"));
         assertTrue(togglePlayback.contains("this.clearQueuedCalls()"));
+        String togglePause = function(source, "  async togglePause()");
+        assertTrue(togglePause.contains("this.audioContext.suspend()"));
+        assertTrue(togglePause.contains("this.audioContext.resume()"));
+        assertFalse(togglePause.contains("stopFeed()"));
+        assertFalse(togglePause.contains("clearQueuedCalls()"));
+        assertFalse(togglePause.contains("stopCurrent()"));
+        assertTrue(function(source(), "function renderScanner()").contains("player.togglePause()"));
+        assertTrue(source.contains("this.ui.pause.disabled = this.stopped"));
         assertTrue(togglePlayback.contains("this.stopCurrent()"));
         assertTrue(togglePlayback.contains("if (!this.ensureConnected())"));
         assertTrue(togglePlayback.contains("this.setStatus('Unavailable')"));

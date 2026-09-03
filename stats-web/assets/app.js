@@ -7759,6 +7759,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
   if (!webCallPlayer) {
     webCallPlayer = new WebCallPlayer({
       play: 'playback-play',
+      pause: 'playback-pause',
       skip: 'playback-skip',
       replay: 'playback-replay',
       hold: 'playback-hold',
@@ -8004,7 +8005,7 @@ function scannerCallQuality(call) {
 }
 
 function scannerCallRenderKey(call, state, site) {
-  if (!call) return `idle:${scannerDetailMode}:${state.paused ? 'paused' : 'listening'}`;
+  if (!call) return `idle:${scannerDetailMode}:${state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening'}`;
   return JSON.stringify([
     scannerDetailMode, call.call_id || '', call.started_at_ms || '',
     scannerMatchedScanLists(call, state), site?.p25_decoder_mode || '',
@@ -8028,8 +8029,9 @@ function renderScannerCall(host, state, site) {
   host.replaceChildren();
   if (!call) {
     const idle = node('div', 'scanner-idle');
-    idle.append(node('strong', '', state.paused ? 'Ready to listen' : 'Scanning selected lists'),
-      node('span', '', state.paused ? 'Press Play to receive completed calls.' :
+    idle.append(node('strong', '', state.stopped ? 'Ready to listen' : state.paused ? 'Playback paused' : 'Scanning selected lists'),
+      node('span', '', state.paused ? 'Calls continue queuing. Press Resume to listen; older calls may expire.' :
+        state.stopped ? 'Press Play to receive completed calls.' :
         'The next matching completed call will appear here.'));
     host.append(idle);
     return;
@@ -8252,6 +8254,8 @@ function renderScanner() {
   displayShell.append(display);
   const controls = node('div', 'scanner-controls');
   const play = scannerControl('Play', () => void player.togglePlayback(), 'primary');
+  const pause = scannerControl('Pause', () => void player.togglePause());
+  pause.title = 'Pause audio and keep collecting calls. The queue is limited and older calls may expire.';
   const replay = scannerControl('Replay Last Call', () => void player.replayLastCall());
   const skip = scannerControl('Skip', () => player.skip());
   const hold = scannerControl('Hold', () => player.toggleHold());
@@ -8259,7 +8263,7 @@ function renderScanner() {
   const avoidList = scannerControl('Avoid List', () => openPlaybackAvoidList(player));
   avoidList.dataset.scannerAction = 'avoid-list';
   const clearQueue = scannerControl('Clear Queue', () => player.clearQueue());
-  controls.append(play, replay, skip, hold, avoid, avoidList, clearQueue);
+  controls.append(play, pause, replay, skip, hold, avoid, avoidList, clearQueue);
 
   const utility = node('div', 'scanner-utility-row');
   const volume = node('input');
@@ -8317,11 +8321,15 @@ function renderScanner() {
   const draw = (state) => {
     latestState = state;
     playbackStatus.textContent = state.status ||
-      (state.paused ? 'Ready' : 'Listening');
-    playbackStatus.classList.toggle('active', !state.paused);
-    play.textContent = state.paused ? 'Play' : 'Stop';
-    play.classList.toggle('active', !state.paused);
-    replay.disabled = !state.lastCallReady;
+      (state.stopped ? 'Ready' : state.paused ? 'Paused' : 'Listening');
+    playbackStatus.classList.toggle('active', !state.stopped && !state.paused);
+    play.textContent = state.stopped ? 'Play' : 'Stop';
+    play.classList.toggle('active', !state.stopped);
+    pause.textContent = state.paused ? 'Resume' : 'Pause';
+    pause.disabled = state.stopped;
+    pause.classList.toggle('active', state.paused);
+    pause.setAttribute('aria-pressed', String(state.paused));
+    replay.disabled = !state.lastCallReady || state.paused;
     skip.disabled = !state.current && !state.queuedCount;
     hold.disabled = state.replayingLast || (!state.holdTarget && !state.currentReady);
     hold.classList.toggle('active', Boolean(state.holdTarget));

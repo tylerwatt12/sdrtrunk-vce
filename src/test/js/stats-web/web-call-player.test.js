@@ -118,7 +118,7 @@ async function main() {
       queuedCount: 0,
       avoids: new Map(),
       holdTarget: null,
-      paused: true,
+      stopped: true,
       current: null,
       render() {}
     });
@@ -155,7 +155,7 @@ async function main() {
     assert.equal(feedPlayer.feedCursor, null);
     assert.equal(feedPlayer.feedRequestUrl(), '/api/v1/calls/feed?scan_list_id=1&scan_list_id=2',
       'A restarted player must omit its old cursor and begin at the live edge');
-    feedPlayer.paused = false;
+    feedPlayer.stopped = false;
     feedPlayer.feedActive = false;
     feedPlayer.scanListCatalogReady = true;
     feedPlayer.pollFeed = async function () { this.firstRestartUrl = this.feedRequestUrl(); };
@@ -175,7 +175,7 @@ async function main() {
       'Feed resets and queue overflow use one generic notice instead of an exact count');
     const resetPoll = Object.assign(Object.create(WebCallPlayer.prototype), {
       feedActive: true,
-      paused: false,
+      stopped: false,
       feedGeneration: 7,
       feedController: null,
       feedCursor: '10',
@@ -194,7 +194,7 @@ async function main() {
     assert.equal(resetPoll.ui.status.textContent, 'Waiting · Some calls were skipped');
 
     const stopped = Object.assign(Object.create(WebCallPlayer.prototype), {
-      paused: false,
+      stopped: false,
       transportToken: 0,
       feedStopped: 0,
       queueCleared: 0,
@@ -214,7 +214,7 @@ async function main() {
       render() {}
     });
     await stopped.togglePlayback();
-    assert.equal(stopped.paused, true);
+    assert.equal(stopped.stopped, true);
     assert.equal(stopped.feedStopped, 1);
     assert.equal(stopped.queueCleared, 1);
     assert.equal(stopped.currentStopped, 1);
@@ -228,7 +228,7 @@ async function main() {
       const defaultScanList = { id: '2', name: 'Default', enabled: true, default: true };
       const otherScanList = { id: '1', name: 'Dispatch', enabled: true, default: false };
       return Object.assign(Object.create(WebCallPlayer.prototype), {
-        paused: true,
+        stopped: true,
         scanListCatalogReady: true,
         scanLists: [otherScanList, defaultScanList],
         scanListById: new Map([[otherScanList.id, otherScanList], [defaultScanList.id, defaultScanList]]),
@@ -257,7 +257,7 @@ async function main() {
     assert.equal(defaultOnPlay.preferenceWrites, 1,
       'The automatic default selection must be saved through the current user preferences');
     assert.equal(defaultOnPlay.feedStarts, 1);
-    assert.equal(defaultOnPlay.paused, false);
+    assert.equal(defaultOnPlay.stopped, false);
 
     const staleSelectionOnPlay = playerReadyToStart(['999']);
     await staleSelectionOnPlay.togglePlayback();
@@ -276,7 +276,7 @@ async function main() {
       selectedScanListIds: new Set(),
       maximumSelectedScanLists: 128,
       scanListCatalogReady: true,
-      paused: true,
+      stopped: true,
       toggleCount: 0,
       togglePlayback() { this.toggleCount++; },
       clearLossNotice() {}, writePreferences() {}, updateScanListStatus() {}, filterQueueForSelectedLists() {},
@@ -320,7 +320,7 @@ async function main() {
       lastHeardBuffer: null,
       replayingLast: false,
       stopAfterReplay: false,
-      paused: false,
+      stopped: false,
       source: null,
       playbackStartedAt: 0,
       loadToken: 1,
@@ -344,7 +344,7 @@ async function main() {
     assert.equal(replay.lastHeard, heard);
     assert.equal(replay.lastHeardBuffer, heardBuffer,
       'A naturally completed call must keep one decoded audio buffer for local replay');
-    replay.paused = true;
+    replay.stopped = true;
     replay.current = null;
     replay.currentBuffer = null;
     assert.equal(await replay.replayLastCall(), true);
@@ -352,6 +352,174 @@ async function main() {
     assert.equal(replay.currentBuffer, heardBuffer);
     assert.equal(replay.replayingLast, true);
     assert.equal(replay.stopAfterReplay, true);
+
+    function pauseFixture() {
+      const player = Object.assign(Object.create(WebCallPlayer.prototype), {
+        stopped: false, paused: false, transportToken: 0, loadToken: 0, loadController: null,
+        current: null, currentBuffer: null, source: null, lastHeard: heard, lastHeardBuffer: heardBuffer,
+        replayingLast: false, stopAfterReplay: false, playbackStartedAt: 0,
+        queuedCalls: [], queuedCount: 0, maximumQueued: 100, conversationGrouping: false,
+        seenCallIds: new Set(), seenCallOrder: [], arrivalSequence: 0,
+        avoids: new Map(), holdTarget: null, selectedScanListIds: new Set(['1']),
+        scanLists: [{ id: '1', name: 'Test', enabled: true, default: true }],
+        scanListById: new Map([['1', { id: '1', enabled: true }]]),
+        maximumSelectedScanLists: 16, scanListCatalogReady: true,
+        feedActive: true, feedGeneration: 1, feedCursor: '10', feedTimer: null,
+        feedController: null, feedUrl: '/api/v1/calls/feed',
+        skippedNotice: false, statusValue: 'Waiting', stateObservers: new Set(),
+        ui: { status: { textContent: '' } }, progressStarts: 0, progressStops: 0,
+        ensureAudioContext() {}, clearIdleDisplay() {}, renderScanLists() {},
+        writePreferences() {}, updateScanListStatus() {},
+        startProgress() { this.progressStarts++; }, stopProgress() { this.progressStops++; },
+        render() { this.renderStatus(); },
+        audioContext: {
+          state: 'running', currentTime: 3,
+          async suspend() { this.state = 'suspended'; },
+          async resume() { this.state = 'running'; },
+          createBufferSource() {
+            return { connect() {}, disconnect() {}, start() {}, stop() {}, onended: null };
+          }
+        }
+      });
+      return player;
+    }
+
+    const pausing = pauseFixture();
+    pausing.current = { ...overlap, _callId: 'current' };
+    pausing.currentBuffer = { duration: 20 };
+    pausing.startCurrent();
+    pausing.audioContext.currentTime = 7;
+    const retainedSource = pausing.source;
+    const retainedAudio = pausing.currentBuffer;
+    await pausing.togglePause();
+    assert.equal(pausing.getPlaybackPosition(), 4);
+    assert.equal(pausing.source, retainedSource, 'Pause must preserve the actual audio source');
+    assert.equal(pausing.audioContext.state, 'suspended');
+    assert.equal(pausing.feedActive, true);
+    assert.equal(pausing.feedCursor, '10', 'Pause must not restart the feed at the live edge');
+    assert.equal(pausing.viewState().playing, false);
+    assert.equal(pausing.viewState().stopped, false);
+    assert.equal(await pausing.replayLastCall(), false, 'Replay must not silently unpause playback');
+    await pausing.togglePause();
+    assert.equal(pausing.source, retainedSource);
+    assert.equal(pausing.currentBuffer, retainedAudio);
+    assert.equal(pausing.getPlaybackPosition(), 4, 'Resume must not restart the call');
+    assert.equal(pausing.audioContext.state, 'running');
+    await pausing.togglePause();
+    pausing.enqueue(overlap);
+    assert.equal(pausing.queuedCount, 1);
+    await pausing.togglePlayback();
+    assert.equal(pausing.stopped, true);
+    assert.equal(pausing.paused, false);
+    assert.equal(pausing.source, null);
+    assert.equal(pausing.currentBuffer, null);
+    assert.equal(pausing.queuedCount, 0);
+    assert.equal(pausing.feedActive, false);
+    assert.equal(pausing.feedCursor, null);
+    await pausing.togglePause();
+    assert.equal(pausing.stopped, true, 'Pause while stopped is a no-op');
+
+    const collecting = pauseFixture();
+    await collecting.togglePause();
+    collecting.requestFeed = async () => ({ cursor: '11', reset: false, calls: [overlap] });
+    await collecting.pollFeed(1);
+    assert.equal(collecting.queuedCount, 1);
+    assert.equal(collecting.current, null, 'Feed arrivals must not start paused audio');
+    assert.equal(collecting.feedCursor, '11');
+    assert.ok(collecting.feedTimer !== null, 'Paused playback must keep polling');
+    for (let i = 0; i < 105; i++) collecting.enqueue({
+      ...overlap, call_id: 'overflow-' + i, started_at_ms: 500 + i
+    });
+    assert.equal(collecting.queuedCount, 100);
+    assert.equal(collecting.queuedCalls[0]._callId, 'overflow-5');
+    assert.equal(collecting.ui.status.textContent, 'Paused — 100 calls queued · Some calls were skipped');
+    collecting.skip();
+    assert.equal(collecting.queuedCount, 99);
+    assert.equal(collecting.paused, true);
+    collecting.clearQueue();
+    assert.equal(collecting.paused, true);
+    assert.equal(collecting.queuedCount, 0);
+    collecting.stopFeed();
+
+    const selectionWhilePaused = pauseFixture();
+    selectionWhilePaused.current = selectionWhilePaused.normalizeCall(overlap);
+    selectionWhilePaused.currentBuffer = { duration: 20 };
+    await selectionWhilePaused.togglePause();
+    selectionWhilePaused.toggleHold();
+    assert.equal(selectionWhilePaused.holdTarget, overlap.conversation_key);
+    selectionWhilePaused.avoidCurrent();
+    assert.equal(selectionWhilePaused.current, null);
+    assert.equal(selectionWhilePaused.paused, true);
+    assert.equal(selectionWhilePaused.avoids.size, 1);
+    selectionWhilePaused.setScanListSelected('1', false);
+    assert.equal(selectionWhilePaused.stopped, true, 'Removing the last list also stops a paused feed');
+    assert.equal(selectionWhilePaused.paused, false);
+    assert.equal(selectionWhilePaused.feedActive, false);
+
+    const originalFetch = global.fetch;
+    try {
+      let finishDownload;
+      global.fetch = () => new Promise((resolve) => { finishDownload = resolve; });
+      const loading = pauseFixture();
+      loading.current = loading.normalizeCall(overlap);
+      loading.audioContext.decodeAudioData = async () => ({ duration: 10 });
+      const download = loading.loadCurrent();
+      await loading.togglePause();
+      finishDownload({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+      await download;
+      assert.equal(loading.source, null, 'Download completion while paused must remain silent');
+      assert.equal(loading.currentBuffer.duration, 10);
+      await loading.togglePause();
+      assert.ok(loading.source, 'Resume starts audio that finished downloading while paused');
+      await loading.togglePlayback();
+
+      const stoppedDownload = pauseFixture();
+      stoppedDownload.current = stoppedDownload.normalizeCall(overlap);
+      stoppedDownload.audioContext.decodeAudioData = async () => ({ duration: 10 });
+      const staleDownload = stoppedDownload.loadCurrent();
+      await stoppedDownload.togglePause();
+      await stoppedDownload.togglePlayback();
+      finishDownload({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+      await staleDownload;
+      assert.equal(stoppedDownload.currentBuffer, null, 'Late downloads cannot resurrect stopped audio');
+      assert.equal(stoppedDownload.source, null);
+
+      global.fetch = async () => ({ ok: false, status: 410 });
+      const expired = pauseFixture();
+      expired.current = expired.normalizeCall(overlap);
+      await expired.togglePause();
+      await expired.loadCurrent();
+      assert.equal(expired.skippedNotice, true);
+      assert.equal(expired.current, null);
+      assert.equal(expired.paused, true, 'Expired audio must not resume playback');
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    const resumeQueue = pauseFixture();
+    await resumeQueue.togglePause();
+    resumeQueue.enqueue(overlap);
+    resumeQueue.loadCurrent = async function () { this.loadedId = this.current._callId; };
+    await resumeQueue.togglePause();
+    assert.equal(resumeQueue.loadedId, overlap.call_id, 'Resume while idle must start the queued call');
+
+    const racing = pauseFixture();
+    let finishSuspend;
+    racing.audioContext.suspend = () => new Promise((resolve) => { finishSuspend = resolve; });
+    const pendingPause = racing.togglePause();
+    racing.audioContext.suspend = async function () { this.state = 'suspended'; };
+    await racing.togglePlayback();
+    finishSuspend();
+    await pendingPause;
+    assert.equal(racing.stopped, true);
+    assert.equal(racing.paused, false);
+    assert.equal(racing.ui.status.textContent, 'Ready', 'Stale pause completion must not undo Stop');
+
+    const rejectedResume = pauseFixture();
+    await rejectedResume.togglePause();
+    rejectedResume.audioContext.resume = async () => { throw new Error('Audio unavailable'); };
+    await rejectedResume.togglePause();
+    assert.equal(rejectedResume.paused, true, 'Rejected resume must remain paused');
 
     assert.doesNotMatch(source, /Recent Calls|recentCalls|recentReplay|live_gap|conversationLanes|playbackOffset/);
     assert.match(source, /feedCursor|recordSkippedCallNotice/);
