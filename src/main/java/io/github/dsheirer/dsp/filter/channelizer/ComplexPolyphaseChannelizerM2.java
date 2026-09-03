@@ -66,7 +66,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     /**
      * Determines how many processed channel results to dispatch for threaded IFFT processing per batch
      */
-    static final int CHANNEL_RESULTS_BATCH_CAPACITY = 256;
+    static final int CHANNEL_RESULTS_BATCH_CAPACITY = 512;
     private static final int IFFT_QUEUE_CAPACITY = 8;
     static final int CHANNEL_RESULTS_ARENA_CAPACITY = 32;
     private static final int PROCESSING_WARMUP_ITERATIONS = 16_384;

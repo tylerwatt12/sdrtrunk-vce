@@ -132,7 +132,8 @@ class ChannelOutputProcessorBackpressureTest
         ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
         List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> retained = drainBatchArena(channelizer);
         Thread producer = new Thread(() -> channelizer.receive(
-            new InterleavedComplexSamples(new float[514], 0)), "saturated channelizer producer");
+            new InterleavedComplexSamples(new float[(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_BATCH_CAPACITY + 1) *
+                channelizer.getChannelCount()], 0)), "saturated channelizer producer");
         producer.start();
         producer.join(TimeUnit.SECONDS.toMillis(2));
 
