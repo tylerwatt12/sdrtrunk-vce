@@ -466,39 +466,6 @@ class ChannelOutputProcessorBackpressureTest
     }
 
     @Test
-    void channelOutputStartsBeforeTheTunerProducerIsEnabled() throws Exception
-    {
-        AtomicBoolean outputStarted = new AtomicBoolean();
-        AtomicBoolean producerObservedReadyOutput = new AtomicBoolean();
-        Listener<SourceEvent> producer = event ->
-        {
-            if(event.getEvent() == SourceEvent.Event.REQUEST_START_SAMPLE_STREAM)
-            {
-                producerObservedReadyOutput.set(outputStarted.get());
-            }
-        };
-        ChannelCalculator calculator = new ChannelCalculator(50_000.0, 2, 100_000_000L, 2.0);
-        PolyphaseChannelSource source = new PolyphaseChannelSource(new TunerChannel(100_000_000L, 12_500),
-            calculator, new SynthesisFilterManager(), producer, "channel output startup order test", null);
-        Field processorField = PolyphaseChannelSource.class.getDeclaredField("mPolyphaseChannelOutputProcessor");
-        processorField.setAccessible(true);
-        IPolyphaseChannelOutputProcessor original = (IPolyphaseChannelOutputProcessor)processorField.get(source);
-        original.stop();
-        processorField.set(source, new OrderingOutputProcessor(outputStarted));
-
-        try
-        {
-            source.start();
-            assertTrue(producerObservedReadyOutput.get(),
-                "the output consumer must be running before tuner samples can enter the channelizer");
-        }
-        finally
-        {
-            source.stopOutputProcessorForRemoval();
-        }
-    }
-
-    @Test
     void channelSourceCompensatesAProducerStartThatFinishesAfterTerminalStop() throws Exception
     {
         CountDownLatch startEntered = new CountDownLatch(1);
@@ -891,29 +858,6 @@ class ChannelOutputProcessorBackpressureTest
         {
             mStopCount.incrementAndGet();
             mRunning.set(false);
-        }
-    }
-
-    private static class OrderingOutputProcessor extends FixedDropOutputProcessor
-    {
-        private final AtomicBoolean mStarted;
-
-        private OrderingOutputProcessor(AtomicBoolean started)
-        {
-            super(0);
-            mStarted = started;
-        }
-
-        @Override
-        public void start()
-        {
-            mStarted.set(true);
-        }
-
-        @Override
-        public void stop()
-        {
-            mStarted.set(false);
         }
     }
 

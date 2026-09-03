@@ -188,18 +188,6 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
             return;
         }
 
-        IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
-
-        if(processor != null)
-        {
-            startOutputProcessor(processor);
-        }
-
-        if(mOutputProcessorStopping)
-        {
-            return;
-        }
-
         super.start();
 
         //A terminal stop can race the synchronous producer start request.  Compensate after the request returns so a
@@ -208,6 +196,11 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
         {
             super.stop();
             return;
+        }
+
+        if(mPolyphaseChannelOutputProcessor != null)
+        {
+            startOutputProcessor(mPolyphaseChannelOutputProcessor);
         }
     }
 

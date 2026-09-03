@@ -29,7 +29,8 @@ import org.slf4j.LoggerFactory;
 public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputProcessor
 {
     private static final Logger mLog = LoggerFactory.getLogger(ChannelOutputProcessor.class);
-    protected static final int CHANNEL_RESULTS_QUEUE_CAPACITY = 8;
+    //Match the fixed channelizer arena so a smaller downstream queue cannot discard an otherwise bounded batch.
+    protected static final int CHANNEL_RESULTS_QUEUE_CAPACITY = 16;
     private static final int OUTPUT_PROCESSING_WARMUP_RESULTS = 4096;
 
     private Dispatcher<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> mChannelResultsDispatcher;
