@@ -23,9 +23,7 @@ import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import io.github.dsheirer.util.Dispatcher;
 import java.text.DecimalFormat;
-import java.util.Arrays;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.math3.util.FastMath;
@@ -68,13 +66,13 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     /**
      * Determines how many processed channel results to dispatch for threaded IFFT processing per batch
      */
-    private static final int PROCESSED_CHANNEL_RESULTS_THRESHOLD = 1024;
+    static final int CHANNEL_RESULTS_BATCH_CAPACITY = 256;
     private static final int IFFT_QUEUE_CAPACITY = 8;
-    static final int CHANNEL_RESULTS_POOL_CAPACITY = PROCESSED_CHANNEL_RESULTS_THRESHOLD * IFFT_QUEUE_CAPACITY;
-    private static final int PROCESSING_WARMUP_ITERATIONS = CHANNEL_RESULTS_POOL_CAPACITY * 2;
+    static final int CHANNEL_RESULTS_ARENA_CAPACITY = 32;
+    private static final int PROCESSING_WARMUP_ITERATIONS = 16_384;
 
     //Sized to process 40 times per second
-    private IFFTProcessorDispatcher mIFFTProcessorDispatcher = new IFFTProcessorDispatcher(25);
+    private final IFFTProcessorDispatcher mIFFTProcessorDispatcher = new IFFTProcessorDispatcher(25);
     private float[] mInlineSamples;
     private float[] mInlineFilter;
     private boolean mTopBlockIndicator = true;
@@ -82,17 +80,13 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private int[] mMiddleBlockMap;
     private int mSampleBufferPointer;
     private int mSamplesPerBlock;
-    private int mTapsPerChannel;
+    private final int mTapsPerChannel;
     private final IPolyphaseChannelizerFilter mPolyphaseChannelizerFilter;
-    private final ConcurrentLinkedQueue<float[]> mChannelResultsPool = new ConcurrentLinkedQueue<>();
-    private final AtomicInteger mChannelResultsPoolSize = new AtomicInteger();
-    private final AtomicLong mChannelResultsPoolMisses = new AtomicLong();
-    private final AtomicLong mChannelResultsArrayAllocations = new AtomicLong();
-    private final ArrayBlockingQueue<ChannelResultsBuffer> mChannelResultsBufferPool =
-        new ArrayBlockingQueue<>(IFFT_QUEUE_CAPACITY);
-    private final AtomicInteger mOwnedChannelResultsBatches = new AtomicInteger();
-    private final AtomicInteger mHighWaterOwnedChannelResultsBatches = new AtomicInteger();
-    private ChannelResultsBuffer mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
+    private final ChannelResultsBuffer[] mChannelResultsArena =
+        new ChannelResultsBuffer[CHANNEL_RESULTS_ARENA_CAPACITY];
+    private final AtomicLong mChannelResultsArenaDrops = new AtomicLong();
+    private int mNextArenaIndex;
+    private ChannelResultsBuffer mProcessedChannelResultsBuffer;
     private float[] mFilterAccumulator;
 
     /**
@@ -167,39 +161,16 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         return new QueueStatus(mIFFTProcessorDispatcher.getQueueSize(),
             mIFFTProcessorDispatcher.getHighWaterQueueSize(),
             mIFFTProcessorDispatcher.getMaximumQueueSize(),
-            mIFFTProcessorDispatcher.getDroppedElementCount(), mChannelResultsPoolSize.get(),
-            CHANNEL_RESULTS_POOL_CAPACITY, mChannelResultsPoolMisses.get(),
-            mChannelResultsArrayAllocations.get(), mOwnedChannelResultsBatches.get(),
-            mHighWaterOwnedChannelResultsBatches.get());
+            getDroppedBatchCount());
     }
 
-    /** Allocation-free cumulative IFFT queue overflow count for lifecycle accounting. */
+    /** Allocation-free cumulative channelizer-pipeline drop count for lifecycle accounting. */
     long getDroppedBatchCount()
     {
-        return mIFFTProcessorDispatcher.getDroppedElementCount();
+        return mIFFTProcessorDispatcher.getDroppedElementCount() + mChannelResultsArenaDrops.get();
     }
 
-    /** Allocation-free cumulative result-pool miss count for lifecycle accounting. */
-    long getResultPoolMissCount()
-    {
-        return mChannelResultsPoolMisses.get();
-    }
-
-    /** Allocation-free cumulative result-array allocation count for lifecycle accounting. */
-    long getResultArrayAllocationCount()
-    {
-        return mChannelResultsArrayAllocations.get();
-    }
-
-    /** Allocation-free owned-batch high-water count for lifecycle accounting. */
-    int getHighWaterOwnedBatchCount()
-    {
-        return mHighWaterOwnedChannelResultsBatches.get();
-    }
-
-    public record QueueStatus(int queuedBatches, int highWaterBatches, int capacityBatches, long droppedBatches,
-                              int resultPoolSize, int resultPoolCapacity, long resultPoolMisses,
-                              long resultArrayAllocations, int ownedBatches, int highWaterOwnedBatches)
+    public record QueueStatus(int queuedBatches, int highWaterBatches, int capacityBatches, long droppedBatches)
     {
     }
 
@@ -222,29 +193,6 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             "] channels at [" + DECIMAL_FORMAT.format(sampleRate / channels) + "] Hz each");
 
         return channels;
-    }
-
-    /**
-     * Updates this channelizer to use the new sample rate.  This method creates a new filter suitable for the
-     * sample rate and reinitializes all internal data structures to prepare for processing the new sample rate.
-     * @param sampleRate in hertz
-     */
-    @Override
-    public void setRates(double sampleRate, int channelCount)
-    {
-        try
-        {
-            super.setRates(sampleRate, channelCount);
-            float[] filterTaps = FilterFactory.getSincM2Channelizer(getChannelSampleRate(), getChannelCount(),
-                mTapsPerChannel, false);
-
-            init(filterTaps);
-        }
-        catch(FilterDesignException fde)
-        {
-            throw new IllegalArgumentException("Cannot create a channelizer filter for the specified sample rate [" +
-                sampleRate + "]");
-        }
     }
 
     /**
@@ -282,14 +230,26 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             {
                 if(mProcessedChannelResultsBuffer.isFull())
                 {
-                    ChannelResultsBuffer processedChannelResults = mProcessedChannelResultsBuffer;
-                    processedChannelResults.setTimestamp(mCurrentSamplesTimestamp);
-                    mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
-                    mIFFTProcessorDispatcher.receive(processedChannelResults);
+                    ChannelResultsBuffer next = acquireChannelResultsBuffer();
+
+                    if(next != null)
+                    {
+                        ChannelResultsBuffer processed = mProcessedChannelResultsBuffer;
+                        processed.setTimestamp(mCurrentSamplesTimestamp);
+                        mProcessedChannelResultsBuffer = next;
+                        mIFFTProcessorDispatcher.receive(processed);
+                    }
+                    else
+                    {
+                        //Every arena batch is already owned downstream.  Reuse this producer-owned batch and count
+                        //one explicit loss instead of allocating or waiting on the real-time receiver thread.
+                        mChannelResultsArenaDrops.incrementAndGet();
+                        mProcessedChannelResultsBuffer.reset();
+                    }
                 }
 
                 //Filter buffered samples and produce a single sample across each of the polyphase channels
-                mProcessedChannelResultsBuffer.add(process());
+                process(mProcessedChannelResultsBuffer.nextResult());
 
                 //Right-shift the samples in the buffer over to make room for a new block of samples
                 System.arraycopy(mInlineSamples, 0, mInlineSamples, mSamplesPerBlock, (mInlineSamples.length - mSamplesPerBlock));
@@ -398,12 +358,10 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      * Processes the sample buffer for each new block of sample data that is loaded and distributes the results to any
      * registered channel listeners.
      */
-    private float[] process()
+    private void process(float[] processed)
     {
         mPolyphaseChannelizerFilter.filter(mInlineSamples, mInlineFilter, mFilterAccumulator, mTapsPerChannel,
             getSubChannelCount());
-
-        float[] processed = acquireChannelResultsArray();
 
         if(mTopBlockIndicator)
         {
@@ -421,8 +379,6 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         }
 
         mTopBlockIndicator = !mTopBlockIndicator;
-
-        return processed;
     }
 
     /**
@@ -432,17 +388,6 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     private void init(float[] coefficients)
     {
-        //This channelizer is only reinitialized during construction or when the PolyphaseChannelManager has already
-        //removed all registered channels before changing sample rate/channel count.  That contract ensures there are
-        //no in-flight ChannelResultsBuffer instances still owned by downstream consumers when the pools are cleared.
-        if(mProcessedChannelResultsBuffer != null)
-        {
-            recycleChannelResultsBuffer(mProcessedChannelResultsBuffer);
-        }
-
-        mChannelResultsPool.clear();
-        mChannelResultsPoolSize.set(0);
-        mChannelResultsBufferPool.clear();
         int channelCount = getChannelCount();
         mIFFTProcessorDispatcher.setFFT(new FloatFFT_1D(channelCount));
         int bufferLength = getSubChannelCount() * mTapsPerChannel;
@@ -452,67 +397,35 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         mInlineFilter = getAlignedFilter(coefficients, channelCount, mTapsPerChannel);
         mInlineSamples = new float[bufferLength];
         mFilterAccumulator = new float[getSubChannelCount()];
-        prefillChannelResultsPool();
+        initializeBatchArena();
         warmUpProcessing();
         mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
     }
 
-    /**
-     * Allocates the bounded steady-state result-array working set before live tuner samples can reach the channelizer.
-     * Without this preparation, a cold channelizer performs thousands of small allocations on the receiver thread
-     * while its IFFT and channel-output workers are also starting, which can exhaust the inbound IQ queue.  Intentional
-     * initialization allocations are not counted by the runtime allocation-pressure telemetry.
-     */
-    private void prefillChannelResultsPool()
+    /** Preallocates every complete result batch before live tuner samples can reach the channelizer. */
+    private void initializeBatchArena()
     {
-        int subChannelCount = getSubChannelCount();
-
-        for(int x = 0; x < CHANNEL_RESULTS_POOL_CAPACITY; x++)
+        for(int x = 0; x < CHANNEL_RESULTS_ARENA_CAPACITY; x++)
         {
-            mChannelResultsPool.offer(new float[subChannelCount]);
+            mChannelResultsArena[x] = new ChannelResultsBuffer(CHANNEL_RESULTS_BATCH_CAPACITY,
+                getSubChannelCount(), this::recycleChannelResultsBuffer);
         }
-
-        mChannelResultsPoolSize.set(CHANNEL_RESULTS_POOL_CAPACITY);
     }
 
     /**
      * Exercises the exact calibrated filter, result mapping, and IFFT kernels with zero samples before the live tuner
-     * stream is attached.  The even iteration count preserves the top/middle phase toggle, zero input leaves filter
-     * history unchanged, and each result array is returned immediately to the already-bounded pool.
+     * stream is attached.  The even iteration count preserves the top/middle phase toggle and zero input leaves
+     * filter history unchanged.
      */
     private void warmUpProcessing()
     {
+        float[] result = new float[getSubChannelCount()];
+
         for(int x = 0; x < PROCESSING_WARMUP_ITERATIONS; x++)
         {
-            float[] result = process();
+            process(result);
             mIFFTProcessorDispatcher.warmUp(result);
-            recycleChannelResultsArray(result);
         }
-    }
-
-    /**
-     * Acquires a reusable processed channel results array sized for the current sub-channel count.
-     */
-    float[] acquireChannelResultsArray()
-    {
-        float[] channelResults = mChannelResultsPool.poll();
-
-        if(channelResults != null)
-        {
-            mChannelResultsPoolSize.decrementAndGet();
-        }
-        else
-        {
-            mChannelResultsPoolMisses.incrementAndGet();
-        }
-
-        if(channelResults == null || channelResults.length != getSubChannelCount())
-        {
-            mChannelResultsArrayAllocations.incrementAndGet();
-            return new float[getSubChannelCount()];
-        }
-
-        return channelResults;
     }
 
     /**
@@ -520,75 +433,27 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     ChannelResultsBuffer acquireChannelResultsBuffer()
     {
-        ChannelResultsBuffer buffer = mChannelResultsBufferPool.poll();
-
-        if(buffer == null)
+        for(int offset = 0; offset < mChannelResultsArena.length; offset++)
         {
-            buffer = new ChannelResultsBuffer(PROCESSED_CHANNEL_RESULTS_THRESHOLD, this::recycleChannelResultsBuffer);
+            int index = (mNextArenaIndex + offset) % mChannelResultsArena.length;
+            ChannelResultsBuffer buffer = mChannelResultsArena[index];
+
+            if(buffer.tryAcquire())
+            {
+                mNextArenaIndex = (index + 1) % mChannelResultsArena.length;
+                return buffer;
+            }
         }
 
-        buffer.reset();
-        int ownedBatches = mOwnedChannelResultsBatches.incrementAndGet();
-        updateHighWaterOwnedBatchCount(ownedBatches);
-        return buffer;
-    }
-
-    /** Maintains the checked-out batch high-water mark without allocating or locking the receiver producer. */
-    private void updateHighWaterOwnedBatchCount(int ownedBatches)
-    {
-        int highWater = mHighWaterOwnedChannelResultsBatches.get();
-
-        while(ownedBatches > highWater &&
-            !mHighWaterOwnedChannelResultsBatches.compareAndSet(highWater, ownedBatches))
-        {
-            highWater = mHighWaterOwnedChannelResultsBatches.get();
-        }
+        return null;
     }
 
     /**
-     * Recycles a fully consumed channel results batch and its backing arrays into local pools.
+     * Returns a fully consumed channel results batch and its backing arrays to the fixed arena.
      */
     void recycleChannelResultsBuffer(ChannelResultsBuffer buffer)
     {
-        for(int index = 0; index < buffer.size(); index++)
-        {
-            recycleChannelResultsArray(buffer.get(index));
-        }
-
-        buffer.clear();
-        mOwnedChannelResultsBatches.decrementAndGet();
-        mChannelResultsBufferPool.offer(buffer);
-    }
-
-    /**
-     * Retains a bounded quantity of processed channel-result arrays for reuse.  A transient blocked consumer can force
-     * the channelizer to allocate beyond this steady-state cache, but recovered buffers above the limit are released
-     * for garbage collection instead of permanently retaining the backlog's high-water mark.
-     */
-    void recycleChannelResultsArray(float[] channelResults)
-    {
-        if(channelResults == null || channelResults.length != getSubChannelCount())
-        {
-            return;
-        }
-
-        int poolSize = mChannelResultsPoolSize.get();
-
-        while(poolSize < CHANNEL_RESULTS_POOL_CAPACITY)
-        {
-            if(mChannelResultsPoolSize.compareAndSet(poolSize, poolSize + 1))
-            {
-                mChannelResultsPool.offer(channelResults);
-                return;
-            }
-
-            poolSize = mChannelResultsPoolSize.get();
-        }
-    }
-
-    int getChannelResultsPoolSize()
-    {
-        return mChannelResultsPoolSize.get();
+        buffer.returnToArena();
     }
 
     /**
@@ -600,6 +465,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     {
         private final float[][] mChannelResults;
         private final RecycleCallback mRecycleCallback;
+        private final AtomicBoolean mAvailable = new AtomicBoolean(true);
         private final AtomicInteger mConsumerCount = new AtomicInteger();
         private int mSize;
         private long mTimestamp;
@@ -607,6 +473,12 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         ChannelResultsBuffer(int capacity, RecycleCallback recycleCallback)
         {
             mChannelResults = new float[capacity][];
+            mRecycleCallback = recycleCallback;
+        }
+
+        ChannelResultsBuffer(int capacity, int resultLength, RecycleCallback recycleCallback)
+        {
+            mChannelResults = new float[capacity][resultLength];
             mRecycleCallback = recycleCallback;
         }
 
@@ -640,6 +512,17 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             }
 
             mChannelResults[mSize++] = channelResults;
+        }
+
+        /** Returns the next permanently owned result array for the producer to populate. */
+        float[] nextResult()
+        {
+            if(isFull())
+            {
+                throw new IllegalStateException("Channel results buffer capacity exceeded");
+            }
+
+            return mChannelResults[mSize++];
         }
 
         public float[] get(int index)
@@ -685,17 +568,28 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             mRecycleCallback.recycle(this);
         }
 
+        private boolean tryAcquire()
+        {
+            if(mAvailable.compareAndSet(true, false))
+            {
+                reset();
+                return true;
+            }
+
+            return false;
+        }
+
+        private void returnToArena()
+        {
+            reset();
+            mAvailable.set(true);
+        }
+
         private void reset()
         {
             mSize = 0;
             mTimestamp = 0;
             mConsumerCount.set(0);
-        }
-
-        private void clear()
-        {
-            Arrays.fill(mChannelResults, 0, mSize, null);
-            reset();
         }
     }
 
@@ -739,12 +633,16 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
                         }
                     }
 
-                    dispatch(list);
                 }
                 catch(Throwable t)
                 {
-                    mLog.error("Error during IFFT and dispatch of processed channel results", t);
+                    list.recycleNow();
+                    mLog.error("Error during IFFT of processed channel results", t);
+                    return;
                 }
+
+
+                dispatch(list);
             });
         }
 

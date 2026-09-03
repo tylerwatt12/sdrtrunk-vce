@@ -33,10 +33,11 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
     private static final Logger mLog = LoggerFactory.getLogger(AbstractComplexPolyphaseChannelizer.class);
     private Broadcaster<SourceEvent> mSourceChangeBroadcaster = new Broadcaster<>();
     private List<PolyphaseChannelSource> mChannels = new CopyOnWriteArrayList<>();
-    private double mSampleRate;
-    private int mChannelCount;
-    private int mSubChannelCount;
-    private double mChannelSampleRate;
+    private volatile PolyphaseChannelSource[] mChannelSnapshot = new PolyphaseChannelSource[0];
+    private final double mSampleRate;
+    private final int mChannelCount;
+    private final int mSubChannelCount;
+    private final double mChannelSampleRate;
     protected long mCurrentSamplesTimestamp;
 
     /**
@@ -59,18 +60,6 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
     public double getSampleRate()
     {
         return mSampleRate;
-    }
-
-    /**
-     * Sets the input sample rate for for this channelizer
-     * @param sampleRate in hertz
-     */
-    public void setRates(double sampleRate, int channelCount)
-    {
-        mSampleRate = sampleRate;
-        mChannelCount = channelCount;
-        mSubChannelCount = channelCount * 2;
-        mChannelSampleRate = mSampleRate / mChannelCount;
     }
 
     /**
@@ -105,7 +94,7 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
      */
     protected void dispatch(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer channelResultsBuffer)
     {
-        PolyphaseChannelSource[] channels = mChannels.toArray(new PolyphaseChannelSource[0]);
+        PolyphaseChannelSource[] channels = mChannelSnapshot;
 
         if(channels.length == 0)
         {
@@ -117,7 +106,15 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
 
         for(PolyphaseChannelSource channel : channels)
         {
-            channel.receiveChannelResults(channelResultsBuffer);
+            try
+            {
+                channel.receiveChannelResults(channelResultsBuffer);
+            }
+            catch(Throwable t)
+            {
+                channelResultsBuffer.release();
+                mLog.error("Error dispatching polyphase channel results", t);
+            }
         }
     }
 
@@ -132,6 +129,7 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
         {
             mChannels.add(polyphaseChannelSource);
             mSourceChangeBroadcaster.addListener(polyphaseChannelSource.getSourceEventListener());
+            mChannelSnapshot = mChannels.toArray(PolyphaseChannelSource[]::new);
         }
         else
         {
@@ -152,6 +150,7 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
         {
             mChannels.remove(polyphaseChannelSource);
             mSourceChangeBroadcaster.removeListener(polyphaseChannelSource.getSourceEventListener());
+            mChannelSnapshot = mChannels.toArray(PolyphaseChannelSource[]::new);
         }
         else
         {
@@ -166,7 +165,7 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
      */
     public int getRegisteredChannelCount()
     {
-        return mChannels.size();
+        return mChannelSnapshot.length;
     }
 
     @Override

@@ -19,6 +19,7 @@ import io.github.dsheirer.dsp.filter.channelizer.output.OneChannelOutputProcesso
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
+import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChannelOutputProcessorBackpressureTest
@@ -78,51 +80,31 @@ class ChannelOutputProcessorBackpressureTest
     }
 
     @Test
-    void channelResultArrayPoolRetainsOnlyItsBoundedWorkingSet() throws Exception
+    void batchArenaPreallocatesAndRecyclesOnlyCompleteBatches() throws Exception
     {
         ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
-        int arrayLength = channelizer.getSubChannelCount();
+        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> retained = drainBatchArena(channelizer);
+        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_ARENA_CAPACITY - 1,
+            retained.size(), "one preallocated batch is reserved for the producer");
+        java.util.IdentityHashMap<float[], Boolean> rows = new java.util.IdentityHashMap<>();
 
-        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY,
-            channelizer.getChannelResultsPoolSize(), "the cold-start working set must be ready before samples arrive");
-
-        for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY + 100; x++)
+        for(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch: retained)
         {
-            channelizer.recycleChannelResultsArray(new float[arrayLength]);
+            for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_BATCH_CAPACITY; x++)
+            {
+                float[] row = batch.nextResult();
+                assertEquals(channelizer.getSubChannelCount(), row.length);
+                assertNull(rows.put(row, Boolean.TRUE), "each result row must have distinct permanent storage");
+            }
         }
 
-        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY,
-            channelizer.getChannelResultsPoolSize());
-
-        for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY; x++)
-        {
-            channelizer.acquireChannelResultsArray();
-        }
-
-        assertEquals(0, channelizer.getChannelResultsPoolSize());
-    }
-
-    @Test
-    void channelResultArrayTelemetryCountsPoolMissesAndAllocations() throws Exception
-    {
-        ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
-        ComplexPolyphaseChannelizerM2.QueueStatus initial = channelizer.getQueueStatus();
-        assertEquals(0, initial.resultPoolMisses());
-        assertEquals(0, initial.resultArrayAllocations());
-        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY, initial.resultPoolSize());
-
-        drainResultPool(channelizer);
-
-        float[] allocated = channelizer.acquireChannelResultsArray();
-        ComplexPolyphaseChannelizerM2.QueueStatus missed = channelizer.getQueueStatus();
-        assertEquals(1, missed.resultPoolMisses());
-        assertEquals(1, missed.resultArrayAllocations());
-
-        channelizer.recycleChannelResultsArray(allocated);
-        assertSame(allocated, channelizer.acquireChannelResultsArray());
-        ComplexPolyphaseChannelizerM2.QueueStatus reused = channelizer.getQueueStatus();
-        assertEquals(1, reused.resultPoolMisses(), "a pool hit must not increment the miss counter");
-        assertEquals(1, reused.resultArrayAllocations(), "a pool hit must not allocate a replacement array");
+        assertNull(channelizer.acquireChannelResultsBuffer(), "the fixed arena must never allocate an overflow batch");
+        retained.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::recycleNow);
+        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> recovered = drainBatchArena(channelizer);
+        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_ARENA_CAPACITY - 1,
+            recovered.size(), "every released batch must return to the same bounded arena");
+        assertTrue(recovered.containsAll(retained));
+        recovered.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::recycleNow);
     }
 
     @Test
@@ -145,70 +127,117 @@ class ChannelOutputProcessorBackpressureTest
     }
 
     @Test
-    void saturatedResultPoolReportsOnlyTheUnservedWorkingSet() throws Exception
+    void saturatedBatchArenaDropsACompleteBatchWithoutAllocatingOrBlocking() throws Exception
     {
         ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
+        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> retained = drainBatchArena(channelizer);
+        Thread producer = new Thread(() -> channelizer.receive(
+            new InterleavedComplexSamples(new float[514], 0)), "saturated channelizer producer");
+        producer.start();
+        producer.join(TimeUnit.SECONDS.toMillis(2));
 
-        int misses = 100;
-
-        for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY + misses; x++)
-        {
-            channelizer.acquireChannelResultsArray();
-        }
-
-        ComplexPolyphaseChannelizerM2.QueueStatus status = channelizer.getQueueStatus();
-        assertEquals(0, status.resultPoolSize());
-        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY, status.resultPoolCapacity());
-        assertEquals(misses, status.resultPoolMisses());
-        assertEquals(misses, status.resultArrayAllocations());
+        assertFalse(producer.isAlive(), "arena exhaustion must never wait for a downstream consumer");
+        assertEquals(1, channelizer.getQueueStatus().droppedBatches(),
+            "crossing one full-batch boundary must count exactly one explicit loss");
+        assertNull(channelizer.acquireChannelResultsBuffer(), "arena exhaustion must not allocate a fallback batch");
+        retained.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::recycleNow);
+        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> recovered = drainBatchArena(channelizer);
+        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_ARENA_CAPACITY - 1, recovered.size());
+        recovered.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::recycleNow);
     }
 
     @Test
-    void sampleRateReinitializationPrefillsOnlyCorrectlySizedResults() throws Exception
+    void fixedRateChannelizersOwnOnlyCorrectlySizedBatches() throws Exception
     {
-        ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
-        int originalLength = channelizer.getSubChannelCount();
+        ComplexPolyphaseChannelizerM2 first = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
+        ComplexPolyphaseChannelizerM2 replacement = new ComplexPolyphaseChannelizerM2(100_000.0, 12);
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer firstBatch = first.acquireChannelResultsBuffer();
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer replacementBatch =
+            replacement.acquireChannelResultsBuffer();
 
-        channelizer.setRates(100_000.0, ComplexPolyphaseChannelizerM2.getChannelCount(100_000.0));
-
-        ComplexPolyphaseChannelizerM2.QueueStatus status = channelizer.getQueueStatus();
-        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY, status.resultPoolSize());
-        assertEquals(0, status.resultPoolMisses(), "reinitialization itself must not consume the live miss budget");
-        assertEquals(0, status.resultArrayAllocations(),
-            "intentional initialization allocations must not be reported as real-time pressure");
-        float[] result = channelizer.acquireChannelResultsArray();
-        assertNotEquals(originalLength, result.length);
-        assertEquals(channelizer.getSubChannelCount(), result.length);
+        assertNotEquals(first.getSubChannelCount(), replacement.getSubChannelCount());
+        assertEquals(first.getSubChannelCount(), firstBatch.nextResult().length);
+        assertEquals(replacement.getSubChannelCount(), replacementBatch.nextResult().length);
+        firstBatch.recycleNow();
+        replacementBatch.recycleNow();
     }
 
     @Test
-    void sharedConsumerRetentionIsVisibleInOwnedBatchHighWater() throws Exception
+    void sharedBatchReturnsOnlyAfterItsFinalConsumerReleasesIt() throws Exception
     {
         ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
-        int retainedBatches = channelizer.getQueueStatus().capacityBatches() + 4;
-        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> batches = new java.util.ArrayList<>();
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer shared = channelizer.acquireChannelResultsBuffer();
+        shared.prepareForConsumers(2);
+        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> retained = drainBatchArena(channelizer);
+        assertNull(channelizer.acquireChannelResultsBuffer());
 
-        for(int x = 0; x < retainedBatches; x++)
+        shared.release();
+        assertNull(channelizer.acquireChannelResultsBuffer(),
+            "the first consumer must not make a shared batch reusable");
+        shared.release();
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer returned = channelizer.acquireChannelResultsBuffer();
+        assertSame(shared, returned, "the final consumer must return the exact batch to the arena once");
+
+        returned.recycleNow();
+        retained.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::recycleNow);
+    }
+
+    @Test
+    void ifftFailureRecyclesItsBatch() throws Exception
+    {
+        ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
+        Field dispatcherField = ComplexPolyphaseChannelizerM2.class.getDeclaredField("mIFFTProcessorDispatcher");
+        dispatcherField.setAccessible(true);
+        ComplexPolyphaseChannelizerM2.IFFTProcessorDispatcher dispatcher =
+            (ComplexPolyphaseChannelizerM2.IFFTProcessorDispatcher)dispatcherField.get(channelizer);
+        Field fftField = dispatcher.getClass().getDeclaredField("mFFT");
+        fftField.setAccessible(true);
+        fftField.set(dispatcher, null);
+        CountDownLatch recycled = new CountDownLatch(1);
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch =
+            new ComplexPolyphaseChannelizerM2.ChannelResultsBuffer(1, ignored -> recycled.countDown());
+        batch.add(new float[channelizer.getSubChannelCount()]);
+
+        try
         {
-            ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch = channelizer.acquireChannelResultsBuffer();
-            batch.prepareForConsumers(2);
-            batches.add(batch);
+            channelizer.start();
+            dispatcher.receive(batch);
+            assertTrue(recycled.await(5, TimeUnit.SECONDS),
+                "an IFFT exception must not permanently lose its reusable batch");
         }
+        finally
+        {
+            channelizer.stop();
+        }
+    }
 
-        ComplexPolyphaseChannelizerM2.QueueStatus retained = channelizer.getQueueStatus();
-        assertEquals(retainedBatches + 1, retained.ownedBatches(),
-            "ownership includes the active assembly batch and all consumer-retained batches");
-        assertEquals(retainedBatches + 1, retained.highWaterOwnedBatches());
+    @Test
+    void oneThrowingChannelCannotLeakOrBlockTheRemainingConsumers() throws Exception
+    {
+        DispatchTestChannelizer channelizer = new DispatchTestChannelizer();
+        ChannelCalculator calculator = new ChannelCalculator(50_000.0, 2, 100_000_000L, 2.0);
+        ThrowingChannelSource throwing = new ThrowingChannelSource(calculator);
+        AtomicInteger delivered = new AtomicInteger();
+        ReleasingChannelSource releasing = new ReleasingChannelSource(calculator, delivered);
+        AtomicInteger recycled = new AtomicInteger();
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch =
+            new ComplexPolyphaseChannelizerM2.ChannelResultsBuffer(1, ignored -> recycled.incrementAndGet());
+        channelizer.addChannel(throwing);
+        channelizer.addChannel(releasing);
 
-        batches.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::release);
-        assertEquals(retainedBatches + 1, channelizer.getQueueStatus().ownedBatches(),
-            "a shared batch remains owned until its final consumer releases it");
-        batches.forEach(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::release);
-
-        ComplexPolyphaseChannelizerM2.QueueStatus released = channelizer.getQueueStatus();
-        assertEquals(1, released.ownedBatches());
-        assertEquals(retainedBatches + 1, released.highWaterOwnedBatches(),
-            "the high-water measurement remains available after consumer recovery");
+        try
+        {
+            channelizer.dispatchForTest(batch);
+            assertEquals(1, delivered.get(), "dispatch must continue after another channel throws");
+            assertEquals(1, recycled.get(), "every consumer share must be released exactly once");
+        }
+        finally
+        {
+            channelizer.removeChannel(throwing);
+            channelizer.removeChannel(releasing);
+            throwing.stopOutputProcessorForRemoval();
+            releasing.stopOutputProcessorForRemoval();
+        }
     }
 
     @Test
@@ -262,6 +291,53 @@ class ChannelOutputProcessorBackpressureTest
     }
 
     @Test
+    void pipelineStatusNeverWaitsForTheChannelizerLifecycleLock() throws Exception
+    {
+        PolyphaseChannelManager manager = new PolyphaseChannelManager(new EmptyNativeBufferProvider(),
+            100_000_000L, 50_000.0);
+        Field lockField = PolyphaseChannelManager.class.getDeclaredField("mChannelizerLock");
+        lockField.setAccessible(true);
+        Object channelizerLock = lockField.get(manager);
+        CountDownLatch lockHeld = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        Thread holder = new Thread(() ->
+        {
+            synchronized(channelizerLock)
+            {
+                lockHeld.countDown();
+
+                try
+                {
+                    releaseLock.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }, "channelizer lifecycle lock holder");
+        AtomicReference<PolyphaseChannelManager.PipelineStatus> result = new AtomicReference<>();
+        Thread observer = new Thread(() -> result.set(manager.getPipelineStatus()), "pipeline status observer");
+
+        try
+        {
+            holder.start();
+            assertTrue(lockHeld.await(5, TimeUnit.SECONDS));
+            observer.start();
+            observer.join(TimeUnit.SECONDS.toMillis(2));
+            assertFalse(observer.isAlive(), "health observation must never wait for the receiver lifecycle lock");
+            assertTrue(result.get() != null);
+        }
+        finally
+        {
+            releaseLock.countDown();
+            holder.join(TimeUnit.SECONDS.toMillis(5));
+            observer.join(TimeUnit.SECONDS.toMillis(5));
+            manager.dispose();
+        }
+    }
+
+    @Test
     void pipelineRetiresDropsFromAnActuallyReplacedChannelizer() throws Exception
     {
         EmptyNativeBufferProvider provider = new EmptyNativeBufferProvider();
@@ -269,12 +345,6 @@ class ChannelOutputProcessorBackpressureTest
         Field channelizerField = PolyphaseChannelManager.class.getDeclaredField("mPolyphaseChannelizer");
         channelizerField.setAccessible(true);
         FixedDropChannelizer previous = new FixedDropChannelizer(100_000.0, 7);
-        drainResultPool(previous);
-        previous.acquireChannelResultsArray();
-        previous.acquireChannelResultsArray();
-        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer retained = previous.acquireChannelResultsBuffer();
-        retained.prepareForConsumers(1);
-        retained.release();
         channelizerField.set(manager, previous);
         PolyphaseChannelSource source = (PolyphaseChannelSource)manager.getChannel(
             new TunerChannel(100_000_000L, 12_500), "ifft replacement retirement test");
@@ -285,12 +355,6 @@ class ChannelOutputProcessorBackpressureTest
             assertNotSame(previous, channelizerField.get(manager));
             assertEquals(7, manager.getPipelineStatus().ifftDroppedBatches(),
                 "replacing a channelizer must retain its cumulative IFFT overflow count");
-            assertEquals(2, manager.getPipelineStatus().ifftResultPoolMisses(),
-                "replacing a channelizer must retain cumulative result-pool misses");
-            assertEquals(2, manager.getPipelineStatus().ifftResultArrayAllocations(),
-                "replacing a channelizer must retain cumulative result-array allocations");
-            assertTrue(manager.getPipelineStatus().ifftHighWaterOwnedBatches() >= 2,
-                "replacing a channelizer must retain the batch ownership high-water mark");
         }
         finally
         {
@@ -299,12 +363,18 @@ class ChannelOutputProcessorBackpressureTest
         }
     }
 
-    private static void drainResultPool(ComplexPolyphaseChannelizerM2 channelizer)
+    private static List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> drainBatchArena(
+        ComplexPolyphaseChannelizerM2 channelizer)
     {
-        for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY; x++)
+        List<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> batches = new java.util.ArrayList<>();
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch;
+
+        while((batch = channelizer.acquireChannelResultsBuffer()) != null)
         {
-            channelizer.acquireChannelResultsArray();
+            batches.add(batch);
         }
+
+        return batches;
     }
 
     @Test
@@ -326,6 +396,33 @@ class ChannelOutputProcessorBackpressureTest
             assertNotSame(retired, processor.get(source), "the test must exercise an actual processor replacement");
             assertTrue(source.getOutputQueueStatus().droppedBatches() >= 7,
                 "replacing the live processor must retain its cumulative overflow count");
+        }
+        finally
+        {
+            source.stopOutputProcessorForRemoval();
+        }
+    }
+
+    @Test
+    void failedPendingOutputRebindReleasesItsConsumerShare() throws Exception
+    {
+        ChannelCalculator calculator = new ChannelCalculator(50_000.0, 2, 100_000_000L, 2.0);
+        PolyphaseChannelSource source = new PolyphaseChannelSource(new TunerChannel(100_000_000L, 12_500),
+            calculator, new SynthesisFilterManager(), ignored -> {}, "failed output rebind test", null);
+        ChannelCalculator incompatible = new ChannelCalculator(50_000.0, 2, 200_000_000L, 2.0);
+        assertThrows(IllegalArgumentException.class,
+            () -> incompatible.getChannelIndexes(source.getTunerChannel()));
+        source.updateOutputProcessor(incompatible, new SynthesisFilterManager());
+        AtomicInteger recycled = new AtomicInteger();
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch =
+            new ComplexPolyphaseChannelizerM2.ChannelResultsBuffer(1, ignored -> recycled.incrementAndGet());
+        batch.prepareForConsumers(1);
+
+        try
+        {
+            source.receiveChannelResults(batch);
+            assertEquals(1, recycled.get(),
+                "a failed pending rebind must release the channel's batch share exactly once");
         }
         finally
         {
@@ -777,6 +874,53 @@ class ChannelOutputProcessorBackpressureTest
         long getDroppedBatchCount()
         {
             return mDrops;
+        }
+    }
+
+    private static class DispatchTestChannelizer extends ComplexPolyphaseChannelizerM2
+    {
+        private DispatchTestChannelizer() throws Exception
+        {
+            super(50_000.0, 12);
+        }
+
+        private void dispatchForTest(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer buffer)
+        {
+            dispatch(buffer);
+        }
+    }
+
+    private static class ThrowingChannelSource extends PolyphaseChannelSource
+    {
+        private ThrowingChannelSource(ChannelCalculator calculator)
+        {
+            super(new TunerChannel(100_000_000L, 12_500), calculator, new SynthesisFilterManager(), ignored -> {},
+                "throwing channel source", null);
+        }
+
+        @Override
+        public void receiveChannelResults(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer buffer)
+        {
+            throw new IllegalStateException("intentional test failure");
+        }
+    }
+
+    private static class ReleasingChannelSource extends PolyphaseChannelSource
+    {
+        private final AtomicInteger mDelivered;
+
+        private ReleasingChannelSource(ChannelCalculator calculator, AtomicInteger delivered)
+        {
+            super(new TunerChannel(100_000_000L, 12_500), calculator, new SynthesisFilterManager(), ignored -> {},
+                "releasing channel source", null);
+            mDelivered = delivered;
+        }
+
+        @Override
+        public void receiveChannelResults(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer buffer)
+        {
+            mDelivered.incrementAndGet();
+            buffer.release();
         }
     }
 }

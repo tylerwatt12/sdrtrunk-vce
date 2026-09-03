@@ -434,16 +434,16 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
      */
     public void receiveChannelResults(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer channelResultsBuffer)
     {
-        if(mPendingOutputProcessorUpdate != null)
-        {
-            ChannelCalculator channelCalculator = mPendingOutputProcessorUpdate.getChannelCalculator();
-            SynthesisFilterManager filterManager = mPendingOutputProcessorUpdate.getSynthesisFilterManager();
-            mPendingOutputProcessorUpdate = null;
-            doUpdateOutputProcessor(channelCalculator, filterManager);
-        }
-
         try
         {
+            if(mPendingOutputProcessorUpdate != null)
+            {
+                ChannelCalculator channelCalculator = mPendingOutputProcessorUpdate.getChannelCalculator();
+                SynthesisFilterManager filterManager = mPendingOutputProcessorUpdate.getSynthesisFilterManager();
+                mPendingOutputProcessorUpdate = null;
+                doUpdateOutputProcessor(channelCalculator, filterManager);
+            }
+
             IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
 
             if(!mOutputProcessorStopping && processor != null)
@@ -455,10 +455,10 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
                 channelResultsBuffer.release();
             }
         }
-        catch(Exception e)
+        catch(Throwable t)
         {
             channelResultsBuffer.release();
-            mLog.error("Error processing channel results", e);
+            mLog.error("Error processing channel results", t);
         }
     }
 

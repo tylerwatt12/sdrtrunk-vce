@@ -30,16 +30,14 @@ class ReceiverHealthServiceTest
     Path mTemporaryDirectory;
 
     @Test
-    void channelizerMeasurementIncludesAllocationAndRetentionEvidence()
+    void channelizerMeasurementIncludesQueueAndDropEvidence()
     {
         PolyphaseChannelManager.PipelineStatus pipeline = new PolyphaseChannelManager.PipelineStatus(
-            2, 7, 8, 3, 4096, 8192, 11, 13, 5, 9, 0, List.of());
+            2, 7, 8, 3, 0, List.of());
         String detail = ReceiverHealthService.channelizerDetail(pipeline);
-        assertTrue(detail.contains("result_pool=4096/8192 arrays"));
-        assertTrue(detail.contains("pool_misses=11"));
-        assertTrue(detail.contains("new_arrays=13"));
-        assertTrue(detail.contains("owned_batches=5"));
-        assertTrue(detail.contains("owned_high_water=9"));
+        assertTrue(detail.contains("high_water=7"));
+        assertTrue(detail.contains("capacity=8"));
+        assertTrue(detail.contains("pipeline_dropped=3"));
     }
 
     @Test

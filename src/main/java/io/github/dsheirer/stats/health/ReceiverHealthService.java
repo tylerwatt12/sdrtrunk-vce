@@ -342,8 +342,8 @@ public final class ReceiverHealthService implements AutoCloseable
                 if(ifftDropDelta > 0)
                 {
                     mIncidents.observe("channelizer-drop", "critical", "Channelizer output batches were discarded",
-                        display, now, pipeline.ifftDroppedBatches(), ifftDropDelta + " new IFFT batches",
-                        "The polyphase IFFT worker missed its bounded queue deadline",
+                        display, now, pipeline.ifftDroppedBatches(), ifftDropDelta + " new channelizer batches",
+                        "The channelizer pipeline exhausted a reusable batch or its IFFT queue",
                         "All extracted channels on this tuner can have missing samples",
                         "Check CPU/GC and per-channel backlog; reduce avoidable receiver work");
                 }
@@ -936,11 +936,7 @@ public final class ReceiverHealthService implements AutoCloseable
     static String channelizerDetail(PolyphaseChannelManager.PipelineStatus pipeline)
     {
         return "high_water=" + pipeline.ifftHighWaterBatches() + "; capacity=" +
-            pipeline.ifftCapacityBatches() + "; dropped=" + pipeline.ifftDroppedBatches() +
-            "; result_pool=" + pipeline.ifftResultPoolSize() + "/" + pipeline.ifftResultPoolCapacity() +
-            " arrays; pool_misses=" + pipeline.ifftResultPoolMisses() + "; new_arrays=" +
-            pipeline.ifftResultArrayAllocations() + "; owned_batches=" + pipeline.ifftOwnedBatches() +
-            "; owned_high_water=" + pipeline.ifftHighWaterOwnedBatches();
+            pipeline.ifftCapacityBatches() + "; pipeline_dropped=" + pipeline.ifftDroppedBatches();
     }
 
     private static Map<String,Object> section(String id, String title, List<Map<String,Object>> rows)
