@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  */
 class NativeBufferProcessor implements Listener<INativeBuffer>
 {
-    static final long DEFAULT_MAXIMUM_QUEUE_DURATION_MILLISECONDS = 200;
+    static final long DEFAULT_MAXIMUM_QUEUE_DURATION_MILLISECONDS = 400;
     private static final Logger mLog = LoggerFactory.getLogger(NativeBufferProcessor.class);
 
     private final String mName;
@@ -361,9 +361,9 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
      */
     void requestMaximumQueueDurationMilliseconds(long durationMilliseconds)
     {
-        if(durationMilliseconds < 50 || durationMilliseconds > 200)
+        if(durationMilliseconds < 50 || durationMilliseconds > 400)
         {
-            throw new IllegalArgumentException("Maximum IQ queue duration must be between 50 and 200 milliseconds");
+            throw new IllegalArgumentException("Maximum IQ queue duration must be between 50 and 400 milliseconds");
         }
 
         mRequestedMaximumQueueDurationMilliseconds.set(durationMilliseconds);

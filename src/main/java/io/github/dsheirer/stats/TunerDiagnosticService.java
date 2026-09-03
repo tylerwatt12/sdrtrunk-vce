@@ -65,7 +65,7 @@ public final class TunerDiagnosticService implements AutoCloseable
     private static final int MAXIMUM_DECIMATION = 32;
     private static final int QUANTIZATION_BITS = 8;
     private static final int MAXIMUM_PROFILE_FRAMES_PER_SECOND = 20;
-    private static final long DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS = 200;
+    private static final long DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS = 400;
     /** Keeps the requested view out of the anti-alias filter transition band. */
     private static final double USABLE_LENS_FRACTION = 0.80;
 

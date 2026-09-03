@@ -314,16 +314,16 @@ public class NativeBufferProcessorTest
     }
 
     @Test
-    public void defaultQueueDurationIsTwoHundredMilliseconds()
+    public void defaultQueueDurationIsFourHundredMilliseconds()
     {
         NativeBufferProcessor processor = new NativeBufferProcessor("default queue duration", 1_000_000,
             buffer -> {});
 
         try
         {
-            assertEquals(200, processor.status().appliedDurationMilliseconds());
-            assertEquals(200, processor.status().requestedDurationMilliseconds());
-            assertEquals(200_000, processor.getMaximumQueuedSampleCount());
+            assertEquals(400, processor.status().appliedDurationMilliseconds());
+            assertEquals(400, processor.status().requestedDurationMilliseconds());
+            assertEquals(400_000, processor.getMaximumQueuedSampleCount());
         }
         finally
         {
@@ -342,15 +342,15 @@ public class NativeBufferProcessorTest
         {
             processor.start();
             assertEquals(100, processor.status().appliedDurationMilliseconds());
-            processor.requestMaximumQueueDurationMilliseconds(200);
+            processor.requestMaximumQueueDurationMilliseconds(400);
             assertEquals(100, processor.status().appliedDurationMilliseconds());
-            assertEquals(200, processor.status().requestedDurationMilliseconds());
+            assertEquals(400, processor.status().requestedDurationMilliseconds());
             processor.receive(new TestNativeBuffer(1, 1_024));
             assertTrue(processed.await(2, TimeUnit.SECONDS));
-            assertEquals(200, processor.status().appliedDurationMilliseconds());
-            assertEquals(200_000, processor.getMaximumQueuedSampleCount());
+            assertEquals(400, processor.status().appliedDurationMilliseconds());
+            assertEquals(400_000, processor.getMaximumQueuedSampleCount());
             assertThrows(IllegalArgumentException.class,
-                () -> processor.requestMaximumQueueDurationMilliseconds(201));
+                () -> processor.requestMaximumQueueDurationMilliseconds(401));
         }
         finally
         {

@@ -165,21 +165,21 @@ class TunerDiagnosticServiceTest
         assertEquals(32_768, state.fftSize());
         assertEquals(20, state.framesPerSecond());
         assertEquals(32, state.maximumDecimation());
-        assertEquals(200, state.iqQueueDurationMilliseconds());
+        assertEquals(400, state.iqQueueDurationMilliseconds());
         assertEquals(8, state.quantizationBits());
         assertEquals(7, state.receiverDroppedBuffers());
         assertEquals(9, state.receiverDroppedMilliseconds());
         assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.initialProfile.get());
         assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.lastProfile.get());
-        assertEquals(List.of(200L), queue.requests);
+        assertEquals(List.of(400L), queue.requests);
 
         session.updateProfile(TunerDiagnosticService.SpectrumProfile.EFFICIENT);
         assertEquals(TunerDiagnosticService.SpectrumProfile.EFFICIENT, processors.lastProfile.get());
         assertEquals(2_048, session.state().fftSize());
-        assertEquals(List.of(200L), queue.requests);
+        assertEquals(List.of(400L), queue.requests);
 
         session.close();
-        assertEquals(List.of(200L, 100L), queue.requests);
+        assertEquals(List.of(400L, 100L), queue.requests);
         service.close();
     }
 
