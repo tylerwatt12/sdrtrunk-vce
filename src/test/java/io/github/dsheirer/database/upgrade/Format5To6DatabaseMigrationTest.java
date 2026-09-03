@@ -51,7 +51,7 @@ class Format5To6DatabaseMigrationTest
             String historyBefore = historyDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(5, preflight.steps().size());
+            assertEquals(6, preflight.steps().size());
             assertEquals("format-5-to-6", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "configured conventional receiver-context identities", 1);
@@ -75,8 +75,8 @@ class Format5To6DatabaseMigrationTest
             }
 
             assertEquals(5, report.source().version());
-            assertEquals(10, report.target().version());
-            assertEquals(5, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
+            assertEquals(6, report.steps().size());
             assertEquals("format-5-to-6", report.steps().getFirst().id());
             assertEquals(CANONICAL_KEY, scalar(connection,
                 "SELECT context_key FROM receiver_context WHERE id=900"));
@@ -89,10 +89,10 @@ class Format5To6DatabaseMigrationTest
             assertEquals("1", scalar(connection,
                 "SELECT COUNT(*) FROM conventional_call_identity_bucket WHERE context_id=900"));
             assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(10, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -114,7 +114,7 @@ class Format5To6DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(10, report.target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -131,8 +131,8 @@ class Format5To6DatabaseMigrationTest
                 "SELECT context_key FROM receiver_context WHERE id=900"));
             assertEquals(historyBefore, historyDigest(connection));
             assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals(10, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -149,11 +149,11 @@ class Format5To6DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(10, report.target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
                 assertEquals(CANONICAL_KEY, scalar(connection,
                     "SELECT context_key FROM receiver_context WHERE id=900"));
                 assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-                assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
                 connection.rollback();
             }
             finally

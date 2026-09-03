@@ -88,8 +88,13 @@ overlapping selection cannot enqueue the same call twice.
 A fresh setup contains:
 
 - one published Scan List named `Default`;
-- `Default P25`, `Default DMR`, `Default NXDN`, and `Default NBFM` Alias Lists; and
+- `Default P25`, `Default DMR`, `Default NXDN`, and `Default Analog` (AM/NBFM) Alias Lists; and
 - an unmatched-talkgroup route from each factory Alias List to `Default`.
+
+Upgrading a database older than format 11 restores missing factory Alias Lists once, including previously deleted
+defaults. An analog-family list named `Default NBFM` becomes `Default Analog` if the new name is available. Existing
+custom lists and routing stay intact; only channels without a selected Alias List receive a compatible default.
+Later startups do not recreate lists you delete after the upgrade.
 
 New channels created in the Channel editor and new RadioReference trunked-site imports initially use the matching
 factory Alias List. Another compatible Alias List can be selected instead. RadioReference agency-frequency imports

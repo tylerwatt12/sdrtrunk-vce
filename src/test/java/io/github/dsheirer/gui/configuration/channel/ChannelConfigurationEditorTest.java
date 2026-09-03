@@ -51,8 +51,8 @@ class ChannelConfigurationEditorTest
         assertDefault(model, DecoderType.P25_PHASE2, "Default P25");
         assertDefault(model, DecoderType.DMR, "Default DMR");
         assertDefault(model, DecoderType.NXDN, "Default NXDN");
-        assertDefault(model, DecoderType.AM, "Default NBFM");
-        assertDefault(model, DecoderType.NBFM, "Default NBFM");
+        assertDefault(model, DecoderType.AM, "Default Analog");
+        assertDefault(model, DecoderType.NBFM, "Default Analog");
     }
 
     @Test

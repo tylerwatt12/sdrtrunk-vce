@@ -91,7 +91,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode(), result.error());
-        assertTrue(result.error().contains("ambiguous across formats [6, 7, 8, 9, 10]"), result.error());
+        assertTrue(result.error().contains("ambiguous across formats [6, 7, 8, 9, 10, 11]"), result.error());
         assertFalse(result.output().contains("adopt-global-format-marker"));
         assertFalse(result.output().contains("format-1-to-2"));
         assertFalse(result.output().contains("format-2-to-3"));
@@ -259,13 +259,13 @@ class ApplicationDatabaseMigratorTest
                     ORDER BY id
                 )
                 """));
-            assertEquals("Default P25:P25|Default DMR:DMR|Default NXDN:NXDN|Default NBFM:NBFM",
+            assertEquals("Default P25:P25|Default DMR:DMR|Default NXDN:NXDN|Default Analog:NBFM",
                 scalar(connection, """
                     SELECT group_concat(value, '|')
                     FROM (
                         SELECT name || ':' || family AS value
                         FROM alias_list
-                        WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default NBFM')
+                        WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default Analog')
                         ORDER BY id
                     )
                     """));
@@ -349,7 +349,7 @@ class ApplicationDatabaseMigratorTest
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
-                "82:Default NXDN|83:Default NBFM|84:Default NBFM", scalar(connection, """
+                "82:Default NXDN|83:Default Analog|84:Default Analog", scalar(connection, """
                 SELECT group_concat(value, '|')
                 FROM (
                     SELECT id || ':' || COALESCE(alias_list_name, 'NULL') AS value
@@ -359,7 +359,7 @@ class ApplicationDatabaseMigratorTest
                 )
                 """));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
-                "82:Default NXDN|83:Default NBFM|84:Default NBFM", scalar(connection, """
+                "82:Default NXDN|83:Default Analog|84:Default Analog", scalar(connection, """
                 SELECT group_concat(value, '|')
                 FROM (
                     SELECT id || ':' || COALESCE(json_extract(config_json, '$.aliasListName'), 'NULL') AS value

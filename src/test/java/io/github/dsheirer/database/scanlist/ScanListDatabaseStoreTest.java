@@ -56,7 +56,7 @@ class ScanListDatabaseStoreTest
         assertTrue(defaultList.isPublished());
         assertTrue(configuration.aliasMemberships().isEmpty());
         List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
-        assertEquals(List.of("Default P25:P25", "Default DMR:DMR", "Default NXDN:NXDN", "Default NBFM:NBFM"),
+        assertEquals(List.of("Default P25:P25", "Default DMR:DMR", "Default NXDN:NXDN", "Default Analog:NBFM"),
             definitions.stream().map(definition -> definition.getName() + ":" + definition.getFamily().name())
                 .toList());
         assertEquals(4, configuration.unmatchedAliasListMemberships().size());

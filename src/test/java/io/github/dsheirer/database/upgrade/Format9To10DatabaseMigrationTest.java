@@ -34,7 +34,7 @@ class Format9To10DatabaseMigrationTest
             String fingerprintBefore = SqliteSchemaValidator.fingerprint(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(1, preflight.steps().size());
+            assertEquals(2, preflight.steps().size());
             assertEquals("format-9-to-10", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.PRESERVE,
                 "saved channels and application settings", 4);
@@ -42,10 +42,11 @@ class Format9To10DatabaseMigrationTest
                 "P25 bandplan overrides", 0);
 
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.MigrationReport report;
             try
             {
-                report = DatabaseMigrationChain.migrate(connection);
+                // Test this historical adjacent step independently of later configuration migrations.
+                new Format9To10DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 10);
                 connection.commit();
             }
             catch(Exception exception)
@@ -58,9 +59,6 @@ class Format9To10DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(9, report.source().version());
-            assertEquals(10, report.target().version());
-            assertEquals("format-9-to-10", report.steps().getFirst().id());
             assertEquals(configurationBefore, configurationDigest(connection));
             assertEquals(fingerprintBefore, SqliteSchemaValidator.fingerprint(connection));
             assertEquals("0", scalar(connection, """
@@ -74,7 +72,7 @@ class Format9To10DatabaseMigrationTest
             assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(10, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(10, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -89,7 +87,7 @@ class Format9To10DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(10, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally

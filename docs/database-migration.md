@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -131,6 +131,18 @@ The format 9-to-10 step introduces optional P25 bandplan override profiles and a
 rewriting existing configuration. Existing channels remain opted out because an absent setting means disabled, and no
 override profile is created until an administrator saves one. Every saved channel, application setting, and received
 per-site P25 band observation is preserved unchanged.
+
+The format 10-to-11 step restores missing factory Alias Lists once, including factory lists previously deleted by an
+administrator. The factory names are `Default P25`, `Default DMR`, `Default NXDN`, and `Default Analog` (AM/NBFM).
+A case-insensitive `Default NBFM` list in the analog family is renamed in place only when `Default Analog` is free;
+its ID, aliases, recording policy, routing, and channel assignments are retained. If both names exist, neither list
+is merged or removed. Other custom names are preserved. A factory target name owned by an incompatible family, or
+contradictory saved channel Alias List references, is refused rather than guessed.
+Only newly created lists get Default scan-list routing with unmatched recording disabled. Existing lists keep their
+routing and recording policy. Compatible channels with a blank Alias List selection get their factory list; existing
+selections stay unchanged except references to the renamed analog list. Preflight and completion report the affected
+counts. This is a semantic-only version change with unchanged DDL. Normal startup remains validation-only and does
+not recreate lists deleted after this migration.
 
 ## Replacement Boundary
 

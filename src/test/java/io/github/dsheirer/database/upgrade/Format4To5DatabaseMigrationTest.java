@@ -44,7 +44,7 @@ class Format4To5DatabaseMigrationTest
             Map<String,CredentialSnapshot> legacyCredentials = legacyCredentials(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(6, preflight.steps().size());
+            assertEquals(7, preflight.steps().size());
             assertEquals("format-4-to-5", preflight.steps().getFirst().id());
             assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "saved channel identity scalars", 2);
             assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired channel configurations", 2);
@@ -60,7 +60,7 @@ class Format4To5DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(4, report.source().version());
-                assertEquals(10, report.target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -183,8 +183,8 @@ class Format4To5DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport rolledBack = DatabaseMigrationChain.migrate(connection);
-                assertEquals(10, rolledBack.target().version());
-                assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, rolledBack.target().version());
+                assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
                 assertTrue(tableExists(connection, "web_user"));
                 connection.rollback();
             }
@@ -205,7 +205,7 @@ class Format4To5DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport retried = DatabaseMigrationChain.migrate(connection);
-                assertEquals(10, retried.target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, retried.target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -218,7 +218,7 @@ class Format4To5DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(10, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM web_user"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM configuration_channel
@@ -305,7 +305,7 @@ class Format4To5DatabaseMigrationTest
             assertEquals("P25_PHASE1", scalar(connection,
                 "SELECT decoder_type FROM configuration_channel WHERE id=(SELECT min(id) " +
                     "FROM configuration_channel)"));
-            assertEquals("10", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertTrue(tableExists(connection, "web_user"));
         }
     }

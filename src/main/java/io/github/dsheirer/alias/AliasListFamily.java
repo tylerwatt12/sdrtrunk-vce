@@ -53,7 +53,7 @@ public enum AliasListFamily
      */
     public String getDefaultAliasListName()
     {
-        return "Default " + name();
+        return this == NBFM ? "Default Analog" : "Default " + name();
     }
 
     @Override

@@ -64,7 +64,7 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("limit of 16 scan lists")));
         assertTrue(DatabaseFormatCatalog.requireVersion(9).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("Seed both moved presentation choices")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(10).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("absent saved-channel P25 override opt-in setting as disabled")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
@@ -75,6 +75,39 @@ class DatabaseFormatCatalogTest
             assertEquals(step.sourceVersion() + 1, step.targetVersion());
             assertFalse(step.id().isBlank());
             assertFalse(step.declaredEffects().isEmpty());
+        }
+    }
+
+    @Test
+    void everyRegisteredFixtureMigratesToExactCurrentFormat() throws Exception
+    {
+        for(DatabaseFormatCatalog.FormatDescriptor descriptor: DatabaseFormatCatalog.formats())
+        {
+            String factoryName = Path.of(descriptor.fixtureResource()).getFileName().toString()
+                .replace(".java", "");
+            Path database = mTemporaryFolder.resolve("catalog-" + descriptor.version() + ".sqlite");
+            Class.forName(getClass().getPackageName() + "." + factoryName)
+                .getMethod("create", Path.class).invoke(null, database);
+            try(Connection connection = open(database))
+            {
+                assertEquals(descriptor.version(), DatabaseFormatCatalog.inspect(connection).version());
+                connection.setAutoCommit(false);
+                try
+                {
+                    DatabaseMigrationChain.migrate(connection);
+                    connection.commit();
+                }
+                catch(Exception e)
+                {
+                    connection.rollback();
+                    throw e;
+                }
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                    DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+                    SqliteSchemaValidator.fingerprint(connection));
+            }
+            SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         }
     }
 
@@ -115,7 +148,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format10TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format11TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -273,7 +306,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixThroughTenAreSemanticallyAmbiguous() throws Exception
+    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixThroughElevenAreSemanticallyAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -289,7 +322,7 @@ class DatabaseFormatCatalogTest
         {
             SQLException exception = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspect(connection));
-            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9, 10]"),
+            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9, 10, 11]"),
                 exception::getMessage);
             assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
                 exception::getMessage);

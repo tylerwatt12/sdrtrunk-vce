@@ -109,11 +109,11 @@ class SdrTrunkDatabaseStartupTest
                 FROM (
                     SELECT id || ':' || family AS value
                     FROM alias_list
-                    WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default NBFM')
+                    WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default Analog')
                     ORDER BY id
                 )
                 """));
-            assertEquals("Default DMR|Default NBFM|Default NXDN|Default P25", scalar(statement, """
+            assertEquals("Default Analog|Default DMR|Default NXDN|Default P25", scalar(statement, """
                 SELECT group_concat(name, '|')
                 FROM (
                     SELECT alias_list.name
