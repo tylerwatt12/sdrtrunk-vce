@@ -598,6 +598,18 @@ export class WebCallPlayer {
   }
 
   async togglePlayback() {
+    if (this.paused && this.scanListCatalogReady && !this.activeSelectedScanListIds().length) {
+      const defaultScanList = this.scanLists.find((item) => item.enabled && item.default);
+      if (defaultScanList) {
+        this.selectedScanListIds = new Set([defaultScanList.id]);
+        this.clearLossNotice();
+        this.writePreferences();
+        this.updateScanListStatus();
+        this.filterQueueForSelectedLists();
+        this.renderScanLists();
+      }
+    }
+
     const token = ++this.transportToken;
     if (!this.paused) {
       this.paused = true;

@@ -108,9 +108,9 @@ disabled. Partial or unknown encryption status continues to inherit the normal d
 when a new Alias is imported; updating an existing RadioReference Alias preserves its Scan List, recording, and
 streaming choices.
 
-The current browser interface requires at least one published Scan List to be selected. Selecting a list saves the
-selection in that user's preferences but does not start playback; press **Play** when ready. At the API level,
-omitting `scan_list_id` selects the published Scan List currently marked as default.
+Selecting a published Scan List saves the selection in that user's preferences but does not start playback; press
+**Play** when ready. If no available Scan List is selected when Play is pressed, the browser selects and saves the
+published Scan List currently marked as default. At the API level, omitting `scan_list_id` selects that same default.
 
 When importing legacy upstream SDRTrunk XML, listening-enabled Aliases are placed in the current default Scan List,
 while Do Not Monitor Aliases remain outside it. Supported imported channels with no Alias List assignment receive the

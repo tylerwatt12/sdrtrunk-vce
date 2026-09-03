@@ -741,6 +741,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(togglePlayback.contains("this.stopCurrent()"));
         assertTrue(togglePlayback.contains("if (!this.ensureConnected())"));
         assertTrue(togglePlayback.contains("this.setStatus('Unavailable')"));
+        assertTrue(togglePlayback.contains("item.enabled && item.default"));
+        assertTrue(togglePlayback.contains("this.writePreferences()"));
         assertFalse(togglePlayback.contains("defaultSelected"));
         assertFalse(source.contains("persistSelectedScanLists"));
         assertTrue(replayLast.contains("this.current = this.lastHeard"));

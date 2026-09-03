@@ -224,6 +224,53 @@ async function main() {
     assert.equal(stopped.lastConversationKey, null);
     assert.equal(stopped.status, 'Ready');
 
+    function playerReadyToStart(selectedScanListIds = []) {
+      const defaultScanList = { id: '2', name: 'Default', enabled: true, default: true };
+      const otherScanList = { id: '1', name: 'Dispatch', enabled: true, default: false };
+      return Object.assign(Object.create(WebCallPlayer.prototype), {
+        paused: true,
+        scanListCatalogReady: true,
+        scanLists: [otherScanList, defaultScanList],
+        scanListById: new Map([[otherScanList.id, otherScanList], [defaultScanList.id, defaultScanList]]),
+        selectedScanListIds: new Set(selectedScanListIds),
+        maximumSelectedScanLists: 16,
+        transportToken: 0,
+        preferenceWrites: 0,
+        feedStarts: 0,
+        clearLossNotice() {},
+        writePreferences() { this.preferenceWrites++; },
+        updateScanListStatus() {},
+        filterQueueForSelectedLists() {},
+        renderScanLists() {},
+        ensureConnected() { this.feedStarts++; return true; },
+        ensureAudioContext() {},
+        audioContext: { state: 'suspended', async resume() {} },
+        setStatus(value) { this.status = value; },
+        render() {}
+      });
+    }
+
+    const defaultOnPlay = playerReadyToStart();
+    await defaultOnPlay.togglePlayback();
+    assert.deepEqual([...defaultOnPlay.selectedScanListIds], ['2'],
+      'Play with no selection must choose the administrator-configured default Scan List');
+    assert.equal(defaultOnPlay.preferenceWrites, 1,
+      'The automatic default selection must be saved through the current user preferences');
+    assert.equal(defaultOnPlay.feedStarts, 1);
+    assert.equal(defaultOnPlay.paused, false);
+
+    const staleSelectionOnPlay = playerReadyToStart(['999']);
+    await staleSelectionOnPlay.togglePlayback();
+    assert.deepEqual([...staleSelectionOnPlay.selectedScanListIds], ['2'],
+      'A stale saved selection must not prevent fallback to the current default Scan List');
+    assert.equal(staleSelectionOnPlay.preferenceWrites, 1);
+
+    const explicitSelectionOnPlay = playerReadyToStart(['1']);
+    await explicitSelectionOnPlay.togglePlayback();
+    assert.deepEqual([...explicitSelectionOnPlay.selectedScanListIds], ['1'],
+      'Play must preserve an available Scan List explicitly selected by the user');
+    assert.equal(explicitSelectionOnPlay.preferenceWrites, 0);
+
     const selection = Object.assign(Object.create(WebCallPlayer.prototype), {
       scanListById: new Map([['1', { id: '1', enabled: true }]]),
       selectedScanListIds: new Set(),
