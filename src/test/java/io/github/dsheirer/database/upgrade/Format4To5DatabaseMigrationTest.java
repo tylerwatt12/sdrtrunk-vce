@@ -44,7 +44,7 @@ class Format4To5DatabaseMigrationTest
             Map<String,CredentialSnapshot> legacyCredentials = legacyCredentials(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(7, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 4, preflight.steps().size());
             assertEquals("format-4-to-5", preflight.steps().getFirst().id());
             assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "saved channel identity scalars", 2);
             assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired channel configurations", 2);
@@ -101,7 +101,7 @@ class Format4To5DatabaseMigrationTest
                        json_extract(preferences_json, '$.presentation.live_detail_row_limit')
                 FROM web_user WHERE username='listener'
                 """));
-            assertEquals("4:light:normal:0:1:4:0", scalar(connection, """
+            assertEquals("5:light:normal:0:1:4:0", scalar(connection, """
                 SELECT json_extract(preferences_json, '$.version') || ':' ||
                        json_extract(preferences_json, '$.appearance.theme') || ':' ||
                        json_extract(preferences_json, '$.scanner.detail_mode') || ':' ||

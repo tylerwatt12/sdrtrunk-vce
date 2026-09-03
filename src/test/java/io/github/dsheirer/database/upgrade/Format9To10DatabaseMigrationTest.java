@@ -34,7 +34,7 @@ class Format9To10DatabaseMigrationTest
             String fingerprintBefore = SqliteSchemaValidator.fingerprint(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(2, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 9, preflight.steps().size());
             assertEquals("format-9-to-10", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.PRESERVE,
                 "saved channels and application settings", 4);

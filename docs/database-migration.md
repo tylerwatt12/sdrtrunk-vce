@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -143,6 +143,12 @@ routing and recording policy. Compatible channels with a blank Alias List select
 selections stay unchanged except references to the renamed analog list. Preflight and completion report the affected
 counts. This is a semantic-only version change with unchanged DDL. Normal startup remains validation-only and does
 not recreate lists deleted after this migration.
+
+The format 11-to-12 step upgrades every exact version-4 per-user browser preference document to version 5. It adds
+an independent idle FFT channel-marker switch, initially off so the existing display is unchanged. Every existing
+browser preference, account, credential, role, receiver setting, and channel assignment is preserved. Each affected
+preference revision is incremented; malformed, incomplete, already-newer, and revision-exhausted documents are
+refused. This is a semantic-only version change with unchanged DDL and no new runtime migration path.
 
 ## Replacement Boundary
 

@@ -256,7 +256,7 @@ class Format10To11DatabaseMigrationTest
         connection.setAutoCommit(false);
         try
         {
-            assertEquals(11, DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
             connection.commit();
         }
         catch(Exception e)
@@ -268,7 +268,7 @@ class Format10To11DatabaseMigrationTest
         {
             connection.setAutoCommit(true);
         }
-        assertEquals(11, DatabaseFormatCatalog.requireCurrent(connection).version());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
         assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
     }

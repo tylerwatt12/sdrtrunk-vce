@@ -51,7 +51,7 @@ class Format5To6DatabaseMigrationTest
             String historyBefore = historyDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(6, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 5, preflight.steps().size());
             assertEquals("format-5-to-6", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "configured conventional receiver-context identities", 1);
@@ -76,7 +76,7 @@ class Format5To6DatabaseMigrationTest
 
             assertEquals(5, report.source().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals(6, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 5, report.steps().size());
             assertEquals("format-5-to-6", report.steps().getFirst().id());
             assertEquals(CANONICAL_KEY, scalar(connection,
                 "SELECT context_key FROM receiver_context WHERE id=900"));

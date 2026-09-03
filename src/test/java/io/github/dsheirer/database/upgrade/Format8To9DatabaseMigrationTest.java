@@ -35,7 +35,7 @@ class Format8To9DatabaseMigrationTest
             String preferencesBefore = existingPreferenceDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(3, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 8, preflight.steps().size());
             assertEquals("format-8-to-9", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "per-user Live presentation settings", 3);
@@ -64,14 +64,14 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=4
+                WHERE json_extract(preferences_json, '$.version')=5
                   AND json_extract(preferences_json,
                       '$.presentation.show_only_active_trunked_channels')=0
                   AND json_extract(preferences_json,
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=4
+                  AND preferences_revision=5
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));
@@ -194,7 +194,8 @@ class Format8To9DatabaseMigrationTest
                 SELECT id || ':' || json_remove(json_set(preferences_json, '$.version', 3),
                     '$.presentation.show_only_active_trunked_channels',
                     '$.presentation.retain_last_call_on_idle_rows',
-                    '$.presentation.clear_voice_quality_when_idle') AS row_value
+                    '$.presentation.clear_voice_quality_when_idle',
+                    '$.tuner.show_idle_channels') AS row_value
                 FROM web_user ORDER BY id)
             """);
     }

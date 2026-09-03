@@ -1,7 +1,7 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 4,
+    version: 5,
     appearance: Object.freeze({ theme: 'light' }),
     page_titles: Object.freeze({ prepend_playing_call: false }),
     playback: Object.freeze({
@@ -28,6 +28,7 @@
       snap_frequency: true,
       smooth_fft: true,
       highlight_waterfall_channels: false,
+      show_idle_channels: false,
       profile: 'balanced'
     }),
     health_alerts: Object.freeze({ disabled_codes: Object.freeze([]) }),
@@ -121,7 +122,7 @@
   function validate(value) {
     exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
       'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 4) throw invalid('The user preference version is unsupported.');
+    if (value.version !== 5) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
     exact(value.playback, ['volume', 'selected_scan_list_ids', 'conversation_grouping',
@@ -132,7 +133,7 @@
       'show_only_active_trunked_channels', 'retain_last_call_on_idle_rows',
       'clear_voice_quality_when_idle'], 'presentation');
     exact(value.tuner, ['floor_db', 'ceiling_db', 'waterfall_speed', 'snap_frequency', 'smooth_fft',
-      'highlight_waterfall_channels', 'profile'], 'tuner');
+      'highlight_waterfall_channels', 'show_idle_channels', 'profile'], 'tuner');
     exact(value.health_alerts, ['disabled_codes'], 'health_alerts');
     const tables = plain(value.tables, 'tables');
     if (Object.keys(tables).length > 128) throw invalid('Too many table layouts are stored.');
@@ -150,7 +151,7 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 4,
+      version: 5,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme') },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
         'page_titles.prepend_playing_call') },
@@ -189,6 +190,7 @@
         smooth_fft: bool(value.tuner.smooth_fft, 'tuner.smooth_fft'),
         highlight_waterfall_channels: bool(value.tuner.highlight_waterfall_channels,
           'tuner.highlight_waterfall_channels'),
+        show_idle_channels: bool(value.tuner.show_idle_channels, 'tuner.show_idle_channels'),
         profile: oneOf(value.tuner.profile,
           ['efficient', 'balanced', 'high-detail', 'maximum-detail'], 'tuner.profile')
       },

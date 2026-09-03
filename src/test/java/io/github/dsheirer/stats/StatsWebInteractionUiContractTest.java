@@ -284,7 +284,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"109\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"110\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -607,7 +607,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=91"));
+        assertTrue(html.contains("/assets/app.css?v=92"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1346,7 +1346,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("Reset measurement"));
         assertFalse(parameters.contains("experiment_"));
         assertFalse(tuner.contains("resetExperimentMeasurement"));
-        assertTrue(css.contains(".tuner-spectrum-profile {"));
+        assertTrue(css.contains(".tuner-spectrum-profile,\n.tuner-spectrum-display-section {"));
         assertTrue(tuner.contains("'Zoom in'"));
         assertTrue(tuner.contains("'Zoom out'"));
         assertTrue(refinement.contains("stream.update(diagnosticParameters())"));
@@ -1408,11 +1408,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Smooth FFT'"));
         assertTrue(tuner.contains("waterfallChannelsInput.type = 'checkbox'"));
         assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_PREFERENCE, false"));
-        assertTrue(tuner.contains("'Highlight channels on waterfall'"));
+        assertTrue(tuner.contains("'Highlight channels on waterfall when hovered'"));
+        assertTrue(tuner.contains("'Show idle channel markers'"));
+        assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
+        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
+        assertTrue(tuner.contains("fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl)"));
+        assertTrue(tuner.contains("waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl, waterfallChannelsControl)"));
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
-        assertTrue(tuner.contains("optionsPanel.append(rangeControl, rangeHelp, speedControl, toggleControls, profilePanel)"));
+        assertTrue(tuner.contains("optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("options.addEventListener('toggle'"));
         assertTrue(tuner.contains("displayControls.append(refiningBadge, flagLegend)"));
@@ -1466,11 +1471,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("flag.addEventListener('focus'"));
         assertTrue(tuner.contains("showActiveFlag(carrier, flag)"));
         assertTrue(tuner.contains("TUNER_ACTIVITY_LABELS[carrier.status]"));
-        assertTrue(tuner.contains("function tunerActivityStatus(row)"));
+        assertTrue(tuner.contains("function tunerActivityStatus(row, includeIdle = false)"));
         assertTrue(tuner.contains("if (tags.has('CURRENT_CONTROL')) return 'CONTROL'"));
-        assertTrue(tuner.contains("tags.has('ALTERNATE_CONTROL') || status === 'IDLE'"));
+        assertTrue(tuner.contains("if (status === 'IDLE') return includeIdle ? 'IDLE' : null"));
         assertTrue(tuner.contains("function updateSpectrumActivityTable(table)"));
-        assertTrue(tuner.contains(".filter(tunerActivityStatus)"));
+        assertTrue(tuner.contains(".filter((row) => tunerActivityStatus(row, true))"));
         assertTrue(tuner.contains("else activeChannelTables.delete(id)"));
         assertTrue(tuner.contains("row.channel_name || row.tableChannelName"));
         assertTrue(tuner.contains("decoderLabel(row.decoder)"));

@@ -5,31 +5,30 @@
  */
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact populated format 11: frozen format-10 fixture plus its historical semantic-only migration. */
-public final class Format11TestDatabase
+/** Exact current format-12 fixture using the authoritative fresh-database path. */
+public final class Format12TestDatabase
 {
-    private Format11TestDatabase()
+    private Format12TestDatabase()
     {
     }
 
     public static Path create(Path database) throws Exception
     {
-        Format10TestDatabase.create(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            new Format10To11DatabaseMigration().migrate(connection);
-            DatabaseFormatCatalog.stamp(connection, 11);
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.requireCurrent(connection);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            if(detected.version() != 11 ||
-                !DatabaseFormatCatalog.requireVersion(11).fingerprint().equals(fingerprint))
+            if(detected.version() != 12 ||
+                !DatabaseFormatCatalog.requireVersion(12).fingerprint().equals(fingerprint))
             {
-                throw new IllegalStateException("Global format 11 fixture fingerprint mismatch: " + fingerprint);
+                throw new IllegalStateException("Global format 12 fixture fingerprint mismatch: " + fingerprint);
             }
         }
         return database;

@@ -10396,6 +10396,7 @@ const TUNER_SPECTRUM_CEILING_PREFERENCE = 'ceiling_db';
 const TUNER_WATERFALL_SPEED_PREFERENCE = 'waterfall_speed';
 const TUNER_SPECTRUM_SNAP_PREFERENCE = 'snap_frequency';
 const TUNER_SPECTRUM_SMOOTH_PREFERENCE = 'smooth_fft';
+const TUNER_SPECTRUM_IDLE_PREFERENCE = 'show_idle_channels';
 const TUNER_WATERFALL_CHANNELS_PREFERENCE = 'highlight_waterfall_channels';
 const TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile';
 let tunerSpectrumSessionTarget = '';
@@ -10429,14 +10430,15 @@ const TUNER_FREQUENCY_RASTERS = Object.freeze([
     originHz: 935_012_500, stepHz: 12_500, label: '900 MHz base' })
 ]);
 const TUNER_ACTIVITY_PRIORITY = Object.freeze({
-  ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2
+  ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2, IDLE: 1
 });
 const TUNER_ACTIVITY_LABELS = Object.freeze({
   ENCRYPTED: 'Encrypted voice',
   CALL: 'Voice call',
   DATA: 'Data activity',
   CONTROL: 'Control channel',
-  ACTIVE: 'Other activity'
+  ACTIVE: 'Other activity',
+  IDLE: 'Idle channel'
 });
 const RADIO_REFERENCE_DETAIL_CACHE_LIMIT = 100;
 const radioReferenceDetailCache = new Map();
@@ -10859,17 +10861,27 @@ function tunerSpectrumPanel() {
   smoothInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true);
   smoothControl.title = 'Average successive frames to make the FFT trace steadier.';
   smoothControl.append(smoothInput, node('span', '', 'Smooth FFT'));
+  const idleChannelsControl = node('label', 'tuner-spectrum-toggle-control');
+  const idleChannelsInput = node('input');
+  idleChannelsInput.type = 'checkbox';
+  idleChannelsInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false);
+  idleChannelsControl.title = 'Outline idle channels from the current activity feed on the FFT. ' +
+    'Markers do not indicate allocation to this tuner.';
+  idleChannelsControl.append(idleChannelsInput, node('span', '', 'Show idle channel markers'));
   const waterfallChannelsControl = node('label', 'tuner-spectrum-toggle-control');
   const waterfallChannelsInput = node('input');
   waterfallChannelsInput.type = 'checkbox';
   waterfallChannelsInput.checked = tunerStoredBoolean(TUNER_WATERFALL_CHANNELS_PREFERENCE, false);
-  waterfallChannelsControl.title = 'Show known and active channel bandwidths over the waterfall.';
+  waterfallChannelsControl.title = 'Highlight active channels while the pointer is over the waterfall.';
   waterfallChannelsControl.append(waterfallChannelsInput,
-    node('span', '', 'Highlight channels on waterfall'));
+    node('span', '', 'Highlight channels on waterfall when hovered'));
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
   waterfallChannelsControl.hidden = !liveActivityAllowed;
-  const toggleControls = node('div', 'tuner-spectrum-option-toggles');
-  toggleControls.append(snapControl, smoothControl, waterfallChannelsControl);
+  idleChannelsControl.hidden = !liveActivityAllowed;
+  const fftOptions = node('fieldset', 'tuner-spectrum-display-section');
+  fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl);
+  const waterfallOptions = node('fieldset', 'tuner-spectrum-display-section');
+  waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl, waterfallChannelsControl);
   const profilePanel = node('fieldset', 'tuner-spectrum-profile');
   profilePanel.append(node('legend', '', 'Spectrum performance'));
   const profileControl = node('label', 'tuner-spectrum-display-control');
@@ -10890,7 +10902,7 @@ function tunerSpectrumPanel() {
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl, profileWarning);
-  optionsPanel.append(rangeControl, rangeHelp, speedControl, toggleControls, profilePanel);
+  optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel);
   options.append(optionsSummary, optionsPanel);
   options.addEventListener('toggle', () => {
     optionsSummary.setAttribute('aria-expanded', String(options.open));
@@ -12043,23 +12055,25 @@ function tunerSpectrumPanel() {
     activeFlagLayers.forEach((layer) => layer.replaceChildren());
   }
 
-  function tunerActivityStatus(row) {
+  function tunerActivityStatus(row, includeIdle = false) {
     const status = String(row?.status || '').toUpperCase();
     const tags = channelTagSet(row?.tags);
     if (tags.has('CURRENT_CONTROL')) return 'CONTROL';
-    if (tags.has('ALTERNATE_CONTROL') || status === 'IDLE') return null;
+    if (tags.has('ALTERNATE_CONTROL')) return null;
+    if (status === 'IDLE') return includeIdle ? 'IDLE' : null;
     return TUNER_ACTIVITY_PRIORITY[status] ? status : null;
   }
 
   function updateSpectrumActivityTable(table) {
     const id = String(table?.table_id || '');
     if (!id) return;
-    const rows = (Array.isArray(table?.rows) ? table.rows : []).filter(tunerActivityStatus);
+    // Retain idle rows so the local display switch takes effect without reconnecting the feed.
+    const rows = (Array.isArray(table?.rows) ? table.rows : []).filter((row) => tunerActivityStatus(row, true));
     if (rows.length) activeChannelTables.set(id, { ...table, rows });
     else activeChannelTables.delete(id);
   }
 
-  function activeCarriers() {
+  function activeCarriers(includeIdle = false) {
     if (!viewport) return [];
     const byFrequency = new Map();
     activeChannelTables.forEach((table) => {
@@ -12069,7 +12083,7 @@ function tunerSpectrumPanel() {
       const tableIdentifiers = Array.isArray(table?.identifiers) ? table.identifiers : [];
       (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
         const frequencyHz = Number(row?.frequency_hz);
-        const status = tunerActivityStatus(row);
+        const status = tunerActivityStatus(row, includeIdle);
         if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
             frequencyHz > viewport.endHz || !status) return;
         const decorated = { ...row, status, frequencyHz, tableChannelName, tableSystemName, tableSiteName,
@@ -12078,8 +12092,11 @@ function tunerSpectrumPanel() {
         if (!carrier) {
           carrier = { frequencyHz, status, rows: [] };
           byFrequency.set(frequencyHz, carrier);
-        } else if (TUNER_ACTIVITY_PRIORITY[status] > TUNER_ACTIVITY_PRIORITY[carrier.status]) {
-          carrier.status = status;
+        } else {
+          // Active details win over idle entries at the same frequency, regardless of arrival order.
+          if (status === 'IDLE' && carrier.status !== 'IDLE') return;
+          if (carrier.status === 'IDLE' && status !== 'IDLE') carrier.rows = [];
+          if (TUNER_ACTIVITY_PRIORITY[status] > TUNER_ACTIVITY_PRIORITY[carrier.status]) carrier.status = status;
         }
         carrier.rows.push(decorated);
       });
@@ -12213,19 +12230,20 @@ function tunerSpectrumPanel() {
       activeFlagLayers.forEach((layer) => layer.replaceChildren());
       return;
     }
-    const carriers = activeCarriers();
+    const carriers = activeCarriers(idleChannelsInput.checked);
     const visibleSpanHz = Math.max(1, viewport.endHz - viewport.startHz);
     const waterfallPlotWidth = Math.max(0, waterfall.host.getBoundingClientRect().width);
     const waterfallFlagWidth = Math.max(TUNER_CHANNEL_MINIMUM_WIDTH_PX,
       Math.min(TUNER_CHANNEL_MAXIMUM_WIDTH_PX,
         waterfallPlotWidth * TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ / visibleSpanHz));
     const signature = JSON.stringify([viewport.startHz, viewport.endHz,
-      waterfallChannelsInput.checked, waterfallFlagWidth,
+      idleChannelsInput.checked, waterfallChannelsInput.checked, waterfallFlagWidth,
       carriers.map((carrier) => [carrier.frequencyHz, carrier.status, activeCarrierDescription(carrier)])]);
     if (signature === activeFlagSignature) return;
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
-    const createFlags = (waterfallLayer) => carriers.map((carrier) => {
+    const createFlags = (waterfallLayer) => carriers.filter((carrier) =>
+      !waterfallLayer || carrier.status !== 'IDLE').map((carrier) => {
       const flag = node(waterfallLayer ? 'span' : 'button',
         `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
       if (!waterfallLayer) flag.type = 'button';
@@ -12351,6 +12369,10 @@ function tunerSpectrumPanel() {
   waterfallChannelsInput.addEventListener('change', () => {
     storeTunerBoolean(TUNER_WATERFALL_CHANNELS_PREFERENCE, waterfallChannelsInput.checked);
     activeFlagSignature = '';
+    renderActiveChannels();
+  });
+  idleChannelsInput.addEventListener('change', () => {
+    storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
   [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
@@ -16225,6 +16247,7 @@ function userPreferenceSummaryCards(preferences) {
       ['Waterfall speed', `${number(preferences.tuner.waterfall_speed)}×`],
       ['Snap frequency', settingsEnabled(preferences.tuner.snap_frequency)],
       ['Smooth FFT', settingsEnabled(preferences.tuner.smooth_fft)],
+      ['Idle FFT markers', settingsEnabled(preferences.tuner.show_idle_channels)],
       ['Highlight channels', settingsEnabled(preferences.tuner.highlight_waterfall_channels)],
       ['Performance profile', semanticLabel(preferences.tuner.profile)]
     ])),

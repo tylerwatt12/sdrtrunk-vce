@@ -35,7 +35,7 @@ class Format7To8DatabaseMigrationTest
             String existingPreferencesBefore = existingPreferenceDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(4, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 7, preflight.steps().size());
             assertEquals("format-7-to-8", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "per-user receiver-health alert settings", 3);
@@ -62,11 +62,11 @@ class Format7To8DatabaseMigrationTest
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=4
+                WHERE json_extract(preferences_json, '$.version')=5
                   AND json_type(preferences_json, '$.health_alerts.disabled_codes')='array'
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=4
+                  AND preferences_revision=5
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));

@@ -12,8 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.dsheirer.web.settings.WebUserPreferences;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import org.junit.jupiter.api.Test;
 
@@ -28,13 +26,12 @@ class Format9WebUserPreferencesCodecTest
     {
         String migrated = Format9WebUserPreferencesCodec.migrateFromFormat8(VERSION_THREE, true, false);
         Format9WebUserPreferencesCodec.validate(migrated);
-        WebUserPreferences runtime = WebUserPreferencesCodec.decode(migrated);
         JsonNode document = MAPPER.readTree(migrated);
 
-        assertEquals(4, runtime.version());
-        assertFalse(runtime.presentation().showOnlyActiveTrunkedChannels());
-        assertTrue(runtime.presentation().retainLastCallOnIdleRows());
-        assertFalse(runtime.presentation().clearVoiceQualityWhenIdle());
+        assertEquals(4, document.path("version").asInt());
+        assertFalse(document.path("presentation").path("show_only_active_trunked_channels").asBoolean());
+        assertTrue(document.path("presentation").path("retain_last_call_on_idle_rows").asBoolean());
+        assertFalse(document.path("presentation").path("clear_voice_quality_when_idle").asBoolean());
         assertEquals("dark", document.path("appearance").path("theme").asText());
         assertEquals(0.4, document.path("playback").path("volume").asDouble());
         assertEquals(7, document.path("playback").path("conversation_burst_limit").asInt());

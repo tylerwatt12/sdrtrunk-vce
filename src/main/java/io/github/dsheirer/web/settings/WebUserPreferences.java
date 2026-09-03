@@ -21,7 +21,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  HealthAlerts healthAlerts, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 4;
+    public static final int CURRENT_VERSION = 5;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
     public static final int MAXIMUM_TABLES = 128;
     public static final int MAXIMUM_COLUMNS_PER_TABLE = 128;
@@ -78,7 +78,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             new Playback(1.0, List.of(), true, DEFAULT_CONVERSATION_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
                 decodeQualityDisplayMode, liveDetailRowLimit, false, false, false),
-            new Tuner(-140, 0, 1, true, true, false, "balanced"), new HealthAlerts(List.of()), Map.of());
+            new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()), Map.of());
     }
 
     public record Appearance(String theme)
@@ -159,7 +159,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     }
 
     public record Tuner(int floorDb, int ceilingDb, double waterfallSpeed, boolean snapFrequency,
-                        boolean smoothFft, boolean highlightWaterfallChannels, String profile)
+                        boolean smoothFft, boolean highlightWaterfallChannels, boolean showIdleChannels, String profile)
     {
         public Tuner
         {

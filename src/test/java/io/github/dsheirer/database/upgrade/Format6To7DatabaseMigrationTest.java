@@ -34,7 +34,7 @@ class Format6To7DatabaseMigrationTest
             String securityBefore = securityDigest(connection);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(5, preflight.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 6, preflight.steps().size());
             assertEquals("format-6-to-7", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "per-user browser preference documents", 3);
@@ -60,16 +60,16 @@ class Format6To7DatabaseMigrationTest
 
             assertEquals(6, report.source().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals(5, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 6, report.steps().size());
             assertEquals("format-6-to-7", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=4
+                WHERE json_extract(preferences_json, '$.version')=5
                   AND json_extract(preferences_json, '$.playback.conversation_grouping')=1
                   AND json_extract(preferences_json, '$.playback.conversation_burst_limit')=4
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=4
+                  AND preferences_revision=5
                 """));
             assertEquals("1.0:0:1.0:0", scalar(connection, """
                 SELECT min(json_extract(preferences_json, '$.playback.volume')) || ':' ||

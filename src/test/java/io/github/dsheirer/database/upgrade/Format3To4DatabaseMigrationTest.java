@@ -41,7 +41,7 @@ class Format3To4DatabaseMigrationTest
             DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
             DatabaseMigrationChain.PreflightReport report = DatabaseMigrationChain.validateSource(connection,
                 detected);
-            assertEquals(8, report.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 3, report.steps().size());
             DatabaseMigrationChain.StepPreflight step = report.steps().getFirst();
             assertEquals("format-3-to-4", step.id());
             assertEffect(step.effects(), DatabaseMigrationEffect.Kind.PRESERVE,
@@ -96,7 +96,7 @@ class Format3To4DatabaseMigrationTest
 
             assertEquals(3, report.source().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-10-to-11", report.steps().getLast().id());
+            assertEquals("format-11-to-12", report.steps().getLast().id());
             DatabaseFormatCatalog.DetectedFormat current = DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, current.version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
