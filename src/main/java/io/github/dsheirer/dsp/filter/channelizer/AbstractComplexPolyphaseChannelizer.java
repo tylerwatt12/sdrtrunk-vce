@@ -69,6 +69,7 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
     {
         mSampleRate = sampleRate;
         mChannelCount = channelCount;
+        mSubChannelCount = channelCount * 2;
         mChannelSampleRate = mSampleRate / mChannelCount;
     }
 

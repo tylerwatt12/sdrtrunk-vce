@@ -451,7 +451,26 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         mInlineFilter = getAlignedFilter(coefficients, channelCount, mTapsPerChannel);
         mInlineSamples = new float[bufferLength];
         mFilterAccumulator = new float[getSubChannelCount()];
+        prefillChannelResultsPool();
         mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
+    }
+
+    /**
+     * Allocates the bounded steady-state result-array working set before live tuner samples can reach the channelizer.
+     * Without this preparation, a cold channelizer performs thousands of small allocations on the receiver thread
+     * while its IFFT and channel-output workers are also starting, which can exhaust the inbound IQ queue.  Intentional
+     * initialization allocations are not counted by the runtime allocation-pressure telemetry.
+     */
+    private void prefillChannelResultsPool()
+    {
+        int subChannelCount = getSubChannelCount();
+
+        for(int x = 0; x < CHANNEL_RESULTS_POOL_CAPACITY; x++)
+        {
+            mChannelResultsPool.offer(new float[subChannelCount]);
+        }
+
+        mChannelResultsPoolSize.set(CHANNEL_RESULTS_POOL_CAPACITY);
     }
 
     /**

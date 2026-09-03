@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -81,6 +82,9 @@ class ChannelOutputProcessorBackpressureTest
         ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
         int arrayLength = channelizer.getSubChannelCount();
 
+        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY,
+            channelizer.getChannelResultsPoolSize(), "the cold-start working set must be ready before samples arrive");
+
         for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY + 100; x++)
         {
             channelizer.recycleChannelResultsArray(new float[arrayLength]);
@@ -104,6 +108,9 @@ class ChannelOutputProcessorBackpressureTest
         ComplexPolyphaseChannelizerM2.QueueStatus initial = channelizer.getQueueStatus();
         assertEquals(0, initial.resultPoolMisses());
         assertEquals(0, initial.resultArrayAllocations());
+        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY, initial.resultPoolSize());
+
+        drainResultPool(channelizer);
 
         float[] allocated = channelizer.acquireChannelResultsArray();
         ComplexPolyphaseChannelizerM2.QueueStatus missed = channelizer.getQueueStatus();
@@ -121,12 +128,6 @@ class ChannelOutputProcessorBackpressureTest
     void saturatedResultPoolReportsOnlyTheUnservedWorkingSet() throws Exception
     {
         ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
-        int arrayLength = channelizer.getSubChannelCount();
-
-        for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY; x++)
-        {
-            channelizer.recycleChannelResultsArray(new float[arrayLength]);
-        }
 
         int misses = 100;
 
@@ -140,6 +141,24 @@ class ChannelOutputProcessorBackpressureTest
         assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY, status.resultPoolCapacity());
         assertEquals(misses, status.resultPoolMisses());
         assertEquals(misses, status.resultArrayAllocations());
+    }
+
+    @Test
+    void sampleRateReinitializationPrefillsOnlyCorrectlySizedResults() throws Exception
+    {
+        ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(50_000.0, 12);
+        int originalLength = channelizer.getSubChannelCount();
+
+        channelizer.setRates(100_000.0, ComplexPolyphaseChannelizerM2.getChannelCount(100_000.0));
+
+        ComplexPolyphaseChannelizerM2.QueueStatus status = channelizer.getQueueStatus();
+        assertEquals(ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY, status.resultPoolSize());
+        assertEquals(0, status.resultPoolMisses(), "reinitialization itself must not consume the live miss budget");
+        assertEquals(0, status.resultArrayAllocations(),
+            "intentional initialization allocations must not be reported as real-time pressure");
+        float[] result = channelizer.acquireChannelResultsArray();
+        assertNotEquals(originalLength, result.length);
+        assertEquals(channelizer.getSubChannelCount(), result.length);
     }
 
     @Test
@@ -230,6 +249,7 @@ class ChannelOutputProcessorBackpressureTest
         Field channelizerField = PolyphaseChannelManager.class.getDeclaredField("mPolyphaseChannelizer");
         channelizerField.setAccessible(true);
         FixedDropChannelizer previous = new FixedDropChannelizer(100_000.0, 7);
+        drainResultPool(previous);
         previous.acquireChannelResultsArray();
         previous.acquireChannelResultsArray();
         ComplexPolyphaseChannelizerM2.ChannelResultsBuffer retained = previous.acquireChannelResultsBuffer();
@@ -256,6 +276,14 @@ class ChannelOutputProcessorBackpressureTest
         {
             source.stop();
             manager.dispose();
+        }
+    }
+
+    private static void drainResultPool(ComplexPolyphaseChannelizerM2 channelizer)
+    {
+        for(int x = 0; x < ComplexPolyphaseChannelizerM2.CHANNEL_RESULTS_POOL_CAPACITY; x++)
+        {
+            channelizer.acquireChannelResultsArray();
         }
     }
 
