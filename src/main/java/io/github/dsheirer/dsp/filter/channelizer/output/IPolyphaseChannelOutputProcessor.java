@@ -39,6 +39,16 @@ public interface IPolyphaseChannelOutputProcessor
      * Stop processing channel results.
      */
     void stop();
+
+    /**
+     * Exercises initialization-only output DSP work before live channel results can arrive.
+     *
+     * @param subChannelCount quantity of interleaved I/Q values in each analysis-channelizer result
+     */
+    default void warmUp(int subChannelCount)
+    {
+    }
+
     /**
      * Receive and enqueue output results from the polyphase analysis channelizer
      * @param channelResultsBuffer to enqueue

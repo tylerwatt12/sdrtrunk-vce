@@ -15,6 +15,7 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.buffer.INativeBufferProvider;
 import io.github.dsheirer.dsp.filter.channelizer.output.ChannelOutputProcessor;
 import io.github.dsheirer.dsp.filter.channelizer.output.IPolyphaseChannelOutputProcessor;
+import io.github.dsheirer.dsp.filter.channelizer.output.OneChannelOutputProcessor;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
@@ -122,6 +123,25 @@ class ChannelOutputProcessorBackpressureTest
         ComplexPolyphaseChannelizerM2.QueueStatus reused = channelizer.getQueueStatus();
         assertEquals(1, reused.resultPoolMisses(), "a pool hit must not increment the miss counter");
         assertEquals(1, reused.resultArrayAllocations(), "a pool hit must not allocate a replacement array");
+    }
+
+    @Test
+    void outputWarmupLeavesTheAssemblerCleanAndNeverDispatchesSyntheticSamples()
+    {
+        OneChannelOutputProcessor processor = new OneChannelOutputProcessor(25_000.0, List.of(0), 1.0f,
+            new HeartbeatManager(), "output warm-up test");
+        AtomicInteger delivered = new AtomicInteger();
+        processor.setListener(ignored -> delivered.incrementAndGet());
+
+        processor.warmUp(2);
+
+        assertEquals(0, delivered.get(), "zero-valued warm-up samples must never reach the decoder listener");
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer oneResult =
+            new ComplexPolyphaseChannelizerM2.ChannelResultsBuffer(1, ignored -> {});
+        oneResult.add(new float[2]);
+        processor.process(oneResult);
+        assertEquals(0, delivered.get(), "warm-up must leave the output assembler at an empty buffer boundary");
+        assertEquals(0, processor.getQueueStatus().droppedBatches());
     }
 
     @Test

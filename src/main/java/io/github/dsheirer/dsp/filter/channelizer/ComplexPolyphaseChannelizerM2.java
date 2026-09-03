@@ -71,6 +71,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private static final int PROCESSED_CHANNEL_RESULTS_THRESHOLD = 1024;
     private static final int IFFT_QUEUE_CAPACITY = 8;
     static final int CHANNEL_RESULTS_POOL_CAPACITY = PROCESSED_CHANNEL_RESULTS_THRESHOLD * IFFT_QUEUE_CAPACITY;
+    private static final int PROCESSING_WARMUP_ITERATIONS = CHANNEL_RESULTS_POOL_CAPACITY * 2;
 
     //Sized to process 40 times per second
     private IFFTProcessorDispatcher mIFFTProcessorDispatcher = new IFFTProcessorDispatcher(25);
@@ -452,6 +453,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         mInlineSamples = new float[bufferLength];
         mFilterAccumulator = new float[getSubChannelCount()];
         prefillChannelResultsPool();
+        warmUpProcessing();
         mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
     }
 
@@ -471,6 +473,21 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         }
 
         mChannelResultsPoolSize.set(CHANNEL_RESULTS_POOL_CAPACITY);
+    }
+
+    /**
+     * Exercises the exact calibrated filter, result mapping, and IFFT kernels with zero samples before the live tuner
+     * stream is attached.  The even iteration count preserves the top/middle phase toggle, zero input leaves filter
+     * history unchanged, and each result array is returned immediately to the already-bounded pool.
+     */
+    private void warmUpProcessing()
+    {
+        for(int x = 0; x < PROCESSING_WARMUP_ITERATIONS; x++)
+        {
+            float[] result = process();
+            mIFFTProcessorDispatcher.warmUp(result);
+            recycleChannelResultsArray(result);
+        }
     }
 
     /**
@@ -593,6 +610,28 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             mRecycleCallback = recycleCallback;
         }
 
+        /**
+         * Creates a zero-valued initialization-only buffer.  All entries share one read-only array because output
+         * processors only extract values from analysis results.
+         */
+        public static ChannelResultsBuffer createWarmup(int resultCount, int subChannelCount)
+        {
+            if(resultCount <= 0 || subChannelCount <= 0)
+            {
+                throw new IllegalArgumentException("Warm-up dimensions must be positive");
+            }
+
+            ChannelResultsBuffer buffer = new ChannelResultsBuffer(resultCount, ignored -> {});
+            float[] zeroResult = new float[subChannelCount];
+
+            for(int x = 0; x < resultCount; x++)
+            {
+                buffer.add(zeroResult);
+            }
+
+            return buffer;
+        }
+
         public void add(float[] channelResults)
         {
             if(mSize >= mChannelResults.length)
@@ -712,6 +751,12 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         private void setFFT(FloatFFT_1D fft)
         {
             mFFT = fft;
+        }
+
+        /** Runs one synchronous initialization-only IFFT without dispatching synthetic samples. */
+        private void warmUp(float[] channelResults)
+        {
+            mFFT.complexInverse(channelResults, true);
         }
     }
 }

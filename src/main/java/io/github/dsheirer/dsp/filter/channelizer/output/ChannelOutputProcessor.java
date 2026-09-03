@@ -30,6 +30,7 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
 {
     private static final Logger mLog = LoggerFactory.getLogger(ChannelOutputProcessor.class);
     protected static final int CHANNEL_RESULTS_QUEUE_CAPACITY = 8;
+    private static final int OUTPUT_PROCESSING_WARMUP_RESULTS = 4096;
 
     private Dispatcher<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> mChannelResultsDispatcher;
     private HeartbeatManager mHeartbeatManager;
@@ -79,6 +80,33 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
         //Queued channel results are stale at shutdown.  Discarding invokes release() so shared result batches can be
         //recycled without forcing old samples through the assembler on the stopping thread.
         mChannelResultsDispatcher.stop();
+    }
+
+    /**
+     * Exercises the configured extraction, synthesis, mixer, gain, and assembly path synchronously before the output
+     * worker receives live results.  Two complete output buffers leave the assemblers at a clean boundary, and the
+     * listener is suppressed so zero-valued warm-up samples can never reach a decoder.
+     */
+    @Override
+    public void warmUp(int subChannelCount)
+    {
+        if(mChannelResultsDispatcher.isRunning())
+        {
+            throw new IllegalStateException("Output processing warm-up must occur before the dispatcher starts");
+        }
+
+        Listener<ComplexSamples> listener = mComplexSamplesListener;
+        mComplexSamplesListener = null;
+
+        try
+        {
+            process(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer.createWarmup(
+                OUTPUT_PROCESSING_WARMUP_RESULTS, subChannelCount));
+        }
+        finally
+        {
+            mComplexSamplesListener = listener;
+        }
     }
 
     /**

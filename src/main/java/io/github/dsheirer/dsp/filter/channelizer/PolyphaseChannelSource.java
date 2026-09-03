@@ -368,8 +368,9 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
                         mPolyphaseChannelOutputProcessor = new OneChannelOutputProcessor(
                             channelCalculator.getChannelSampleRate(),
                             indexes, channelCalculator.getChannelCount(), getHeartbeatManager(), mThreadName);
-                        mPolyphaseChannelOutputProcessor.setListener(this);
                         mPolyphaseChannelOutputProcessor.setFrequencyOffset(getFrequencyOffset());
+                        mPolyphaseChannelOutputProcessor.warmUp(channelCalculator.getChannelCount() * 2);
+                        mPolyphaseChannelOutputProcessor.setListener(this);
                         startOutputProcessor(mPolyphaseChannelOutputProcessor);
                         break;
                     case 2:
@@ -380,8 +381,9 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
                             mPolyphaseChannelOutputProcessor = new TwoChannelOutputProcessor(
                                 channelCalculator.getChannelSampleRate(),
                                 indexes, filter, channelCalculator.getChannelCount(), getHeartbeatManager(), mThreadName);
-                            mPolyphaseChannelOutputProcessor.setListener(this);
                             mPolyphaseChannelOutputProcessor.setFrequencyOffset(getFrequencyOffset());
+                            mPolyphaseChannelOutputProcessor.warmUp(channelCalculator.getChannelCount() * 2);
+                            mPolyphaseChannelOutputProcessor.setListener(this);
                             startOutputProcessor(mPolyphaseChannelOutputProcessor);
                         }
                         catch(FilterDesignException fde)
