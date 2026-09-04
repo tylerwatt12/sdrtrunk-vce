@@ -1113,8 +1113,7 @@ public class LogicalCallMonitor extends BorderPane
 
     private static boolean isStableTieBreaker(LogicalCallWinnerCriterion criterion)
     {
-        return criterion == LogicalCallWinnerCriterion.RADIORESOLVE_ID ||
-            criterion == LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID ||
+        return criterion == LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID ||
             criterion == LogicalCallWinnerCriterion.CALL_LEG_ID;
     }
 
@@ -1460,7 +1459,7 @@ public class LogicalCallMonitor extends BorderPane
             case NORMALIZED_FEC_ERROR_RATE -> "lowest corrected-bit error rate";
             case INGRESS_LOSS_OR_AUDIO_TRUNCATION -> "undamaged audio";
             case RETAINED_AUDIO_SAMPLE_COUNT -> "most complete retained audio";
-            case RADIORESOLVE_ID, CHANNEL_CONFIGURATION_ID, CALL_LEG_ID -> "stable receiver order";
+            case CHANNEL_CONFIGURATION_ID, CALL_LEG_ID -> "stable receiver order";
         };
     }
 

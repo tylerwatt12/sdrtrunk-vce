@@ -1205,13 +1205,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         if(comparison == 0)
         {
-            comparison = compareNullable(first.snapshot.callLegSource().radioResolveId(),
-                second.snapshot.callLegSource().radioResolveId());
-            criterion = LogicalCallWinnerCriterion.RADIORESOLVE_ID;
-        }
-
-        if(comparison == 0)
-        {
             comparison = compareNullable(first.snapshot.callLegSource().channelConfigurationId(),
                 second.snapshot.callLegSource().channelConfigurationId());
             criterion = LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID;
@@ -1469,7 +1462,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             case INGRESS_LOSS_OR_AUDIO_TRUNCATION -> textValue(Boolean.toString(
                 leg.ingressLoss || leg.audioTruncated));
             case RETAINED_AUDIO_SAMPLE_COUNT -> wholeValue(leg.audioSampleCount);
-            case RADIORESOLVE_ID -> textValue(leg.snapshot.callLegSource().radioResolveId());
             case CHANNEL_CONFIGURATION_ID -> textValue(leg.snapshot.callLegSource().channelConfigurationId());
             case CALL_LEG_ID -> textValue(legId(leg));
             case SINGLE_LEG -> LogicalCallDiagnosticWinner.CriterionValue.empty();
