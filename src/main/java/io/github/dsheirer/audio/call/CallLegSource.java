@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 
@@ -22,9 +23,9 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
  */
 public record CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
                             String siteGuid, long aliasListId, P25SiteIdentity p25SiteIdentity,
-                            boolean trafficChannel)
+                            ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
 {
-    public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null, false);
+    public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null, null, false);
 
     public CallLegSource
     {
@@ -43,6 +44,16 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
         return p25SiteIdentity != null;
     }
 
+    public boolean isTrunked()
+    {
+        return channelKind == ChannelConfigurationPolicy.ChannelKind.TRUNKED;
+    }
+
+    public boolean isConventional()
+    {
+        return channelKind == ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL;
+    }
+
     /**
      * Returns this source classified as a trunked traffic channel.  DMR Capacity Plus can convert an already-running
      * rest-channel processing chain into a traffic chain, so audio modules must be able to publish that committed
@@ -51,7 +62,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     public CallLegSource asTrafficChannel()
     {
         return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName, siteGuid,
-            aliasListId, p25SiteIdentity, true);
+            aliasListId, p25SiteIdentity, channelKind, true);
     }
 
     private static String normalize(String value)

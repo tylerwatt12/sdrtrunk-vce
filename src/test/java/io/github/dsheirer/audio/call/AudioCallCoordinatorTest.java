@@ -1713,7 +1713,8 @@ class AudioCallCoordinatorTest
         AudioCallId callId = new AudioCallId(producerId, callSequence, 0);
         P25SiteIdentity siteIdentity = wacn != null ? new P25SiteIdentity(wacn, system, rfss, site) : null;
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "channel-" + producerId,
-            "Site " + site, siteGuid, aliasList.getId(), siteIdentity, true);
+            "Site " + site, siteGuid, aliasList.getId(), siteIdentity,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         return new Leg(callId, callLegId, aliasList, source, talkgroup, radio, start, end,
             quality, record, routes, false, null);
     }
@@ -1732,7 +1733,8 @@ class AudioCallCoordinatorTest
     private static Leg withDecoder(Leg leg, DecoderType decoderType)
     {
         CallLegSource source = new CallLegSource(decoderType, leg.source().channelConfigurationId(),
-            leg.source().channelName(), leg.source().siteGuid(), leg.source().aliasListId(), null, true);
+            leg.source().channelName(), leg.source().siteGuid(), leg.source().aliasListId(), null,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), source, leg.talkgroup(), leg.radio(),
             leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(), leg.encrypted(),
             leg.callEncryptionEvidence());

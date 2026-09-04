@@ -16227,8 +16227,8 @@ function userPreferenceSummaryCards(preferences) {
       ['Playing call in every page title', settingsEnabled(preferences.page_titles.prepend_playing_call)],
       ['Playback volume', `${Math.round(preferences.playback.volume * 100)}%`],
       ['Selected scan lists', selectedScanListSummary(preferences.playback.selected_scan_list_ids)],
-      ['Conversation Mode', settingsEnabled(preferences.playback.conversation_grouping)],
-      ['Calls before switching', number(preferences.playback.conversation_burst_limit)],
+      ['Group calls by target', settingsEnabled(preferences.playback.target_grouping)],
+      ['Calls per target', number(preferences.playback.target_burst_limit)],
       ['Detail level', semanticLabel(preferences.scanner.detail_mode)]
     ])),
     settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
@@ -16461,30 +16461,30 @@ function openScannerSettings(returnFocusSelector = null) {
   const form = node('form', 'admin-form scanner-settings-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  const conversationGrouping = preferenceCheckbox('conversation-grouping', 'Conversation Mode',
-    current.playback.conversation_grouping,
-    'When calls are waiting, keep a conversation together before switching to another target.');
+  const targetGrouping = preferenceCheckbox('target-grouping', 'Group calls by playback target',
+    current.playback.target_grouping,
+    'When calls are waiting, keep related calls together before switching to another channel or talkgroup.');
   const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
     current.page_titles.prepend_playing_call,
     'The Scanner title always shows the audible target. Turn this on to add it to other pages too.');
-  const conversationBurstLimit = node('input');
-  conversationBurstLimit.type = 'number';
-  conversationBurstLimit.name = 'conversation-burst-limit';
-  conversationBurstLimit.min = '1';
-  conversationBurstLimit.max = '20';
-  conversationBurstLimit.required = true;
-  conversationBurstLimit.value = String(current.playback.conversation_burst_limit);
+  const targetBurstLimit = node('input');
+  targetBurstLimit.type = 'number';
+  targetBurstLimit.name = 'target-burst-limit';
+  targetBurstLimit.min = '1';
+  targetBurstLimit.max = '20';
+  targetBurstLimit.required = true;
+  targetBurstLimit.value = String(current.playback.target_burst_limit);
   const apply = (preferences) => {
-    conversationGrouping.input.checked = preferences.playback.conversation_grouping;
-    conversationBurstLimit.value = String(preferences.playback.conversation_burst_limit);
+    targetGrouping.input.checked = preferences.playback.target_grouping;
+    targetBurstLimit.value = String(preferences.playback.target_burst_limit);
     prependTitle.input.checked = preferences.page_titles.prepend_playing_call;
   };
   const fields = node('div', 'settings-field-grid');
-  fields.append(formField('Calls before switching', conversationBurstLimit,
-    'Play 1–20 waiting calls from the same conversation before another waiting conversation gets a turn.'));
-  const card = settingsCard('Conversation playback',
+  fields.append(formField('Calls before switching targets', targetBurstLimit,
+    'Play 1–20 waiting calls for the same channel or talkgroup before another waiting target gets a turn.'));
+  const card = settingsCard('Playback order',
     'These choices affect only calls that have already built up in this browser queue.',
-    conversationGrouping.control, fields);
+    targetGrouping.control, fields);
   const titleCard = settingsCard('Page titles',
     'Choose whether Scanner playback also appears in the title of other pages.', prependTitle.control);
   const save = node('button', '', 'Save Scanner Settings');
@@ -16504,18 +16504,18 @@ function openScannerSettings(returnFocusSelector = null) {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     const submitted = {
-      conversation_grouping: conversationGrouping.input.checked,
-      conversation_burst_limit: Number(conversationBurstLimit.value),
+      target_grouping: targetGrouping.input.checked,
+      target_burst_limit: Number(targetBurstLimit.value),
       prepend_playing_call: prependTitle.input.checked
     };
-    const controls = [conversationGrouping.input, conversationBurstLimit, prependTitle.input, save];
+    const controls = [targetGrouping.input, targetBurstLimit, prependTitle.input, save];
     controls.forEach((control) => { control.disabled = true; });
     modal.setBusy(true);
     message.textContent = 'Saving Scanner settings…';
     try {
       await updateUserPreferences((preferences) => {
-        preferences.playback.conversation_grouping = submitted.conversation_grouping;
-        preferences.playback.conversation_burst_limit = submitted.conversation_burst_limit;
+        preferences.playback.target_grouping = submitted.target_grouping;
+        preferences.playback.target_burst_limit = submitted.target_burst_limit;
         preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
       }, false);
       modal.setDirty(false);

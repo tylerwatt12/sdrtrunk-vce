@@ -835,11 +835,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("MAXIMUM_SEEN_CALL_IDS = 2048"));
         assertTrue(source.contains("MAXIMUM_QUEUED_CALLS = 100"));
         assertTrue(source.contains("MAXIMUM_AVOIDS = 256"));
-        assertTrue(schedule.contains("consecutive < this.conversationBurstLimit"));
-        assertTrue(schedule.contains("!this.conversationGrouping"));
+        assertTrue(schedule.contains("consecutive < this.targetBurstLimit"));
+        assertTrue(schedule.contains("!this.targetGrouping"));
         assertTrue(source.contains("first._startedAtMs - second._startedAtMs"));
-        assertTrue(normalize.contains("typeof value.conversation_key !== 'string'"));
-        assertTrue(normalize.contains("value.conversation_key.trim()"));
+        assertTrue(normalize.contains("typeof playbackTarget?.key === 'string'"));
+        assertTrue(normalize.contains("playbackTarget.key.trim()"));
         assertFalse(source.contains("conversationKey(call)"));
         assertFalse(source.contains("recentCalls"));
         assertFalse(source.contains("recentReplay"));

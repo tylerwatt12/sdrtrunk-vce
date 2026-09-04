@@ -71,8 +71,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(personalSummary.contains("page_titles.prepend_playing_call"));
         assertTrue(personalSummary.contains("playback.volume"));
         assertTrue(personalSummary.contains("selected_scan_list_ids"));
-        assertTrue(personalSummary.contains("conversation_grouping"));
-        assertTrue(personalSummary.contains("conversation_burst_limit"));
+        assertTrue(personalSummary.contains("target_grouping"));
+        assertTrue(personalSummary.contains("target_burst_limit"));
         assertTrue(personalSummary.contains("scanner.detail_mode"));
         assertTrue(personalSummary.contains("presentation.show_encryption_details"));
         assertTrue(personalSummary.contains("presentation.show_control_decode_quality"));
@@ -109,19 +109,19 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(livePresentation.contains("retain_last_call_on_idle_rows"));
         assertTrue(livePresentation.contains("clear_voice_quality_when_idle"));
         assertTrue(livePresentation.contains("preferences.presentation ="));
-        assertFalse(livePresentation.contains("conversation_grouping"));
-        assertFalse(livePresentation.contains("conversation_burst_limit"));
+        assertFalse(livePresentation.contains("target_grouping"));
+        assertFalse(livePresentation.contains("target_burst_limit"));
         assertFalse(livePresentation.contains("preferences.playback"));
         assertFalse(livePresentation.contains("preferences.page_titles"));
         assertTrue(livePresentation.contains("modal.setDirty(true)"));
         assertTrue(livePresentation.contains("void render()"));
 
         assertTrue(scannerPlayback.contains("openReadOnlyModal('Scanner settings'"));
-        assertTrue(scannerPlayback.contains("conversation_grouping"));
-        assertTrue(scannerPlayback.contains("conversation_burst_limit"));
+        assertTrue(scannerPlayback.contains("target_grouping"));
+        assertTrue(scannerPlayback.contains("target_burst_limit"));
         assertTrue(scannerPlayback.contains("page_titles.prepend_playing_call"));
-        assertTrue(scannerPlayback.contains("preferences.playback.conversation_grouping ="));
-        assertTrue(scannerPlayback.contains("preferences.playback.conversation_burst_limit ="));
+        assertTrue(scannerPlayback.contains("preferences.playback.target_grouping ="));
+        assertTrue(scannerPlayback.contains("preferences.playback.target_burst_limit ="));
         assertTrue(scannerPlayback.contains("preferences.page_titles.prepend_playing_call ="));
         assertFalse(scannerPlayback.contains("preferences.presentation"));
         assertTrue(source.contains("id = 'scanner-settings'"));

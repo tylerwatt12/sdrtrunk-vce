@@ -25,6 +25,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.filter.AllPassFilter;
@@ -373,6 +374,7 @@ public class DecoderFactory
             channel != null ? channel.getRadresGuid() : null,
             aliasList != null ? aliasList.getId() : 0L,
             channel != null ? channel.getP25SiteIdentity() : null,
+            channel != null ? ChannelConfigurationPolicy.requireChannelKind(channel) : null,
             channel != null && channel.getChannelType() == ChannelType.TRAFFIC);
     }
 

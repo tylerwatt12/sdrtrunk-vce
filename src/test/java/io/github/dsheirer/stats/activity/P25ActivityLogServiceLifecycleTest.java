@@ -946,7 +946,8 @@ class P25ActivityLogServiceLifecycleTest
         CallLegId callLegId = CallLegId.from(callId);
         IdentifierCollection identifiers = new IdentifierCollection();
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "uncertain-config",
-            "Uncertain Site", "uncertain-guid", 0, null, true);
+            "Uncertain Site", "uncertain-guid", 0, null,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
             timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
             CallEncryptionState.UNKNOWN, true,
@@ -963,7 +964,8 @@ class P25ActivityLogServiceLifecycleTest
         identifiers.update(APCO25RadioIdentifier.createFrom(1_234_567));
         P25SiteIdentity learnedSite = new P25SiteIdentity(0xBEE00, 0x348, 2, 1);
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "learned-config",
-            "Learned Site", "learned-guid", 77L, learnedSite, true);
+            "Learned Site", "learned-guid", 77L, learnedSite,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
             timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
             CallEncryptionState.CLEAR, true,

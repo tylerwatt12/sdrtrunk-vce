@@ -837,7 +837,8 @@ class P25ActivityLogMapperTest
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
         AudioCallId callId = new AudioCallId(1L, 2L, 1);
         CallLegSource source = new CallLegSource(DecoderType.P25_CONVENTIONAL, CONFIGURATION_ID,
-            "P25 Conventional", GUID, 0, null, false);
+            "P25 Conventional", GUID, 0, null,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
             false, true, CallEncryptionState.CLEAR, true,
@@ -1171,7 +1172,8 @@ class P25ActivityLogMapperTest
         AudioCallId callId = new AudioCallId(100, sequence, 1);
         CallLegId callLegId = CallLegId.from(callId);
         CallLegSource source = new CallLegSource(decoderType, "traffic-configuration", "Traffic Site", GUID,
-            aliasListId, siteIdentity, true);
+            aliasListId, siteIdentity,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), start, end,
             1, 1, start, end, false, true, CallEncryptionState.CLEAR, true,
             AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers), VoiceCallQuality.EMPTY,
