@@ -1999,8 +1999,8 @@ public class DMRDecoderState extends TimeslotDecoderState
         boolean encrypted = mCurrentCallEncrypted ||
             DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new DMRConventionalCallEvent(startTimestamp, endTimestamp,
-            channel.getConfigurationId(), channel.getRadresGuid(), channel.getName(), channel.getAliasListName(),
-            frequency, getTimeslot(), targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
+            channel.getConfigurationId(), frequency, getTimeslot(), targetKind, talkgroup, sourceRadio, targetRadio,
+            encrypted));
     }
 
     private static DMRConventionalCallEvent.TargetKind targetKind(DecodeEventType eventType)

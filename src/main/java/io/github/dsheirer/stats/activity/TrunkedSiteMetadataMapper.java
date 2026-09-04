@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.TrunkedSiteMetadataClassifier;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
@@ -47,9 +48,9 @@ final class TrunkedSiteMetadataMapper
         }
 
         Channel channel = event.channel();
-        String guid = blankToNull(channel.getRadresGuid());
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
-        if(guid == null)
+        if(configurationId == null)
         {
             return null;
         }
@@ -59,31 +60,25 @@ final class TrunkedSiteMetadataMapper
         Long primaryFrequency = primaryFrequency(channel);
         Long configuredCurrentControl = channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency ?
             null : primaryFrequency;
-        String configuredSystem = blankToNull(channel.getSystem());
-        String channelName = configuredSiteName(channel);
         Object structuralSnapshot = event.snapshot() instanceof DMRNetworkConfigurationSnapshot dmr ?
             dmr.withoutFreshness() : event.snapshot() instanceof NXDNNetworkConfigurationSnapshot nxdn ?
                 nxdn.withoutFreshness() : event.snapshot();
-        String hash = sha256(structuralSnapshot, configuredSystem, channelName, channel.getAliasListName(),
-            primaryFrequency);
+        String hash = sha256(structuralSnapshot, primaryFrequency);
 
         if(event.snapshot() instanceof DMRNetworkConfigurationSnapshot dmr)
         {
-            return mapDmr(observedAt, guid, hash, configuredSystem, channelName,
-                blankToNull(channel.getAliasListName()), primaryFrequency, configuredCurrentControl, dmr);
+            return mapDmr(observedAt, configurationId, hash, primaryFrequency, configuredCurrentControl, dmr);
         }
         else if(event.snapshot() instanceof NXDNNetworkConfigurationSnapshot nxdn)
         {
-            return mapNxdn(observedAt, guid, hash, configuredSystem, channelName,
-                blankToNull(channel.getAliasListName()), primaryFrequency, configuredCurrentControl, nxdn);
+            return mapNxdn(observedAt, configurationId, hash, primaryFrequency, configuredCurrentControl, nxdn);
         }
 
         return null;
     }
 
-    private static TrunkedSiteSchema.Snapshot mapDmr(long observedAt, String guid, String hash,
-                                                      String configuredSystem, String channelName,
-                                                      String aliasListName, Long primaryFrequency,
+    private static TrunkedSiteSchema.Snapshot mapDmr(long observedAt, String configurationId, String hash,
+                                                      Long primaryFrequency,
                                                       Long configuredCurrentControl,
                                                       DMRNetworkConfigurationSnapshot snapshot)
     {
@@ -143,17 +138,16 @@ final class TrunkedSiteMetadataMapper
             }
         }
 
-        return new TrunkedSiteSchema.Snapshot(observedAt, guid, hash, TrunkedSiteSchema.PROTOCOL_DMR,
-            dmrVariant(snapshot.variant()), modelCode != null ? modelCode : 0, configuredSystem, channelName,
-            aliasListName, snapshot.decoder(), snapshot.network(), null, snapshot.site(), null, modelCode,
+        return new TrunkedSiteSchema.Snapshot(observedAt, configurationId, hash, TrunkedSiteSchema.PROTOCOL_DMR,
+            dmrVariant(snapshot.variant()), modelCode != null ? modelCode : 0, snapshot.network(), null,
+            snapshot.site(), null, modelCode,
             dmrBrand(snapshot.brand()), dmrMode(snapshot.mode()), dmrChannelType(snapshot.channelType()),
             snapshot.colorCodeTimeslot1(), snapshot.colorCodeTimeslot2(), null, 0, null, primaryFrequency,
             configuredCurrentControl, channels, neighbors);
     }
 
-    private static TrunkedSiteSchema.Snapshot mapNxdn(long observedAt, String guid, String hash,
-                                                       String configuredSystem, String channelName,
-                                                       String aliasListName, Long primaryFrequency,
+    private static TrunkedSiteSchema.Snapshot mapNxdn(long observedAt, String configurationId, String hash,
+                                                       Long primaryFrequency,
                                                        Long configuredCurrentControl,
                                                        NXDNNetworkConfigurationSnapshot snapshot)
     {
@@ -227,9 +221,8 @@ final class TrunkedSiteMetadataMapper
                 observedAt(neighborObservedAt, observedAt)));
         }
 
-        return new TrunkedSiteSchema.Snapshot(observedAt, guid, hash, TrunkedSiteSchema.PROTOCOL_NXDN,
-            nxdnVariant(snapshot.variant()), identityDomain, configuredSystem, channelName, aliasListName,
-            snapshot.decoder(), network, system, site, snapshot.ran(), null, null,
+        return new TrunkedSiteSchema.Snapshot(observedAt, configurationId, hash, TrunkedSiteSchema.PROTOCOL_NXDN,
+            nxdnVariant(snapshot.variant()), identityDomain, network, system, site, snapshot.ran(), null, null,
             nxdnRepeaterMode(snapshot.repeaterStatus()), null, null, null, snapshot.currentRepeater(),
             nxdnServiceFlags(snapshot.services()),
             nxdnFailureCode(snapshot.failureStatus()), primaryFrequency, currentControl, channels, neighbors);

@@ -15,6 +15,7 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
@@ -391,26 +392,27 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     {
         ReceiverActivityWriter writer = getCollectionWriter();
 
-        if(snapshot != null && !snapshot.active() && snapshot.guid() != null)
+        if(snapshot != null && !snapshot.active() && snapshot.configurationId() != null)
         {
-            mObservedTrunkedSites.computeIfPresent(snapshot.guid(), (guid, evidence) ->
+            mObservedTrunkedSites.computeIfPresent(snapshot.configurationId(), (_, evidence) ->
                 evidence.channel() == snapshot.channel() ? null : evidence);
         }
 
-        TrunkedSiteEvidence evidence = snapshot != null && snapshot.guid() != null ?
-            mObservedTrunkedSites.get(snapshot.guid()) : null;
+        TrunkedSiteEvidence evidence = snapshot != null && snapshot.configurationId() != null ?
+            mObservedTrunkedSites.get(snapshot.configurationId()) : null;
         boolean observedTrunkedSite = hasCurrentTrunkedSiteEvidence(snapshot, evidence);
 
         if(evidence != null && !observedTrunkedSite)
         {
-            mObservedTrunkedSites.remove(snapshot.guid(), evidence);
+            mObservedTrunkedSites.remove(snapshot.configurationId(), evidence);
         }
 
         if(writer != null && shouldPersistControlChannelQuality(snapshot, observedTrunkedSite) &&
-            snapshot.active() && snapshot.guid() != null && !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
+            snapshot.active() && snapshot.configurationId() != null && !snapshot.configurationId().isBlank() &&
+                snapshot.frequencyHz() > 0)
         {
-            enqueueObservation(writer, new ReceiverActivityRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
-                snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
+            enqueueObservation(writer, new ReceiverActivityRecords.ControlChannelQuality(snapshot.observedAtMs(),
+                snapshot.configurationId(), snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
                 snapshot.minimumSignalDbfs(), snapshot.maximumSignalDbfs(), snapshot.decodeHealthPercent(),
                 snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
                 snapshot.droppedBits(), snapshot.lastValidDecodeMs()));
@@ -419,7 +421,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     /**
      * Requires metadata evidence from the same running channel and decoder configuration. Explicit DMR and NXDN modes
-     * are also checked so a conventional channel cannot inherit evidence through a reused GUID. The quality monitor's
+     * are also checked so a conventional channel cannot inherit evidence through a reused configuration UUID. The quality monitor's
      * inactive snapshot clears this evidence when the channel stops.
      */
     static boolean hasCurrentTrunkedSiteEvidence(ControlChannelQualitySnapshot snapshot,
@@ -1305,15 +1307,15 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         var snapshot = TrunkedSiteMetadataMapper.map(event);
         Channel channel = event != null ? event.channel() : null;
-        String guid = channel != null ? channel.getRadresGuid() : null;
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
         if(channel != null &&
             (channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isConventional() ||
                 channel.getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn && nxdn.isConventional()))
         {
-            if(guid != null && !guid.isBlank())
+            if(configurationId != null)
             {
-                mObservedTrunkedSites.remove(guid);
+                mObservedTrunkedSites.remove(configurationId);
             }
 
             return;
@@ -1321,9 +1323,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         if(snapshot != null)
         {
-            if(snapshot.guid() != null && !snapshot.guid().isBlank())
+            if(snapshot.configurationId() != null)
             {
-                mObservedTrunkedSites.put(snapshot.guid(),
+                mObservedTrunkedSites.put(snapshot.configurationId(),
                     new TrunkedSiteEvidence(channel,
                         channel != null ? channel.getDecodeConfiguration() : null, decoderType(channel)));
             }
@@ -1331,9 +1333,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             enqueueObservation(writer, new ReceiverActivityRecords.TrunkedSiteSnapshot(
                 snapshot.observedAtEpochMilliseconds(), snapshot));
         }
-        else if(guid != null && !guid.isBlank())
+        else if(configurationId != null)
         {
-            mObservedTrunkedSites.remove(guid);
+            mObservedTrunkedSites.remove(configurationId);
         }
     }
 
@@ -1397,7 +1399,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private boolean shouldLogTalkerAlias(ReceiverActivityRecords.TalkerAliasUpdate update)
     {
         long now = System.currentTimeMillis();
-        String key = String.join("|", "talker-alias", update.contextKey(), Integer.toString(update.radioId()),
+        String key = String.join("|", "talker-alias", update.configurationId(), Integer.toString(update.radioId()),
             update.talkerAlias(), update.identityDomain().name());
 
         synchronized(mRecentDedupeKeys)

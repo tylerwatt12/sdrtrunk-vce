@@ -1071,8 +1071,7 @@ public class NXDNDecoderState extends DecoderState
         long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
         boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new NXDNConventionalCallEvent(startTimestamp, endTimestamp,
-            mChannel.getConfigurationId(), mChannel.getRadresGuid(), mChannel.getName(), mChannel.getAliasListName(),
-            frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
+            mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
     }
 
     private static DecodeEventType callEventType(CallType callType, EncryptionKeyIdentifier encryption)

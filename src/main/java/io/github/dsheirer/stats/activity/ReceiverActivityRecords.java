@@ -30,7 +30,7 @@ final class ReceiverActivityRecords
     {
     }
 
-    enum ContextKind
+    enum ReceiverKind
     {
         TRUNKED_SITE,
         CONVENTIONAL_P25,
@@ -92,9 +92,9 @@ final class ReceiverActivityRecords
      * been grouped and one winner has been selected.  The process-local logical call id is used only for bounded
      * output idempotency and is never stored in SQLite.
      */
-    record ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String contextKey,
-                               String guid, String protocol, IdentityDomain identityDomain, Integer wacn, Integer systemId,
-                               long aliasListId, int destinationId, String destinationKind,
+    record ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String configurationId,
+                               String protocol, IdentityDomain identityDomain, Integer wacn, Integer systemId,
+                               int destinationId, String destinationKind,
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, boolean encrypted,
                                Integer encryptionAlgorithmId, Integer encryptionKeyId,
                                P25TargetIdentity p25TargetIdentity,
@@ -104,7 +104,8 @@ final class ReceiverActivityRecords
     {
         ResolvedLogicalCall
         {
-            if(logicalCallId == null || callStartEpochMilliseconds <= 0)
+            if(logicalCallId == null || callStartEpochMilliseconds <= 0 ||
+                configurationId == null || configurationId.isBlank())
             {
                 throw new IllegalArgumentException("Resolved logical call requires an id and start timestamp");
             }
@@ -305,20 +306,23 @@ final class ReceiverActivityRecords
         }
     }
 
-    record ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
+    record ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
                          String protocol, Action action, String eventType, String sourceRadioId, String targetId,
                          String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
                          Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
-                         String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
+                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                         String talkerAlias, boolean countedCall, String dedupeKey,
                          RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain,
                          P25TargetIdentity p25TargetIdentity,
-                         List<P25PatchMemberIdentity> p25PatchMemberIdentities, String aliasListName,
-                         boolean configuredMetadataObserved)
+                         List<P25PatchMemberIdentity> p25PatchMemberIdentities)
         implements ReceiverActivityRecord
     {
         ActivityEvent
         {
+            if(configurationId == null || configurationId.isBlank())
+            {
+                throw new IllegalArgumentException("Receiver activity requires a saved channel configuration ID");
+            }
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds,
                 positiveInteger(targetId));
             identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
@@ -327,87 +331,12 @@ final class ReceiverActivityRecords
                 patchMemberTalkgroupIds);
         }
 
-        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
-                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
-                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
-                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
-                      String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain,
-                      P25TargetIdentity p25TargetIdentity,
-                      List<P25PatchMemberIdentity> p25PatchMemberIdentities)
-        {
-            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
-                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
-                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain,
-                p25TargetIdentity, p25PatchMemberIdentities, null, false);
-        }
-
-        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
-                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
-                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
-                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
-                      String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain,
-                      P25TargetIdentity p25TargetIdentity)
-        {
-            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
-                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
-                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain,
-                p25TargetIdentity, List.of());
-        }
-
-        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
-                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
-                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
-                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
-                      String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain)
-        {
-            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
-                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
-                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain,
-                P25TargetIdentity.UNKNOWN);
-        }
-
-        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
-                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
-                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
-                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
-                      String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioPresenceUpdate radioPresenceUpdate)
-        {
-            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
-                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
-                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, IdentityDomain.STANDARD);
-        }
-
-        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
-                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
-                      String targetKind, Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
-                      Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
-                      Integer nac, Integer rfss, Integer site, String channelName, String decoder,
-                      String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioPresenceUpdate radioPresenceUpdate)
-        {
-            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
-                sourceRadioId, targetId, targetKind, List.of(), frequencyHertz, lcn, timeslot, encrypted,
-                encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName, decoder,
-                talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, IdentityDomain.STANDARD);
-        }
     }
 
     /**
      * One-time identity/encryption enrichment for an already-counted trunked call.
      */
-    record TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
+    record TrunkedCallAttribution(long callStartEpochMilliseconds, String configurationId,
                                   Long frequencyHertz, Integer timeslot,
                                   int destinationId, String destinationKind,
                                   List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
@@ -420,66 +349,15 @@ final class ReceiverActivityRecords
     {
         TrunkedCallAttribution
         {
+            if(configurationId == null || configurationId.isBlank())
+            {
+                throw new IllegalArgumentException("Call attribution requires a saved channel configuration ID");
+            }
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
             identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
             p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity : P25TargetIdentity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
-        }
-
-        TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
-                               Long frequencyHertz, Integer timeslot,
-                               int destinationId, String destinationKind,
-                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
-                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                               boolean destinationBecameKnown, boolean sourceBecameKnown,
-                               boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
-                               IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
-                destinationKind, patchMemberTalkgroupIds, sourceRadioId, encryptionAlgorithmId, encryptionKeyId,
-                destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation,
-                identityDomain, p25TargetIdentity, List.of());
-        }
-
-        TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
-                               Long frequencyHertz, Integer timeslot,
-                               int destinationId, String destinationKind,
-                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
-                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                               boolean destinationBecameKnown, boolean sourceBecameKnown,
-                               boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
-                               IdentityDomain identityDomain)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
-                destinationKind, patchMemberTalkgroupIds, sourceRadioId, encryptionAlgorithmId, encryptionKeyId,
-                destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation,
-                identityDomain, P25TargetIdentity.UNKNOWN);
-        }
-
-        TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
-                               Long frequencyHertz, Integer timeslot,
-                               int destinationId, String destinationKind,
-                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
-                               boolean destinationBecameKnown, boolean sourceBecameKnown,
-                               boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
-                               IdentityDomain identityDomain)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
-                destinationKind, patchMemberTalkgroupIds, sourceRadioId, null, null, destinationBecameKnown,
-                sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation, identityDomain);
-        }
-
-        TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
-                               Long frequencyHertz, Integer timeslot,
-                               int destinationId, String destinationKind,
-                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
-                               boolean destinationBecameKnown, boolean sourceBecameKnown,
-                               boolean encryptionBecameKnown, boolean encryptedBeforeObservation)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
-                destinationKind, patchMemberTalkgroupIds, sourceRadioId, null, null, destinationBecameKnown,
-                sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation, IdentityDomain.STANDARD);
         }
 
         boolean hasEncryptionDetails()
@@ -504,7 +382,7 @@ final class ReceiverActivityRecords
      * Confirmed service use for the durable site-channel inventory.  Activity events remain independent so a
      * candidate that is not yet confirmed never removes grant/call history.
      */
-    record ChannelFact(long observedAtEpochMilliseconds, String guid, String lcn, long frequencyHertz,
+    record ChannelFact(long observedAtEpochMilliseconds, String configurationId, String lcn, long frequencyHertz,
                        ChannelTag serviceTag, boolean tdma, int timeslots)
         implements ReceiverActivityRecord
     {
@@ -513,7 +391,7 @@ final class ReceiverActivityRecords
     /**
      * Late over-the-air talker alias update for an already-counted call.
      */
-    record TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
+    record TalkerAliasUpdate(long observedAtEpochMilliseconds, String configurationId, Integer wacn,
                              Integer systemId, int radioId, String talkerAlias, IdentityDomain identityDomain)
         implements ReceiverActivityRecord
     {
@@ -522,10 +400,10 @@ final class ReceiverActivityRecords
             identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
         }
 
-        TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
+        TalkerAliasUpdate(long observedAtEpochMilliseconds, String configurationId, Integer wacn,
                           Integer systemId, int radioId, String talkerAlias)
         {
-            this(observedAtEpochMilliseconds, contextKey, guid, wacn, systemId, radioId, talkerAlias,
+            this(observedAtEpochMilliseconds, configurationId, wacn, systemId, radioId, talkerAlias,
                 IdentityDomain.STANDARD);
         }
     }
@@ -537,7 +415,7 @@ final class ReceiverActivityRecords
      * {@code talkgroupId} component carries the numeric destination for radio/private calls too; targetKind controls
      * how that value is interpreted and keeps talkgroup-specific projections gated.
      */
-    record ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+    record ConventionalCallOutput(long callStartEpochMilliseconds, String configurationId,
                                Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                                IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity,
@@ -546,45 +424,15 @@ final class ReceiverActivityRecords
     {
         ConventionalCallOutput
         {
+            if(configurationId == null || configurationId.isBlank())
+            {
+                throw new IllegalArgumentException("Call output requires a saved channel configuration ID");
+            }
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, talkgroupId);
             identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
             p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity : P25TargetIdentity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
-        }
-
-        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
-                            Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
-                            List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
-                            IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
-                patchMemberTalkgroupIds, sourceRadioId, output, identityDomain, p25TargetIdentity, List.of());
-        }
-
-        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
-                            Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
-                            List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
-                            IdentityDomain identityDomain)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
-                patchMemberTalkgroupIds, sourceRadioId, output, identityDomain, P25TargetIdentity.UNKNOWN);
-        }
-
-        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
-                            Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
-                            List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
-                patchMemberTalkgroupIds, sourceRadioId, output, IdentityDomain.STANDARD);
-        }
-
-        ConventionalCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
-                            Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
-                            List<Integer> patchMemberTalkgroupIds, CallOutput output)
-        {
-            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
-                patchMemberTalkgroupIds, null, output, IdentityDomain.STANDARD);
         }
 
         int destinationId()
@@ -603,9 +451,8 @@ final class ReceiverActivityRecords
      * One completed conventional DMR call. This writer message always updates compact summaries and may also retain
      * one optional detailed row.
      */
-    record DmrConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String contextKey,
-                               String guid, String channelName, String aliasListName, long frequencyHertz,
-                               int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
+    record DmrConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String configurationId,
+                               long frequencyHertz, int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
                                Integer targetRadioId, boolean encrypted)
         implements ReceiverActivityRecord
     {
@@ -627,9 +474,8 @@ final class ReceiverActivityRecords
      * One completed conventional NXDN call. This writer message always updates compact conventional summaries and
      * may also retain one optional detailed row.
      */
-    record NxdnConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String contextKey,
-                                String guid, String channelName, String aliasListName, long frequencyHertz,
-                                NxdnTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
+    record NxdnConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String configurationId,
+                                long frequencyHertz, NxdnTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
                                 Integer targetRadioId, boolean encrypted)
         implements ReceiverActivityRecord
     {
@@ -714,8 +560,8 @@ final class ReceiverActivityRecords
         }
     }
 
-    record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,
-                        String protocol, String channelName, String aliasListName, String decoder,
+    record SiteSnapshot(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                        String snapshotHash, String protocol,
                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
                         Integer lra, Boolean activeRfssNetworkConnection, Boolean tdma,
                         P25NetworkConfigurationSnapshot.SiteStatus siteStatus,
@@ -727,9 +573,16 @@ final class ReceiverActivityRecords
                         List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignSystemBands)
         implements ReceiverActivityRecord
     {
+        SiteSnapshot
+        {
+            if(observedAtEpochMilliseconds <= 0 || configurationId == null || configurationId.isBlank())
+            {
+                throw new IllegalArgumentException("Site snapshot requires a saved channel configuration ID");
+            }
+        }
     }
 
-    record ControlChannelQuality(long observedAtEpochMilliseconds, String guid, long frequencyHertz,
+    record ControlChannelQuality(long observedAtEpochMilliseconds, String configurationId, long frequencyHertz,
                                  Double signalDbfs, Double averageSignalDbfs, Double minimumSignalDbfs,
                                  Double maximumSignalDbfs, Double decodeHealthPercent, long validFrames,
                                  long invalidFrames, long correctedBits, long syncLossBits, long droppedBits,
@@ -738,7 +591,8 @@ final class ReceiverActivityRecords
     {
         ControlChannelQuality
         {
-            if(observedAtEpochMilliseconds <= 0 || guid == null || guid.isBlank() || frequencyHertz <= 0 ||
+            if(observedAtEpochMilliseconds <= 0 || configurationId == null || configurationId.isBlank() ||
+                frequencyHertz <= 0 ||
                 validFrames < 0 || invalidFrames < 0 || correctedBits < 0 || syncLossBits < 0 || droppedBits < 0 ||
                 lastValidDecodeMs < 0 || decodeHealthPercent != null &&
                     (!Double.isFinite(decodeHealthPercent) || decodeHealthPercent < 0.0 ||

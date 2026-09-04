@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.configuration.channel;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.Editor;
@@ -862,15 +863,16 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private void clearSiteStatistics()
     {
         Channel channel = getItem();
-        String guid = channel != null ? channel.getRadresGuid() : null;
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
-        if(channel == null || channel.isProcessing() || guid == null || guid.isBlank())
+        if(channel == null || channel.isProcessing() || configurationId == null)
         {
             updateClearSiteStatisticsButtonState();
             return;
         }
 
-        String siteName = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : guid;
+        String siteName = channel.getName() != null && !channel.getName().isBlank() ?
+            channel.getName() : configurationId;
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
             "Delete this site's learned channels, frequencies, neighbors, activity history, snapshots, and signal " +
                 "quality history?\n\nOther sites, shared system-wide radio/talkgroup summaries, and administrator " +
@@ -894,7 +896,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         mSiteStatisticsMaintenanceRunning = true;
         getClearSiteStatisticsButton().setText("Clearing Site Statistics...");
         getClearSiteStatisticsButton().setDisable(true);
-        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearSite(guid);
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearSite(configurationId);
         MyEventBus.getGlobalEventBus().post(request);
 
         request.result().whenComplete((maintenanceResult, throwable) -> Platform.runLater(() -> {
@@ -930,11 +932,11 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         boolean supported = getDecoderType() == DecoderType.P25_PHASE1 || getDecoderType() == DecoderType.P25_PHASE2 ||
             getDecoderType() == DecoderType.DMR || getDecoderType() == DecoderType.NXDN;
         Channel channel = getItem();
-        String guid = channel != null ? channel.getRadresGuid() : null;
+        String configurationId = ChannelConfigurationKey.configured(channel);
         getClearSiteStatisticsButton().setVisible(supported);
         getClearSiteStatisticsButton().setManaged(supported);
         getClearSiteStatisticsButton().setDisable(mSiteStatisticsMaintenanceRunning || !supported || channel == null ||
-            channel.isProcessing() || guid == null || guid.isBlank());
+            channel.isProcessing() || configurationId == null);
     }
 
     private void initOwner(Alert alert)

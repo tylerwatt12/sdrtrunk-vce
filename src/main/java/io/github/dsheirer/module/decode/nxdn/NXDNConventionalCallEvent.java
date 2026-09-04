@@ -17,9 +17,8 @@ package io.github.dsheirer.module.decode.nxdn;
  * that call closes so downstream statistics can count it without time-window deduplication.</p>
  */
 public record NXDNConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
-                                        String guid, String channelName, String aliasListName, long frequencyHertz,
-                                        TargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
-                                        Integer targetRadioId, boolean encrypted)
+                                        long frequencyHertz, TargetKind targetKind, Integer talkgroupId,
+                                        Integer sourceRadioId, Integer targetRadioId, boolean encrypted)
 {
     public enum TargetKind
     {

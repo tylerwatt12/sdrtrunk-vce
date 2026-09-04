@@ -519,7 +519,8 @@ class ReceiverActivityWriter implements AutoCloseable
 
                 if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS)
                 {
-                    result = ReceiverActivityMaintenance.clearSiteStats(connection, mDatabasePath, request.siteGuid());
+                    result = ReceiverActivityMaintenance.clearSiteStats(connection, mDatabasePath,
+                        request.configurationId());
                 }
                 else
                 {
@@ -808,7 +809,7 @@ class ReceiverActivityWriter implements AutoCloseable
                         connection, trunkedSiteSnapshot.snapshot()) &&
                         TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot(), childRetentionCutoff))
                     {
-                        ReceiverActivitySchema.ensureTrunkedSiteIdentityScope(connection,
+                        ReceiverActivitySchema.ensureTrunkedSiteRadioSystem(connection,
                             trunkedSiteSnapshot.snapshot());
                     }
                     writtenRecords++;

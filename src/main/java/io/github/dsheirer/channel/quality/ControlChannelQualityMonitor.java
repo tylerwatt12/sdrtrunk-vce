@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel.quality;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.message.DroppedSamplesMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageListener;
@@ -57,7 +58,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     private static final Thread PUBLICATION_WORKER = startPublicationWorker();
 
     private final Channel mChannel;
-    private final String mGuid;
+    private final String mConfigurationId;
     private final Consumer<ControlChannelQualitySnapshot> mConsumer;
     private final DecoderType mDecoderType;
     private final boolean mIgnoreDmrCrcChecksums;
@@ -123,7 +124,8 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
                                         Consumer<ControlChannelQualitySnapshot> consumer)
     {
         mChannel = channel;
-        mGuid = channel != null && channel.isStandardChannel() ? channel.getRadresGuid() : null;
+        mConfigurationId = channel != null && channel.isStandardChannel() ?
+            ChannelConfigurationKey.configured(channel) : null;
         mFrequency = initialFrequency;
         mConsumer = consumer;
         mDecoderType = channel != null && channel.getDecodeConfiguration() != null ?
@@ -364,7 +366,8 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         Double min = powerCount > 0 ? minimum : null;
         Double max = powerCount > 0 ? maximum : null;
         Double current = Double.isFinite(mSignalDbfs) ? mSignalDbfs : null;
-        ControlChannelQualitySnapshot snapshot = new ControlChannelQualitySnapshot(mChannel, mGuid, mFrequency, now,
+        ControlChannelQualitySnapshot snapshot = new ControlChannelQualitySnapshot(mChannel, mConfigurationId,
+            mFrequency, now,
             active, current, average, min, max, health, valid, invalid, corrected, syncLoss, dropped,
             mLastValidDecode);
         return new SnapshotPublication(snapshot, mStateGeneration, mLifecycleGeneration);

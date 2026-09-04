@@ -22,7 +22,7 @@ package io.github.dsheirer.channel.quality;
 import java.util.OptionalDouble;
 
 /**
- * Supplies the most recent usable control-channel decode health for a stable configured site identity.
+ * Supplies the most recent usable control-channel decode health for a saved channel configuration.
  *
  * <p>Implementations used by the audio-call coordinator must be an in-memory lookup. They must not perform database,
  * network, filesystem, or other blocking work on the coordinator thread.</p>
@@ -33,10 +33,10 @@ public interface ControlChannelQualityProvider
     ControlChannelQualityProvider NONE = _ -> OptionalDouble.empty();
 
     /**
-     * Gets fresh, active control-channel decode health for the supplied stable site identity.
+     * Gets fresh, active control-channel decode health for the supplied saved channel.
      *
-     * @param stableSiteIdentity stable configured site identity
+     * @param configurationId canonical saved channel UUID
      * @return decode health from 0 through 100, or empty when the site is inactive, stale, or unknown
      */
-    OptionalDouble getDecodeHealthPercent(String stableSiteIdentity);
+    OptionalDouble getDecodeHealthPercent(String configurationId);
 }

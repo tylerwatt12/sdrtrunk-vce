@@ -26,7 +26,7 @@ final class StatsApiV1Payload
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> INTERNAL_FIELDS = Set.of(
-        "scope_id", "context_id", "system_key", "p25_system_key", "resolved_system_key", "site_type",
+        "radio_system_id", "channel_id", "system_key", "p25_system_key", "resolved_system_key", "site_type",
         "protocol_code",
         "scope_kind_code", "variant_code",
         "identity_domain_code", "identity_kind_code", "target_kind_code", "last_talkgroup_kind_code",
@@ -87,7 +87,7 @@ final class StatsApiV1Payload
         boolean siteRecord = !identityRecord && (source.has("variant_code") || source.has("guid")) &&
             (source.has("site_id") || source.has("ran") || source.has("rfss") || source.has("site"));
         boolean protocolRecord = source.has("protocol_code") || source.has("protocol") || identityRecord ||
-            siteRecord || source.has("scope_token") || source.has("context_key");
+            siteRecord || source.has("system_key") || source.has("configuration_id");
         ObjectNode presented = OBJECT_MAPPER.createObjectNode();
         Iterator<Map.Entry<String,JsonNode>> fields = source.fields();
 
@@ -189,7 +189,7 @@ final class StatsApiV1Payload
 
         if(source.get("identity_domain_code") instanceof JsonNode domain && domain.isNumber())
         {
-            if(identityRecord || !siteRecord && source.has("scope_token"))
+            if(identityRecord || !siteRecord && source.has("system_key"))
             {
                 String addressDomain = protocol.addressDomain(domain.longValue());
                 presented.put("address_domain", addressDomain);

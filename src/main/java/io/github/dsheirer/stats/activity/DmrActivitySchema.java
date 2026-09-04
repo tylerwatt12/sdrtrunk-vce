@@ -11,7 +11,6 @@
 
 package io.github.dsheirer.stats.activity;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -26,38 +25,36 @@ import java.util.TreeMap;
 /**
  * Compact, retention-bound identity summaries for conventional DMR calls.
  *
- * <p>Identity is scoped to the configured receiver context, RF carrier, and timeslot. This prevents the same numeric
+ * <p>Identity is keyed by the saved channel, RF carrier, and timeslot. This prevents the same numeric
  * talkgroup or radio on unrelated repeaters from being merged. Call observations are aggregated directly and are
  * never retained as an append-only baseline.</p>
  */
 public final class DmrActivitySchema
 {
-    public static final int SCHEMA_VERSION = 1;
-    public static final String SCHEMA_VERSION_KEY = "dmr_activity_schema_version";
     public static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
-    public static final int MAXIMUM_TALKGROUPS_PER_CONTEXT = 4_096;
-    public static final int MAXIMUM_RADIOS_PER_CONTEXT = 32_768;
+    public static final int MAXIMUM_TALKGROUPS_PER_CHANNEL = 4_096;
+    public static final int MAXIMUM_RADIOS_PER_CHANNEL = 32_768;
     public static final int MAXIMUM_DMR_ID = 0xFFFFFF;
     public static final String TALKGROUP_TABLE = "dmr_conventional_talkgroup_summary";
     public static final String RADIO_TABLE = "dmr_conventional_radio_summary";
     public static final String TALKGROUP_RETENTION_INDEX = "idx_dmr_conventional_talkgroup_last_seen";
     public static final String RADIO_RETENTION_INDEX = "idx_dmr_conventional_radio_last_seen";
-    public static final String TALKGROUP_CONTEXT_INDEX = "idx_dmr_conventional_talkgroup_context";
-    public static final String RADIO_CONTEXT_INDEX = "idx_dmr_conventional_radio_context";
+    public static final String TALKGROUP_RECEIVER_INDEX = "idx_dmr_conventional_talkgroup_channel";
+    public static final String RADIO_RECEIVER_INDEX = "idx_dmr_conventional_radio_channel";
 
     private static final List<SqliteSchemaValidator.Table> TABLES = List.of(
         new SqliteSchemaValidator.Table(TALKGROUP_TABLE,
-            "context_id", "frequency_hz", "timeslot", "talkgroup_id", "first_seen_ms", "last_seen_ms",
+            "channel_id", "frequency_hz", "timeslot", "talkgroup_id", "first_seen_ms", "last_seen_ms",
             "call_count", "encrypted_count", "last_source_radio_id"),
         new SqliteSchemaValidator.Table(RADIO_TABLE,
-            "context_id", "frequency_hz", "timeslot", "radio_id", "first_seen_ms", "last_seen_ms",
+            "channel_id", "frequency_hz", "timeslot", "radio_id", "first_seen_ms", "last_seen_ms",
             "call_count", "source_call_count", "target_call_count", "group_call_count", "private_call_count",
             "encrypted_count", "last_talkgroup_id", "last_peer_radio_id")
     );
     private static final List<String> INDEXES = List.of(
-        TALKGROUP_RETENTION_INDEX, RADIO_RETENTION_INDEX, TALKGROUP_CONTEXT_INDEX, RADIO_CONTEXT_INDEX);
+        TALKGROUP_RETENTION_INDEX, RADIO_RETENTION_INDEX, TALKGROUP_RECEIVER_INDEX, RADIO_RECEIVER_INDEX);
     private static final List<ColumnDefinition> TALKGROUP_COLUMNS = List.of(
-        column("context_id", "INTEGER", true, null, 1),
+        column("channel_id", "INTEGER", true, null, 1),
         column("frequency_hz", "INTEGER", true, null, 2),
         column("timeslot", "INTEGER", true, null, 3),
         column("talkgroup_id", "INTEGER", true, null, 4),
@@ -67,7 +64,7 @@ public final class DmrActivitySchema
         column("encrypted_count", "INTEGER", true, "0", 0),
         column("last_source_radio_id", "INTEGER", false, null, 0));
     private static final List<ColumnDefinition> RADIO_COLUMNS = List.of(
-        column("context_id", "INTEGER", true, null, 1),
+        column("channel_id", "INTEGER", true, null, 1),
         column("frequency_hz", "INTEGER", true, null, 2),
         column("timeslot", "INTEGER", true, null, 3),
         column("radio_id", "INTEGER", true, null, 4),
@@ -116,7 +113,7 @@ public final class DmrActivitySchema
         {
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS dmr_conventional_talkgroup_summary (
-                    context_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
                     frequency_hz INTEGER NOT NULL,
                     timeslot INTEGER NOT NULL,
                     talkgroup_id INTEGER NOT NULL,
@@ -125,8 +122,8 @@ public final class DmrActivitySchema
                     call_count INTEGER NOT NULL DEFAULT 0,
                     encrypted_count INTEGER NOT NULL DEFAULT 0,
                     last_source_radio_id INTEGER,
-                    PRIMARY KEY(context_id, frequency_hz, timeslot, talkgroup_id),
-                    FOREIGN KEY(context_id) REFERENCES receiver_context(id) ON DELETE CASCADE,
+                    PRIMARY KEY(channel_id, frequency_hz, timeslot, talkgroup_id),
+                    FOREIGN KEY(channel_id) REFERENCES receiver_channel(id) ON DELETE CASCADE,
                     CHECK(frequency_hz > 0),
                     CHECK(timeslot IN (1, 2)),
                     CHECK(talkgroup_id BETWEEN 1 AND 16777215),
@@ -139,7 +136,7 @@ public final class DmrActivitySchema
                 """);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS dmr_conventional_radio_summary (
-                    context_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
                     frequency_hz INTEGER NOT NULL,
                     timeslot INTEGER NOT NULL,
                     radio_id INTEGER NOT NULL,
@@ -153,8 +150,8 @@ public final class DmrActivitySchema
                     encrypted_count INTEGER NOT NULL DEFAULT 0,
                     last_talkgroup_id INTEGER,
                     last_peer_radio_id INTEGER,
-                    PRIMARY KEY(context_id, frequency_hz, timeslot, radio_id),
-                    FOREIGN KEY(context_id) REFERENCES receiver_context(id) ON DELETE CASCADE,
+                    PRIMARY KEY(channel_id, frequency_hz, timeslot, radio_id),
+                    FOREIGN KEY(channel_id) REFERENCES receiver_channel(id) ON DELETE CASCADE,
                     CHECK(frequency_hz > 0),
                     CHECK(timeslot IN (1, 2)),
                     CHECK(radio_id BETWEEN 1 AND 16777215),
@@ -172,26 +169,25 @@ public final class DmrActivitySchema
             statement.executeUpdate("""
                 CREATE INDEX IF NOT EXISTS idx_dmr_conventional_talkgroup_last_seen
                 ON dmr_conventional_talkgroup_summary(
-                    last_seen_ms, context_id, frequency_hz, timeslot, talkgroup_id)
+                    last_seen_ms, channel_id, frequency_hz, timeslot, talkgroup_id)
                 """);
             statement.executeUpdate("""
                 CREATE INDEX IF NOT EXISTS idx_dmr_conventional_radio_last_seen
                 ON dmr_conventional_radio_summary(
-                    last_seen_ms, context_id, frequency_hz, timeslot, radio_id)
+                    last_seen_ms, channel_id, frequency_hz, timeslot, radio_id)
                 """);
             statement.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_dmr_conventional_talkgroup_context
+                CREATE INDEX IF NOT EXISTS idx_dmr_conventional_talkgroup_channel
                 ON dmr_conventional_talkgroup_summary(
-                    context_id, last_seen_ms DESC, frequency_hz, timeslot, talkgroup_id)
+                    channel_id, last_seen_ms DESC, frequency_hz, timeslot, talkgroup_id)
                 """);
             statement.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_dmr_conventional_radio_context
+                CREATE INDEX IF NOT EXISTS idx_dmr_conventional_radio_channel
                 ON dmr_conventional_radio_summary(
-                    context_id, last_seen_ms DESC, frequency_hz, timeslot, radio_id)
+                    channel_id, last_seen_ms DESC, frequency_hz, timeslot, radio_id)
                 """);
         }
 
-        SdrTrunkDatabaseStartup.setMetadata(connection, SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION));
     }
 
     /**
@@ -199,39 +195,38 @@ public final class DmrActivitySchema
      */
     public static void validate(Connection connection) throws SQLException
     {
-        SqliteSchemaValidator.validate(connection, TABLES, INDEXES, List.of(),
-            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION))));
+        SqliteSchemaValidator.validate(connection, TABLES, INDEXES, List.of(), List.of());
         validateTableDefinition(connection, TALKGROUP_TABLE, TALKGROUP_COLUMNS, TALKGROUP_CHECKS);
         validateTableDefinition(connection, RADIO_TABLE, RADIO_COLUMNS, RADIO_CHECKS);
         validatePrimaryKey(connection, TALKGROUP_TABLE,
-            List.of("context_id", "frequency_hz", "timeslot", "talkgroup_id"));
+            List.of("channel_id", "frequency_hz", "timeslot", "talkgroup_id"));
         validatePrimaryKey(connection, RADIO_TABLE,
-            List.of("context_id", "frequency_hz", "timeslot", "radio_id"));
+            List.of("channel_id", "frequency_hz", "timeslot", "radio_id"));
         validateForeignKey(connection, TALKGROUP_TABLE);
         validateForeignKey(connection, RADIO_TABLE);
         validateIndex(connection, TALKGROUP_TABLE, TALKGROUP_RETENTION_INDEX,
-            indexes("last_seen_ms", "context_id", "frequency_hz", "timeslot", "talkgroup_id"));
+            indexes("last_seen_ms", "channel_id", "frequency_hz", "timeslot", "talkgroup_id"));
         validateIndex(connection, RADIO_TABLE, RADIO_RETENTION_INDEX,
-            indexes("last_seen_ms", "context_id", "frequency_hz", "timeslot", "radio_id"));
-        validateIndex(connection, TALKGROUP_TABLE, TALKGROUP_CONTEXT_INDEX, List.of(
-            index("context_id", false), index("last_seen_ms", true), index("frequency_hz", false),
+            indexes("last_seen_ms", "channel_id", "frequency_hz", "timeslot", "radio_id"));
+        validateIndex(connection, TALKGROUP_TABLE, TALKGROUP_RECEIVER_INDEX, List.of(
+            index("channel_id", false), index("last_seen_ms", true), index("frequency_hz", false),
             index("timeslot", false), index("talkgroup_id", false)));
-        validateIndex(connection, RADIO_TABLE, RADIO_CONTEXT_INDEX, List.of(
-            index("context_id", false), index("last_seen_ms", true), index("frequency_hz", false),
+        validateIndex(connection, RADIO_TABLE, RADIO_RECEIVER_INDEX, List.of(
+            index("channel_id", false), index("last_seen_ms", true), index("frequency_hz", false),
             index("timeslot", false), index("radio_id", false)));
     }
 
-    static void recordCompletedCall(Connection connection, int contextId,
+    static void recordCompletedCall(Connection connection, int channelId,
                                     ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
-        requireValid(contextId, call);
+        requireValid(channelId, call);
         long timestamp = call.callEndEpochMilliseconds();
 
         if(call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP && positive(call.talkgroupId()) != null)
         {
-            if(canAdmitTalkgroup(connection, contextId, call))
+            if(canAdmitTalkgroup(connection, channelId, call))
             {
-                upsertTalkgroup(connection, contextId, call, timestamp);
+                upsertTalkgroup(connection, channelId, call, timestamp);
             }
         }
 
@@ -241,26 +236,26 @@ public final class DmrActivitySchema
 
         if(sourceRadio != null && sourceRadio.equals(targetRadio))
         {
-            if(canAdmitRadio(connection, contextId, call, sourceRadio))
+            if(canAdmitRadio(connection, channelId, call, sourceRadio))
             {
-                upsertRadio(connection, contextId, call, sourceRadio, true, true, timestamp);
+                upsertRadio(connection, channelId, call, sourceRadio, true, true, timestamp);
             }
         }
         else
         {
             if(sourceRadio != null)
             {
-                if(canAdmitRadio(connection, contextId, call, sourceRadio))
+                if(canAdmitRadio(connection, channelId, call, sourceRadio))
                 {
-                    upsertRadio(connection, contextId, call, sourceRadio, true, false, timestamp);
+                    upsertRadio(connection, channelId, call, sourceRadio, true, false, timestamp);
                 }
             }
 
             if(targetRadio != null)
             {
-                if(canAdmitRadio(connection, contextId, call, targetRadio))
+                if(canAdmitRadio(connection, channelId, call, targetRadio))
                 {
-                    upsertRadio(connection, contextId, call, targetRadio, false, true, timestamp);
+                    upsertRadio(connection, channelId, call, targetRadio, false, true, timestamp);
                 }
             }
         }
@@ -268,7 +263,8 @@ public final class DmrActivitySchema
 
     static void validateCompletedCall(ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
-        if(call == null || !ReceiverContextKey.isConventional(call.contextKey()) || call.frequencyHertz() <= 0 ||
+        if(call == null || call.configurationId() == null || call.configurationId().isBlank() ||
+            call.frequencyHertz() <= 0 ||
             (call.timeslot() != 1 && call.timeslot() != 2) || call.callStartEpochMilliseconds() <= 0 ||
             call.callEndEpochMilliseconds() < call.callStartEpochMilliseconds() || call.targetKind() == null ||
             invalidIdentity(call.talkgroupId()) || invalidIdentity(call.sourceRadioId()) ||
@@ -283,21 +279,21 @@ public final class DmrActivitySchema
     {
         int talkgroups = deleteAllBatches(connection, """
             DELETE FROM dmr_conventional_talkgroup_summary
-            WHERE (context_id, frequency_hz, timeslot, talkgroup_id) IN (
-                SELECT context_id, frequency_hz, timeslot, talkgroup_id
+            WHERE (channel_id, frequency_hz, timeslot, talkgroup_id) IN (
+                SELECT channel_id, frequency_hz, timeslot, talkgroup_id
                 FROM dmr_conventional_talkgroup_summary INDEXED BY idx_dmr_conventional_talkgroup_last_seen
                 WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, context_id, frequency_hz, timeslot, talkgroup_id
+                ORDER BY last_seen_ms, channel_id, frequency_hz, timeslot, talkgroup_id
                 LIMIT ?
             )
             """, cutoffEpochMilliseconds);
         int radios = deleteAllBatches(connection, """
             DELETE FROM dmr_conventional_radio_summary
-            WHERE (context_id, frequency_hz, timeslot, radio_id) IN (
-                SELECT context_id, frequency_hz, timeslot, radio_id
+            WHERE (channel_id, frequency_hz, timeslot, radio_id) IN (
+                SELECT channel_id, frequency_hz, timeslot, radio_id
                 FROM dmr_conventional_radio_summary INDEXED BY idx_dmr_conventional_radio_last_seen
                 WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, context_id, frequency_hz, timeslot, radio_id
+                ORDER BY last_seen_ms, channel_id, frequency_hz, timeslot, radio_id
                 LIMIT ?
             )
             """, cutoffEpochMilliseconds);
@@ -313,9 +309,9 @@ public final class DmrActivitySchema
         }
     }
 
-    public static int clearSiteStats(Connection connection, String guid) throws SQLException
+    public static int clearChannelStats(Connection connection, String configurationId) throws SQLException
     {
-        if(guid == null || guid.isBlank())
+        if(configurationId == null || configurationId.isBlank())
         {
             return 0;
         }
@@ -326,10 +322,10 @@ public final class DmrActivitySchema
         {
             try(PreparedStatement statement = connection.prepareStatement("""
                 DELETE FROM %s
-                WHERE context_id IN (SELECT id FROM receiver_context WHERE guid = ?)
+                WHERE channel_id IN (SELECT id FROM receiver_channel WHERE configuration_id = ?)
                 """.formatted(table)))
             {
-                statement.setString(1, guid);
+                statement.setString(1, configurationId);
                 deleted = Math.addExact(deleted, statement.executeUpdate());
             }
         }
@@ -337,16 +333,16 @@ public final class DmrActivitySchema
         return deleted;
     }
 
-    private static void upsertTalkgroup(Connection connection, int contextId,
+    private static void upsertTalkgroup(Connection connection, int channelId,
                                         ReceiverActivityRecords.DmrConventionalCall call, long timestamp)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO dmr_conventional_talkgroup_summary (
-                context_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms, last_seen_ms, call_count,
+                channel_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms, last_seen_ms, call_count,
                 encrypted_count, last_source_radio_id
             ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-            ON CONFLICT(context_id, frequency_hz, timeslot, talkgroup_id) DO UPDATE SET
+            ON CONFLICT(channel_id, frequency_hz, timeslot, talkgroup_id) DO UPDATE SET
                 first_seen_ms = min(dmr_conventional_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(dmr_conventional_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
                 call_count = dmr_conventional_talkgroup_summary.call_count + 1,
@@ -357,7 +353,7 @@ public final class DmrActivitySchema
                     ELSE dmr_conventional_talkgroup_summary.last_source_radio_id END
             """))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, call.talkgroupId());
@@ -369,7 +365,7 @@ public final class DmrActivitySchema
         }
     }
 
-    private static void upsertRadio(Connection connection, int contextId,
+    private static void upsertRadio(Connection connection, int channelId,
                                     ReceiverActivityRecords.DmrConventionalCall call, int radioId,
                                     boolean source, boolean target, long timestamp) throws SQLException
     {
@@ -381,11 +377,11 @@ public final class DmrActivitySchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO dmr_conventional_radio_summary (
-                context_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms, call_count,
+                channel_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms, call_count,
                 source_call_count, target_call_count, group_call_count, private_call_count, encrypted_count,
                 last_talkgroup_id, last_peer_radio_id
             ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(context_id, frequency_hz, timeslot, radio_id) DO UPDATE SET
+            ON CONFLICT(channel_id, frequency_hz, timeslot, radio_id) DO UPDATE SET
                 first_seen_ms = min(dmr_conventional_radio_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(dmr_conventional_radio_summary.last_seen_ms, excluded.last_seen_ms),
                 call_count = dmr_conventional_radio_summary.call_count + 1,
@@ -406,7 +402,7 @@ public final class DmrActivitySchema
                     ELSE dmr_conventional_radio_summary.last_peer_radio_id END
             """))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, radioId);
@@ -423,15 +419,15 @@ public final class DmrActivitySchema
         }
     }
 
-    private static boolean canAdmitTalkgroup(Connection connection, int contextId,
+    private static boolean canAdmitTalkgroup(Connection connection, int channelId,
                                              ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1 FROM dmr_conventional_talkgroup_summary
-            WHERE context_id = ? AND frequency_hz = ? AND timeslot = ? AND talkgroup_id = ?
+            WHERE channel_id = ? AND frequency_hz = ? AND timeslot = ? AND talkgroup_id = ?
             """))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, call.talkgroupId());
@@ -445,19 +441,19 @@ public final class DmrActivitySchema
             }
         }
 
-        return contextRowCountBelow(connection, TALKGROUP_TABLE, contextId, MAXIMUM_TALKGROUPS_PER_CONTEXT);
+        return channelRowCountBelow(connection, TALKGROUP_TABLE, channelId, MAXIMUM_TALKGROUPS_PER_CHANNEL);
     }
 
-    private static boolean canAdmitRadio(Connection connection, int contextId,
+    private static boolean canAdmitRadio(Connection connection, int channelId,
                                          ReceiverActivityRecords.DmrConventionalCall call, int radioId)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1 FROM dmr_conventional_radio_summary
-            WHERE context_id = ? AND frequency_hz = ? AND timeslot = ? AND radio_id = ?
+            WHERE channel_id = ? AND frequency_hz = ? AND timeslot = ? AND radio_id = ?
             """))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
             statement.setLong(2, call.frequencyHertz());
             statement.setInt(3, call.timeslot());
             statement.setInt(4, radioId);
@@ -471,16 +467,16 @@ public final class DmrActivitySchema
             }
         }
 
-        return contextRowCountBelow(connection, RADIO_TABLE, contextId, MAXIMUM_RADIOS_PER_CONTEXT);
+        return channelRowCountBelow(connection, RADIO_TABLE, channelId, MAXIMUM_RADIOS_PER_CHANNEL);
     }
 
-    private static boolean contextRowCountBelow(Connection connection, String table, int contextId, int maximumRows)
+    private static boolean channelRowCountBelow(Connection connection, String table, int channelId, int maximumRows)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT count(*) FROM " + table + " WHERE context_id = ?"))
+            "SELECT count(*) FROM " + table + " WHERE channel_id = ?"))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -489,14 +485,14 @@ public final class DmrActivitySchema
         }
     }
 
-    private static void requireValid(int contextId, ReceiverActivityRecords.DmrConventionalCall call)
+    private static void requireValid(int channelId, ReceiverActivityRecords.DmrConventionalCall call)
         throws SQLException
     {
         validateCompletedCall(call);
 
-        if(contextId <= 0)
+        if(channelId <= 0)
         {
-            throw new SQLException("Invalid conventional DMR receiver context");
+            throw new SQLException("Invalid conventional DMR receiver channel");
         }
     }
 
@@ -634,8 +630,8 @@ public final class DmrActivitySchema
         {
             while(resultSet.next())
             {
-                if("receiver_context".equals(resultSet.getString("table")) &&
-                    "context_id".equals(resultSet.getString("from")) &&
+                if("receiver_channel".equals(resultSet.getString("table")) &&
+                    "channel_id".equals(resultSet.getString("from")) &&
                     "id".equals(resultSet.getString("to")) &&
                     "CASCADE".equalsIgnoreCase(resultSet.getString("on_delete")))
                 {
@@ -646,7 +642,7 @@ public final class DmrActivitySchema
 
         if(!found)
         {
-            throw new SQLException("SQLite schema has incorrect receiver-context foreign key for [" + table + "]");
+            throw new SQLException("SQLite schema has incorrect receiver-channel foreign key for [" + table + "]");
         }
     }
 

@@ -16,6 +16,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -69,12 +70,9 @@ class ReceiverActivityMapper
             return null;
         }
 
-        String guid = blankToNull(event.guid());
-        String configurationId = blankToNull(event.channelConfigurationId());
-        String channelName = blankToNull(event.channelName());
-        String contextKey = ReceiverContextKey.conventional(configurationId);
+        String configurationId = ChannelConfigurationKey.canonical(event.channelConfigurationId());
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
@@ -100,7 +98,7 @@ class ReceiverActivityMapper
         }
 
         return new ReceiverActivityRecords.DmrConventionalCall(event.startTimestamp(), event.endTimestamp(),
-            contextKey, guid, channelName, blankToNull(event.aliasListName()), event.frequencyHertz(),
+            configurationId, event.frequencyHertz(),
             event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
     }
 
@@ -112,12 +110,9 @@ class ReceiverActivityMapper
             return null;
         }
 
-        String guid = blankToNull(event.guid());
-        String configurationId = blankToNull(event.channelConfigurationId());
-        String channelName = blankToNull(event.channelName());
-        String contextKey = ReceiverContextKey.conventional(configurationId);
+        String configurationId = ChannelConfigurationKey.canonical(event.channelConfigurationId());
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
@@ -142,7 +137,7 @@ class ReceiverActivityMapper
         }
 
         return new ReceiverActivityRecords.NxdnConventionalCall(event.startTimestamp(), event.endTimestamp(),
-            contextKey, guid, channelName, blankToNull(event.aliasListName()), event.frequencyHertz(),
+            configurationId, event.frequencyHertz(),
             targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
     }
 
@@ -172,17 +167,15 @@ class ReceiverActivityMapper
         }
 
         IdentifierFacts facts = IdentifierFacts.from(event.identifiers());
-        String guid = firstNonBlank(event.channel().getRadresGuid(), facts.radresGuid());
-        String contextKey = contextKey(guid, facts, ReceiverActivityRecords.ContextKind.TRUNKED_SITE,
-            event.channel().getConfigurationId());
+        String configurationId = ChannelConfigurationKey.configured(event.channel());
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
 
         long observedAt = event.timestamp() > 0 ? event.timestamp() : System.currentTimeMillis();
-        return new ReceiverActivityRecords.TalkerAliasUpdate(observedAt, contextKey, guid, facts.wacn(),
+        return new ReceiverActivityRecords.TalkerAliasUpdate(observedAt, configurationId, facts.wacn(),
             facts.systemId(), event.radio().getValue(), event.alias().getValue().toString().trim(),
             identityDomain(event.identityDomain()));
     }
@@ -262,37 +255,28 @@ class ReceiverActivityMapper
                 .thenComparingInt(P25SiteIdentity::system).thenComparingInt(P25SiteIdentity::rfss)
                 .thenComparingInt(P25SiteIdentity::site))
             .toList();
-        List<Long> aliasListIds = call.callLegSummaries().stream()
-            .map(summary -> summary.source().aliasListId())
-            .filter(id -> id > 0)
-            .distinct()
-            .toList();
         P25SiteIdentity system = null;
-        long aliasListId = winnerSource.aliasListId();
         if(p25)
         {
             boolean completeSourceIdentity = !call.callLegSummaries().isEmpty() &&
                 call.callLegSummaries().stream().allMatch(summary -> summary.source().trafficChannel() &&
-                    summary.source().hasLearnedP25SiteIdentity() && summary.source().hasDurableAliasListId());
-            boolean oneAliasList = aliasListIds.size() == 1;
+                    summary.source().hasLearnedP25SiteIdentity() &&
+                    summary.source().channelConfigurationId() != null);
             boolean oneLearnedSystem = !learnedSites.isEmpty();
             if(oneLearnedSystem)
             {
                 P25SiteIdentity firstSystem = learnedSites.get(0);
                 oneLearnedSystem = learnedSites.stream().allMatch(site -> site.wacn() == firstSystem.wacn() &&
                     site.system() == firstSystem.system());
-                if(completeSourceIdentity && oneAliasList && oneLearnedSystem)
+                if(completeSourceIdentity && oneLearnedSystem)
                 {
                     system = firstSystem;
-                    aliasListId = aliasListIds.get(0);
                 }
             }
 
             if(system == null)
             {
-                //Missing or conflicting learned scope is deliberately fail-open: keep the call in its receiver
-                //context and do not claim any learned-site observation.
-                aliasListId = 0;
+                //Missing or conflicting learned identity stays isolated to the saved receiver channel.
                 learnedSites = List.of();
             }
         }
@@ -309,9 +293,8 @@ class ReceiverActivityMapper
         Identifier source = identifiers.getFromIdentifier();
         Integer destination = destinationId(target);
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? destinationId(source) : null;
-        String guid = firstNonBlank(winnerSource.siteGuid(), facts.radresGuid());
-        String contextKey = ReceiverContextKey.trunked(guid);
-        if(system == null && contextKey == null)
+        String configurationId = ChannelConfigurationKey.canonical(winnerSource.channelConfigurationId());
+        if(configurationId == null)
         {
             return null;
         }
@@ -322,9 +305,9 @@ class ReceiverActivityMapper
             return null;
         }
 
-        return new ReceiverActivityRecords.ResolvedLogicalCall(call.logicalCallId(), timestamp, contextKey, guid,
+        return new ReceiverActivityRecords.ResolvedLogicalCall(call.logicalCallId(), timestamp, configurationId,
             protocol, identityDomain(identifiers, nxdn, false), system != null ? system.wacn() : null,
-            system != null ? system.system() : null, aliasListId,
+            system != null ? system.system() : null,
             destination != null ? destination : 0, facts.targetForm(),
             facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
             facts.encryptionAlgorithmId(), facts.encryptionKeyId(), p25TargetIdentity(target, p25),
@@ -358,8 +341,7 @@ class ReceiverActivityMapper
         Identifier sourceIdentifier = identifiers.getFromIdentifier();
         Integer sourceRadio = sourceIdentifier != null && sourceIdentifier.getForm() == Form.RADIO ?
             destinationId(sourceIdentifier) : null;
-        String guid = blankToNull(facts.radresGuid());
-        String contextKey = ReceiverContextKey.conventional(facts.configurationId());
+        String configurationId = ChannelConfigurationKey.canonical(facts.configurationId());
 
         long timestamp = snapshot.startTimestamp() > 0 ? snapshot.startTimestamp() :
             snapshot.lastActivityTimestamp();
@@ -369,14 +351,14 @@ class ReceiverActivityMapper
             timestamp = System.currentTimeMillis();
         }
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
 
         Integer timeslot = snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) :
             facts.timeslot();
-        return new ReceiverActivityRecords.ConventionalCallOutput(timestamp, contextKey, guid, facts.frequencyHertz(),
+        return new ReceiverActivityRecords.ConventionalCallOutput(timestamp, configurationId, facts.frequencyHertz(),
             timeslot, destination != null ? destination : 0, facts.targetForm(),
             facts.patchMemberTalkgroupIds(), sourceRadio, output,
             identityDomain(identifiers, DecoderType.NXDN.toString().equals(facts.decoder()), false),
@@ -425,9 +407,9 @@ class ReceiverActivityMapper
             return null;
         }
 
-        ReceiverActivityRecords.ContextKind contextKind = contextKind(channel, decoderType);
+        ReceiverActivityRecords.ReceiverKind receiverKind = receiverKind(channel, decoderType);
 
-        if(contextKind == null)
+        if(receiverKind == null)
         {
             return null;
         }
@@ -446,11 +428,10 @@ class ReceiverActivityMapper
         }
 
         String lcn = channelDescriptor;
-        String guid = blankToNull(channel.getRadresGuid());
         String protocol = protocolName(event.getProtocol(), facts, decoderType);
-        String contextKey = contextKey(guid, facts, contextKind, channel.getConfigurationId());
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
@@ -484,14 +465,14 @@ class ReceiverActivityMapper
         if(actionOverride == null && (decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN) &&
             isUsefulProtocolSignaling(event.getEventType()))
         {
-            dedupeKey = protocolSignalingDedupeKey(contextKey, protocol, action, event, frequency,
+            dedupeKey = protocolSignalingDedupeKey(configurationId, protocol, action, event, frequency,
                 channelDescriptor, timeslot, sourceRadioId, targetId, targetKind);
         }
         else if(actionOverride == null &&
             (isHighChurnCallEvent(event.getEventType()) || action == ReceiverActivityRecords.Action.CONTINUE))
         {
             dedupeKey = String.join("|",
-                safe(contextKey),
+                safe(configurationId),
                 safe(action),
                 safe(frequency),
                 safe(timeslot),
@@ -501,21 +482,20 @@ class ReceiverActivityMapper
                 safe(facts.patchMemberTalkgroupIds()),
                 safe(metricsAlgorithmId),
                 safe(metricsKeyId),
-                contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG &&
+                receiverKind == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG &&
                     event.getEventType() != null && event.getEventType().isVoiceCallEvent() ?
                     Long.toString(event.getTimeStart()) : "");
         }
 
-        return new ReceiverActivityRecords.ActivityEvent(observedAt, contextKey, guid, contextKind,
+        return new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId, receiverKind,
             protocol, action,
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
             targetKind, facts.patchMemberTalkgroupIds(), frequency, lcn, timeslot, metricsEncrypted, metricsAlgorithmId,
-            metricsKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
-            activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
+            metricsKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.talkerAlias(),
             action == ReceiverActivityRecords.Action.CALL &&
-                (contextKind != ReceiverActivityRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
+                (receiverKind != ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
             radioPresenceUpdate, identityDomain(channel, event.getIdentifierCollection()), p25TargetIdentity,
-            facts.p25PatchMemberIdentities(), blankToNull(channel.getAliasListName()), true);
+            facts.p25PatchMemberIdentities());
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
@@ -557,19 +537,17 @@ class ReceiverActivityMapper
             safe(snapshot.frequencyBands()), safe(snapshot.patchGroups()),
             safe(snapshot.siteStatus() != null ? snapshot.siteStatus().withoutVolatileTiming() : null),
             safe(snapshot.foreignSystemBands())));
-        String guid = blankToNull(channel.getRadresGuid());
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
-        if(guid == null)
+        if(configurationId == null)
         {
             return null;
         }
 
-        return new ReceiverActivityRecords.SiteSnapshot(event.observedAtEpochMilliseconds(), guid,
-            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
-            TrunkedSiteMetadataMapper.configuredSiteName(channel), blankToNull(channel.getAliasListName()),
-            snapshot.decoder(), wacn,
-            system, nac, rfss, site, lra, activeRfssNetworkConnection, tdma, snapshot.siteStatus(), currentControl,
-            currentControl,
+        return new ReceiverActivityRecords.SiteSnapshot(event.observedAtEpochMilliseconds(), configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
+            wacn, system, nac, rfss, site, lra, activeRfssNetworkConnection, tdma, snapshot.siteStatus(),
+            currentControl, currentControl,
             snapshot.channels(), snapshot.neighborSites(),
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.foreignSystemBands());
     }
@@ -1015,31 +993,10 @@ class ReceiverActivityMapper
                 ReceiverActivityRecords.IdentityDomain.STANDARD;
     }
 
-    private static String contextKey(String guid, IdentifierFacts facts,
-                                     ReceiverActivityRecords.ContextKind contextKind,
-                                     String channelConfigurationId)
-    {
-        String configurationId = facts != null && facts.configurationId() != null ?
-            facts.configurationId() : blankToNull(channelConfigurationId);
-        return contextKind == ReceiverActivityRecords.ContextKind.TRUNKED_SITE ?
-            ReceiverContextKey.trunked(guid) : ReceiverContextKey.conventional(configurationId);
-    }
-
-    private static String activityChannelName(ReceiverActivityRecords.ContextKind contextKind, Channel channel)
-    {
-        if(channel == null)
-        {
-            return null;
-        }
-
-        return contextKind == ReceiverActivityRecords.ContextKind.TRUNKED_SITE ?
-            TrunkedSiteMetadataMapper.configuredSiteName(channel) : blankToNull(channel.getName());
-    }
-
     private static String protocolName(Protocol protocol, IdentifierFacts facts, DecoderType decoderType)
     {
         //Activity protocol identifies the configured air interface. Some DMR data applications label their payload
-        //protocol (for example LRRP), which must not relabel the receiver context.
+        //protocol (for example LRRP), which must not relabel the saved receiver channel.
         if(decoderType == DecoderType.DMR)
         {
             return Protocol.DMR.name();
@@ -1063,35 +1020,35 @@ class ReceiverActivityMapper
         return decoderType != null ? decoderType.name() : "UNKNOWN";
     }
 
-    private static ReceiverActivityRecords.ContextKind contextKind(Channel channel, DecoderType decoderType)
+    private static ReceiverActivityRecords.ReceiverKind receiverKind(Channel channel, DecoderType decoderType)
     {
         if(decoderType == DecoderType.P25_CONVENTIONAL)
         {
-            return ReceiverActivityRecords.ContextKind.CONVENTIONAL_P25;
+            return ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25;
         }
 
         if(decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2)
         {
-            return ReceiverActivityRecords.ContextKind.TRUNKED_SITE;
+            return ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE;
         }
 
         if(decoderType == DecoderType.AM || decoderType == DecoderType.NBFM)
         {
-            return ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG;
+            return ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG;
         }
 
         if(decoderType == DecoderType.DMR &&
             channel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
         {
-            return config.isTrunked() ? ReceiverActivityRecords.ContextKind.TRUNKED_SITE :
-                ReceiverActivityRecords.ContextKind.CONVENTIONAL_DMR;
+            return config.isTrunked() ? ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE :
+                ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_DMR;
         }
 
         if(decoderType == DecoderType.NXDN &&
             channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
         {
-            return config.isTrunked() ? ReceiverActivityRecords.ContextKind.TRUNKED_SITE :
-                ReceiverActivityRecords.ContextKind.CONVENTIONAL_NXDN;
+            return config.isTrunked() ? ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE :
+                ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_NXDN;
         }
 
         return null;
@@ -1118,7 +1075,7 @@ class ReceiverActivityMapper
      * command and response subtypes without retaining message bodies. Event type, participants, physical channel and
      * slot remain separate key components so unrelated operations can never suppress one another.
      */
-    private static String protocolSignalingDedupeKey(String contextKey, String protocol,
+    private static String protocolSignalingDedupeKey(String configurationId, String protocol,
                                                       ReceiverActivityRecords.Action action, IDecodeEvent event,
                                                       Long frequency, String channelDescriptor, Integer timeslot,
                                                       String sourceRadioId, String targetId, String targetKind)
@@ -1127,7 +1084,7 @@ class ReceiverActivityMapper
         String subtype = details != null && !details.isBlank() ?
             sha256(details.strip().replaceAll("\\s+", " ").toUpperCase(Locale.ROOT)) : "";
         return PROTOCOL_SIGNAL_DEDUPE_PREFIX + String.join("|",
-            safe(contextKey),
+            safe(configurationId),
             safe(protocol),
             safe(event.getEventType()),
             subtype,
@@ -1202,8 +1159,8 @@ class ReceiverActivityMapper
                                    Long frequencyHertz,
                                    String channelDescriptor, String logicalChannelName, boolean encrypted,
                                    Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn,
-                                   Integer systemId, Integer nac, Integer rfss, Integer site, String radresGuid,
-                                   String configurationId, String configuredChannelName, String decoder,
+                                   Integer systemId, Integer nac, Integer rfss, Integer site,
+                                   String configurationId, String decoder,
                                    String talkerAlias, Integer timeslot)
     {
         static IdentifierFacts from(IdentifierCollection identifiers)
@@ -1226,8 +1183,7 @@ class ReceiverActivityMapper
                 intValue(first(identifiers, Form.WACN)), intValue(first(identifiers, Form.SYSTEM)),
                 intValue(first(identifiers, Form.NETWORK_ACCESS_CODE)),
                 intValue(first(identifiers, Form.RF_SUBSYSTEM)), intValue(first(identifiers, Form.SITE)),
-                value(first(identifiers, Form.RADRES_GUID)), value(first(identifiers, Form.UNIQUE_ID)),
-                value(first(identifiers, Form.CHANNEL)), value(first(identifiers, Form.DECODER_TYPE)),
+                value(first(identifiers, Form.UNIQUE_ID)), value(first(identifiers, Form.DECODER_TYPE)),
                 value(first(identifiers, Form.TALKER_ALIAS)), timeslot);
         }
 

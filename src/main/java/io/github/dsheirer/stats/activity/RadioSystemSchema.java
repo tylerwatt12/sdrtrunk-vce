@@ -11,8 +11,11 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.protocol.Protocol;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -32,10 +35,8 @@ import java.util.stream.Collectors;
  * <p>All methods are called by the single statistics writer while its batch transaction is open.  No decoder thread
  * accesses SQLite and no per-call rows are retained here.</p>
  */
-final class TrunkedIdentitySchema
+final class RadioSystemSchema
 {
-    static final int SCOPE_KIND_LINKED_SYSTEM = 1;
-    static final int SCOPE_KIND_CONTEXT = 2;
     private static final int IDENTITY_DOMAIN_STANDARD = 0;
     private static final int IDENTITY_DOMAIN_NXDN_TYPE_C = 1;
     private static final int IDENTITY_DOMAIN_NXDN_TYPE_D = 2;
@@ -44,9 +45,9 @@ final class TrunkedIdentitySchema
     static final int P25_IDENTITY_STATE_STABLE_FULLY_QUALIFIED = 2;
     static final int P25_IDENTITY_STATE_AMBIGUOUS = 3;
     private static final int DELETE_BATCH_SIZE = 1_000;
-    static final int MAX_IDENTITIES_PER_SCOPE = 100_000;
-    static final int MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SCOPE = 100_000;
-    static final int MAX_RELATIONSHIPS_PER_SCOPE = 500_000;
+    static final int MAX_IDENTITIES_PER_SYSTEM = 100_000;
+    static final int MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SYSTEM = 100_000;
+    static final int MAX_RELATIONSHIPS_PER_SYSTEM = 500_000;
 
     private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes().stream()
         .filter(action -> action != ReceiverActivityRecords.Action.CALL)
@@ -62,7 +63,7 @@ final class TrunkedIdentitySchema
         .map(column -> "?")
         .collect(Collectors.joining(", "));
 
-    private TrunkedIdentitySchema()
+    private RadioSystemSchema()
     {
     }
 
@@ -74,69 +75,64 @@ final class TrunkedIdentitySchema
         }
 
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_identity_scope_context_scope
-            ON trunked_identity_scope_context(scope_id, context_id)
+            CREATE INDEX IF NOT EXISTS idx_radio_system_identity_last_seen
+            ON radio_system_identity_summary(radio_system_id, identity_kind_code, last_seen_ms DESC, identity_id)
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_identity_scope_kind_last_seen
-            ON trunked_identity_summary(scope_id, identity_kind_code, last_seen_ms DESC, identity_id)
+            CREATE INDEX IF NOT EXISTS idx_radio_system_identity_retention
+            ON radio_system_identity_summary(last_seen_ms, radio_system_id, identity_kind_code, identity_id)
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_identity_retention
-            ON trunked_identity_summary(last_seen_ms, scope_id, identity_kind_code, identity_id)
-            """);
-        statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_p25_zero_local_fq_scope_last_seen
+            CREATE INDEX IF NOT EXISTS idx_p25_zero_local_fq_system_last_seen
             ON p25_zero_local_fq_talkgroup_summary(
-                scope_id, last_seen_ms DESC, home_wacn, home_system_id, home_talkgroup_id
+                radio_system_id, last_seen_ms DESC, home_wacn, home_system_id, home_talkgroup_id
             )
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_p25_zero_local_fq_retention
             ON p25_zero_local_fq_talkgroup_summary(
-                last_seen_ms, scope_id, home_wacn, home_system_id, home_talkgroup_id
+                last_seen_ms, radio_system_id, home_wacn, home_system_id, home_talkgroup_id
             )
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_talkgroup_reverse
             ON trunked_radio_talkgroup_summary(
-                scope_id, talkgroup_id, target_kind_code, last_seen_ms DESC, radio_id
+                radio_system_id, talkgroup_id, target_kind_code, last_seen_ms DESC, radio_id
             )
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_talkgroup_retention
             ON trunked_radio_talkgroup_summary(
-                last_seen_ms, scope_id, radio_id, talkgroup_id, target_kind_code
+                last_seen_ms, radio_system_id, radio_id, talkgroup_id, target_kind_code
             )
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_affiliation_talkgroup
-            ON trunked_radio_affiliation(scope_id, talkgroup_id, confirmed_at_ms DESC, radio_id)
+            ON trunked_radio_affiliation(radio_system_id, talkgroup_id, confirmed_at_ms DESC, radio_id)
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_affiliation_retention
-            ON trunked_radio_affiliation(confirmed_at_ms, scope_id, radio_id)
+            ON trunked_radio_affiliation(confirmed_at_ms, radio_system_id, radio_id)
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_radio_site_presence_context
-            ON trunked_radio_site_presence(context_id, confirmed_at_ms DESC, scope_id, radio_id)
+            CREATE INDEX IF NOT EXISTS idx_trunked_radio_site_presence_channel
+            ON trunked_radio_site_presence(channel_id, confirmed_at_ms DESC, radio_system_id, radio_id)
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_site_presence_retention
-            ON trunked_radio_site_presence(confirmed_at_ms, scope_id, radio_id)
+            ON trunked_radio_site_presence(confirmed_at_ms, radio_system_id, radio_id)
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_presence_lifecycle_retention
-            ON trunked_radio_presence_lifecycle(cleared_at_ms, scope_id, radio_id)
+            ON trunked_radio_presence_lifecycle(cleared_at_ms, radio_system_id, radio_id)
             """);
     }
 
     static List<SqliteSchemaValidator.Definition> definitions()
     {
         return List.of(
-            new SqliteSchemaValidator.Definition("table", "trunked_identity_scope", scopeSql()),
-            new SqliteSchemaValidator.Definition("table", "trunked_identity_scope_context", scopeContextSql()),
-            new SqliteSchemaValidator.Definition("table", "trunked_identity_summary", identitySummarySql()),
+            new SqliteSchemaValidator.Definition("table", "radio_system", radioSystemSql()),
+            new SqliteSchemaValidator.Definition("table", "radio_system_identity_summary", identitySummarySql()),
             new SqliteSchemaValidator.Definition("table", "p25_zero_local_fq_talkgroup_summary",
                 zeroLocalFullyQualifiedTalkgroupSummarySql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_talkgroup_summary",
@@ -144,52 +140,76 @@ final class TrunkedIdentitySchema
             new SqliteSchemaValidator.Definition("table", "trunked_radio_affiliation", radioAffiliationSql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_site_presence", radioSitePresenceSql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_presence_lifecycle",
-                radioPresenceLifecycleSql())
+                radioPresenceLifecycleSql()),
+            new SqliteSchemaValidator.Definition("trigger", "prune_provisional_radio_system_after_channel_delete",
+                pruneProvisionalAfterChannelDeleteSql()),
+            new SqliteSchemaValidator.Definition("trigger", "prune_provisional_radio_system_after_channel_reassign",
+                pruneProvisionalAfterChannelReassignSql())
         );
     }
 
-    private static String scopeSql()
+    private static String radioSystemSql()
     {
         return """
-            CREATE TABLE IF NOT EXISTS trunked_identity_scope (
-                scope_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scope_token TEXT NOT NULL UNIQUE,
+            CREATE TABLE IF NOT EXISTS radio_system (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                system_key TEXT NOT NULL UNIQUE CHECK(length(trim(system_key)) > 0),
                 protocol_code INTEGER NOT NULL CHECK(protocol_code IN (1, 3, 4)),
-                scope_kind_code INTEGER NOT NULL CHECK(scope_kind_code IN (1, 2)),
                 identity_domain_code INTEGER NOT NULL DEFAULT 0 CHECK(identity_domain_code IN (0, 1, 2)),
-                alias_list_id INTEGER,
-                p25_system_key INTEGER REFERENCES p25_system(system_key) ON DELETE CASCADE,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                UNIQUE(p25_system_key, alias_list_id),
+                p25_wacn INTEGER CHECK(p25_wacn IS NULL OR p25_wacn BETWEEN 0 AND 1048575),
+                p25_system_id INTEGER CHECK(p25_system_id IS NULL OR p25_system_id BETWEEN 0 AND 4095),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                UNIQUE(p25_wacn, p25_system_id),
                 CHECK(
-                    (scope_kind_code = 1 AND protocol_code = 1 AND p25_system_key IS NOT NULL
-                        AND alias_list_id IS NOT NULL AND alias_list_id > 0)
+                    (protocol_code = 1 AND identity_domain_code = 0 AND (
+                        (p25_wacn IS NOT NULL AND p25_system_id IS NOT NULL
+                            AND system_key = printf('p25:%05x:%03x', p25_wacn, p25_system_id))
+                        OR
+                        (p25_wacn IS NULL AND p25_system_id IS NULL
+                            AND length(system_key) = 48
+                            AND substr(system_key, 1, 12) = 'p25:channel:'
+                            AND substr(system_key, 21, 1) = '-'
+                            AND substr(system_key, 26, 1) = '-'
+                            AND substr(system_key, 31, 1) = '-'
+                            AND substr(system_key, 36, 1) = '-'
+                            AND substr(system_key, 13) = lower(substr(system_key, 13))
+                            AND length(replace(substr(system_key, 13), '-', '')) = 32
+                            AND replace(substr(system_key, 13), '-', '') NOT GLOB '*[^0-9a-f]*')
+                    ))
                     OR
-                    (scope_kind_code = 2 AND protocol_code IN (1, 3, 4) AND p25_system_key IS NULL
-                        AND alias_list_id IS NULL)
+                    (protocol_code = 3 AND identity_domain_code = 0
+                        AND p25_wacn IS NULL AND p25_system_id IS NULL
+                        AND length(system_key) = 48
+                        AND substr(system_key, 1, 12) = 'dmr:channel:'
+                        AND substr(system_key, 21, 1) = '-'
+                        AND substr(system_key, 26, 1) = '-'
+                        AND substr(system_key, 31, 1) = '-'
+                        AND substr(system_key, 36, 1) = '-'
+                        AND substr(system_key, 13) = lower(substr(system_key, 13))
+                        AND length(replace(substr(system_key, 13), '-', '')) = 32
+                        AND replace(substr(system_key, 13), '-', '') NOT GLOB '*[^0-9a-f]*')
+                    OR
+                    (protocol_code = 4 AND p25_wacn IS NULL AND p25_system_id IS NULL
+                        AND length(system_key) = 49
+                        AND substr(system_key, 1, 13) = 'nxdn:channel:'
+                        AND substr(system_key, 22, 1) = '-'
+                        AND substr(system_key, 27, 1) = '-'
+                        AND substr(system_key, 32, 1) = '-'
+                        AND substr(system_key, 37, 1) = '-'
+                        AND substr(system_key, 14) = lower(substr(system_key, 14))
+                        AND length(replace(substr(system_key, 14), '-', '')) = 32
+                        AND replace(substr(system_key, 14), '-', '') NOT GLOB '*[^0-9a-f]*')
                 )
             )
-            """;
-    }
-
-    private static String scopeContextSql()
-    {
-        return """
-            CREATE TABLE IF NOT EXISTS trunked_identity_scope_context (
-                context_id INTEGER PRIMARY KEY REFERENCES receiver_context(id) ON DELETE CASCADE,
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL
-            ) WITHOUT ROWID
             """;
     }
 
     private static String identitySummarySql()
     {
         return """
-            CREATE TABLE IF NOT EXISTS trunked_identity_summary (
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
+            CREATE TABLE IF NOT EXISTS radio_system_identity_summary (
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (1, 2, 3)),
                 identity_id INTEGER NOT NULL CHECK(identity_id > 0),
                 p25_identity_state_code INTEGER NOT NULL DEFAULT 0
@@ -212,7 +232,7 @@ final class TrunkedIdentitySchema
                 last_encryption_key_id INTEGER,
                 last_talker_alias TEXT,
                 last_talker_alias_seen_ms INTEGER,
-                PRIMARY KEY(scope_id, identity_kind_code, identity_id),
+                PRIMARY KEY(radio_system_id, identity_kind_code, identity_id),
                 CHECK(
                     (last_counterpart_kind_code IS NULL AND last_counterpart_id IS NULL)
                     OR
@@ -242,7 +262,7 @@ final class TrunkedIdentitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS p25_zero_local_fq_talkgroup_summary (
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 home_wacn INTEGER NOT NULL CHECK(home_wacn BETWEEN 0 AND 1048575),
                 home_system_id INTEGER NOT NULL CHECK(home_system_id BETWEEN 0 AND 4095),
                 home_talkgroup_id INTEGER NOT NULL CHECK(home_talkgroup_id BETWEEN 1 AND 65534),
@@ -253,7 +273,7 @@ final class TrunkedIdentitySchema
                 encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
                 recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
                 streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
-                PRIMARY KEY(scope_id, home_wacn, home_system_id, home_talkgroup_id)
+                PRIMARY KEY(radio_system_id, home_wacn, home_system_id, home_talkgroup_id)
             ) WITHOUT ROWID
             """.formatted(ACTION_COUNT_DEFINITIONS);
     }
@@ -262,7 +282,7 @@ final class TrunkedIdentitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_talkgroup_summary (
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 radio_id INTEGER NOT NULL CHECK(radio_id > 0),
                 talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
                 target_kind_code INTEGER NOT NULL CHECK(target_kind_code IN (1, 3)),
@@ -275,7 +295,7 @@ final class TrunkedIdentitySchema
                 streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
                 last_encryption_algorithm_id INTEGER,
                 last_encryption_key_id INTEGER,
-                PRIMARY KEY(scope_id, radio_id, talkgroup_id, target_kind_code)
+                PRIMARY KEY(radio_system_id, radio_id, talkgroup_id, target_kind_code)
             ) WITHOUT ROWID
             """.formatted(ACTION_COUNT_DEFINITIONS);
     }
@@ -284,11 +304,11 @@ final class TrunkedIdentitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_affiliation (
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 radio_id INTEGER NOT NULL CHECK(radio_id > 0),
                 talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
                 confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(scope_id, radio_id)
+                PRIMARY KEY(radio_system_id, radio_id)
             ) WITHOUT ROWID
             """;
     }
@@ -297,13 +317,14 @@ final class TrunkedIdentitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_site_presence (
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 radio_id INTEGER NOT NULL CHECK(radio_id > 0),
-                context_id INTEGER NOT NULL
-                    REFERENCES trunked_identity_scope_context(context_id) ON DELETE CASCADE,
+                channel_id INTEGER NOT NULL,
                 evidence_code INTEGER NOT NULL CHECK(evidence_code IN (1, 2)),
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(scope_id, radio_id)
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(radio_system_id, radio_id),
+                FOREIGN KEY(channel_id, radio_system_id)
+                    REFERENCES receiver_channel(id, radio_system_id) ON DELETE CASCADE
             ) WITHOUT ROWID
             """;
     }
@@ -312,18 +333,60 @@ final class TrunkedIdentitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_presence_lifecycle (
-                scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 radio_id INTEGER NOT NULL CHECK(radio_id > 0),
                 cleared_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(scope_id, radio_id)
+                PRIMARY KEY(radio_system_id, radio_id)
             ) WITHOUT ROWID
+            """;
+    }
+
+    private static String pruneProvisionalAfterChannelDeleteSql()
+    {
+        return """
+            CREATE TRIGGER IF NOT EXISTS prune_provisional_radio_system_after_channel_delete
+            AFTER DELETE ON receiver_channel
+            WHEN OLD.radio_system_id IS NOT NULL
+            BEGIN
+                DELETE FROM radio_system
+                WHERE id = OLD.radio_system_id
+                  AND system_key IN (
+                      'p25:channel:' || OLD.configuration_id,
+                      'dmr:channel:' || OLD.configuration_id,
+                      'nxdn:channel:' || OLD.configuration_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM receiver_channel WHERE radio_system_id = OLD.radio_system_id
+                  );
+            END
+            """;
+    }
+
+    private static String pruneProvisionalAfterChannelReassignSql()
+    {
+        return """
+            CREATE TRIGGER IF NOT EXISTS prune_provisional_radio_system_after_channel_reassign
+            AFTER UPDATE OF radio_system_id ON receiver_channel
+            WHEN OLD.radio_system_id IS NOT NULL AND OLD.radio_system_id IS NOT NEW.radio_system_id
+            BEGIN
+                DELETE FROM radio_system
+                WHERE id = OLD.radio_system_id
+                  AND system_key IN (
+                      'p25:channel:' || OLD.configuration_id,
+                      'dmr:channel:' || OLD.configuration_id,
+                      'nxdn:channel:' || OLD.configuration_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM receiver_channel WHERE radio_system_id = OLD.radio_system_id
+                  );
+            END
             """;
     }
 
     static List<SqliteSchemaValidator.Table> tables()
     {
         List<String> identityColumns = new ArrayList<>(List.of(
-            "scope_id", "identity_kind_code", "identity_id", "p25_identity_state_code", "p25_home_wacn",
+            "radio_system_id", "identity_kind_code", "identity_id", "p25_identity_state_code", "p25_home_wacn",
             "p25_home_system_id", "p25_home_talkgroup_id", "first_seen_ms", "last_seen_ms"));
         identityColumns.addAll(ACTION_COUNT_COLUMNS);
         identityColumns.addAll(List.of("logical_call_count", "source_logical_call_count",
@@ -333,150 +396,141 @@ final class TrunkedIdentitySchema
             "last_talker_alias_seen_ms"));
 
         List<String> relationshipColumns = new ArrayList<>(List.of(
-            "scope_id", "radio_id", "talkgroup_id", "target_kind_code", "first_seen_ms", "last_seen_ms"));
+            "radio_system_id", "radio_id", "talkgroup_id", "target_kind_code", "first_seen_ms", "last_seen_ms"));
         relationshipColumns.addAll(ACTION_COUNT_COLUMNS);
         relationshipColumns.addAll(List.of("logical_call_count", "encrypted_logical_call_count",
             "recorded_output_count", "streamed_output_count",
             "last_encryption_algorithm_id", "last_encryption_key_id"));
 
         List<String> zeroLocalFullyQualifiedColumns = new ArrayList<>(List.of(
-            "scope_id", "home_wacn", "home_system_id", "home_talkgroup_id", "first_seen_ms", "last_seen_ms"));
+            "radio_system_id", "home_wacn", "home_system_id", "home_talkgroup_id", "first_seen_ms", "last_seen_ms"));
         zeroLocalFullyQualifiedColumns.addAll(ACTION_COUNT_COLUMNS);
         zeroLocalFullyQualifiedColumns.addAll(List.of("logical_call_count", "encrypted_logical_call_count",
             "recorded_output_count", "streamed_output_count"));
 
         return List.of(
-            new SqliteSchemaValidator.Table("trunked_identity_scope", "scope_id", "scope_token", "protocol_code",
-                "scope_kind_code", "identity_domain_code", "alias_list_id", "p25_system_key", "first_seen_ms",
-                "last_seen_ms"),
-            new SqliteSchemaValidator.Table("trunked_identity_scope_context", "context_id", "scope_id",
-                "first_seen_ms", "last_seen_ms"),
-            new SqliteSchemaValidator.Table("trunked_identity_summary", identityColumns),
+            new SqliteSchemaValidator.Table("radio_system", "id", "system_key", "protocol_code",
+                "identity_domain_code", "p25_wacn", "p25_system_id", "first_seen_ms", "last_seen_ms"),
+            new SqliteSchemaValidator.Table("radio_system_identity_summary", identityColumns),
             new SqliteSchemaValidator.Table("p25_zero_local_fq_talkgroup_summary",
                 zeroLocalFullyQualifiedColumns),
             new SqliteSchemaValidator.Table("trunked_radio_talkgroup_summary", relationshipColumns),
-            new SqliteSchemaValidator.Table("trunked_radio_affiliation", "scope_id", "radio_id", "talkgroup_id",
+            new SqliteSchemaValidator.Table("trunked_radio_affiliation", "radio_system_id", "radio_id", "talkgroup_id",
                 "confirmed_at_ms"),
-            new SqliteSchemaValidator.Table("trunked_radio_site_presence", "scope_id", "radio_id", "context_id",
+            new SqliteSchemaValidator.Table("trunked_radio_site_presence", "radio_system_id", "radio_id", "channel_id",
                 "evidence_code", "confirmed_at_ms"),
-            new SqliteSchemaValidator.Table("trunked_radio_presence_lifecycle", "scope_id", "radio_id",
+            new SqliteSchemaValidator.Table("trunked_radio_presence_lifecycle", "radio_system_id", "radio_id",
                 "cleared_at_ms")
         );
     }
 
     static List<String> indexes()
     {
-        return List.of("idx_trunked_identity_scope_context_scope",
-            "idx_trunked_identity_scope_kind_last_seen", "idx_trunked_identity_retention",
-            "idx_p25_zero_local_fq_scope_last_seen", "idx_p25_zero_local_fq_retention",
+        return List.of("idx_radio_system_identity_last_seen", "idx_radio_system_identity_retention",
+            "idx_p25_zero_local_fq_system_last_seen", "idx_p25_zero_local_fq_retention",
             "idx_trunked_radio_talkgroup_reverse", "idx_trunked_radio_talkgroup_retention",
             "idx_trunked_radio_affiliation_talkgroup", "idx_trunked_radio_affiliation_retention",
-            "idx_trunked_radio_site_presence_context", "idx_trunked_radio_site_presence_retention",
+            "idx_trunked_radio_site_presence_channel", "idx_trunked_radio_site_presence_retention",
             "idx_trunked_radio_presence_lifecycle_retention");
     }
 
     static void validate(Connection connection) throws SQLException
     {
-        validatePrimaryKey(connection, "trunked_identity_scope", List.of("scope_id"));
-        validatePrimaryKey(connection, "trunked_identity_scope_context", List.of("context_id"));
-        validatePrimaryKey(connection, "trunked_identity_summary",
-            List.of("scope_id", "identity_kind_code", "identity_id"));
+        validatePrimaryKey(connection, "radio_system", List.of("id"));
+        validatePrimaryKey(connection, "radio_system_identity_summary",
+            List.of("radio_system_id", "identity_kind_code", "identity_id"));
         validatePrimaryKey(connection, "p25_zero_local_fq_talkgroup_summary",
-            List.of("scope_id", "home_wacn", "home_system_id", "home_talkgroup_id"));
+            List.of("radio_system_id", "home_wacn", "home_system_id", "home_talkgroup_id"));
         validatePrimaryKey(connection, "trunked_radio_talkgroup_summary",
-            List.of("scope_id", "radio_id", "talkgroup_id", "target_kind_code"));
-        validatePrimaryKey(connection, "trunked_radio_affiliation", List.of("scope_id", "radio_id"));
-        validatePrimaryKey(connection, "trunked_radio_site_presence", List.of("scope_id", "radio_id"));
-        validatePrimaryKey(connection, "trunked_radio_presence_lifecycle", List.of("scope_id", "radio_id"));
+            List.of("radio_system_id", "radio_id", "talkgroup_id", "target_kind_code"));
+        validatePrimaryKey(connection, "trunked_radio_affiliation", List.of("radio_system_id", "radio_id"));
+        validatePrimaryKey(connection, "trunked_radio_site_presence", List.of("radio_system_id", "radio_id"));
+        validatePrimaryKey(connection, "trunked_radio_presence_lifecycle", List.of("radio_system_id", "radio_id"));
 
-        validateForeignKeys(connection, "trunked_identity_scope", Set.of(
-            new ForeignKey("p25_system_key", "p25_system", "system_key", "CASCADE")));
-        validateForeignKeys(connection, "trunked_identity_scope_context", Set.of(
-            new ForeignKey("context_id", "receiver_context", "id", "CASCADE"),
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE")));
-        validateForeignKeys(connection, "trunked_identity_summary", Set.of(
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE")));
+        validateForeignKeys(connection, "radio_system", Set.of());
+        validateForeignKeys(connection, "radio_system_identity_summary", Set.of(
+            new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "p25_zero_local_fq_talkgroup_summary", Set.of(
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE")));
+            new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "trunked_radio_talkgroup_summary", Set.of(
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE")));
+            new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "trunked_radio_affiliation", Set.of(
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE")));
+            new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "trunked_radio_site_presence", Set.of(
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE"),
-            new ForeignKey("context_id", "trunked_identity_scope_context", "context_id", "CASCADE")));
+            new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE"),
+            new ForeignKey("channel_id", "receiver_channel", "id", "CASCADE"),
+            new ForeignKey("radio_system_id", "receiver_channel", "radio_system_id", "CASCADE")));
         validateForeignKeys(connection, "trunked_radio_presence_lifecycle", Set.of(
-            new ForeignKey("scope_id", "trunked_identity_scope", "scope_id", "CASCADE")));
+            new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
 
-        validateIndex(connection, "idx_trunked_identity_scope_context_scope",
-            List.of(new IndexColumn(0, "scope_id", false), new IndexColumn(1, "context_id", false)));
-        validateIndex(connection, "idx_trunked_identity_scope_kind_last_seen", List.of(
-            new IndexColumn(0, "scope_id", false),
+        validateIndex(connection, "idx_radio_system_identity_last_seen", List.of(
+            new IndexColumn(0, "radio_system_id", false),
             new IndexColumn(1, "identity_kind_code", false),
             new IndexColumn(2, "last_seen_ms", true),
             new IndexColumn(3, "identity_id", false)));
-        validateIndex(connection, "idx_trunked_identity_retention", List.of(
+        validateIndex(connection, "idx_radio_system_identity_retention", List.of(
             new IndexColumn(0, "last_seen_ms", false),
-            new IndexColumn(1, "scope_id", false),
+            new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "identity_kind_code", false),
             new IndexColumn(3, "identity_id", false)));
-        validateIndex(connection, "idx_p25_zero_local_fq_scope_last_seen", List.of(
-            new IndexColumn(0, "scope_id", false),
+        validateIndex(connection, "idx_p25_zero_local_fq_system_last_seen", List.of(
+            new IndexColumn(0, "radio_system_id", false),
             new IndexColumn(1, "last_seen_ms", true),
             new IndexColumn(2, "home_wacn", false),
             new IndexColumn(3, "home_system_id", false),
             new IndexColumn(4, "home_talkgroup_id", false)));
         validateIndex(connection, "idx_p25_zero_local_fq_retention", List.of(
             new IndexColumn(0, "last_seen_ms", false),
-            new IndexColumn(1, "scope_id", false),
+            new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "home_wacn", false),
             new IndexColumn(3, "home_system_id", false),
             new IndexColumn(4, "home_talkgroup_id", false)));
         validateIndex(connection, "idx_trunked_radio_talkgroup_reverse", List.of(
-            new IndexColumn(0, "scope_id", false),
+            new IndexColumn(0, "radio_system_id", false),
             new IndexColumn(1, "talkgroup_id", false),
             new IndexColumn(2, "target_kind_code", false),
             new IndexColumn(3, "last_seen_ms", true),
             new IndexColumn(4, "radio_id", false)));
         validateIndex(connection, "idx_trunked_radio_talkgroup_retention", List.of(
             new IndexColumn(0, "last_seen_ms", false),
-            new IndexColumn(1, "scope_id", false),
+            new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false),
             new IndexColumn(3, "talkgroup_id", false),
             new IndexColumn(4, "target_kind_code", false)));
         validateIndex(connection, "idx_trunked_radio_affiliation_talkgroup", List.of(
-            new IndexColumn(0, "scope_id", false),
+            new IndexColumn(0, "radio_system_id", false),
             new IndexColumn(1, "talkgroup_id", false),
             new IndexColumn(2, "confirmed_at_ms", true),
             new IndexColumn(3, "radio_id", false)));
         validateIndex(connection, "idx_trunked_radio_affiliation_retention", List.of(
             new IndexColumn(0, "confirmed_at_ms", false),
-            new IndexColumn(1, "scope_id", false),
+            new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false)));
-        validateIndex(connection, "idx_trunked_radio_site_presence_context", List.of(
-            new IndexColumn(0, "context_id", false),
+        validateIndex(connection, "idx_trunked_radio_site_presence_channel", List.of(
+            new IndexColumn(0, "channel_id", false),
             new IndexColumn(1, "confirmed_at_ms", true),
-            new IndexColumn(2, "scope_id", false),
+            new IndexColumn(2, "radio_system_id", false),
             new IndexColumn(3, "radio_id", false)));
         validateIndex(connection, "idx_trunked_radio_site_presence_retention", List.of(
             new IndexColumn(0, "confirmed_at_ms", false),
-            new IndexColumn(1, "scope_id", false),
+            new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false)));
         validateIndex(connection, "idx_trunked_radio_presence_lifecycle_retention", List.of(
             new IndexColumn(0, "cleared_at_ms", false),
-            new IndexColumn(1, "scope_id", false),
+            new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false)));
+        validateRadioSystemKeys(connection);
     }
 
-    static Scope recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity, int contextId)
+    static RadioSystem recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity, int channelId)
         throws SQLException
     {
-        Scope scope = ensureScope(connection, contextId, activity.observedAtEpochMilliseconds(),
-            activity.identityDomain());
+        RadioSystem radioSystem = ensureRadioSystem(connection, channelId, activity.observedAtEpochMilliseconds(),
+            activity.identityDomain(), activity.wacn(), activity.systemId());
 
-        if(scope == null ||
-            (scope.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                activity.observedAtEpochMilliseconds() < scope.firstSeenEpochMilliseconds()))
+        if(radioSystem == null ||
+            (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
+                activity.observedAtEpochMilliseconds() < radioSystem.firstSeenEpochMilliseconds()))
         {
             return null;
         }
@@ -484,11 +538,11 @@ final class TrunkedIdentitySchema
         if(activity.action() == null ||
             activity.action() == ReceiverActivityRecords.Action.UNKNOWN)
         {
-            return scope;
+            return radioSystem;
         }
 
         Integer source = positive(activity.sourceRadioId());
-        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
+        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(radioSystem.protocolCode(), radioSystem.identityDomain(),
             source);
         //A P25 continuation belongs to the active call and can replace an initially ordinary local talkgroup with
         //its fully-qualified home identity.  The call-attribution update below owns that refinement because it also
@@ -496,32 +550,32 @@ final class TrunkedIdentitySchema
         //would make the ordinary start plus its later qualification look like two conflicting identities.
         ReceiverActivityRecords.P25TargetIdentity observedTargetIdentity = activity.p25TargetIdentity();
         ReceiverActivityRecords.P25TargetIdentity targetIdentity =
-            scope.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
+            radioSystem.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
                 activity.action() == ReceiverActivityRecords.Action.CONTINUE ?
                 ReceiverActivityRecords.P25TargetIdentity.UNKNOWN : observedTargetIdentity;
         List<ReceiverActivityRecords.P25PatchMemberIdentity> patchMemberIdentities =
-            scope.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
+            radioSystem.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
                 activity.action() == ReceiverActivityRecords.Action.CONTINUE ?
                 List.of() : activity.p25PatchMemberIdentities();
-        List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
+        List<Identity> destinations = destinationIdentities(radioSystem.protocolCode(), radioSystem.identityDomain(),
             activity.targetId(), activity.targetKind(), activity.patchMemberTalkgroupIds(), targetIdentity,
             patchMemberIdentities);
         //Receiver observations establish identity/signaling metadata only. Logical-call completion owns call and
         //encryption counters so copies heard on several receiver legs cannot inflate them.
         int encrypted = 0;
 
-        if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), activity.targetId(), activity.targetKind(),
+        if(isZeroLocalFullyQualifiedTalkgroup(radioSystem.protocolCode(), activity.targetId(), activity.targetKind(),
             observedTargetIdentity))
         {
             //Unlike a positive local identity, the tuple has no earlier local row that can be refined. Preserve
             //direct/untracked mid-call observations here; any later attribution adds the physical call count once.
-            upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), observedTargetIdentity,
+            upsertZeroLocalFullyQualifiedTalkgroup(connection, radioSystem.radioSystemId(), observedTargetIdentity,
                 activity.observedAtEpochMilliseconds(), activity.action(), false, encrypted, 0, 0);
         }
 
         for(Identity destination: destinations)
         {
-            upsertIdentity(connection, scope.scopeId(), destination, activity.observedAtEpochMilliseconds(),
+            upsertIdentity(connection, radioSystem.radioSystemId(), destination, activity.observedAtEpochMilliseconds(),
                 activity.action(), false, false, true, encrypted, 0, 0,
                 validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                 activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null);
@@ -531,30 +585,30 @@ final class TrunkedIdentitySchema
         {
             Identity sourceIdentity = new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source);
             Identity counterpart = destinations.isEmpty() ? null : destinations.get(0);
-            upsertIdentity(connection, scope.scopeId(), sourceIdentity, activity.observedAtEpochMilliseconds(),
+            upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity, activity.observedAtEpochMilliseconds(),
                 activity.action(), false, true, false, encrypted, 0, 0, counterpart,
                 activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null);
 
             for(Identity destination: groupDestinations(destinations))
             {
-                upsertRelationship(connection, scope.scopeId(), source, destination,
+                upsertRelationship(connection, radioSystem.radioSystemId(), source, destination,
                     activity.observedAtEpochMilliseconds(), activity.action(), false, encrypted,
                     0, 0, activity.encryptionAlgorithmId(), activity.encryptionKeyId());
             }
         }
 
-        updateRadioPresence(connection, scope, contextId, activity);
+        updateRadioPresence(connection, radioSystem, channelId, activity);
 
-        return scope;
+        return radioSystem;
     }
 
-    private static void updateRadioPresence(Connection connection, Scope scope, int contextId,
+    private static void updateRadioPresence(Connection connection, RadioSystem radioSystem, int channelId,
                                             ReceiverActivityRecords.ActivityEvent activity) throws SQLException
     {
         ReceiverActivityRecords.RadioPresenceUpdate update = activity.radioPresenceUpdate();
 
-        if(update == null || !TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
-            update.radioId()) || !identityExists(connection, scope.scopeId(),
+        if(update == null || !TrunkedIdentityPolicy.isDirectoryRadio(radioSystem.protocolCode(), radioSystem.identityDomain(),
+            update.radioId()) || !identityExists(connection, radioSystem.radioSystemId(),
             new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, update.radioId())))
         {
             return;
@@ -563,14 +617,14 @@ final class TrunkedIdentitySchema
         if(update.cleared())
         {
             try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO trunked_radio_presence_lifecycle(scope_id, radio_id, cleared_at_ms)
+                INSERT INTO trunked_radio_presence_lifecycle(radio_system_id, radio_id, cleared_at_ms)
                 VALUES (?, ?, ?)
-                ON CONFLICT(scope_id, radio_id) DO UPDATE SET
+                ON CONFLICT(radio_system_id, radio_id) DO UPDATE SET
                     cleared_at_ms = max(trunked_radio_presence_lifecycle.cleared_at_ms,
                         excluded.cleared_at_ms)
                 """))
             {
-                statement.setInt(1, scope.scopeId());
+                statement.setInt(1, radioSystem.radioSystemId());
                 statement.setInt(2, update.radioId());
                 statement.setLong(3, activity.observedAtEpochMilliseconds());
                 statement.executeUpdate();
@@ -580,9 +634,9 @@ final class TrunkedIdentitySchema
             {
                 try(PreparedStatement statement = connection.prepareStatement(
                     "DELETE FROM " + table +
-                        " WHERE scope_id = ? AND radio_id = ? AND confirmed_at_ms <= ?"))
+                        " WHERE radio_system_id = ? AND radio_id = ? AND confirmed_at_ms <= ?"))
                 {
-                    statement.setInt(1, scope.scopeId());
+                    statement.setInt(1, radioSystem.radioSystemId());
                     statement.setInt(2, update.radioId());
                     statement.setLong(3, activity.observedAtEpochMilliseconds());
                     statement.executeUpdate();
@@ -591,8 +645,8 @@ final class TrunkedIdentitySchema
             return;
         }
 
-        if((update.talkgroupId() != null && !TrunkedIdentityPolicy.isDirectoryTalkgroup(scope.protocolCode(),
-            scope.identityDomain(), update.talkgroupId())) || hasClearAtOrAfter(connection, scope.scopeId(),
+        if((update.talkgroupId() != null && !TrunkedIdentityPolicy.isDirectoryTalkgroup(radioSystem.protocolCode(),
+            radioSystem.identityDomain(), update.talkgroupId())) || hasClearAtOrAfter(connection, radioSystem.radioSystemId(),
             update.radioId(), activity.observedAtEpochMilliseconds()))
         {
             return;
@@ -600,28 +654,28 @@ final class TrunkedIdentitySchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_radio_site_presence (
-                scope_id, radio_id, context_id, evidence_code, confirmed_at_ms
+                radio_system_id, radio_id, channel_id, evidence_code, confirmed_at_ms
             ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(scope_id, radio_id) DO UPDATE SET
-                context_id = excluded.context_id,
+            ON CONFLICT(radio_system_id, radio_id) DO UPDATE SET
+                channel_id = excluded.channel_id,
                 evidence_code = excluded.evidence_code,
                 confirmed_at_ms = excluded.confirmed_at_ms
             WHERE excluded.confirmed_at_ms > trunked_radio_site_presence.confirmed_at_ms
                OR (excluded.confirmed_at_ms = trunked_radio_site_presence.confirmed_at_ms
                    AND (excluded.evidence_code > trunked_radio_site_presence.evidence_code
                        OR (excluded.evidence_code = trunked_radio_site_presence.evidence_code
-                           AND excluded.context_id < trunked_radio_site_presence.context_id)))
+                           AND excluded.channel_id < trunked_radio_site_presence.channel_id)))
             """))
         {
-            statement.setInt(1, scope.scopeId());
+            statement.setInt(1, radioSystem.radioSystemId());
             statement.setInt(2, update.radioId());
-            statement.setInt(3, contextId);
+            statement.setInt(3, channelId);
             statement.setInt(4, update.evidence().code());
             statement.setLong(5, activity.observedAtEpochMilliseconds());
             statement.executeUpdate();
         }
 
-        if(update.talkgroupId() == null || !identityExists(connection, scope.scopeId(),
+        if(update.talkgroupId() == null || !identityExists(connection, radioSystem.radioSystemId(),
             new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP, update.talkgroupId())))
         {
             return;
@@ -629,9 +683,9 @@ final class TrunkedIdentitySchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_radio_affiliation (
-                scope_id, radio_id, talkgroup_id, confirmed_at_ms
+                radio_system_id, radio_id, talkgroup_id, confirmed_at_ms
             ) VALUES (?, ?, ?, ?)
-            ON CONFLICT(scope_id, radio_id) DO UPDATE SET
+            ON CONFLICT(radio_system_id, radio_id) DO UPDATE SET
                 talkgroup_id = excluded.talkgroup_id,
                 confirmed_at_ms = excluded.confirmed_at_ms
             WHERE excluded.confirmed_at_ms > trunked_radio_affiliation.confirmed_at_ms
@@ -639,7 +693,7 @@ final class TrunkedIdentitySchema
                    AND excluded.talkgroup_id < trunked_radio_affiliation.talkgroup_id)
             """))
         {
-            statement.setInt(1, scope.scopeId());
+            statement.setInt(1, radioSystem.radioSystemId());
             statement.setInt(2, update.radioId());
             statement.setInt(3, update.talkgroupId());
             statement.setLong(4, activity.observedAtEpochMilliseconds());
@@ -651,16 +705,16 @@ final class TrunkedIdentitySchema
      * A deregistration wins an equal-time tie. Retaining its bounded watermark prevents delayed confirmations from
      * recreating either current state after the visible rows have been removed.
      */
-    private static boolean hasClearAtOrAfter(Connection connection, int scopeId, int radioId, long observedAt)
+    private static boolean hasClearAtOrAfter(Connection connection, int radioSystemId, int radioId, long observedAt)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1
             FROM trunked_radio_presence_lifecycle
-            WHERE scope_id = ? AND radio_id = ? AND cleared_at_ms >= ?
+            WHERE radio_system_id = ? AND radio_id = ? AND cleared_at_ms >= ?
             """))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.setInt(2, radioId);
             statement.setLong(3, observedAt);
 
@@ -672,32 +726,32 @@ final class TrunkedIdentitySchema
     }
 
     /** Updates bounded lifetime identity and relationship summaries exactly once for a resolved logical call. */
-    static void recordResolvedLogicalCall(Connection connection, Scope scope,
+    static void recordResolvedLogicalCall(Connection connection, RadioSystem radioSystem,
                                           ReceiverActivityRecords.ResolvedLogicalCall call) throws SQLException
     {
-        if(scope == null || call == null)
+        if(radioSystem == null || call == null)
         {
             return;
         }
 
-        List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
+        List<Identity> destinations = destinationIdentities(radioSystem.protocolCode(), radioSystem.identityDomain(),
             call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
             call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities());
         Integer source = call.sourceRadioId();
-        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
+        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(radioSystem.protocolCode(), radioSystem.identityDomain(),
             source);
         int encrypted = call.encrypted() ? 1 : 0;
 
-        if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), call.destinationId(), call.destinationKind(),
+        if(isZeroLocalFullyQualifiedTalkgroup(radioSystem.protocolCode(), call.destinationId(), call.destinationKind(),
             call.p25TargetIdentity()))
         {
-            upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), call.p25TargetIdentity(),
+            upsertZeroLocalFullyQualifiedTalkgroup(connection, radioSystem.radioSystemId(), call.p25TargetIdentity(),
                 call.callStartEpochMilliseconds(), null, true, encrypted, 0, 0);
         }
 
         for(Identity destination: destinations)
         {
-            upsertIdentity(connection, scope.scopeId(), destination, call.callStartEpochMilliseconds(), null, true,
+            upsertIdentity(connection, radioSystem.radioSystemId(), destination, call.callStartEpochMilliseconds(), null, true,
                 false, true, encrypted, 0, 0,
                 validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                 call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null,
@@ -707,13 +761,13 @@ final class TrunkedIdentitySchema
         if(validSource)
         {
             Identity sourceIdentity = new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source);
-            upsertIdentity(connection, scope.scopeId(), sourceIdentity, call.callStartEpochMilliseconds(), null,
+            upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity, call.callStartEpochMilliseconds(), null,
                 true, true, false, encrypted, 0, 0, destinations.isEmpty() ? null : destinations.get(0),
                 call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null);
 
             for(Identity destination: groupDestinations(destinations))
             {
-                upsertRelationship(connection, scope.scopeId(), source, destination,
+                upsertRelationship(connection, radioSystem.radioSystemId(), source, destination,
                     call.callStartEpochMilliseconds(), null, true, encrypted, 0, 0,
                     call.encryptionAlgorithmId(), call.encryptionKeyId());
             }
@@ -721,33 +775,33 @@ final class TrunkedIdentitySchema
     }
 
     /** Updates output counters for the already-counted resolved logical call without adding another call. */
-    static void applyLogicalCallOutput(Connection connection, Scope scope,
+    static void applyLogicalCallOutput(Connection connection, RadioSystem radioSystem,
                                        ReceiverActivityRecords.LogicalCallOutput output, int recorded, int streamed)
         throws SQLException
     {
-        if(scope == null || output == null)
+        if(radioSystem == null || output == null)
         {
             return;
         }
 
         ReceiverActivityRecords.ResolvedLogicalCall call = output.call();
-        List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
+        List<Identity> destinations = destinationIdentities(radioSystem.protocolCode(), radioSystem.identityDomain(),
             call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
             call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities());
         Integer source = call.sourceRadioId();
-        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
+        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(radioSystem.protocolCode(), radioSystem.identityDomain(),
             source);
 
-        if(isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(), call.destinationId(), call.destinationKind(),
+        if(isZeroLocalFullyQualifiedTalkgroup(radioSystem.protocolCode(), call.destinationId(), call.destinationKind(),
             call.p25TargetIdentity()))
         {
-            upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(), call.p25TargetIdentity(),
+            upsertZeroLocalFullyQualifiedTalkgroup(connection, radioSystem.radioSystemId(), call.p25TargetIdentity(),
                 call.callStartEpochMilliseconds(), null, false, 0, recorded, streamed);
         }
 
         for(Identity destination: destinations)
         {
-            upsertIdentity(connection, scope.scopeId(), destination, call.callStartEpochMilliseconds(), null, false,
+            upsertIdentity(connection, radioSystem.radioSystemId(), destination, call.callStartEpochMilliseconds(), null, false,
                 false, false, 0, recorded, streamed,
                 validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                 null, null, null, null, P25IdentityMerge.SAME_CALL_REFINEMENT);
@@ -755,47 +809,47 @@ final class TrunkedIdentitySchema
 
         if(validSource)
         {
-            upsertIdentity(connection, scope.scopeId(),
+            upsertIdentity(connection, radioSystem.radioSystemId(),
                 new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source), call.callStartEpochMilliseconds(),
                 null, false, false, false, 0, recorded, streamed,
                 destinations.isEmpty() ? null : destinations.get(0), null, null, null, null);
             for(Identity destination: groupDestinations(destinations))
             {
-                upsertRelationship(connection, scope.scopeId(), source, destination,
+                upsertRelationship(connection, radioSystem.radioSystemId(), source, destination,
                     call.callStartEpochMilliseconds(), null, false, 0, recorded, streamed, null, null);
             }
         }
     }
 
-    static boolean applyAttribution(Connection connection, int contextId,
+    static boolean applyAttribution(Connection connection, int channelId,
                                     ReceiverActivityRecords.TrunkedCallAttribution attribution) throws SQLException
     {
-        Scope scope = ensureScope(connection, contextId, attribution.callStartEpochMilliseconds(),
+        RadioSystem radioSystem = ensureRadioSystem(connection, channelId, attribution.callStartEpochMilliseconds(),
             attribution.identityDomain(), false);
 
-        if(scope == null ||
-            (scope.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                attribution.callStartEpochMilliseconds() < scope.firstSeenEpochMilliseconds()))
+        if(radioSystem == null ||
+            (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
+                attribution.callStartEpochMilliseconds() < radioSystem.firstSeenEpochMilliseconds()))
         {
             return false;
         }
 
-        List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
+        List<Identity> destinations = destinationIdentities(radioSystem.protocolCode(), radioSystem.identityDomain(),
             attribution.destinationId() > 0 ? Integer.toString(attribution.destinationId()) : null,
             attribution.destinationKind(), attribution.patchMemberTalkgroupIds(),
             attribution.p25TargetIdentity(), attribution.p25PatchMemberIdentities());
         Integer source = attribution.sourceRadioId();
-        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
+        boolean validSource = TrunkedIdentityPolicy.isDirectoryRadio(radioSystem.protocolCode(), radioSystem.identityDomain(),
             source);
         int priorEncrypted = 0;
         boolean p25TargetIdentityApplied = false;
-        boolean zeroLocalFullyQualified = isZeroLocalFullyQualifiedTalkgroup(scope.protocolCode(),
+        boolean zeroLocalFullyQualified = isZeroLocalFullyQualifiedTalkgroup(radioSystem.protocolCode(),
             attribution.destinationId(), attribution.destinationKind(), attribution.p25TargetIdentity());
 
         if(zeroLocalFullyQualified &&
             (attribution.destinationBecameKnown() || attribution.hasP25TargetIdentity()))
         {
-            p25TargetIdentityApplied = upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(),
+            p25TargetIdentityApplied = upsertZeroLocalFullyQualifiedTalkgroup(connection, radioSystem.radioSystemId(),
                 attribution.p25TargetIdentity(), attribution.callStartEpochMilliseconds(),
                 null, false, 0,
                 0, 0);
@@ -807,7 +861,7 @@ final class TrunkedIdentitySchema
             {
                 if(destination.p25TargetIdentity().state() != ReceiverActivityRecords.P25IdentityState.UNKNOWN)
                 {
-                    p25TargetIdentityApplied |= upsertIdentity(connection, scope.scopeId(), destination,
+                    p25TargetIdentityApplied |= upsertIdentity(connection, radioSystem.radioSystemId(), destination,
                         attribution.callStartEpochMilliseconds(), null, false, false, false, 0, 0, 0,
                         null, null, null, null, null, P25IdentityMerge.SAME_CALL_REFINEMENT);
                 }
@@ -818,7 +872,7 @@ final class TrunkedIdentitySchema
         {
             for(Identity destination: destinations)
             {
-                upsertIdentity(connection, scope.scopeId(), destination, attribution.callStartEpochMilliseconds(),
+                upsertIdentity(connection, radioSystem.radioSystemId(), destination, attribution.callStartEpochMilliseconds(),
                     null, false, false, true, 0, 0, 0,
                     validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                     null, null, null, null);
@@ -827,7 +881,7 @@ final class TrunkedIdentitySchema
 
         if(attribution.sourceBecameKnown() && validSource)
         {
-            upsertIdentity(connection, scope.scopeId(),
+            upsertIdentity(connection, radioSystem.radioSystemId(),
                 new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source),
                 attribution.callStartEpochMilliseconds(), null, false,
                 true, false, 0, 0, 0, destinations.isEmpty() ? null : destinations.get(0),
@@ -839,7 +893,7 @@ final class TrunkedIdentitySchema
         {
             if(attribution.destinationBecameKnown() && !attribution.sourceBecameKnown())
             {
-                upsertIdentity(connection, scope.scopeId(),
+                upsertIdentity(connection, radioSystem.radioSystemId(),
                     new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source),
                     attribution.callStartEpochMilliseconds(), null, false, false, false, 0, 0, 0,
                     destinations.get(0), null, null, null, null);
@@ -848,7 +902,7 @@ final class TrunkedIdentitySchema
             {
                 for(Identity destination: destinations)
                 {
-                    upsertIdentity(connection, scope.scopeId(), destination,
+                    upsertIdentity(connection, radioSystem.radioSystemId(), destination,
                         attribution.callStartEpochMilliseconds(), null, false, false, false, 0, 0, 0,
                         new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source),
                         null, null, null, null);
@@ -857,7 +911,7 @@ final class TrunkedIdentitySchema
 
             for(Identity destination: groupDestinations(destinations))
             {
-                upsertRelationship(connection, scope.scopeId(), source, destination,
+                upsertRelationship(connection, radioSystem.radioSystemId(), source, destination,
                     attribution.callStartEpochMilliseconds(), null, false,
                     0, 0, 0, null, null);
             }
@@ -869,14 +923,14 @@ final class TrunkedIdentitySchema
 
             if(zeroLocalFullyQualified && attribution.encryptionBecameKnown())
             {
-                p25TargetIdentityApplied |= upsertZeroLocalFullyQualifiedTalkgroup(connection, scope.scopeId(),
+                p25TargetIdentityApplied |= upsertZeroLocalFullyQualifiedTalkgroup(connection, radioSystem.radioSystemId(),
                     attribution.p25TargetIdentity(), attribution.callStartEpochMilliseconds(), null, false,
                     newlyEncrypted, 0, 0);
             }
 
             for(Identity destination: destinations)
             {
-                upsertIdentity(connection, scope.scopeId(), destination,
+                upsertIdentity(connection, radioSystem.radioSystemId(), destination,
                     attribution.callStartEpochMilliseconds(), null, false, false, false, newlyEncrypted, 0, 0,
                     validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
                     attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(), null, null);
@@ -884,7 +938,7 @@ final class TrunkedIdentitySchema
 
             if(validSource)
             {
-                upsertIdentity(connection, scope.scopeId(),
+                upsertIdentity(connection, radioSystem.radioSystemId(),
                     new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source),
                     attribution.callStartEpochMilliseconds(), null, false, false, false, newlyEncrypted, 0, 0,
                     destinations.isEmpty() ? null : destinations.get(0), attribution.encryptionAlgorithmId(),
@@ -892,7 +946,7 @@ final class TrunkedIdentitySchema
 
                 for(Identity destination: groupDestinations(destinations))
                 {
-                    upsertRelationship(connection, scope.scopeId(), source, destination,
+                    upsertRelationship(connection, radioSystem.radioSystemId(), source, destination,
                         attribution.callStartEpochMilliseconds(), null, false, newlyEncrypted, 0, 0,
                         attribution.encryptionAlgorithmId(), attribution.encryptionKeyId());
                 }
@@ -905,27 +959,23 @@ final class TrunkedIdentitySchema
             p25TargetIdentityApplied;
     }
 
-    /**
-     * Indicates whether delayed attribution still belongs to the current identity generation. A lack of an eligible
-     * directory scope is not itself incompatible: P25 detail can still be enriched before an Alias List-backed
-     * system scope exists. NXDN Type-C and Type-D generations, however, must never enrich one another.
-     */
-    static boolean isAttributionCompatible(Connection connection, int contextId,
+    /** Indicates whether delayed attribution still belongs to the channel's current identity generation. */
+    static boolean isAttributionCompatible(Connection connection, int channelId,
                                            ReceiverActivityRecords.TrunkedCallAttribution attribution)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT scope.protocol_code, scope.identity_domain_code, scope.first_seen_ms
-            FROM trunked_identity_scope_context mapping
-            JOIN trunked_identity_scope scope ON scope.scope_id = mapping.scope_id
-            WHERE mapping.context_id = ?
+            SELECT system.protocol_code, system.identity_domain_code, system.first_seen_ms
+            FROM receiver_channel channel
+            LEFT JOIN radio_system system ON system.id = channel.radio_system_id
+            WHERE channel.id = ?
             """))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
-                if(!resultSet.next() ||
+                if(!resultSet.next() || resultSet.getObject("protocol_code") == null ||
                     resultSet.getInt("protocol_code") != TrunkedIdentityPolicy.PROTOCOL_NXDN)
                 {
                     return true;
@@ -944,7 +994,7 @@ final class TrunkedIdentitySchema
         }
     }
 
-    static boolean updateTalkerAlias(Connection connection, int contextId, int radioId, String talkerAlias,
+    static boolean updateTalkerAlias(Connection connection, int channelId, int radioId, String talkerAlias,
                                      long observedAt, ReceiverActivityRecords.IdentityDomain identityDomain)
         throws SQLException
     {
@@ -953,321 +1003,263 @@ final class TrunkedIdentitySchema
             return false;
         }
 
-        Scope scope = ensureScope(connection, contextId, observedAt, identityDomain, false);
+        RadioSystem radioSystem = ensureRadioSystem(connection, channelId, observedAt, identityDomain, false);
 
-        if(scope == null ||
-            (scope.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                observedAt < scope.firstSeenEpochMilliseconds()) ||
-            !TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(), radioId))
+        if(radioSystem == null ||
+            (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
+                observedAt < radioSystem.firstSeenEpochMilliseconds()) ||
+            !TrunkedIdentityPolicy.isDirectoryRadio(radioSystem.protocolCode(), radioSystem.identityDomain(), radioId))
         {
             return false;
         }
 
-        return upsertIdentity(connection, scope.scopeId(),
+        return upsertIdentity(connection, radioSystem.radioSystemId(),
             new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, radioId), observedAt,
             null, false, false, false, 0, 0, 0, null, null, null, talkerAlias, observedAt);
     }
 
-    static Scope ensureScope(Connection connection, int contextId, long observedAt,
+    static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
                              ReceiverActivityRecords.IdentityDomain observationDomain) throws SQLException
     {
-        return ensureScope(connection, contextId, observedAt, observationDomain, true);
+        return ensureRadioSystem(connection, channelId, observedAt, observationDomain, null, null, true);
+    }
+
+    static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
+                             ReceiverActivityRecords.IdentityDomain observationDomain,
+                             Integer p25Wacn, Integer p25SystemId) throws SQLException
+    {
+        return ensureRadioSystem(connection, channelId, observedAt, observationDomain, p25Wacn, p25SystemId,
+            true);
     }
 
     /**
-     * Resolves the identity scope for one writer record. Only primary activity/site observations may reclassify the
+     * Resolves the identity radioSystem for one writer record. Only primary activity/site observations may reclassify the
      * NXDN address domain. Completion, attribution and alias messages are delayed enrichments of an already accepted
      * observation and must never change the current generation themselves.
      */
-    static Scope ensureScope(Connection connection, int contextId, long observedAt,
+    static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
                              ReceiverActivityRecords.IdentityDomain observationDomain,
                              boolean allowIdentityDomainChange) throws SQLException
     {
-        return ensureScope(connection, contextId, observedAt, observationDomain, allowIdentityDomainChange, false);
+        return ensureRadioSystem(connection, channelId, observedAt, observationDomain, null, null,
+            allowIdentityDomainChange);
     }
 
-    /** Resolves one completed receiver-local logical call, including fail-open P25 context scopes. */
-    static Scope ensureContextLogicalCallScope(Connection connection, int contextId, long observedAt,
-                                                ReceiverActivityRecords.IdentityDomain observationDomain)
+    private static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
+                             ReceiverActivityRecords.IdentityDomain observationDomain,
+                             Integer p25Wacn, Integer p25SystemId, boolean allowIdentityDomainChange)
         throws SQLException
     {
-        return ensureScope(connection, contextId, observedAt, observationDomain, false, true);
+        return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
+            p25SystemId, allowIdentityDomainChange);
     }
 
-    private static Scope ensureScope(Connection connection, int contextId, long observedAt,
-                                     ReceiverActivityRecords.IdentityDomain observationDomain,
-                                     boolean allowIdentityDomainChange, boolean allowP25ContextFallback)
+    /** Resolves one completed receiver-local logical call. */
+    static RadioSystem ensureReceiverRadioSystem(Connection connection, int channelId, long observedAt,
+                                                ReceiverActivityRecords.IdentityDomain observationDomain,
+                                                Integer p25Wacn, Integer p25SystemId)
         throws SQLException
     {
-        Context context = context(connection, contextId);
+        return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
+            p25SystemId, false);
+    }
 
-        if(context == null)
+    private static RadioSystem ensureRadioSystemInternal(Connection connection, int channelId, long observedAt,
+                                                         ReceiverActivityRecords.IdentityDomain observationDomain,
+                                                         Integer observedP25Wacn,
+                                                         Integer observedP25SystemId,
+                                                         boolean allowIdentityDomainChange)
+        throws SQLException
+    {
+        ReceiverChannel channel = receiverChannel(connection, channelId);
+
+        if(channel == null || observedAt <= 0)
         {
             return null;
         }
 
-        int protocol = TrunkedIdentityPolicy.protocolFamilyCode(context.protocolCode());
+        int protocol = TrunkedIdentityPolicy.protocolFamilyCode(channel.protocolCode());
 
         if(!TrunkedIdentityPolicy.isSupportedProtocol(protocol))
         {
             return null;
         }
 
-        int scopeKind;
-        String scopeToken;
-        Integer p25SystemKey = null;
-        Long aliasListId = null;
-
-        if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25)
+        Integer p25Wacn = protocol == TrunkedIdentityPolicy.PROTOCOL_P25 ? observedP25Wacn : null;
+        Integer p25SystemId = protocol == TrunkedIdentityPolicy.PROTOCOL_P25 ? observedP25SystemId : null;
+        if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25 && (p25Wacn == null || p25SystemId == null) &&
+            channel.currentP25Wacn() != null && channel.currentP25SystemId() != null)
         {
-            if(context.systemKey() == null || context.wacn() == null || context.systemId() == null ||
-                context.aliasListId() == null || context.aliasListId() <= 0)
-            {
-                if(!allowP25ContextFallback)
-                {
-                    return null;
-                }
-
-                scopeKind = SCOPE_KIND_CONTEXT;
-                scopeToken = context.guid() != null && !context.guid().isBlank() ?
-                    "p25:uncertain:guid:" + context.guid() : "p25:uncertain:context:" + context.contextId();
-            }
-            else
-            {
-                scopeKind = SCOPE_KIND_LINKED_SYSTEM;
-                p25SystemKey = context.systemKey();
-                aliasListId = context.aliasListId();
-                scopeToken = String.format(Locale.ROOT, "p25:%05X:%03X:alias-list:%d", context.wacn(),
-                    context.systemId(), aliasListId);
-            }
+            p25Wacn = channel.currentP25Wacn();
+            p25SystemId = channel.currentP25SystemId();
         }
-        else
+        String systemKey = p25Wacn != null && p25SystemId != null ?
+            RadioSystemKey.p25(p25Wacn, p25SystemId) :
+            RadioSystemKey.configured(protocol(protocol), channel.configurationId());
+        if(systemKey == null)
         {
-            scopeKind = SCOPE_KIND_CONTEXT;
-            String protocolName = protocol == TrunkedIdentityPolicy.PROTOCOL_DMR ? "dmr" : "nxdn";
-            scopeToken = context.guid() != null && !context.guid().isBlank() ?
-                protocolName + ":guid:" + context.guid() :
-                protocolName + ":context:" + context.contextId();
+            return null;
         }
 
         int identityDomainCode = identityDomainCode(protocol, observationDomain);
-        ExistingScope existingScope = existingScope(connection, scopeToken);
-        Integer mappedScopeId = mappedScopeId(connection, contextId);
-        boolean nxdnIdentityDomainChanged = existingScope != null &&
+        ExistingRadioSystem existing = existingRadioSystem(connection, systemKey);
+        boolean nxdnIdentityDomainChanged = existing != null &&
             protocol == TrunkedIdentityPolicy.PROTOCOL_NXDN &&
-            existingScope.scopeKindCode() == SCOPE_KIND_CONTEXT &&
             identityDomainCode != IDENTITY_DOMAIN_STANDARD &&
-            existingScope.identityDomainCode() != identityDomainCode;
+            existing.identityDomainCode() != identityDomainCode;
 
         if(nxdnIdentityDomainChanged && !allowIdentityDomainChange)
         {
             return null;
         }
 
-        if(nxdnIdentityDomainChanged && observedAt < existingScope.lastSeenEpochMilliseconds())
+        if(nxdnIdentityDomainChanged && observedAt < existing.lastSeenEpochMilliseconds())
         {
             return null;
         }
 
         if(nxdnIdentityDomainChanged)
         {
-            clearNxdnIdentityDomainState(connection, existingScope.scopeId());
+            clearNxdnIdentityDomainState(connection, existing.id());
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO trunked_identity_scope (
-                scope_token, protocol_code, scope_kind_code, identity_domain_code, alias_list_id, p25_system_key,
+            INSERT INTO radio_system (
+                system_key, protocol_code, identity_domain_code, p25_wacn, p25_system_id,
                 first_seen_ms, last_seen_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope_token) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(system_key) DO UPDATE SET
                 first_seen_ms = CASE
                     WHEN excluded.identity_domain_code != 0
-                     AND excluded.identity_domain_code != trunked_identity_scope.identity_domain_code
-                     AND excluded.last_seen_ms >= trunked_identity_scope.last_seen_ms
+                     AND excluded.identity_domain_code != radio_system.identity_domain_code
+                     AND excluded.last_seen_ms >= radio_system.last_seen_ms
                     THEN excluded.first_seen_ms
-                    ELSE trunked_identity_scope.first_seen_ms
+                    ELSE radio_system.first_seen_ms
                 END,
-                last_seen_ms = max(trunked_identity_scope.last_seen_ms, excluded.last_seen_ms),
+                last_seen_ms = max(radio_system.last_seen_ms, excluded.last_seen_ms),
                 identity_domain_code = CASE
                     WHEN excluded.identity_domain_code != 0
-                     AND excluded.last_seen_ms >= trunked_identity_scope.last_seen_ms
+                     AND excluded.last_seen_ms >= radio_system.last_seen_ms
                     THEN excluded.identity_domain_code
-                    ELSE trunked_identity_scope.identity_domain_code
+                    ELSE radio_system.identity_domain_code
                 END
             """))
         {
-            statement.setString(1, scopeToken);
+            statement.setString(1, systemKey);
             statement.setInt(2, protocol);
-            statement.setInt(3, scopeKind);
-            statement.setInt(4, identityDomainCode);
-            setLong(statement, 5, aliasListId);
-            setInteger(statement, 6, p25SystemKey);
+            statement.setInt(3, identityDomainCode);
+            setInteger(statement, 4, p25Wacn);
+            setInteger(statement, 5, p25SystemId);
+            statement.setLong(6, observedAt);
             statement.setLong(7, observedAt);
-            statement.setLong(8, observedAt);
             statement.executeUpdate();
         }
 
-        Scope scope;
+        RadioSystem radioSystem;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT scope_id, protocol_code, identity_domain_code, first_seen_ms
-            FROM trunked_identity_scope
-            WHERE scope_token = ?
+            SELECT id, protocol_code, identity_domain_code, first_seen_ms
+            FROM radio_system
+            WHERE system_key = ?
             """))
         {
-            statement.setString(1, scopeToken);
+            statement.setString(1, systemKey);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(!resultSet.next())
                 {
-                    throw new SQLException("Missing trunked identity scope [" + scopeToken + "]");
+                    throw new SQLException("Missing radio system [" + systemKey + "]");
                 }
 
-                scope = new Scope(resultSet.getInt("scope_id"), resultSet.getInt("protocol_code"),
-                    identityDomain(resultSet.getInt("identity_domain_code")), scopeToken,
+                radioSystem = new RadioSystem(resultSet.getInt("id"), resultSet.getInt("protocol_code"),
+                    identityDomain(resultSet.getInt("identity_domain_code")), systemKey,
                     resultSet.getLong("first_seen_ms"));
             }
         }
 
-        if(mappedScopeId != null && mappedScopeId != scope.scopeId())
+        if(channel.radioSystemId() != null && channel.radioSystemId() != radioSystem.radioSystemId())
         {
-            clearContextIdentityState(connection, contextId);
+            clearReceiverChannelIdentityState(connection, channelId);
         }
 
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO trunked_identity_scope_context (context_id, scope_id, first_seen_ms, last_seen_ms)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(context_id) DO UPDATE SET
-                scope_id = excluded.scope_id,
-                first_seen_ms = CASE
-                    WHEN trunked_identity_scope_context.scope_id = excluded.scope_id
-                    THEN min(trunked_identity_scope_context.first_seen_ms, excluded.first_seen_ms)
-                    ELSE excluded.first_seen_ms
-                END,
-                last_seen_ms = CASE
-                    WHEN trunked_identity_scope_context.scope_id = excluded.scope_id
-                    THEN max(trunked_identity_scope_context.last_seen_ms, excluded.last_seen_ms)
-                    ELSE excluded.last_seen_ms
-                END
-            """))
+        try(PreparedStatement statement = connection.prepareStatement(
+            "UPDATE receiver_channel SET radio_system_id = ? WHERE id = ?"))
         {
-            statement.setInt(1, contextId);
-            statement.setInt(2, scope.scopeId());
-            statement.setLong(3, observedAt);
-            statement.setLong(4, observedAt);
+            statement.setInt(1, radioSystem.radioSystemId());
+            statement.setInt(2, channelId);
             statement.executeUpdate();
         }
 
-        deleteOrphanContextScopes(connection);
-        return scope;
+        if(channel.radioSystemId() != null && channel.radioSystemId() != radioSystem.radioSystemId())
+        {
+            deleteUnusedConfiguredSystem(connection, channel.radioSystemId());
+        }
+        return radioSystem;
     }
 
-    /**
-     * Resolves a P25 system-and-alias-list scope for a completed logical call.  Unlike receiver observations, the
-     * global coordinator result does not belong to one receiver context.
-     */
-    static Scope ensureP25LogicalCallScope(Connection connection, int wacn, int systemId, long aliasListId,
-                                           long observedAt) throws SQLException
+    /** Resolves the native P25 radio-system identity carried by a completed logical call. */
+    static RadioSystem ensureP25RadioSystem(Connection connection, int wacn, int systemId,
+                                            long observedAt) throws SQLException
     {
-        if(wacn < 0 || wacn > 0xFFFFF || systemId < 0 || systemId > 0xFFF || aliasListId <= 0 || observedAt <= 0)
+        String radioSystemKey = RadioSystemKey.p25(wacn, systemId);
+        if(radioSystemKey == null || observedAt <= 0)
         {
             return null;
         }
 
-        String scopeToken = String.format(Locale.ROOT, "p25:%05X:%03X:alias-list:%d", wacn, systemId,
-            aliasListId);
-        Scope retainedScope = selectScope(connection, scopeToken);
-        if(retainedScope != null)
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                UPDATE trunked_identity_scope SET last_seen_ms=max(last_seen_ms, ?) WHERE scope_id=?
-                """))
-            {
-                statement.setLong(1, observedAt);
-                statement.setInt(2, retainedScope.scopeId());
-                statement.executeUpdate();
-            }
-            return retainedScope;
-        }
-
-        Integer systemKey;
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO p25_system(wacn, system_id, first_seen_ms, last_seen_ms)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(wacn, system_id) DO UPDATE SET
-                first_seen_ms = min(p25_system.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(p25_system.last_seen_ms, excluded.last_seen_ms)
-            RETURNING system_key
+            INSERT INTO radio_system(system_key, protocol_code, identity_domain_code, p25_wacn,
+                p25_system_id, first_seen_ms, last_seen_ms)
+            VALUES (?, 1, 0, ?, ?, ?, ?)
+            ON CONFLICT(system_key) DO UPDATE SET
+                first_seen_ms = min(radio_system.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(radio_system.last_seen_ms, excluded.last_seen_ms)
             """))
         {
-            statement.setInt(1, wacn);
-            statement.setInt(2, systemId);
-            statement.setLong(3, observedAt);
-            statement.setLong(4, observedAt);
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                systemKey = resultSet.next() ? resultSet.getInt(1) : null;
-            }
-        }
-
-        if(systemKey == null)
-        {
-            return null;
-        }
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO trunked_identity_scope(
-                scope_token, protocol_code, scope_kind_code, identity_domain_code, alias_list_id, p25_system_key,
-                first_seen_ms, last_seen_ms
-            ) VALUES (?, 1, 1, 0, ?, ?, ?, ?)
-            ON CONFLICT(scope_token) DO UPDATE SET
-                first_seen_ms = min(trunked_identity_scope.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(trunked_identity_scope.last_seen_ms, excluded.last_seen_ms)
-            """))
-        {
-            statement.setString(1, scopeToken);
-            statement.setLong(2, aliasListId);
-            statement.setInt(3, systemKey);
+            statement.setString(1, radioSystemKey);
+            statement.setInt(2, wacn);
+            statement.setInt(3, systemId);
             statement.setLong(4, observedAt);
             statement.setLong(5, observedAt);
             statement.executeUpdate();
         }
 
-        return selectScope(connection, scopeToken);
+        return selectRadioSystem(connection, radioSystemKey);
     }
 
-    private static Scope selectScope(Connection connection, String scopeToken) throws SQLException
+    private static RadioSystem selectRadioSystem(Connection connection, String systemKey) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT scope_id, protocol_code, identity_domain_code, first_seen_ms
-            FROM trunked_identity_scope WHERE scope_token = ?
+            SELECT id, protocol_code, identity_domain_code, first_seen_ms
+            FROM radio_system WHERE system_key = ?
             """))
         {
-            statement.setString(1, scopeToken);
+            statement.setString(1, systemKey);
             try(ResultSet resultSet = statement.executeQuery())
             {
-                return resultSet.next() ? new Scope(resultSet.getInt("scope_id"),
+                return resultSet.next() ? new RadioSystem(resultSet.getInt("id"),
                     resultSet.getInt("protocol_code"), identityDomain(resultSet.getInt("identity_domain_code")),
-                    scopeToken, resultSet.getLong("first_seen_ms")) : null;
+                    systemKey, resultSet.getLong("first_seen_ms")) : null;
             }
         }
     }
 
-    private static ExistingScope existingScope(Connection connection, String scopeToken) throws SQLException
+    private static ExistingRadioSystem existingRadioSystem(Connection connection, String systemKey) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT scope_id, scope_kind_code, identity_domain_code, last_seen_ms
-            FROM trunked_identity_scope
-            WHERE scope_token = ?
+            SELECT id, identity_domain_code, last_seen_ms
+            FROM radio_system
+            WHERE system_key = ?
             """))
         {
-            statement.setString(1, scopeToken);
+            statement.setString(1, systemKey);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(resultSet.next())
                 {
-                    return new ExistingScope(resultSet.getInt("scope_id"), resultSet.getInt("scope_kind_code"),
+                    return new ExistingRadioSystem(resultSet.getInt("id"),
                         resultSet.getInt("identity_domain_code"), resultSet.getLong("last_seen_ms"));
                 }
             }
@@ -1276,18 +1268,16 @@ final class TrunkedIdentitySchema
         return null;
     }
 
-    private static Integer mappedScopeId(Connection connection, int contextId) throws SQLException
+    private static void deleteUnusedConfiguredSystem(Connection connection, int radioSystemId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT scope_id FROM trunked_identity_scope_context WHERE context_id = ?
+            DELETE FROM radio_system
+            WHERE id = ? AND system_key LIKE '%:channel:%'
+              AND NOT EXISTS (SELECT 1 FROM receiver_channel WHERE radio_system_id = radio_system.id)
             """))
         {
-            statement.setInt(1, contextId);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next() ? resultSet.getInt("scope_id") : null;
-            }
+            statement.setInt(1, radioSystemId);
+            statement.executeUpdate();
         }
     }
 
@@ -1295,86 +1285,86 @@ final class TrunkedIdentitySchema
      * NXDN Type-C and Type-D reuse portions of the same numeric address space with different meanings. If a channel
      * is reclassified, remove the prior generation before accepting the new domain.
      */
-    private static void clearNxdnIdentityDomainState(Connection connection, int scopeId) throws SQLException
+    private static void clearNxdnIdentityDomainState(Connection connection, int radioSystemId) throws SQLException
     {
         for(String table: List.of("trunked_radio_affiliation", "trunked_radio_site_presence",
             "trunked_radio_presence_lifecycle"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
-                "DELETE FROM " + table + " WHERE scope_id = ?"))
+                "DELETE FROM " + table + " WHERE radio_system_id = ?"))
             {
-                statement.setInt(1, scopeId);
+                statement.setInt(1, radioSystemId);
                 statement.executeUpdate();
             }
         }
 
         try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM trunked_radio_talkgroup_summary WHERE scope_id = ?"))
+            "DELETE FROM trunked_radio_talkgroup_summary WHERE radio_system_id = ?"))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.executeUpdate();
         }
 
         try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM trunked_identity_summary WHERE scope_id = ?"))
+            "DELETE FROM radio_system_identity_summary WHERE radio_system_id = ?"))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.executeUpdate();
         }
 
-        for(Integer contextId: mappedContextIds(connection, scopeId))
+        for(Integer channelId: receiverChannelIds(connection, radioSystemId))
         {
-            clearContextIdentityState(connection, contextId);
+            clearReceiverChannelIdentityState(connection, channelId);
         }
     }
 
-    private static List<Integer> mappedContextIds(Connection connection, int scopeId) throws SQLException
+    private static List<Integer> receiverChannelIds(Connection connection, int radioSystemId) throws SQLException
     {
-        List<Integer> contextIds = new ArrayList<>();
+        List<Integer> channelIds = new ArrayList<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT context_id FROM trunked_identity_scope_context WHERE scope_id = ?
+            SELECT id FROM receiver_channel WHERE radio_system_id = ?
             """))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
                 while(resultSet.next())
                 {
-                    contextIds.add(resultSet.getInt("context_id"));
+                    channelIds.add(resultSet.getInt("id"));
                 }
             }
         }
 
-        return contextIds;
+        return channelIds;
     }
 
     /**
-     * Clears receiver-owned projections before moving a context to a different identity scope. These rows join
-     * through the context's current scope/protocol, so retaining them would relabel old calls as belonging to the new
+     * Clears receiver-owned projections before moving a channel to a different identity radioSystem. These rows join
+     * through the channel's current radioSystem/protocol, so retaining them would relabel old calls as belonging to the new
      * system or protocol.
      */
-    private static void clearContextIdentityState(Connection connection, int contextId) throws SQLException
+    private static void clearReceiverChannelIdentityState(Connection connection, int channelId) throws SQLException
     {
         for(String table: List.of("trunked_radio_site_presence", "trunked_signaling_activity_bucket",
             "receiver_activity_event"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
-                "DELETE FROM " + table + " WHERE context_id = ?"))
+                "DELETE FROM " + table + " WHERE channel_id = ?"))
             {
-                statement.setInt(1, contextId);
+                statement.setInt(1, channelId);
                 statement.executeUpdate();
             }
         }
     }
 
-    /** Clears receiver-owned identity evidence and its scope mapping when a newer site generation is known but its
+    /** Clears receiver-owned identity evidence and its radioSystem mapping when a newer site generation is known but its
      * complete normalized system key is not yet available. */
-    static void clearContextGeneration(Connection connection, int contextId) throws SQLException
+    static void clearReceiverChannelGeneration(Connection connection, int channelId) throws SQLException
     {
-        clearContextIdentityState(connection, contextId);
-        clearContext(connection, contextId);
+        clearReceiverChannelIdentityState(connection, channelId);
+        detachReceiverChannel(connection, channelId);
     }
 
     static int deleteOlderThan(Connection connection, long cutoff) throws SQLException
@@ -1385,8 +1375,59 @@ final class TrunkedIdentitySchema
         deleted += deleteIdentityBatches(connection, "trunked_radio_presence_lifecycle", cutoff);
         deleted += deleteIdentityBatches(connection, "trunked_radio_talkgroup_summary", cutoff);
         deleted += deleteIdentityBatches(connection, "p25_zero_local_fq_talkgroup_summary", cutoff);
-        deleted += deleteIdentityBatches(connection, "trunked_identity_summary", cutoff);
+        deleted += deleteIdentityBatches(connection, "radio_system_identity_summary", cutoff);
         return deleted;
+    }
+
+    /** Removes at most one bounded batch of systems after their channels and retained facts are gone. */
+    static int pruneUnusedRadioSystems(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            DELETE FROM radio_system
+            WHERE id IN (
+                SELECT system.id
+                FROM radio_system system
+                WHERE NOT EXISTS (SELECT 1 FROM receiver_channel WHERE radio_system_id = system.id)
+                  AND (
+                      system.system_key LIKE '%:channel:%'
+                      OR (
+                          NOT EXISTS (
+                              SELECT 1 FROM radio_system_identity_summary WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM p25_zero_local_fq_talkgroup_summary WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_radio_talkgroup_summary WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_radio_affiliation WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_radio_site_presence WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_radio_presence_lifecycle WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_logical_call_bucket WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_logical_call_identity_bucket WHERE radio_system_id = system.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM p25_learned_site WHERE radio_system_id = system.id
+                          )
+                      )
+                  )
+                ORDER BY system.id
+                LIMIT ?
+            )
+            """))
+        {
+            statement.setInt(1, DELETE_BATCH_SIZE);
+            return statement.executeUpdate();
+        }
     }
 
     static int reset(Connection connection) throws SQLException
@@ -1397,28 +1438,43 @@ final class TrunkedIdentitySchema
         deleted += deleteAll(connection, "trunked_radio_presence_lifecycle");
         deleted += deleteAll(connection, "trunked_radio_talkgroup_summary");
         deleted += deleteAll(connection, "p25_zero_local_fq_talkgroup_summary");
-        deleted += deleteAll(connection, "trunked_identity_summary");
-        deleted += deleteAll(connection, "trunked_identity_scope_context");
-        deleted += deleteAll(connection, "trunked_identity_scope");
+        deleted += deleteAll(connection, "radio_system_identity_summary");
+        deleted += deleteAll(connection, "radio_system");
         return deleted;
     }
 
-    static int clearContext(Connection connection, int contextId) throws SQLException
+    static int detachReceiverChannel(Connection connection, int channelId) throws SQLException
     {
         int deleted;
+        Integer previous = null;
 
         try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM trunked_identity_scope_context WHERE context_id = ?"))
+            "SELECT radio_system_id FROM receiver_channel WHERE id = ?"))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                previous = resultSet.next() ? nullableInteger(resultSet, "radio_system_id") : null;
+            }
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement(
+            "UPDATE receiver_channel SET radio_system_id = NULL WHERE id = ?"))
+        {
+            statement.setInt(1, channelId);
             deleted = statement.executeUpdate();
+        }
+
+        if(previous != null)
+        {
+            deleteUnusedConfiguredSystem(connection, previous);
         }
 
         return deleted;
     }
 
     private static boolean upsertZeroLocalFullyQualifiedTalkgroup(
-        Connection connection, int scopeId, ReceiverActivityRecords.P25TargetIdentity targetIdentity,
+        Connection connection, int radioSystemId, ReceiverActivityRecords.P25TargetIdentity targetIdentity,
         long observedAt, ReceiverActivityRecords.Action action, boolean countedCall, int encrypted, int recorded,
         int streamed) throws SQLException
     {
@@ -1427,20 +1483,20 @@ final class TrunkedIdentitySchema
             return false;
         }
 
-        if(!zeroLocalFullyQualifiedTalkgroupExists(connection, scopeId, targetIdentity) &&
-            !hasScopeCapacity(connection, "p25_zero_local_fq_talkgroup_summary", scopeId,
-                MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SCOPE))
+        if(!zeroLocalFullyQualifiedTalkgroupExists(connection, radioSystemId, targetIdentity) &&
+            !hasSystemCapacity(connection, "p25_zero_local_fq_talkgroup_summary", radioSystemId,
+                MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SYSTEM))
         {
             return false;
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_zero_local_fq_talkgroup_summary (
-                scope_id, home_wacn, home_system_id, home_talkgroup_id,
+                radio_system_id, home_wacn, home_system_id, home_talkgroup_id,
                 first_seen_ms, last_seen_ms, %s, logical_call_count, encrypted_logical_call_count,
                 recorded_output_count, streamed_output_count
             ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?)
-            ON CONFLICT(scope_id, home_wacn, home_system_id, home_talkgroup_id) DO UPDATE SET
+            ON CONFLICT(radio_system_id, home_wacn, home_system_id, home_talkgroup_id) DO UPDATE SET
                 first_seen_ms = min(p25_zero_local_fq_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(p25_zero_local_fq_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
@@ -1456,7 +1512,7 @@ final class TrunkedIdentitySchema
             actionUpdateSql("p25_zero_local_fq_talkgroup_summary"))))
         {
             int index = 1;
-            statement.setInt(index++, scopeId);
+            statement.setInt(index++, radioSystemId);
             statement.setInt(index++, targetIdentity.homeWacn());
             statement.setInt(index++, targetIdentity.homeSystemId());
             statement.setInt(index++, targetIdentity.homeTalkgroupId());
@@ -1474,16 +1530,16 @@ final class TrunkedIdentitySchema
     }
 
     private static boolean zeroLocalFullyQualifiedTalkgroupExists(
-        Connection connection, int scopeId, ReceiverActivityRecords.P25TargetIdentity targetIdentity)
+        Connection connection, int radioSystemId, ReceiverActivityRecords.P25TargetIdentity targetIdentity)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1
             FROM p25_zero_local_fq_talkgroup_summary
-            WHERE scope_id = ? AND home_wacn = ? AND home_system_id = ? AND home_talkgroup_id = ?
+            WHERE radio_system_id = ? AND home_wacn = ? AND home_system_id = ? AND home_talkgroup_id = ?
             """))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.setInt(2, targetIdentity.homeWacn());
             statement.setInt(3, targetIdentity.homeSystemId());
             statement.setInt(4, targetIdentity.homeTalkgroupId());
@@ -1495,19 +1551,19 @@ final class TrunkedIdentitySchema
         }
     }
 
-    private static boolean upsertIdentity(Connection connection, int scopeId, Identity identity, long observedAt,
+    private static boolean upsertIdentity(Connection connection, int radioSystemId, Identity identity, long observedAt,
                                           ReceiverActivityRecords.Action action, boolean countedCall,
                                           boolean sourceCall, boolean targetCall, int encrypted, int recorded,
                                           int streamed, Identity counterpart, Integer encryptionAlgorithm,
                                           Integer encryptionKey, String talkerAlias, Long talkerAliasSeen)
         throws SQLException
     {
-        return upsertIdentity(connection, scopeId, identity, observedAt, action, countedCall, sourceCall,
+        return upsertIdentity(connection, radioSystemId, identity, observedAt, action, countedCall, sourceCall,
             targetCall, encrypted, recorded, streamed, counterpart, encryptionAlgorithm, encryptionKey,
             talkerAlias, talkerAliasSeen, P25IdentityMerge.AGGREGATE);
     }
 
-    private static boolean upsertIdentity(Connection connection, int scopeId, Identity identity, long observedAt,
+    private static boolean upsertIdentity(Connection connection, int radioSystemId, Identity identity, long observedAt,
                                           ReceiverActivityRecords.Action action, boolean countedCall,
                                           boolean sourceCall, boolean targetCall, int encrypted, int recorded,
                                           int streamed, Identity counterpart, Integer encryptionAlgorithm,
@@ -1515,20 +1571,20 @@ final class TrunkedIdentitySchema
                                           P25IdentityMerge p25IdentityMerge)
         throws SQLException
     {
-        if(!identityExists(connection, scopeId, identity) &&
-            !hasScopeCapacity(connection, "trunked_identity_summary", scopeId, MAX_IDENTITIES_PER_SCOPE))
+        if(!identityExists(connection, radioSystemId, identity) &&
+            !hasSystemCapacity(connection, "radio_system_identity_summary", radioSystemId, MAX_IDENTITIES_PER_SYSTEM))
         {
             return false;
         }
 
         String sameCallFullyQualifiedRefinement = p25IdentityMerge == P25IdentityMerge.SAME_CALL_REFINEMENT ?
-            "trunked_identity_summary.p25_identity_state_code = 1 " +
+            "radio_system_identity_summary.p25_identity_state_code = 1 " +
                 "AND excluded.p25_identity_state_code = 2 " +
-                "AND trunked_identity_summary.first_seen_ms = excluded.first_seen_ms" : "0";
+                "AND radio_system_identity_summary.first_seen_ms = excluded.first_seen_ms" : "0";
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO trunked_identity_summary (
-                scope_id, identity_kind_code, identity_id,
+            INSERT INTO radio_system_identity_summary (
+                radio_system_id, identity_kind_code, identity_id,
                 p25_identity_state_code, p25_home_wacn, p25_home_system_id, p25_home_talkgroup_id,
                 first_seen_ms, last_seen_ms, %s,
                 logical_call_count, source_logical_call_count, target_logical_call_count,
@@ -1537,138 +1593,138 @@ final class TrunkedIdentitySchema
                 last_encryption_algorithm_id, last_encryption_key_id,
                 last_talker_alias, last_talker_alias_seen_ms
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope_id, identity_kind_code, identity_id) DO UPDATE SET
+            ON CONFLICT(radio_system_id, identity_kind_code, identity_id) DO UPDATE SET
                 p25_identity_state_code = CASE
                     WHEN excluded.p25_identity_state_code = 0
-                    THEN trunked_identity_summary.p25_identity_state_code
-                    WHEN trunked_identity_summary.p25_identity_state_code = 0
+                    THEN radio_system_identity_summary.p25_identity_state_code
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 0
                     THEN excluded.p25_identity_state_code
                     WHEN %s
                     THEN 2
-                    WHEN trunked_identity_summary.p25_identity_state_code = 3
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 3
                          OR excluded.p25_identity_state_code = 3
                     THEN 3
-                    WHEN trunked_identity_summary.p25_identity_state_code = 1
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 1
                          AND excluded.p25_identity_state_code = 1
                     THEN 1
-                    WHEN trunked_identity_summary.p25_identity_state_code = 2
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 2
                          AND excluded.p25_identity_state_code = 2
-                         AND trunked_identity_summary.p25_home_wacn = excluded.p25_home_wacn
-                         AND trunked_identity_summary.p25_home_system_id = excluded.p25_home_system_id
-                         AND trunked_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
+                         AND radio_system_identity_summary.p25_home_wacn = excluded.p25_home_wacn
+                         AND radio_system_identity_summary.p25_home_system_id = excluded.p25_home_system_id
+                         AND radio_system_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
                     THEN 2
                     ELSE 3
                 END,
                 p25_home_wacn = CASE
                     WHEN excluded.p25_identity_state_code = 0
-                         AND trunked_identity_summary.p25_identity_state_code = 2
-                    THEN trunked_identity_summary.p25_home_wacn
-                    WHEN trunked_identity_summary.p25_identity_state_code = 0
+                         AND radio_system_identity_summary.p25_identity_state_code = 2
+                    THEN radio_system_identity_summary.p25_home_wacn
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 0
                          AND excluded.p25_identity_state_code = 2
                     THEN excluded.p25_home_wacn
                     WHEN %s
                     THEN excluded.p25_home_wacn
-                    WHEN trunked_identity_summary.p25_identity_state_code = 2
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 2
                          AND excluded.p25_identity_state_code = 2
-                         AND trunked_identity_summary.p25_home_wacn = excluded.p25_home_wacn
-                         AND trunked_identity_summary.p25_home_system_id = excluded.p25_home_system_id
-                         AND trunked_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
-                    THEN trunked_identity_summary.p25_home_wacn
+                         AND radio_system_identity_summary.p25_home_wacn = excluded.p25_home_wacn
+                         AND radio_system_identity_summary.p25_home_system_id = excluded.p25_home_system_id
+                         AND radio_system_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
+                    THEN radio_system_identity_summary.p25_home_wacn
                     ELSE NULL
                 END,
                 p25_home_system_id = CASE
                     WHEN excluded.p25_identity_state_code = 0
-                         AND trunked_identity_summary.p25_identity_state_code = 2
-                    THEN trunked_identity_summary.p25_home_system_id
-                    WHEN trunked_identity_summary.p25_identity_state_code = 0
+                         AND radio_system_identity_summary.p25_identity_state_code = 2
+                    THEN radio_system_identity_summary.p25_home_system_id
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 0
                          AND excluded.p25_identity_state_code = 2
                     THEN excluded.p25_home_system_id
                     WHEN %s
                     THEN excluded.p25_home_system_id
-                    WHEN trunked_identity_summary.p25_identity_state_code = 2
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 2
                          AND excluded.p25_identity_state_code = 2
-                         AND trunked_identity_summary.p25_home_wacn = excluded.p25_home_wacn
-                         AND trunked_identity_summary.p25_home_system_id = excluded.p25_home_system_id
-                         AND trunked_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
-                    THEN trunked_identity_summary.p25_home_system_id
+                         AND radio_system_identity_summary.p25_home_wacn = excluded.p25_home_wacn
+                         AND radio_system_identity_summary.p25_home_system_id = excluded.p25_home_system_id
+                         AND radio_system_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
+                    THEN radio_system_identity_summary.p25_home_system_id
                     ELSE NULL
                 END,
                 p25_home_talkgroup_id = CASE
                     WHEN excluded.p25_identity_state_code = 0
-                         AND trunked_identity_summary.p25_identity_state_code = 2
-                    THEN trunked_identity_summary.p25_home_talkgroup_id
-                    WHEN trunked_identity_summary.p25_identity_state_code = 0
+                         AND radio_system_identity_summary.p25_identity_state_code = 2
+                    THEN radio_system_identity_summary.p25_home_talkgroup_id
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 0
                          AND excluded.p25_identity_state_code = 2
                     THEN excluded.p25_home_talkgroup_id
                     WHEN %s
                     THEN excluded.p25_home_talkgroup_id
-                    WHEN trunked_identity_summary.p25_identity_state_code = 2
+                    WHEN radio_system_identity_summary.p25_identity_state_code = 2
                          AND excluded.p25_identity_state_code = 2
-                         AND trunked_identity_summary.p25_home_wacn = excluded.p25_home_wacn
-                         AND trunked_identity_summary.p25_home_system_id = excluded.p25_home_system_id
-                         AND trunked_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
-                    THEN trunked_identity_summary.p25_home_talkgroup_id
+                         AND radio_system_identity_summary.p25_home_wacn = excluded.p25_home_wacn
+                         AND radio_system_identity_summary.p25_home_system_id = excluded.p25_home_system_id
+                         AND radio_system_identity_summary.p25_home_talkgroup_id = excluded.p25_home_talkgroup_id
+                    THEN radio_system_identity_summary.p25_home_talkgroup_id
                     ELSE NULL
                 END,
-                first_seen_ms = min(trunked_identity_summary.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(trunked_identity_summary.last_seen_ms, excluded.last_seen_ms),
+                first_seen_ms = min(radio_system_identity_summary.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(radio_system_identity_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
-                logical_call_count = trunked_identity_summary.logical_call_count + excluded.logical_call_count,
-                source_logical_call_count = trunked_identity_summary.source_logical_call_count +
+                logical_call_count = radio_system_identity_summary.logical_call_count + excluded.logical_call_count,
+                source_logical_call_count = radio_system_identity_summary.source_logical_call_count +
                     excluded.source_logical_call_count,
-                target_logical_call_count = trunked_identity_summary.target_logical_call_count +
+                target_logical_call_count = radio_system_identity_summary.target_logical_call_count +
                     excluded.target_logical_call_count,
-                encrypted_logical_call_count = trunked_identity_summary.encrypted_logical_call_count +
+                encrypted_logical_call_count = radio_system_identity_summary.encrypted_logical_call_count +
                     excluded.encrypted_logical_call_count,
-                recorded_output_count = trunked_identity_summary.recorded_output_count +
+                recorded_output_count = radio_system_identity_summary.recorded_output_count +
                     excluded.recorded_output_count,
-                streamed_output_count = trunked_identity_summary.streamed_output_count +
+                streamed_output_count = radio_system_identity_summary.streamed_output_count +
                     excluded.streamed_output_count,
                 last_counterpart_kind_code = CASE
                     WHEN excluded.last_counterpart_id IS NOT NULL
-                         AND excluded.last_seen_ms >= trunked_identity_summary.last_seen_ms
+                         AND excluded.last_seen_ms >= radio_system_identity_summary.last_seen_ms
                     THEN excluded.last_counterpart_kind_code
-                    ELSE trunked_identity_summary.last_counterpart_kind_code
+                    ELSE radio_system_identity_summary.last_counterpart_kind_code
                 END,
                 last_counterpart_id = CASE
                     WHEN excluded.last_counterpart_id IS NOT NULL
-                         AND excluded.last_seen_ms >= trunked_identity_summary.last_seen_ms
+                         AND excluded.last_seen_ms >= radio_system_identity_summary.last_seen_ms
                     THEN excluded.last_counterpart_id
-                    ELSE trunked_identity_summary.last_counterpart_id
+                    ELSE radio_system_identity_summary.last_counterpart_id
                 END,
                 last_encryption_algorithm_id = CASE
                     WHEN excluded.last_encryption_algorithm_id IS NOT NULL
-                         AND excluded.last_seen_ms >= trunked_identity_summary.last_seen_ms
+                         AND excluded.last_seen_ms >= radio_system_identity_summary.last_seen_ms
                     THEN excluded.last_encryption_algorithm_id
-                    ELSE trunked_identity_summary.last_encryption_algorithm_id
+                    ELSE radio_system_identity_summary.last_encryption_algorithm_id
                 END,
                 last_encryption_key_id = CASE
                     WHEN excluded.last_encryption_key_id IS NOT NULL
-                         AND excluded.last_seen_ms >= trunked_identity_summary.last_seen_ms
+                         AND excluded.last_seen_ms >= radio_system_identity_summary.last_seen_ms
                     THEN excluded.last_encryption_key_id
-                    ELSE trunked_identity_summary.last_encryption_key_id
+                    ELSE radio_system_identity_summary.last_encryption_key_id
                 END,
                 last_talker_alias = CASE
                     WHEN excluded.last_talker_alias IS NOT NULL
                          AND excluded.last_talker_alias_seen_ms >=
-                             coalesce(trunked_identity_summary.last_talker_alias_seen_ms, 0)
+                             coalesce(radio_system_identity_summary.last_talker_alias_seen_ms, 0)
                     THEN excluded.last_talker_alias
-                    ELSE trunked_identity_summary.last_talker_alias
+                    ELSE radio_system_identity_summary.last_talker_alias
                 END,
                 last_talker_alias_seen_ms = CASE
                     WHEN excluded.last_talker_alias IS NOT NULL
                          AND excluded.last_talker_alias_seen_ms >=
-                             coalesce(trunked_identity_summary.last_talker_alias_seen_ms, 0)
+                             coalesce(radio_system_identity_summary.last_talker_alias_seen_ms, 0)
                     THEN excluded.last_talker_alias_seen_ms
-                    ELSE trunked_identity_summary.last_talker_alias_seen_ms
+                    ELSE radio_system_identity_summary.last_talker_alias_seen_ms
                 END
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
             sameCallFullyQualifiedRefinement, sameCallFullyQualifiedRefinement,
             sameCallFullyQualifiedRefinement, sameCallFullyQualifiedRefinement,
-            actionUpdateSql("trunked_identity_summary"))))
+            actionUpdateSql("radio_system_identity_summary"))))
         {
             int index = 1;
-            statement.setInt(index++, scopeId);
+            statement.setInt(index++, radioSystemId);
             statement.setInt(index++, identity.kindCode());
             statement.setInt(index++, identity.id());
             statement.setInt(index++, identity.p25TargetIdentity().stateCode());
@@ -1696,28 +1752,28 @@ final class TrunkedIdentitySchema
         return true;
     }
 
-    private static boolean upsertRelationship(Connection connection, int scopeId, int radioId, Identity destination,
+    private static boolean upsertRelationship(Connection connection, int radioSystemId, int radioId, Identity destination,
                                               long observedAt, ReceiverActivityRecords.Action action,
                                               boolean countedCall, int encrypted, int recorded, int streamed,
                                               Integer encryptionAlgorithm, Integer encryptionKey) throws SQLException
     {
         Identity radio = new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, radioId);
 
-        if(!identityExists(connection, scopeId, radio) || !identityExists(connection, scopeId, destination) ||
-            !relationshipExists(connection, scopeId, radioId, destination) &&
-                !hasScopeCapacity(connection, "trunked_radio_talkgroup_summary", scopeId,
-                    MAX_RELATIONSHIPS_PER_SCOPE))
+        if(!identityExists(connection, radioSystemId, radio) || !identityExists(connection, radioSystemId, destination) ||
+            !relationshipExists(connection, radioSystemId, radioId, destination) &&
+                !hasSystemCapacity(connection, "trunked_radio_talkgroup_summary", radioSystemId,
+                    MAX_RELATIONSHIPS_PER_SYSTEM))
         {
             return false;
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_radio_talkgroup_summary (
-                scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, %s,
+                radio_system_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, %s,
                 logical_call_count, encrypted_logical_call_count, recorded_output_count, streamed_output_count,
                 last_encryption_algorithm_id, last_encryption_key_id
             ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope_id, radio_id, talkgroup_id, target_kind_code) DO UPDATE SET
+            ON CONFLICT(radio_system_id, radio_id, talkgroup_id, target_kind_code) DO UPDATE SET
                 first_seen_ms = min(trunked_radio_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(trunked_radio_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
@@ -1744,7 +1800,7 @@ final class TrunkedIdentitySchema
             actionUpdateSql("trunked_radio_talkgroup_summary"))))
         {
             int index = 1;
-            statement.setInt(index++, scopeId);
+            statement.setInt(index++, radioSystemId);
             statement.setInt(index++, radioId);
             statement.setInt(index++, destination.id());
             statement.setInt(index++, destination.kindCode());
@@ -1763,14 +1819,14 @@ final class TrunkedIdentitySchema
         return true;
     }
 
-    private static boolean identityExists(Connection connection, int scopeId, Identity identity) throws SQLException
+    private static boolean identityExists(Connection connection, int radioSystemId, Identity identity) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT 1 FROM trunked_identity_summary
-            WHERE scope_id = ? AND identity_kind_code = ? AND identity_id = ?
+            SELECT 1 FROM radio_system_identity_summary
+            WHERE radio_system_id = ? AND identity_kind_code = ? AND identity_id = ?
             """))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.setInt(2, identity.kindCode());
             statement.setInt(3, identity.id());
 
@@ -1781,15 +1837,15 @@ final class TrunkedIdentitySchema
         }
     }
 
-    private static boolean relationshipExists(Connection connection, int scopeId, int radioId,
+    private static boolean relationshipExists(Connection connection, int radioSystemId, int radioId,
                                               Identity destination) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1 FROM trunked_radio_talkgroup_summary
-            WHERE scope_id = ? AND radio_id = ? AND talkgroup_id = ? AND target_kind_code = ?
+            WHERE radio_system_id = ? AND radio_id = ? AND talkgroup_id = ? AND target_kind_code = ?
             """))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.setInt(2, radioId);
             statement.setInt(3, destination.id());
             statement.setInt(4, destination.kindCode());
@@ -1805,10 +1861,10 @@ final class TrunkedIdentitySchema
      * Index-backed admission check. The production writer is single-threaded, so the check and following insert are
      * serialized within one transaction.
      */
-    static boolean hasScopeCapacity(Connection connection, String table, int scopeId, int maximumRows)
+    static boolean hasSystemCapacity(Connection connection, String table, int radioSystemId, int maximumRows)
         throws SQLException
     {
-        if(maximumRows <= 0 || (!"trunked_identity_summary".equals(table) &&
+        if(maximumRows <= 0 || (!"radio_system_identity_summary".equals(table) &&
             !"p25_zero_local_fq_talkgroup_summary".equals(table) &&
             !"trunked_radio_talkgroup_summary".equals(table)))
         {
@@ -1816,9 +1872,9 @@ final class TrunkedIdentitySchema
         }
 
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT 1 FROM " + table + " WHERE scope_id = ? LIMIT 1 OFFSET ?"))
+            "SELECT 1 FROM " + table + " WHERE radio_system_id = ? LIMIT 1 OFFSET ?"))
         {
-            statement.setInt(1, scopeId);
+            statement.setInt(1, radioSystemId);
             statement.setInt(2, maximumRows - 1);
 
             try(ResultSet resultSet = statement.executeQuery())
@@ -1898,17 +1954,19 @@ final class TrunkedIdentitySchema
             .toList();
     }
 
-    private static Context context(Connection connection, int contextId) throws SQLException
+    private static ReceiverChannel receiverChannel(Connection connection, int channelId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT context.id, context.guid, context.protocol_code, context.alias_list_id, context.system_key,
-                   system.wacn, system.system_id
-            FROM receiver_context context
-            LEFT JOIN p25_system system ON system.system_key = context.system_key
-            WHERE context.id = ? AND context.kind_code = 1
+            SELECT channel.id, channel.configuration_id, channel.radio_system_id,
+                system.p25_wacn, system.p25_system_id, configured.decoder_type
+            FROM receiver_channel channel
+            JOIN configuration_channel configured
+              ON configured.configuration_id = channel.configuration_id
+            LEFT JOIN radio_system system ON system.id = channel.radio_system_id
+            WHERE channel.id = ? AND configured.channel_kind = 'TRUNKED'
             """))
         {
-            statement.setInt(1, contextId);
+            statement.setInt(1, channelId);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -1917,10 +1975,10 @@ final class TrunkedIdentitySchema
                     return null;
                 }
 
-                return new Context(resultSet.getInt("id"), resultSet.getString("guid"),
-                    nullableInteger(resultSet, "protocol_code"), nullableLong(resultSet, "alias_list_id"),
-                    nullableInteger(resultSet, "system_key"),
-                    nullableInteger(resultSet, "wacn"), nullableInteger(resultSet, "system_id"));
+                return new ReceiverChannel(resultSet.getInt("id"), resultSet.getString("configuration_id"),
+                    ReceiverActivitySchema.protocolCodeForDecoder(resultSet.getString("decoder_type")),
+                    nullableInteger(resultSet, "radio_system_id"),
+                    nullableInteger(resultSet, "p25_wacn"), nullableInteger(resultSet, "p25_system_id"));
             }
         }
     }
@@ -1937,6 +1995,17 @@ final class TrunkedIdentitySchema
             case NXDN_TYPE_C -> IDENTITY_DOMAIN_NXDN_TYPE_C;
             case NXDN_TYPE_D -> IDENTITY_DOMAIN_NXDN_TYPE_D;
             default -> IDENTITY_DOMAIN_STANDARD;
+        };
+    }
+
+    private static Protocol protocol(int protocolCode)
+    {
+        return switch(protocolCode)
+        {
+            case TrunkedIdentityPolicy.PROTOCOL_P25 -> Protocol.APCO25;
+            case TrunkedIdentityPolicy.PROTOCOL_DMR -> Protocol.DMR;
+            case TrunkedIdentityPolicy.PROTOCOL_NXDN -> Protocol.NXDN;
+            default -> Protocol.UNKNOWN;
         };
     }
 
@@ -1985,15 +2054,15 @@ final class TrunkedIdentitySchema
     {
         String sql;
 
-        if("trunked_identity_summary".equals(table))
+        if("radio_system_identity_summary".equals(table))
         {
             sql = """
-                DELETE FROM trunked_identity_summary
-                WHERE (scope_id, identity_kind_code, identity_id) IN (
-                    SELECT scope_id, identity_kind_code, identity_id
-                    FROM trunked_identity_summary INDEXED BY idx_trunked_identity_retention
+                DELETE FROM radio_system_identity_summary
+                WHERE (radio_system_id, identity_kind_code, identity_id) IN (
+                    SELECT radio_system_id, identity_kind_code, identity_id
+                    FROM radio_system_identity_summary INDEXED BY idx_radio_system_identity_retention
                     WHERE last_seen_ms < ?
-                    ORDER BY last_seen_ms, scope_id, identity_kind_code, identity_id
+                    ORDER BY last_seen_ms, radio_system_id, identity_kind_code, identity_id
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);
@@ -2002,11 +2071,11 @@ final class TrunkedIdentitySchema
         {
             sql = """
                 DELETE FROM trunked_radio_talkgroup_summary
-                WHERE (scope_id, radio_id, talkgroup_id, target_kind_code) IN (
-                    SELECT scope_id, radio_id, talkgroup_id, target_kind_code
+                WHERE (radio_system_id, radio_id, talkgroup_id, target_kind_code) IN (
+                    SELECT radio_system_id, radio_id, talkgroup_id, target_kind_code
                     FROM trunked_radio_talkgroup_summary INDEXED BY idx_trunked_radio_talkgroup_retention
                     WHERE last_seen_ms < ?
-                    ORDER BY last_seen_ms, scope_id, radio_id, talkgroup_id, target_kind_code
+                    ORDER BY last_seen_ms, radio_system_id, radio_id, talkgroup_id, target_kind_code
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);
@@ -2015,11 +2084,11 @@ final class TrunkedIdentitySchema
         {
             sql = """
                 DELETE FROM p25_zero_local_fq_talkgroup_summary
-                WHERE (scope_id, home_wacn, home_system_id, home_talkgroup_id) IN (
-                    SELECT scope_id, home_wacn, home_system_id, home_talkgroup_id
+                WHERE (radio_system_id, home_wacn, home_system_id, home_talkgroup_id) IN (
+                    SELECT radio_system_id, home_wacn, home_system_id, home_talkgroup_id
                     FROM p25_zero_local_fq_talkgroup_summary INDEXED BY idx_p25_zero_local_fq_retention
                     WHERE last_seen_ms < ?
-                    ORDER BY last_seen_ms, scope_id, home_wacn, home_system_id, home_talkgroup_id
+                    ORDER BY last_seen_ms, radio_system_id, home_wacn, home_system_id, home_talkgroup_id
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);
@@ -2028,11 +2097,11 @@ final class TrunkedIdentitySchema
         {
             sql = """
                 DELETE FROM trunked_radio_affiliation
-                WHERE (scope_id, radio_id) IN (
-                    SELECT scope_id, radio_id
+                WHERE (radio_system_id, radio_id) IN (
+                    SELECT radio_system_id, radio_id
                     FROM trunked_radio_affiliation INDEXED BY idx_trunked_radio_affiliation_retention
                     WHERE confirmed_at_ms < ?
-                    ORDER BY confirmed_at_ms, scope_id, radio_id
+                    ORDER BY confirmed_at_ms, radio_system_id, radio_id
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);
@@ -2041,11 +2110,11 @@ final class TrunkedIdentitySchema
         {
             sql = """
                 DELETE FROM trunked_radio_site_presence
-                WHERE (scope_id, radio_id) IN (
-                    SELECT scope_id, radio_id
+                WHERE (radio_system_id, radio_id) IN (
+                    SELECT radio_system_id, radio_id
                     FROM trunked_radio_site_presence INDEXED BY idx_trunked_radio_site_presence_retention
                     WHERE confirmed_at_ms < ?
-                    ORDER BY confirmed_at_ms, scope_id, radio_id
+                    ORDER BY confirmed_at_ms, radio_system_id, radio_id
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);
@@ -2054,12 +2123,12 @@ final class TrunkedIdentitySchema
         {
             sql = """
                 DELETE FROM trunked_radio_presence_lifecycle
-                WHERE (scope_id, radio_id) IN (
-                    SELECT scope_id, radio_id
+                WHERE (radio_system_id, radio_id) IN (
+                    SELECT radio_system_id, radio_id
                     FROM trunked_radio_presence_lifecycle
                         INDEXED BY idx_trunked_radio_presence_lifecycle_retention
                     WHERE cleared_at_ms < ?
-                    ORDER BY cleared_at_ms, scope_id, radio_id
+                    ORDER BY cleared_at_ms, radio_system_id, radio_id
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);
@@ -2086,18 +2155,73 @@ final class TrunkedIdentitySchema
         return total;
     }
 
-    private static void deleteOrphanContextScopes(Connection connection) throws SQLException
+    private static void validateRadioSystemKeys(Connection connection) throws SQLException
     {
-        try(Statement statement = connection.createStatement())
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT id, system_key, protocol_code, p25_wacn, p25_system_id
+                FROM radio_system
+                ORDER BY id
+                """))
         {
-            statement.executeUpdate("""
-                DELETE FROM trunked_identity_scope
-                WHERE scope_kind_code = 2
-                  AND NOT EXISTS (
-                      SELECT 1 FROM trunked_identity_scope_context mapping
-                      WHERE mapping.scope_id = trunked_identity_scope.scope_id
-                  )
-                """);
+            while(resultSet.next())
+            {
+                String key = resultSet.getString("system_key");
+                int protocolCode = resultSet.getInt("protocol_code");
+                Integer wacn = nullableInteger(resultSet, "p25_wacn");
+                Integer systemId = nullableInteger(resultSet, "p25_system_id");
+                String expected;
+
+                if(wacn != null && systemId != null)
+                {
+                    expected = RadioSystemKey.p25(wacn, systemId);
+                }
+                else
+                {
+                    int marker = key != null ? key.indexOf(":channel:") : -1;
+                    String configurationId = marker >= 0 ? key.substring(marker + 9) : null;
+                    configurationId = ChannelConfigurationKey.canonical(configurationId);
+                    expected = configurationId != null ?
+                        RadioSystemKey.configured(protocol(protocolCode), configurationId) : null;
+                }
+
+                if(expected == null || !expected.equals(key))
+                {
+                    throw new SQLException("Radio system [" + resultSet.getInt("id") +
+                        "] has a noncanonical key");
+                }
+            }
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT channel.id, channel.configuration_id, system.system_key, system.protocol_code,
+                    configured.decoder_type
+                FROM receiver_channel channel
+                JOIN radio_system system ON system.id = channel.radio_system_id
+                JOIN configuration_channel configured
+                  ON configured.configuration_id = channel.configuration_id
+                ORDER BY channel.id
+                """))
+        {
+            while(resultSet.next())
+            {
+                int configuredProtocol = TrunkedIdentityPolicy.protocolFamilyCode(
+                    ReceiverActivitySchema.protocolCodeForDecoder(resultSet.getString("decoder_type")));
+                int systemProtocol = resultSet.getInt("protocol_code");
+                String key = resultSet.getString("system_key");
+                String configurationId = resultSet.getString("configuration_id");
+                boolean nativeP25 = RadioSystemKey.isP25Native(key);
+                String configuredKey = RadioSystemKey.configured(protocol(systemProtocol), configurationId);
+
+                if(configuredProtocol != systemProtocol ||
+                    (!nativeP25 && !key.equals(configuredKey)) ||
+                    (nativeP25 && systemProtocol != TrunkedIdentityPolicy.PROTOCOL_P25))
+                {
+                    throw new SQLException("Receiver channel [" + resultSet.getInt("id") +
+                        "] is attached to an incompatible radio system");
+                }
+            }
         }
     }
 
@@ -2267,18 +2391,17 @@ final class TrunkedIdentitySchema
         }
     }
 
-    record Scope(int scopeId, int protocolCode, ReceiverActivityRecords.IdentityDomain identityDomain,
-                 String scopeToken, long firstSeenEpochMilliseconds)
+    record RadioSystem(int radioSystemId, int protocolCode, ReceiverActivityRecords.IdentityDomain identityDomain,
+                 String systemKey, long firstSeenEpochMilliseconds)
     {
     }
 
-    private record Context(int contextId, String guid, Integer protocolCode, Long aliasListId, Integer systemKey,
-                           Integer wacn, Integer systemId)
+    private record ReceiverChannel(int id, String configurationId, Integer protocolCode, Integer radioSystemId,
+                                   Integer currentP25Wacn, Integer currentP25SystemId)
     {
     }
 
-    private record ExistingScope(int scopeId, int scopeKindCode, int identityDomainCode,
-                                 long lastSeenEpochMilliseconds)
+    private record ExistingRadioSystem(int id, int identityDomainCode, long lastSeenEpochMilliseconds)
     {
     }
 

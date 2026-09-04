@@ -33,12 +33,12 @@ final class WebConfiguredEntityRepository
             config.alias_list_name, alias_list.id AS alias_list_id,
             config.radres_guid AS guid, config.decoder_type AS decoder,
             config.primary_frequency_hz,
-            context.id AS context_id, context.context_key,
+            context.id AS channel_id, context.configuration_id,
             context.first_seen_ms, context.last_seen_ms, context.nac,
             context.primary_frequency_hz AS observed_primary_frequency_hz
         FROM configuration_channel config
         LEFT JOIN alias_list ON alias_list.name = config.alias_list_name COLLATE NOCASE
-        LEFT JOIN receiver_context context ON context.context_key = CASE config.channel_kind
+        LEFT JOIN receiver_channel context ON context.configuration_id = CASE config.channel_kind
             WHEN 'TRUNKED' THEN 'GUID:' || config.radres_guid
             WHEN 'CONVENTIONAL' THEN 'CONFIGURATION:' || config.configuration_id
         END
@@ -120,7 +120,7 @@ final class WebConfiguredEntityRepository
             text(row.get("configured_name")), text(row.get("alias_list_name")),
             nullableLong(row.get("alias_list_id")), text(row.get("guid")), text(row.get("decoder")),
             nullableLong(row.get("primary_frequency_hz")), protocol,
-            nullableLong(row.get("context_id")), text(row.get("context_key")),
+            nullableLong(row.get("channel_id")),
             nullableLong(row.get("first_seen_ms")), nullableLong(row.get("last_seen_ms")),
             nullableLong(row.get("nac")), nullableLong(row.get("observed_primary_frequency_hz")));
     }
@@ -148,8 +148,7 @@ final class WebConfiguredEntityRepository
     record ConfiguredChannel(long rowId, String configurationId, ChannelKind channelKind, String configuredSystem,
                              String configuredSite, String configuredName, String aliasListName, Long aliasListId,
                              String guid, String decoder, Long primaryFrequencyHz, StatsApiProtocol protocol,
-                             Long contextId,
-                             String contextKey, Long firstSeenMs, Long lastSeenMs, Long nac,
+                             Long channelId, Long firstSeenMs, Long lastSeenMs, Long nac,
                              Long observedPrimaryFrequencyHz)
     {
         ConfiguredChannel

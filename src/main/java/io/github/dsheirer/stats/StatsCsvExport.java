@@ -92,7 +92,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
         {
             case "system-talkgroups" -> List.of(
                 text("protocol", "protocol"), text("system_name", "configured_system"),
-                text("scope", "scope_token"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                text("scope", "system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 number("talkgroup_id", "talkgroup_id"),
@@ -112,7 +112,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "system-radios" -> List.of(
                 text("protocol", "protocol"), text("system_name", "configured_system"),
-                text("scope", "scope_token"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                text("scope", "system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 number("radio_id", "radio_id"),
@@ -137,7 +137,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "site-channels" -> List.of(
                 text("protocol", "site_protocol"), text("system_name", "site_system_name"),
-                text("scope", "site_scope_token"), text("site_guid", "site_guid"),
+                text("scope", "site_system_key"), text("site_guid", "site_guid"),
                 text("site_name", "site_name"), text("wacn_hex", row -> siteP25Hex(row, "site_wacn", 5)),
                 number("wacn", "site_wacn"),
                 text("system_id_hex", row -> siteP25Hex(row, "site_system_id", 3)),
@@ -166,7 +166,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "site-neighbors" -> List.of(
                 text("protocol", "site_protocol"), text("system_name", "site_system_name"),
-                text("source_scope", "site_scope_token"), text("source_site_guid", "site_guid"),
+                text("source_scope", "site_system_key"), text("source_site_guid", "site_guid"),
                 text("source_site_name", "site_name"), text("entry_type", "entry_type"),
                 text("neighbor_name", "neighbor_name"), text("neighbor_guid", "neighbor_guid"),
                 text("wacn_hex", row -> siteP25Hex(row, "wacn", 5)), number("wacn", "wacn"),

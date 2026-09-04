@@ -131,7 +131,7 @@ public final class ReceiverActivityMaintenance
                 optimize(connection);
             }
             case CLEAR_SITE_STATS -> throw new IllegalArgumentException(
-                "CLEAR_SITE_STATS requires a site GUID");
+                "CLEAR_SITE_STATS requires a channel configuration ID");
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
@@ -142,28 +142,28 @@ public final class ReceiverActivityMaintenance
      * Clears statistics and history owned by one configured site without changing its channel configuration or
      * system-wide summaries that may be shared by other sites.
      */
-    public static Result clearSiteStats(Path databasePath, String guid) throws IOException, SQLException
+    public static Result clearSiteStats(Path databasePath, String configurationId) throws IOException, SQLException
     {
         try(Connection connection = SdrTrunkDatabase.open(databasePath))
         {
-            return clearSiteStats(connection, databasePath, guid);
+            return clearSiteStats(connection, databasePath, configurationId);
         }
     }
 
     /**
      * Clears one site's statistics on the caller-owned writer connection.
      */
-    static Result clearSiteStats(Connection connection, Path databasePath, String guid)
+    static Result clearSiteStats(Connection connection, Path databasePath, String configurationId)
         throws IOException, SQLException
     {
-        if(guid == null || guid.isBlank())
+        if(configurationId == null || configurationId.isBlank())
         {
-            throw new IllegalArgumentException("Site GUID is required");
+            throw new IllegalArgumentException("Channel configuration ID is required");
         }
 
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
-        int rowsDeleted = clearSiteStats(connection, guid);
+        int rowsDeleted = clearSiteStats(connection, configurationId);
         checkpoint(connection);
         optimize(connection);
         return new Result(Operation.CLEAR_SITE_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
@@ -186,7 +186,7 @@ public final class ReceiverActivityMaintenance
         int deleted = ReceiverActivitySchema.deleteOlderThan(connection, cutoff) +
             TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total() +
             DmrActivitySchema.deleteOlderThan(connection, cutoff).total();
-        deleted += ReceiverActivitySchema.pruneInactiveTrunkedContexts(connection);
+        deleted += ReceiverActivitySchema.pruneUnusedRadioSystems(connection);
 
         ReceiverActivitySchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
         ReceiverActivitySchema.updateStatus(connection, "last_retention_cleanup_ms",
@@ -205,12 +205,12 @@ public final class ReceiverActivityMaintenance
         });
     }
 
-    private static int clearSiteStats(Connection connection, String guid) throws SQLException
+    private static int clearSiteStats(Connection connection, String configurationId) throws SQLException
     {
         return inTransaction(connection, () -> {
-            int deleted = DmrActivitySchema.clearSiteStats(connection, guid) +
-                ReceiverActivitySchema.clearSiteStats(connection, guid) +
-                TrunkedSiteSchema.clearSiteStats(connection, guid);
+            int deleted = DmrActivitySchema.clearChannelStats(connection, configurationId) +
+                ReceiverActivitySchema.clearSiteStats(connection, configurationId) +
+                TrunkedSiteSchema.clearSiteStats(connection, configurationId);
             ReceiverActivitySchema.updateStatus(connection, "last_site_stats_clear_ms",
                 Long.toString(System.currentTimeMillis()));
             return deleted;

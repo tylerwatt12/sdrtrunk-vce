@@ -20,22 +20,22 @@ import java.util.concurrent.CompletableFuture;
 public final class StatsDatabaseMaintenanceRequest
 {
     private final ReceiverActivityMaintenance.Operation mOperation;
-    private final String mSiteGuid;
+    private final String mConfigurationId;
     private final CompletableFuture<ReceiverActivityMaintenance.Result> mResult = new CompletableFuture<>();
 
-    private StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation operation, String siteGuid)
+    private StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation operation, String configurationId)
     {
         mOperation = Objects.requireNonNull(operation, "Maintenance operation is required");
-        mSiteGuid = siteGuid;
+        mConfigurationId = configurationId;
 
         if(operation == ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS &&
-            (siteGuid == null || siteGuid.isBlank()))
+            (configurationId == null || configurationId.isBlank()))
         {
-            throw new IllegalArgumentException("Site GUID is required");
+            throw new IllegalArgumentException("Channel configuration ID is required");
         }
-        else if(operation != ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS && siteGuid != null)
+        else if(operation != ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS && configurationId != null)
         {
-            throw new IllegalArgumentException("Site GUID is only valid for CLEAR_SITE_STATS");
+            throw new IllegalArgumentException("Channel configuration ID is only valid for CLEAR_SITE_STATS");
         }
     }
 
@@ -44,9 +44,10 @@ public final class StatsDatabaseMaintenanceRequest
         return new StatsDatabaseMaintenanceRequest(operation, null);
     }
 
-    public static StatsDatabaseMaintenanceRequest clearSite(String guid)
+    public static StatsDatabaseMaintenanceRequest clearSite(String configurationId)
     {
-        return new StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS, guid);
+        return new StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS,
+            configurationId);
     }
 
     public ReceiverActivityMaintenance.Operation operation()
@@ -54,9 +55,9 @@ public final class StatsDatabaseMaintenanceRequest
         return mOperation;
     }
 
-    public String siteGuid()
+    public String configurationId()
     {
-        return mSiteGuid;
+        return mConfigurationId;
     }
 
     public CompletableFuture<ReceiverActivityMaintenance.Result> result()

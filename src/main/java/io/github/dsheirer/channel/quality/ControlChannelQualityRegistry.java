@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.channel.quality;
 
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.sample.Listener;
 import java.util.OptionalDouble;
 import java.util.concurrent.ConcurrentHashMap;
@@ -64,9 +65,10 @@ public final class ControlChannelQualityRegistry
     @Override
     public void receive(ControlChannelQualitySnapshot snapshot)
     {
-        String siteIdentity = normalize(snapshot != null ? snapshot.guid() : null);
+        String configurationId = ChannelConfigurationKey.canonical(
+            snapshot != null ? snapshot.configurationId() : null);
 
-        if(siteIdentity == null || snapshot.observedAtMs() <= 0)
+        if(configurationId == null || snapshot.observedAtMs() <= 0)
         {
             return;
         }
@@ -76,22 +78,22 @@ public final class ControlChannelQualityRegistry
             health : Double.NaN;
         QualityObservation incoming =
             new QualityObservation(snapshot.observedAtMs(), snapshot.active(), normalizedHealth);
-        mObservations.compute(siteIdentity,
+        mObservations.compute(configurationId,
             (_, current) -> current == null || incoming.observedAtMilliseconds() >=
                 current.observedAtMilliseconds() ? incoming : current);
     }
 
     @Override
-    public OptionalDouble getDecodeHealthPercent(String stableSiteIdentity)
+    public OptionalDouble getDecodeHealthPercent(String configurationId)
     {
-        String siteIdentity = normalize(stableSiteIdentity);
+        configurationId = ChannelConfigurationKey.canonical(configurationId);
 
-        if(siteIdentity == null)
+        if(configurationId == null)
         {
             return OptionalDouble.empty();
         }
 
-        QualityObservation observation = mObservations.get(siteIdentity);
+        QualityObservation observation = mObservations.get(configurationId);
 
         if(observation == null || !observation.active() || !Double.isFinite(observation.decodeHealthPercent()))
         {
@@ -120,17 +122,6 @@ public final class ControlChannelQualityRegistry
     int size()
     {
         return mObservations.size();
-    }
-
-    private static String normalize(String value)
-    {
-        if(value == null)
-        {
-            return null;
-        }
-
-        String normalized = value.trim();
-        return normalized.isEmpty() ? null : normalized;
     }
 
     private record QualityObservation(long observedAtMilliseconds, boolean active, double decodeHealthPercent)

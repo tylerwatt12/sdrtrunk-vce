@@ -415,14 +415,13 @@ final class StatsLiveService implements AutoCloseable
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
         WebEntityNavigationCatalog.Channel tableChannel =
-            navigation.channel(snapshot.configurationId(), snapshot.guid());
+            navigation.channel(snapshot.configurationId(), null);
         table.put("table_id", boundedText(snapshot.tableId(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("title", boundedText(snapshot.title(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("system_name", boundedText(snapshot.systemName(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("site_name", boundedText(snapshot.siteName(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("channel_name", boundedText(snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(table, "guid", snapshot.guid(), MAXIMUM_LIVE_TEXT_LENGTH);
         WebEntityRef.put(table, tableChannel != null ? tableChannel.entityRef() : null);
         table.put("control_active", snapshot.controlActive());
         table.put("channel_running", snapshot.channelRunning());
@@ -526,7 +525,7 @@ final class StatsLiveService implements AutoCloseable
 
         if(navigation != null)
         {
-            putText(row, "context_key", navigation.contextKey(), MAXIMUM_LIVE_TEXT_LENGTH);
+            putText(row, "configuration_id", navigation.channelConfigurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "alias_list_name", navigation.aliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "protocol", navigation.protocol(), MAXIMUM_LIVE_TEXT_LENGTH);
             row.put("source_aliases", navigation.sourceAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)

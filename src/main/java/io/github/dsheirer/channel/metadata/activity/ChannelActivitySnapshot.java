@@ -8,7 +8,7 @@ package io.github.dsheirer.channel.metadata.activity;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelContextKey;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  * Immutable snapshot of one browser Live Systems activity table.
  */
 public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
-                                      String channelName, String configurationId, String guid, boolean controlActive,
+                                      String channelName, String configurationId, boolean controlActive,
                                       boolean channelRunning, List<IdentifierField> identifiers, List<Row> rows)
 {
     public ChannelActivitySnapshot
@@ -43,12 +43,11 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     {
         Channel owner = table != null ? table.getOwnerChannel() : null;
         String tableId = owner != null ? "channel-" + owner.getChannelID() : "conventional";
-        String guid = owner != null && owner.hasRadresGuid() ? owner.getRadresGuid() : null;
         List<Row> rows = table != null ? table.getRows().stream().map(row -> Row.from(row, owner)).toList() : List.of();
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
             owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
             owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
-            guid, table != null && table.isControlActive(), table != null && table.isChannelRunning(),
+            table != null && table.isControlActive(), table != null && table.isChannelRunning(),
             table != null ? table.getIdentifiers() : List.of(), rows);
     }
 
@@ -98,7 +97,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 aliasDescriptions(row.getSourceAliases()), value(row.getTalkerAlias()), row.getSourceAliasDisplay(),
                 value(row.getTarget()), form(row.getTarget()), aliases(row.getTargetAliases()),
                 aliasDescriptions(row.getTargetAliases()),
-                row.getDecoder(), row.getEncryptionDetails(), new Navigation(ChannelContextKey.configured(channel),
+                row.getDecoder(), row.getEncryptionDetails(), new Navigation(ChannelConfigurationKey.configured(channel),
                 channel != null ? channel.getAliasListName() : null, protocol(row.getSource(), row.getTarget()),
                 aliasReferences(row.getSourceAliases()), matcher(row.getSource()),
                 aliasReferences(row.getTargetAliases()), matcher(row.getTarget())), row.getRole().name());
@@ -207,7 +206,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     }
 
     /** Browser navigation metadata detached from mutable receiver and Alias objects. */
-    public record Navigation(String contextKey, String aliasListName, String protocol,
+    public record Navigation(String channelConfigurationId, String aliasListName, String protocol,
                              List<AliasReference> sourceAliases, MatcherReference sourceMatcher,
                              List<AliasReference> targetAliases, MatcherReference targetMatcher)
     {

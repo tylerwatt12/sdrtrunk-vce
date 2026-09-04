@@ -577,10 +577,10 @@ class StatsAliasResolver
                 WITH requested(system_key) AS (VALUES %s)
                 SELECT DISTINCT scope.p25_system_key AS system_key, list.name AS alias_list_name
                 FROM requested
-                JOIN trunked_identity_scope scope ON scope.p25_system_key = requested.system_key
-                JOIN trunked_identity_scope_context ownership INDEXED BY idx_trunked_identity_scope_context_scope
-                  ON ownership.scope_id = scope.scope_id
-                JOIN receiver_context context ON context.id = ownership.context_id
+                JOIN radio_system scope ON scope.p25_system_key = requested.system_key
+                JOIN radio_system_context ownership INDEXED BY idx_radio_system_context_scope
+                  ON ownership.radio_system_id = scope.radio_system_id
+                JOIN receiver_channel context ON context.id = ownership.channel_id
                 JOIN p25_site_snapshot site INDEXED BY idx_p25_site_snapshot_identity
                   ON site.guid = context.guid AND site.system_key = scope.p25_system_key
                 JOIN alias_list list ON list.name = site.alias_list_name COLLATE NOCASE

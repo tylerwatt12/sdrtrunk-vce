@@ -135,7 +135,7 @@ enum StatsApiProtocol
         return switch((int)code)
         {
             case 1 -> "linked_system";
-            case 2 -> "receiver_context";
+            case 2 -> "receiver_channel";
             default -> "unknown";
         };
     }

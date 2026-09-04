@@ -12,6 +12,7 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -71,10 +72,9 @@ class TrunkedCallActivityMapper
         Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
             descriptor.getDownlinkFrequency() : null;
         Integer timeslot = event.hasTimeslot() ? event.getTimeslot() : null;
-        String guid = blankToNull(channel.getRadresGuid());
-        String contextKey = ReceiverContextKey.trunked(guid);
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
@@ -86,18 +86,15 @@ class TrunkedCallActivityMapper
         String targetId = value(target);
         String targetKind = target != null && target.getForm() != null ? target.getForm().name() : null;
 
-        return new ReceiverActivityRecords.ActivityEvent(event.getTimeStart(), contextKey, guid,
-            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, protocol.name(), ReceiverActivityRecords.Action.CALL,
+        return new ReceiverActivityRecords.ActivityEvent(event.getTimeStart(), configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, protocol.name(), ReceiverActivityRecords.Action.CALL,
             eventType.name(), sourceId, targetId, targetKind, List.of(), frequency,
             descriptor != null ? descriptor.toString() : null, timeslot, encrypted,
             encrypted && encryptionKey != null ? encryptionKey.getAlgorithm() : null,
             encrypted && encryptionKey != null ? encryptionKey.getKey() : null,
             null, intValue(identifiers, Form.SYSTEM), null, null, intValue(identifiers, Form.SITE),
-            TrunkedSiteMetadataMapper.configuredSiteName(channel),
-            decoderType != null ? decoderType.name() : protocol.name(),
             value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
-            identityDomain(channel, identifiers), ReceiverActivityRecords.P25TargetIdentity.UNKNOWN, List.of(),
-            blankToNull(channel.getAliasListName()), true);
+            identityDomain(channel, identifiers), ReceiverActivityRecords.P25TargetIdentity.UNKNOWN, List.of());
     }
 
     ReceiverActivityRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
@@ -124,13 +121,12 @@ class TrunkedCallActivityMapper
         String destinationKind = target != null && target.getForm() != null ? target.getForm().name() : null;
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
         ReceiverActivityRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
-        String guid = blankToNull(channel.getRadresGuid());
-        String contextKey = ReceiverContextKey.trunked(guid);
+        String configurationId = ChannelConfigurationKey.configured(channel);
         IChannelDescriptor descriptor = attribution.channelDescriptor();
         Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
             descriptor.getDownlinkFrequency() : null;
 
-        if(contextKey == null)
+        if(configurationId == null)
         {
             return null;
         }
@@ -143,7 +139,7 @@ class TrunkedCallActivityMapper
         }
 
         return new ReceiverActivityRecords.TrunkedCallAttribution(
-            attribution.callStartEpochMilliseconds(), contextKey, guid,
+            attribution.callStartEpochMilliseconds(), configurationId,
             frequency, attribution.timeslot(),
             destinationId != null ? destinationId : 0, destinationKind, patchMemberTalkgroups(target),
             sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
