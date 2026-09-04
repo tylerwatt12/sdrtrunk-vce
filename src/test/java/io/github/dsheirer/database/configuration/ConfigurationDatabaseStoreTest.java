@@ -59,6 +59,8 @@ class ConfigurationDatabaseStoreTest
         String configurationId = channel.getConfigurationId();
         channel.setSystem("County");
         channel.setSite("Simulcast");
+        long aliasListId = insertAliasList(database, "County Aliases", "P25");
+        channel.setAliasListId(aliasListId);
         channel.setAliasListName("County Aliases");
         channel.setAutoStart(true);
         channel.setAutoStartOrder(2);
@@ -129,33 +131,40 @@ class ConfigurationDatabaseStoreTest
             assertFalse(tableExists(connection, "playlist_broadcast_stream"));
 
             try(ResultSet resultSet = statement.executeQuery("""
-                SELECT decoder_type, source_type, primary_frequency_hz, frequency_count,
-                       recording_enabled, event_logging_enabled
+                SELECT decoder_type, primary_frequency_hz,
+                       json_type(config_json, '$.configurationId') AS configuration_id_json,
+                       json_type(config_json, '$.aliasListName') AS alias_list_name_json
                 FROM configuration_channel
                 """))
             {
                 assertTrue(resultSet.next());
                 assertEquals("P25_PHASE1", resultSet.getString("decoder_type"));
-                assertEquals("TUNER", resultSet.getString("source_type"));
                 assertEquals(853_762_500L, resultSet.getLong("primary_frequency_hz"));
-                assertEquals(1, resultSet.getInt("frequency_count"));
-                assertEquals(0, resultSet.getInt("recording_enabled"));
-                assertEquals(0, resultSet.getInt("event_logging_enabled"));
+                assertNull(resultSet.getString("configuration_id_json"));
+                assertNull(resultSet.getString("alias_list_name_json"));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
-                SELECT server_type, enabled, host, port, json_extract(config_json, '$.mode') AS mode,
+                SELECT configuration_id,
+                       json_extract(config_json, '$.type') AS server_type,
+                       json_extract(config_json, '$.enabled') AS enabled,
+                       json_extract(config_json, '$.host') AS host,
+                       json_extract(config_json, '$.port') AS port,
+                       json_extract(config_json, '$.mode') AS mode,
+                       json_type(config_json, '$.configurationId') AS configuration_id_json,
                        json_type(config_json, '$.callUploadEnabled') AS call_upload_enabled,
                        json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled
                 FROM configuration_broadcast_stream
                 """))
             {
                 assertTrue(resultSet.next());
+                assertEquals(stream.getConfigurationId(), resultSet.getString("configuration_id"));
                 assertEquals("RADIORESOLVE", resultSet.getString("server_type"));
                 assertEquals(1, resultSet.getInt("enabled"));
                 assertEquals("https://example.invalid/upload", resultSet.getString("host"));
                 assertEquals(80, resultSet.getInt("port"));
                 assertEquals("CALLS_ONLY", resultSet.getString("mode"));
+                assertNull(resultSet.getString("configuration_id_json"));
                 assertNull(resultSet.getString("call_upload_enabled"));
                 assertNull(resultSet.getString("site_metadata_enabled"));
             }
@@ -209,21 +218,19 @@ class ConfigurationDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement channelStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
-                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                    radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                    frequency_count, recording_enabled, event_logging_enabled, config_json
+                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (77, '11111111-1111-4111-8111-111111111111', 'TRUNKED', 9, 'Legacy System',
-                    'Legacy Site', 'Retired MPT', 'Legacy Aliases',
-                    '22222222-2222-4222-8222-222222222222', 1, 4, 'MPT1327', 'TUNER', 451000000, 2, 1, 1,
+                    'Legacy Site', 'Retired MPT', NULL,
+                    '22222222-2222-4222-8222-222222222222', 1, 4, 'MPT1327', 451000000,
                     '{"type":"retired-channel","payload":"must be dropped without decoding"}')
                 """);
             PreparedStatement soundCardStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
-                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                    radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                    frequency_count, recording_enabled, event_logging_enabled, config_json
+                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (78, '33333333-3333-4333-8333-333333333333', 'CONVENTIONAL', 10, 'Legacy System',
-                    'Audio Input', 'Retired Sound Card', 'Legacy Aliases', NULL, 1, 5, 'DMR', 'MIXER', NULL, 0, 0, 1,
+                    'Audio Input', 'Retired Sound Card', NULL, NULL, 1, 5, 'DMR', NULL,
                     '{"type":"retired-sound-card","payload":"must be dropped without decoding"}')
                 """);
             PreparedStatement mapStatement = connection.prepareStatement("""
@@ -362,11 +369,7 @@ class ConfigurationDatabaseStoreTest
             new ProjectionTamper("auto_start_order", "auto_start_order=1.5"),
             new ProjectionTamper("auto_start_order", "auto_start_order=2147483648"),
             new ProjectionTamper("decoder_type", "decoder_type='NBFM'"),
-            new ProjectionTamper("source_type", "source_type='RECORDING'"),
-            new ProjectionTamper("primary_frequency_hz", "primary_frequency_hz=121900001"),
-            new ProjectionTamper("frequency_count", "frequency_count=2"),
-            new ProjectionTamper("recording_enabled", "recording_enabled=1"),
-            new ProjectionTamper("event_logging_enabled", "event_logging_enabled=1"));
+            new ProjectionTamper("primary_frequency_hz", "primary_frequency_hz=121900001"));
 
         for(int index = 0; index < tampers.size(); index++)
         {
@@ -396,7 +399,7 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void blankConventionalUploadGuidIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
+    void blankConventionalRadioResolveIdIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("blank-conventional-guid.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -413,7 +416,7 @@ class ConfigurationDatabaseStoreTest
         {
             statement.executeUpdate("""
                 UPDATE configuration_channel
-                SET radres_guid = NULL, config_json = json_remove(config_json, '$.radresGuid')
+                SET radioresolve_id = NULL
                 """);
         }
 
@@ -428,16 +431,18 @@ class ConfigurationDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT configuration_id, radres_guid,
-                       json_extract(config_json, '$.radresGuid') AS json_radres_guid
+                SELECT configuration_id, radioresolve_id,
+                       json_type(config_json, '$.radioResolveId') AS json_radioresolve_id,
+                       json_type(config_json, '$.radresGuid') AS json_legacy_radres_guid
                 FROM configuration_channel
                 """))
         {
             assertTrue(resultSet.next());
             assertEquals(configurationId, resultSet.getString("configuration_id"));
-            String assignedGuid = resultSet.getString("radres_guid");
-            assertEquals(assignedGuid, UUID.fromString(assignedGuid).toString());
-            assertEquals(assignedGuid, resultSet.getString("json_radres_guid"));
+            String assignedId = resultSet.getString("radioresolve_id");
+            assertEquals(assignedId, UUID.fromString(assignedId).toString());
+            assertNull(resultSet.getString("json_radioresolve_id"));
+            assertNull(resultSet.getString("json_legacy_radres_guid"));
         }
     }
 
@@ -452,9 +457,8 @@ class ConfigurationDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_broadcast_stream (
-                    sort_order, name, server_type, enabled, host, port, delay_ms,
-                    maximum_recording_age_ms, config_json
-                ) VALUES (0, 'Unknown Stream', 'UNKNOWN', 0, NULL, NULL, NULL, NULL, ?)
+                    configuration_id, sort_order, config_json
+                ) VALUES ('44444444-4444-4444-8444-444444444444', 0, ?)
                 """))
         {
             statement.setString(1, rawJson);
@@ -482,6 +486,25 @@ class ConfigurationDatabaseStoreTest
             new ConfigurationDatabaseStore(database).replace(connection,
                 new ChannelAndBroadcastConfiguration(state.mChannels, state.mBroadcastConfigurations));
             connection.commit();
+        }
+    }
+
+    private static long insertAliasList(Path database, String name, String family) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list(name, family, unmatched_talkgroup_record_enabled)
+                VALUES (?, ?, 0)
+                """, Statement.RETURN_GENERATED_KEYS))
+        {
+            statement.setString(1, name);
+            statement.setString(2, family);
+            statement.executeUpdate();
+            try(ResultSet keys = statement.getGeneratedKeys())
+            {
+                assertTrue(keys.next());
+                return keys.getLong(1);
+            }
         }
     }
 
