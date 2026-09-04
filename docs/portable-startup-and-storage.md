@@ -51,8 +51,9 @@ Fresh profiles collect summary statistics; detailed activity history is opt-in. 
 Time-based activity retention defaults to 30 days (1–365 days); these controls do not change recordings or ordinary logs.
 
 Tuner discovery lists physical devices as **Detected**, not Ready. It only enumerates descriptors/identities; it does
-not open, configure, tune, or start receiving from a tuner. Rescan and Skip are available, and no hardware or missing
-drivers do not prevent setup. Discovery runs again when revisiting the page rather than reusing an imported inventory.
+not open, configure, tune, or start receiving from a tuner. **Skip discovery** is available only during a scan and
+waits for discovery to stop safely. Afterward, use **Rescan** or **Continue**; having no hardware or a missing driver
+does not prevent setup. Discovery runs again when revisiting the page rather than reusing an imported inventory.
 
 **Optimize decoding** helps sdrtrunk-vce choose the fastest supported way to process radio signals on this computer;
 it is not a general-purpose computer performance score. Running it during setup is recommended. Close other
@@ -69,6 +70,11 @@ copying does not reset it. Other preparation pages do not automatically start wo
 
 Use **Help → Setup Wizard…** to reopen setup after an explicit restart confirmation, or launch graphically with
 `--setup-wizard`. Completed profiles normally launch without optional setup pages unless required preparation changes.
+When explicitly reopened with an existing profile, the same Starting point page offers **Keep my current settings**,
+**Replace settings from a SQLite database**, and **Import a legacy XML playlist**. No extra step is inserted. Merely
+selecting an option or returning with Back never imports or replaces data; each import has a separate preview and
+confirmation. Fresh-start and folder-copy choices remain exclusive to new installations. Imports are no longer in
+the File menu. After an import completes, Starting point becomes a results review for that session.
 
 The bundled Application Migrator is the only supported release database-migration entry point. During first-launch
 migration it copies an accepted SQLite database into a private staging folder, updates only that staged copy, runs
@@ -180,17 +186,21 @@ supported migration input for either active channel, so an old `webfirst` data d
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.
 
-After setup, **File > Import Legacy Playlist XML** can merge another supported playlist into the active profile.
+After setup, **Help > Setup Wizard… > Import a legacy XML playlist** can merge another supported playlist into the
+active profile.
 Existing configuration is retained, imported name conflicts are renamed, and a validated timestamped database backup
 is created before the configuration snapshot is committed. The source XML remains read only.
 
-**File > Import SQLite Database** can instead replace the complete active database from a supported Alpha 8-or-newer
-SQLite file. This is a replacement, not a merge. A bold red warning and migration plan are shown before confirmation.
-SDRTrunk then stops its services, preserves the current database as a timestamped safety backup, migrates and validates
+**Help > Setup Wizard… > Replace settings from a SQLite database** can instead replace the complete active database
+from a supported Alpha 8-or-newer SQLite file. This is a replacement, not a merge. Receiving is already stopped by
+restarting into setup. A bold red warning and migration plan are shown before confirmation. SDRTrunk then closes its
+setup preferences, preserves the current database as a timestamped safety backup, migrates and validates
 a staged copy of the selected file, installs it atomically, and restarts. Only SQLite contents are imported; files
 beside the source database are not copied, current non-database portable files remain in place, and the selected source
 is never changed. Stored portable paths are not remapped. If the imported database has no administrator, setup asks
-for a new administrator password after restart. The success report can be copied and continues automatically after
+for a new administrator password after restart. Every replacement saves an unfinished destination review before
+promotion, so even an interrupted restart returns to setup. Valid imported settings are checked off; missing setup
+and Review & finish are shown before reception can start. The success report can be copied and continues automatically after
 its visible countdown; an unconfirmed failed replacement does not restart automatically.
 
 Headless launches require one explicit option when the database is absent:

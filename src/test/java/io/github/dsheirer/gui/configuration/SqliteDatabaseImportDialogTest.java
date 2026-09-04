@@ -7,6 +7,7 @@
 package io.github.dsheirer.gui.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.awt.Color;
 import java.awt.Font;
@@ -35,12 +36,13 @@ class SqliteDatabaseImportDialogTest
     }
 
     @Test
-    void fileMenuExposesTheAfterSetupDatabaseImport() throws Exception
+    void wizardOwnsTheAfterSetupDatabaseImportAndRestartPrecedesReception() throws Exception
     {
         String application = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java"));
 
-        assertTrue(application.contains("new JMenuItem(\"Import SQLite Database...\")"));
-        assertTrue(application.contains("SqliteDatabaseImportDialog.choose(mMainGui"));
+        assertFalse(application.contains("new JMenuItem(\"Import SQLite Database...\")"));
+        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
+        assertTrue(wizard.contains("SqliteDatabaseImportDialog.choose(this, database, root)"));
         assertTrue(application.contains("replaceCurrentDatabase(prepared.sourceDatabase()"));
         assertTrue(application.contains("ApplicationRelauncher.relaunch()"));
         assertTrue(application.contains("processShutdown(false)"));

@@ -44,8 +44,6 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
-import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog;
 import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog.PreparedImport;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
@@ -502,16 +500,6 @@ public class SDRTrunk
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
 
-        JMenuItem importLegacyPlaylistMenu = new JMenuItem("Import Legacy Playlist XML...");
-        importLegacyPlaylistMenu.addActionListener(event -> LegacyPlaylistImportDialog.show(mMainGui,
-            mConfigurationManager, mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot()));
-        fileMenu.add(importLegacyPlaylistMenu);
-
-        JMenuItem importSqliteDatabaseMenu = new JMenuItem("Import SQLite Database...");
-        importSqliteDatabaseMenu.addActionListener(event -> importSqliteDatabase());
-        fileMenu.add(importSqliteDatabaseMenu);
-        fileMenu.addSeparator();
-
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {
                 if(mDatabaseReplacementInProgress)
@@ -655,6 +643,8 @@ public class SDRTrunk
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
             try
             {
+                mDatabaseReplacementInProgress = true;
+                mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
                 flushConfigurationForDatabaseReplacement();
                 processShutdown(false);
                 releaseDataRootLock();
@@ -663,6 +653,8 @@ public class SDRTrunk
             }
             catch(Exception e)
             {
+                mDatabaseReplacementInProgress = false;
+                mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
                 JOptionPane.showMessageDialog(mMainGui,
                     "Automatic restart failed. Close this process and start again with --setup-wizard.",
                     "Restart required", JOptionPane.ERROR_MESSAGE);
@@ -846,90 +838,46 @@ public class SDRTrunk
         }
     }
 
-    /**
-     * Replaces the complete active SQLite profile at a restart boundary. A database replacement cannot use the
-     * lighter live configuration-reload path because preferences, authentication, statistics, and other services
-     * also own state in the same file.
-     */
-    private void importSqliteDatabase()
+    /** Runs only at the pre-receiver startup boundary, after the wizard has detached all callbacks. */
+    private static int replaceSetupDatabase(PreparedImport prepared, Path dataRoot, PortableDataRootLock lock)
     {
-        Path dataRoot = mDataRootLock != null ? mDataRootLock.getDataRoot() : PortableApplicationPaths.getDataRoot();
-        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        PreparedImport prepared = SqliteDatabaseImportDialog.choose(mMainGui, activeDatabase,
-            mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
-
-        if(prepared == null)
-        {
-            return;
-        }
-
-        mDatabaseReplacementInProgress = true;
-        mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-
+        //No receiver services have been constructed. Keep the root lock until promotion and restart are complete.
+        if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER))
+            Desktop.getDesktop().setQuitHandler((event, response) -> response.cancelQuit());
         try
         {
-            flushConfigurationForDatabaseReplacement();
-        }
-        catch(Exception | LinkageError e)
-        {
-            JOptionPane.showMessageDialog(mMainGui,
-                "The current configuration could not be saved, so the database was not replaced.\n\n" +
-                    exceptionMessage(e), "SQLite Database Import Cancelled", JOptionPane.ERROR_MESSAGE);
-            mDatabaseReplacementInProgress = false;
-            mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-            return;
-        }
-
-        boolean replacementSucceeded = false;
-
-        try
-        {
-            //Keep the portable-root lock while services are closed and the staged replacement is running so another
-            //application process cannot enter the data folder between shutdown and promotion.
-            processShutdown(false);
-            ApplicationMigrationService service = new ApplicationMigrationService();
-            ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(mMainGui,
-                APPLICATION_MIGRATOR_TITLE,
-                progress -> service.replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.plan(),
-                    progress));
-            replacementSucceeded = true;
-            ApplicationMigrationSuccessDialog.show(mMainGui, APPLICATION_MIGRATOR_TITLE,
+            java.util.prefs.Preferences.userRoot().flush();
+            SqlitePreferencesFactory.shutdown();
+            ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(null,
+                APPLICATION_MIGRATOR_TITLE, progress -> new ApplicationMigrationService()
+                    .replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.plan(), progress));
+            ApplicationMigrationSuccessDialog.show(null, APPLICATION_MIGRATOR_TITLE,
                 ApplicationMigrationSuccessDialog.replacementImportReport(migration, prepared.sourceDatabase()));
         }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            showDatabaseReplacementFailure(e);
-        }
         catch(Exception | LinkageError e)
         {
-            showDatabaseReplacementFailure(e);
+            JOptionPane.showMessageDialog(null,
+                "The SQLite import could not finish safely. The application will close without starting reception. " +
+                    "If a safety backup was completed, it remains in the database/backups folder. " +
+                    "Review the error before restarting manually.\n\n" + exceptionMessage(e),
+                "SQLite Database Import Failed", JOptionPane.ERROR_MESSAGE);
+            //Do not release the lock or reopen stale preferences after an uncertain failure. The caller exits.
+            return 1;
         }
-
-        if(!replacementSucceeded)
-        {
-            //Keep the portable-root lock until process termination. A shutdown failure can mean a database-owning
-            //worker is still unwinding, so explicitly releasing the lock before exit would permit another process
-            //to enter the data folder too early.
-            System.exit(1);
-            return;
-        }
-
         try
         {
-            releaseDataRootLock();
+            lock.close();
+            //The staged database contains an unfinished review; normal startup must return to the wizard.
             ApplicationRelauncher.relaunch();
         }
         catch(IOException e)
         {
-            JOptionPane.showMessageDialog(mMainGui,
-                (replacementSucceeded ? "The database was replaced successfully" :
-                    "The database replacement did not complete") +
-                    ", but SDRTrunk could not restart automatically. Start it again manually.\n\n" +
-                    exceptionMessage(e), "SDRTrunk Restart Required", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(null,
+                "Your database was imported, but the application could not restart. Start it manually to review " +
+                    "your imported settings before receiving.\n\n" + exceptionMessage(e),
+                "Restart Required", JOptionPane.ERROR_MESSAGE);
         }
-
-        System.exit(replacementSucceeded ? 0 : 1);
+        return 0;
     }
 
     private void flushConfigurationForDatabaseReplacement() throws Exception
@@ -966,16 +914,6 @@ public class SDRTrunk
 
             throw e;
         }
-    }
-
-    private void showDatabaseReplacementFailure(Throwable throwable)
-    {
-        JOptionPane.showMessageDialog(mMainGui,
-            "The SQLite database import failed. SDRTrunk will not restart automatically because the final active " +
-                "database state could not be confirmed. If a safety backup was completed, it remains in the " +
-                "database/backups folder. Review the error and restart SDRTrunk manually.\n\n" +
-                exceptionMessage(throwable),
-            "SQLite Database Import Failed", JOptionPane.ERROR_MESSAGE);
     }
 
     private static String exceptionMessage(Throwable throwable)
@@ -1445,6 +1383,11 @@ public class SDRTrunk
                     return;
                 }
                 dataRootLock = setup.lock();
+                if(setup.replacement() != null)
+                {
+                    System.exit(replaceSetupDatabase(setup.replacement(), dataRoot, dataRootLock));
+                    return;
+                }
                 userPreferences = setup.preferences();
                 startConfiguredChannels = setup.startChannels();
             }

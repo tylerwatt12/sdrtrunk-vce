@@ -126,9 +126,9 @@ final class WizardStyles
     {
         refreshWithTheme(button,"quiet");
         Map<String,Object> style = buttonStyle();
-        style.put("buttonType", "borderless");
+        style.put("background", surface());
+        style.put("borderColor", border());
         style.put("foreground", muted());
-        style.put("minimumWidth", 0);
         button.putClientProperty(FlatClientProperties.STYLE, style);
         button.setFont(bodyFont());
         return button;

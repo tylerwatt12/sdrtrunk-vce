@@ -11,20 +11,14 @@
 
 package io.github.dsheirer.gui.configuration;
 
-import io.github.dsheirer.configuration.ConfigurationManager;
-import io.github.dsheirer.configuration.ConfigurationManager.ExternalConfigurationReloadException;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService.ImportResult;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService.PreparedImport;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Summary;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import java.awt.Component;
-import java.awt.Cursor;
 import java.nio.file.Path;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
-import javafx.application.Platform;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.JScrollPane;
@@ -40,75 +34,29 @@ public final class LegacyPlaylistImportDialog
     {
     }
 
-    public static void show(Component parent, ConfigurationManager configurationManager, Path initialDirectory)
+    /** Pre-receiver entry point: preview only; the wizard applies the merge while no configuration service exists. */
+    public static PreparedImport choose(Component parent, Path database, Path initialDirectory)
     {
         JFileChooser chooser = new JFileChooser(initialDirectory != null ? initialDirectory.toFile() : null);
         chooser.setDialogTitle("Import Legacy Playlist XML");
         chooser.setFileFilter(new FileNameExtensionFilter("SDRTrunk Playlist XML (*.xml)", "xml"));
-
-        if(chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION)
-        {
-            return;
-        }
-
-        Cursor previousCursor = parent.getCursor();
-        parent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-
+        if(chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION) return null;
         try
         {
-            callOnJavaFxThreadAndWait(() -> {
-                configurationManager.flushConfiguration();
-                return null;
-            });
-            LegacyPlaylistImportService service =
-                new LegacyPlaylistImportService(configurationManager.getDatabasePath());
-            PreparedImport preparedImport = service.prepare(chooser.getSelectedFile().toPath());
-            parent.setCursor(previousCursor);
-
-            Object[] options = {"Import", "Cancel"};
-            int choice = JOptionPane.showOptionDialog(parent, previewPanel(preparedImport.preview()),
-                "Import Legacy Playlist XML", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
-                options, options[0]);
-
-            if(choice != 0)
-            {
-                return;
-            }
-
-            parent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-            ImportResult result;
-
-            try
-            {
-                result = callOnJavaFxThreadAndWait(() ->
-                    configurationManager.applyExternalConfigurationSnapshot(() ->
-                        service.execute(preparedImport)));
-            }
-            catch(ExternalConfigurationReloadException reloadError)
-            {
-                parent.setCursor(previousCursor);
-                JOptionPane.showMessageDialog(parent,
-                    "The playlist was imported, but the running interface could not reload it.\n\n" +
-                        "Restart SDRTrunk before making configuration changes.\n\nBackups: " +
-                        configurationManager.getDatabasePath().getParent().resolve("backups") +
-                        "\n\n" + message(rootCause(reloadError)),
-                    "Playlist Imported — Restart Required", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-
-            parent.setCursor(previousCursor);
-            JOptionPane.showMessageDialog(parent, resultMessage(result), "Playlist Import Complete",
-                JOptionPane.INFORMATION_MESSAGE);
+            java.awt.Window owner = parent instanceof java.awt.Window window ? window :
+                javax.swing.SwingUtilities.getWindowAncestor(parent);
+            var prepared = ApplicationMigrationProgressDialog.run(owner,
+                "Review playlist import", progress -> new LegacyPlaylistImportService(database)
+                    .prepare(chooser.getSelectedFile().toPath()));
+            Object[] options = {"Import playlist", "Cancel"};
+            return JOptionPane.showOptionDialog(parent, previewPanel(prepared.preview()), "Review playlist import",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[1]) == 0 ? prepared : null;
         }
-        catch(Exception | LinkageError e)
+        catch(Exception e)
         {
-            parent.setCursor(previousCursor);
-            JOptionPane.showMessageDialog(parent, "The playlist was not imported.\n\n" +
-                message(rootCause(e)), "Playlist Import Failed", JOptionPane.ERROR_MESSAGE);
-        }
-        finally
-        {
-            parent.setCursor(previousCursor);
+            JOptionPane.showMessageDialog(parent, "The playlist could not be checked. No changes were made.\n\n" +
+                message(rootCause(e)), "Playlist Import Refused", JOptionPane.ERROR_MESSAGE);
+            return null;
         }
     }
 
@@ -136,11 +84,10 @@ public final class LegacyPlaylistImportDialog
             "  Channels (same system, site, and name): " + preview.channelConflicts() + '\n' +
             "  Streaming configurations: " + preview.streamConflicts() + "\n\n" +
             "Existing configuration will not be replaced. Unsupported legacy entries are omitted. A timestamped " +
-            "database backup will be created before the import. Applying the import reloads configuration and stops " +
-            "currently running channels.";
+            "database backup will be created before the import. Receiving will stay stopped until you finish setup.";
     }
 
-    private static String resultMessage(ImportResult result)
+    public static String resultMessage(ImportResult result)
     {
         Summary summary = result.summary();
         return "The playlist import completed.\n\n" +
@@ -150,38 +97,6 @@ public final class LegacyPlaylistImportDialog
             "Imported streaming configurations: " + summary.streamCount() + "\n\n" +
             "Renamed conflicts: " + summary.totalRenamed() + "\n\n" +
             "Backup: " + result.backupPath();
-    }
-
-    private static <T> T callOnJavaFxThreadAndWait(Callable<T> callable)
-        throws Exception
-    {
-        if(Platform.isFxApplicationThread())
-        {
-            return callable.call();
-        }
-
-        FutureTask<T> task = new FutureTask<>(callable);
-        Platform.runLater(task);
-        try
-        {
-            return task.get();
-        }
-        catch(ExecutionException e)
-        {
-            Throwable cause = e.getCause();
-
-            if(cause instanceof Exception exception)
-            {
-                throw exception;
-            }
-
-            if(cause instanceof Error error)
-            {
-                throw error;
-            }
-
-            throw e;
-        }
     }
 
     private static Throwable rootCause(Throwable throwable)

@@ -165,7 +165,9 @@ SQLite-file selection are entry points to the same engine, not separate implemen
 The Swing Setup Wizard owns first-run graphical presentation. Migration preflight, progress, and completion stay on
 its Starting point page; completion offers Copy Message and a ten-second continuation countdown. After promotion,
 Back can review the installed source/results but cannot replace the database. The separately confirmed post-setup
-SQLite replacement workflow retains its existing service-stop, backup, validation, restart, and quit-blocking rules.
+SQLite replacement workflow is reached through **Help > Setup Wizard…** on that same Starting point page. It retains
+its existing service-stop, backup, validation, restart, and quit-blocking rules. Its source confirmation and completion
+dialogs are reused; it does not reuse the new-install copy operation against an occupied data folder.
 
 Format 13 adds only the bounded `setup_wizard` record in `application_settings`. The adjacent 12-to-13 step preserves
 all existing configuration and marks existing installations previously configured; runtime readiness checks decide
@@ -228,14 +230,18 @@ not promoted. After the atomic promotion point, the already validated result may
 validation restores the retained backup on failure. Normal application startup after setup is exact-schema
 validation-only and never creates, repairs, or migrates an existing schema.
 
-After setup, **File > Import SQLite Database** provides an explicit database-only replacement workflow. It preflights
-the selected source before confirmation, displays a bold red replacement warning, closes all database-owning runtime
-services while retaining the portable-data lock, backs up the current active database, migrates a staged copy of the
-selected source, validates it, promotes it atomically, and starts a new application process. The selected source is
+After setup, **Help > Setup Wizard… > Replace settings from a SQLite database** provides an explicit database-only
+replacement workflow. Restarting into setup first closes the receiver and its database-owning runtime services.
+The wizard preflights the selected source and displays a bold red replacement warning before confirmation. With the
+portable-data lock retained and setup preferences closed, it backs up the current active database, migrates a staged
+copy of the selected source, validates it, promotes it atomically, and starts a new application process. The source is
 never changed. Window close, Exit, and operating-system quit requests are refused while replacement is in progress.
 The completion report has a Copy Message action and a visible countdown that continues automatically without waiting
 for the operator to dismiss it. A failed replacement does not automatically relaunch the application when the final
-active-database state cannot be proven; the retained backup and error are left for explicit recovery.
+active-database state cannot be proven; the retained backup and error are left for explicit recovery. Replacement
+resets the existing bounded wizard-progress record on the staged copy before validation and promotion. Normal startup
+therefore returns to unfinished setup and review even if the imported source was setup-complete or the restart was
+interrupted. Old in-memory preferences are closed before replacement and are never reused to launch the new profile.
 
 ## Input Scope
 
@@ -244,12 +250,12 @@ as the vault, JMBE library, optional modules, and paths that need remapping. Sel
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. The plan and completion report must clearly say when
 external artifacts were unavailable; file-only migration must never imply that they were copied.
 
-The after-setup SQLite menu import also has database-only scope. It replaces the active SQLite contents rather than
+The after-setup SQLite wizard import also has database-only scope. It replaces the active SQLite contents rather than
 merging rows, leaves the selected source and its neighboring files unchanged, and leaves the active data folder's
 existing non-database files in place. Its confirmation must identify both the selected source and active target and
-state these boundaries before shutdown. Stored portable paths are not remapped for this database-only workflow. A
+state these boundaries before replacement. Stored portable paths are not remapped for this database-only workflow. A
 markerless imported database is initialized as a newly imported profile: an existing primary administrator satisfies
-setup, otherwise startup requires the operator to create one.
+the administrator step, otherwise startup requires the operator to create one. Both cases require destination review.
 
 All graphical and headless entry points use the same inspector, registry, chain runner, validator, and report model.
 Do not add schema-specific launchers or separately maintained migration utilities.

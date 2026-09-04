@@ -164,7 +164,8 @@ public final class ApplicationMigrationSuccessDialog
             "setup will request a new administrator password after restart.\n\n" + migration.helperOutput() +
             "\n\nSelected source:\n" + sourceDatabase.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + migration.safetyBackup() +
-            "\n\nSDRTrunk will restart automatically.";
+            "\n\nSDRTrunk will restart automatically into setup. Review the imported settings and output folders " +
+            "before starting reception.";
     }
 
     /** Lightweight view kept separate from the top-level window so button and countdown wiring is testable headless. */

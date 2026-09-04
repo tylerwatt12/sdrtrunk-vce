@@ -15,9 +15,42 @@ class SetupStartupBoundaryTest
         assertTrue(startup.indexOf("SetupWizard.ensureListener(")<startup.indexOf("mTunerManager.start()"));
         assertTrue(startup.indexOf("SetupWizard.ensureListener(")<startup.indexOf("mAudioStreamingManager.start()"));
         assertFalse(startup.contains("CoordinatedStartupDialog"));
+        assertTrue(main.indexOf("if(setup.replacement() != null)") < main.indexOf("new SDRTrunk("));
+        String replacement = startup.substring(startup.indexOf("private static int replaceSetupDatabase"),
+            startup.indexOf("private void flushConfigurationForDatabaseReplacement"));
+        assertTrue(replacement.indexOf("SqlitePreferencesFactory.shutdown()") < replacement.indexOf(".replaceCurrentDatabase("));
+        assertTrue(replacement.indexOf(".replaceCurrentDatabase(") < replacement.indexOf("lock.close()"));
+        assertTrue(replacement.contains("response.cancelQuit()"));
+        assertTrue(replacement.contains("return 1;"));
         String wizard=Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         for(String forbidden:new String[]{"new TunerManager", "ChannelProcessingManager", "JmbeEditorRequest", "ApplicationMigrationProgressDialog.run"})
             assertFalse(wizard.contains(forbidden),forbidden);
+    }
+
+    @Test void hardwareSkipOnlyExistsAsAnAcknowledgedScanCancellation() throws Exception
+    {
+        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
+        String hardware = wizard.substring(wizard.indexOf("private void hardwarePage()"), wizard.indexOf("private void calibrationPage()"));
+        assertFalse(hardware.contains("defer("));
+        assertTrue(hardware.contains("stopped.set(true)"));
+        assertTrue(hardware.contains("persist() && stopped.get()"));
+        assertTrue(wizard.contains("? \"Skip discovery\" : \"Cancel operation\""));
+        assertTrue(wizard.contains("cancel.setVisible(false)"));
+        assertFalse(wizard.contains("Summary statistics — recommended"));
+    }
+
+    @Test void replacementReviewIsDurableAndNeverMarksHardwareAsDetected() throws Exception
+    {
+        SetupProgress progress = SetupProgress.decode(SetupProgress.replacementReview().encode());
+        assertFalse(progress.isComplete());
+        assertTrue(progress.isImported());
+        assertEquals(SetupProgress.State.CARRIED_OVER, progress.get(SetupStep.SOURCE));
+        assertEquals(SetupProgress.State.DEFERRED, progress.get(SetupStep.HARDWARE));
+        assertEquals(SetupProgress.State.PENDING, progress.get(SetupStep.REVIEW));
+        assertEquals(SetupStep.ADMINISTRATOR, progress.resumeAt());
+        for(SetupStep step : SetupStep.values())
+            if(step != SetupStep.HARDWARE && step != SetupStep.REVIEW) progress.set(step, SetupProgress.State.CARRIED_OVER);
+        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(progress, false, false, false, false));
     }
     @Test void digitalVoiceReadinessUsesConfigurationOnly()
     {

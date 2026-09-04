@@ -149,15 +149,18 @@ ${user.home}/SDRTrunk/playlist/playlist_v2.xml
 ```
 
 You can also choose another XML file. First-launch import creates a new SQLite configuration. To add another playlist
-later, use **File > Import Legacy Playlist XML**. VCE previews the supported contents, keeps existing configuration,
-renames imported name conflicts, and creates a timestamped database backup before applying the import. Your original
+later, use **Help > Setup Wizard…**, then **Import a legacy XML playlist** on Starting point. VCE previews the supported
+contents, keeps existing configuration, renames imported name conflicts, and creates a timestamped database backup
+before applying the import. Your original
 XML remains unchanged and regular SDRTrunk can continue using it.
 
-To replace the active profile from a supported older database after setup, use **File > Import SQLite Database**.
+To replace the active profile from a supported database after setup, use **Help > Setup Wizard…**, then
+**Replace settings from a SQLite database** on Starting point.
 VCE shows the migration plan and an explicit replacement warning, retains the current database as a safety backup,
 migrates only a staged copy of the selected file, validates it, and restarts. This imports only SQLite contents; it
 does not copy files beside the selected database or remap stored portable paths. If the imported database has no
-administrator, setup asks for a new administrator password after restart. A failed replacement does not restart
+administrator, setup asks for a new administrator password after restart. Every successful replacement returns to
+setup to review the imported settings and output folders before receiving resumes. A failed replacement does not restart
 automatically when the final active-database state cannot be confirmed.
 
 After importing:

@@ -62,7 +62,7 @@ public final class SqliteDatabaseImportDialog
         {
             if(Files.exists(activeDatabase) && Files.isSameFile(source, activeDatabase))
             {
-                throw new IllegalArgumentException("Choose an older SQLite file, not the active database.");
+                throw new IllegalArgumentException("Choose a different SQLite file, not the database this installation is using.");
             }
 
             Window owner = parent instanceof Window parentWindow ? parentWindow :
@@ -106,7 +106,8 @@ public final class SqliteDatabaseImportDialog
                 "portable data folder will remain in place. Stored portable paths in a database-only import are " +
                 "not remapped. If the imported database has no administrator, setup will require a new administrator " +
                 "password when SDRTrunk restarts.\n\n" +
-                "SDRTrunk will stop all channels and services, perform the replacement, and restart automatically." +
+                "Receiving is stopped during setup. SDRTrunk will perform the replacement and restart automatically " +
+                "into setup to review the imported settings before receiving resumes." +
                 "\n\nSelected SQLite database:\n" + source +
                 "\n\nActive database to replace:\n" + activeDatabase.toAbsolutePath().normalize() +
                 "\n\nRequired database changes:\n" + ApplicationMigrationService.describePlan(plan));

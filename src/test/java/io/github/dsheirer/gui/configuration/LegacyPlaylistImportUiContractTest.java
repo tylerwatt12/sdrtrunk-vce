@@ -12,6 +12,7 @@
 package io.github.dsheirer.gui.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,11 +28,14 @@ class LegacyPlaylistImportUiContractTest
         Path.of("src/main/java/io/github/dsheirer/configuration/ConfigurationManager.java");
 
     @Test
-    void fileMenuExposesTheManualXmlImport() throws Exception
+    void helpWizardReplacesTheFileMenuImport() throws Exception
     {
         String source = Files.readString(SDRTRUNK);
-        assertTrue(source.contains("new JMenuItem(\"Import Legacy Playlist XML...\")"));
-        assertTrue(source.contains("LegacyPlaylistImportDialog.show(mMainGui"));
+        assertFalse(source.contains("new JMenuItem(\"Import Legacy Playlist XML...\")"));
+        assertTrue(source.contains("new JMenuItem(\"Setup Wizard…\")"));
+        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
+        assertTrue(wizard.contains("LegacyPlaylistImportDialog.choose(this, database, root)"));
+        assertTrue(wizard.contains("new LegacyPlaylistImportService(database).execute(selected)"));
     }
 
     @Test
@@ -44,12 +48,13 @@ class LegacyPlaylistImportUiContractTest
     }
 
     @Test
-    void applyUsesTheConfigurationManagersExclusiveJavaFxOperation() throws Exception
+    void previewDoesNotConstructRuntimeServicesAndExistingRuntimeImportIsolationIsRetained() throws Exception
     {
         String dialog = Files.readString(DIALOG);
         String manager = Files.readString(CONFIGURATION_MANAGER);
-        assertTrue(dialog.contains("callOnJavaFxThreadAndWait(() ->"));
-        assertTrue(dialog.contains("configurationManager.applyExternalConfigurationSnapshot"));
+        assertFalse(dialog.contains("ConfigurationManager"));
+        assertFalse(dialog.contains("Platform.runLater"));
+        assertFalse(dialog.contains(".execute("));
         assertTrue(manager.contains("mExternalConfigurationOperation = true;"));
         assertTrue(manager.contains("if(mExternalConfigurationOperation)"));
         assertTrue(manager.contains("saveNow(true);"));

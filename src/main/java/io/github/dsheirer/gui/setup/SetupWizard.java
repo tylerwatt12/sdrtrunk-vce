@@ -7,6 +7,9 @@ import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import io.github.dsheirer.database.*;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
+import io.github.dsheirer.database.importer.LegacyPlaylistImportService;
+import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
+import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog;
 import io.github.dsheirer.database.upgrade.*;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
@@ -41,7 +44,12 @@ import static io.github.dsheirer.gui.setup.SetupProgress.State.*;
 /** Pre-receiver Swing setup session. No receiver services or device controllers are constructed here. */
 public final class SetupWizard extends JDialog
 {
-    public record Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels) {}
+    public record Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels,
+                         SqliteDatabaseImportDialog.PreparedImport replacement)
+    {
+        public Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels)
+        { this(preferences, lock, startChannels, null); }
+    }
     private final Path root;
     private final Path database;
     private final SdrTrunkDatabaseBootstrap.Options options;
@@ -94,6 +102,9 @@ public final class SetupWizard extends JDialog
     private List<String> autoStart = List.of();
     private boolean autoStartNeedsJmbe;
     private boolean startChannels = true;
+    private boolean sourceCommitted;
+    private boolean restartRequired;
+    private SqliteDatabaseImportDialog.PreparedImport replacement;
     private StatsWebServerService liveServer;
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
@@ -159,7 +170,7 @@ public final class SetupWizard extends JDialog
                 if(showInspectionFailure) wizard.fail("We couldn’t check your saved settings. Choose Check my settings to try again. No files have been changed.");
                 wizard.setVisible(true);
             });
-            return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels) : null;
+            return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels, wizard.replacement) : null;
         }
         finally
         {
@@ -176,7 +187,7 @@ public final class SetupWizard extends JDialog
         database = SdrTrunkDatabasePath.getDatabasePath(root);
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
         if(Files.isRegularFile(database) && options.upgradeData() != null)
-            throw new IllegalArgumentException("This profile already has a database. Use File → Import SQLite Database after setup for explicitly confirmed replacement.");
+            throw new IllegalArgumentException("This profile already has a database. Use Help → Setup Wizard for explicitly confirmed replacement.");
         if(!Files.isRegularFile(database) && options.upgradeCurrent())
             throw new IllegalArgumentException("--upgrade-current requires an existing portable database.");
         forced = Arrays.asList(args).contains("--setup-wizard");
@@ -184,6 +195,11 @@ public final class SetupWizard extends JDialog
         ownsLock = existingLock == null;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { leave(); } });
+        if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER))
+            Desktop.getDesktop().setQuitHandler((event, response) -> {
+                response.cancelQuit();
+                SwingUtilities.invokeLater(this::leave);
+            });
         JPanel shell = new JPanel(new BorderLayout(28, 0));
         JPanel rail = new JPanel(new BorderLayout());
         rail.setPreferredSize(new Dimension(235, 600));
@@ -307,6 +323,15 @@ public final class SetupWizard extends JDialog
         }
         if(preferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
             preferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
+        readAutoStart();
+        if(limitedVisit && !autoStartNeedsJmbe && progress.get(SetupStep.JMBE) == PENDING)
+            progress.set(SetupStep.JMBE, DEFERRED);
+        save();
+    }
+
+    private void readAutoStart() throws Exception
+    {
+        autoStartNeedsJmbe = false;
         //Read names only. No channel/controller objects and no credentials are projected into the review.
         try(var connection = SdrTrunkDatabase.open(database);
             var query = connection.prepareStatement("SELECT name, decoder_type FROM configuration_channel WHERE auto_start = 1 ORDER BY auto_start_order, name");
@@ -316,9 +341,6 @@ public final class SetupWizard extends JDialog
             while(rows.next()) { names.add(rows.getString(1)); autoStartNeedsJmbe |= SetupReadiness.requiresJmbe(rows.getString(2)); }
             autoStart = List.copyOf(names);
         }
-        if(limitedVisit && !autoStartNeedsJmbe && progress.get(SetupStep.JMBE) == PENDING)
-            progress.set(SetupStep.JMBE, DEFERRED);
-        save();
     }
 
     private void revalidateSettings() throws Exception
@@ -334,7 +356,7 @@ public final class SetupWizard extends JDialog
         if(progress.isImported() || progress.isComplete()) ready(SetupStep.ACTIVITY, true);
         ready(SetupStep.CALIBRATION, CalibrationManager.getInstance(preferences).isCalibrated());
         //Hardware inventory is deliberately never persisted or inferred from configuration.
-        progress.set(SetupStep.HARDWARE, PENDING);
+        if(progress.get(SetupStep.HARDWARE) != DEFERRED) progress.set(SetupStep.HARDWARE, PENDING);
     }
 
     private void ready(SetupStep id, boolean valid)
@@ -393,8 +415,13 @@ public final class SetupWizard extends JDialog
     {
         if(preferences != null)
         {
+            if(forced && !sourceCommitted && liveServer == null)
+            {
+                existingSourcePage();
+                return;
+            }
             notice("Your settings are in place", "Continue using this installation’s saved settings. You can review or change them in the following steps.", true);
-            details("Where my settings are saved", database + "\n\nTo replace this profile later, use File → Import SQLite Database from the main application. Returning to this page never replaces your data.");
+            details("Where my settings are saved", database + "\n\nTo import another profile later, use Help → Setup Wizard from the main application. Returning to this page never replaces your data.");
             if(!migrationReport.isBlank())
             {
                 details("View the full import report",migrationReport);
@@ -494,6 +521,7 @@ public final class SetupWizard extends JDialog
             initialize(fresh || xml);
             return report;
         }, report -> {
+            sourceCommitted = true;
             migrationReport = report;
             progress.setComplete(false);
             if(!persist()) return;
@@ -510,6 +538,55 @@ public final class SetupWizard extends JDialog
                 countdown.start();
             }
         });
+    }
+
+    /** Same first step and lineage; replacement is an explicit action, never a side effect of Back. */
+    private void existingSourcePage()
+    {
+        paragraph("Your saved settings are already here. Keep using them, or choose an import to review before making any changes.");
+        ButtonGroup group = new ButtonGroup();
+        WizardChoiceCard keep = choice(group, "Keep my current settings — recommended",
+            "Review your setup without importing or replacing anything.", true);
+        WizardChoiceCard sqlite = choice(group, "Replace settings from a SQLite database",
+            "Replace this installation’s database, including channels, aliases, accounts and preferences. We’ll show a warning and save a recovery copy first. Extra files are not copied, and saved output folders are not changed.", false);
+        WizardChoiceCard xml = choice(group, "Import a legacy XML playlist",
+            "Add supported channels, aliases and streaming settings to this profile. Existing configuration stays in place; conflicting imported names are renamed. This does not replace your database.", false);
+        details("Where my settings are saved", database.toString());
+        Runnable selectionChanged = () -> next.setText(keep.isSelected() ? "Continue" : "Choose file & review");
+        for(var card : List.of(keep, sqlite, xml)) card.radio().addItemListener(e -> selectionChanged.run());
+        accept = () -> {
+            if(keep.isSelected()) { completeAndContinue(); return; }
+            if(!persist()) return;
+            if(sqlite.isSelected())
+            {
+                var selected = SqliteDatabaseImportDialog.choose(this, database, root);
+                if(selected == null) return;
+                //Return to the startup boundary. No old preferences or setup callbacks may write after replacement.
+                replacement = selected;
+                finished = true;
+                dispose();
+            }
+            else
+            {
+                var selected = LegacyPlaylistImportDialog.choose(this, database, root);
+                if(selected == null) return;
+                job("Importing your playlist…", null,
+                    () -> {
+                        var result = new LegacyPlaylistImportService(database).execute(selected);
+                        //The merge is already committed, even if a subsequent readiness read fails.
+                        sourceCommitted = true;
+                        migrationReport = LegacyPlaylistImportDialog.resultMessage(result);
+                        readAutoStart();
+                        revalidateSettings();
+                        return result;
+                    }, result -> {
+                        progress.set(SetupStep.SOURCE, COMPLETE);
+                        showPage(SetupStep.SOURCE);
+                        notice("Your playlist was imported", "Your existing settings were kept. Continue to review your setup before receiving starts.", true);
+                        persist();
+                    });
+            }
+        };
     }
 
     private void administratorPage()
@@ -723,7 +800,7 @@ public final class SetupWizard extends JDialog
         paragraph("Choose how much listening activity to keep. These settings do not change your audio recordings or application log files.");
         ButtonGroup group = new ButtonGroup();
         JRadioButton off = card(group,"Off", "Do not collect statistics or detailed activity history.",!app.isStatsLoggingEnabled());
-        card(group,"Summary statistics — recommended", "Keep useful activity totals without a detailed event-by-event history.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
+        card(group,"Summary statistics", "Keep useful activity totals without a detailed event-by-event history.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
         JRadioButton detailed = card(group,"Summaries plus detailed history", "Also keep individual activity events for troubleshooting and review. This uses more storage.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
         JSpinner days = WizardStyles.integerSpinner(app.getStatsLoggingRetentionDays(),1,365);
         JPanel retention=stack();
@@ -763,7 +840,7 @@ public final class SetupWizard extends JDialog
                     if(persist() && stopped.get()) showPage(nextStep());
                 });
         };
-        button("Rescan",scan); defer("Skip");
+        button("Rescan",scan);
         accept = () -> { if(progress.get(step) == NEEDS_ATTENTION) deferCurrent(); else completeAndContinue(); };
         SwingUtilities.invokeLater(() -> { if(step == SetupStep.HARDWARE && !busy) scan.run(); });
     }
@@ -886,7 +963,7 @@ public final class SetupWizard extends JDialog
         if(progress != null) { progress.set(step,RUNNING); persist(); }
         danger.setVisible(false); operation=description; completed=0; total=0; output.clear(); output.accept(description);
         meter.setVisible(true); cancel.setVisible(cancelAction!=null); cancel.setEnabled(true); updateNavigation();
-        cancel.setText(step == SetupStep.HARDWARE ? "Skip" : "Cancel operation");
+        cancel.setText(step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation");
         diagnostics.setVisible(false); detailsToggle.setVisible(true); detailsToggle.setText("Show details");
         worker.submit(() -> {
             T result=null; Throwable failure=null;
@@ -899,6 +976,13 @@ public final class SetupWizard extends JDialog
                 {
                     boolean stopped=problem instanceof InterruptedException;
                     if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
+                    if(step == SetupStep.SOURCE && sourceCommitted)
+                    {
+                        restartRequired = true;
+                        showPage(SetupStep.SOURCE);
+                        fail("Your import completed, but setup couldn’t refresh the review. Exit setup and reopen it to load your imported settings. Do not import the playlist again.");
+                        return;
+                    }
                     fail(stopped ? "Stopped safely. You can try again or set this up later." : safeFailure(problem));
                 }
                 else
@@ -979,12 +1063,12 @@ public final class SetupWizard extends JDialog
     }
     private void updateNavigation()
     {
-        enableTree(page,!busy);
-        back.setEnabled(!busy && preferences!=null && step.ordinal()>0);
-        next.setEnabled(!busy && canContinue.getAsBoolean());
+        enableTree(page,!busy && !restartRequired);
+        back.setEnabled(!busy && !restartRequired && preferences!=null && step.ordinal()>0);
+        next.setEnabled(!busy && !restartRequired && canContinue.getAsBoolean());
         exit.setEnabled(!busy);
         boolean dark = preferences != null ? preferences.getApplicationPreference().getTheme().isDark() : selectedTheme == Theme.DARK;
-        themeToggle.setEnabled(!busy);
+        themeToggle.setEnabled(!busy && !restartRequired);
         themeToggle.setText(dark ? "Light mode" : "Dark mode");
         themeToggle.setToolTipText(dark ? "Switch to light mode" : "Switch to dark mode");
         themeToggle.getAccessibleContext().setAccessibleName(themeToggle.getToolTipText());
@@ -996,7 +1080,7 @@ public final class SetupWizard extends JDialog
             String ink=colorHex(id==step || progress!=null && progress.isDone(id) ? WizardStyles.foreground() : WizardStyles.muted());
             button.setText("<html><font color='"+ink+"'>"+(progress!=null && progress.isDone(id)?"✓ ":"")+(id.ordinal()+1)+". "+id.title()+"<br><small>"+label(state)+"</small></font></html>");
             button.setToolTipText(label(state)); button.getAccessibleContext().setAccessibleDescription(label(state));
-            button.setEnabled(!busy && (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
+            button.setEnabled(!busy && !restartRequired && (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
                 (progress.isDone(id) || state==DEFERRED || state==NEEDS_ATTENTION)));
             button.setFont(button.getFont().deriveFont(id==step?Font.BOLD:Font.PLAIN));
             Color fill=id==step ? WizardStyles.surface() : UIManager.getColor("Panel.background");

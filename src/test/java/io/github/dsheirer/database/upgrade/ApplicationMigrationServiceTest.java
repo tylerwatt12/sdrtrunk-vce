@@ -262,6 +262,31 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    void replacingFromACompletedCurrentProfileStillRequiresDestinationReview() throws Exception
+    {
+        Path activeRoot = mTemporaryFolder.resolve("review-target");
+        Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
+        Path sourceDatabase = mTemporaryFolder.resolve("review-source.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        new io.github.dsheirer.gui.setup.SetupProgress(true, false).save(sourceDatabase);
+        insertAlias(activeDatabase, "Old destination");
+        insertAlias(sourceDatabase, "Selected source");
+        byte[] sourceHash = sha256(sourceDatabase);
+        var result = new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
+        assertCurrentFormat(activeDatabase);
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        var review = io.github.dsheirer.gui.setup.SetupProgress.read(activeDatabase);
+        assertFalse(review.isComplete());
+        assertTrue(review.isImported());
+        assertEquals(io.github.dsheirer.gui.setup.SetupProgress.State.PENDING,
+            review.get(io.github.dsheirer.gui.setup.SetupStep.REVIEW));
+        assertTrue(io.github.dsheirer.gui.setup.SetupProgress.read(sourceDatabase).isComplete());
+        assertEquals("Old destination", scalar(result.safetyBackup(), "SELECT name FROM alias WHERE id=1"));
+        assertEquals("Selected source", scalar(activeDatabase, "SELECT name FROM alias WHERE id=1"));
+    }
+
+    @Test
     void selectedDatabaseReplacementBindsTheApprovedPlanBeforeBackup() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("active-plan-binding-data");

@@ -152,6 +152,17 @@ class WizardComponentsTest
                 assertNotEquals(primary.getForeground(), primary.getBackground());
                 assertTrue(WizardStyles.contrast(primary.getForeground(), primary.getBackground()) >= 4.5);
                 assertTrue(WizardStyles.contrast(WizardStyles.muted(), WizardStyles.surface()) >= 4.5);
+                assertEquals(secondary.getPreferredSize().height, quiet.getPreferredSize().height);
+                @SuppressWarnings("unchecked")
+                var quietStyle = (java.util.Map<String,Object>)quiet.getClientProperty("FlatLaf.style");
+                assertEquals(WizardStyles.border(), quietStyle.get("borderColor"));
+                assertNotEquals("borderless", quietStyle.get("buttonType"));
+                assertTrue(quiet.isBorderPainted());
+                if(dark) FlatLightLaf.setup(); else FlatDarkLaf.setup();
+                SwingUtilities.updateComponentTreeUI(quiet);
+                @SuppressWarnings("unchecked")
+                var changedStyle = (java.util.Map<String,Object>)quiet.getClientProperty("FlatLaf.style");
+                assertEquals(WizardStyles.border(), changedStyle.get("borderColor"));
                 var text = WizardStyles.prose("Clear, readable setup instructions.");
                 assertTrue(text.getFont().getSize2D() >= 14);
                 assertFalse(text.isOpaque());

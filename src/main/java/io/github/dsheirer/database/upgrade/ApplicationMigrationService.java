@@ -313,6 +313,8 @@ public final class ApplicationMigrationService
             listener.update("Updating selected database copy");
             String helperOutput = mMigrationRunner.run(staged, null, null);
             InitialAdminSetup.initializeNewProfile(staged);
+            //Commit the review requirement with the replacement, not after promotion or only in restart arguments.
+            io.github.dsheirer.gui.setup.SetupProgress.replacementReview().save(staged);
 
             listener.update("Checking updated database");
             validateGlobalDatabase(staged);

@@ -169,7 +169,8 @@ class ApplicationMigrationSuccessDialogTest
             "an administrator, setup will request a new administrator password after restart.\n\n" + helper +
             "\n\nSelected source:\n" + source.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + backup +
-            "\n\nSDRTrunk will restart automatically.", replacement);
+            "\n\nSDRTrunk will restart automatically into setup. Review the imported settings and output folders " +
+            "before starting reception.", replacement);
     }
 
     @Test

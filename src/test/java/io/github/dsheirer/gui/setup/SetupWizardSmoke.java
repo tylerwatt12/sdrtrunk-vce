@@ -132,7 +132,11 @@ public final class SetupWizardSmoke
                 throw new AssertionError("Off did not preserve the dormant retention setting");
         }
         await(target,SetupStep.HARDWARE);
-        capture(target,root,"07-hardware"); click(target,"Skip"); await(target,SetupStep.CALIBRATION);
+        capture(target,root,"07-hardware");
+        if(descendants(target).stream().anyMatch(component -> component instanceof javax.swing.JButton button &&
+            button.isShowing() && button.getText().equals("Skip discovery")))
+            throw new AssertionError("Completed scan still has Skip discovery");
+        click(target,"Continue"); await(target,SetupStep.CALIBRATION);
         capture(target,root,"08-benchmark"); click(target,"Skip this time"); await(target,SetupStep.REVIEW);
         capture(target,root,"09-review");
         javax.swing.SwingUtilities.invokeAndWait(()-> {

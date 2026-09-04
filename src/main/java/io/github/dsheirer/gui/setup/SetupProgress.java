@@ -30,6 +30,16 @@ public final class SetupProgress
     public boolean isComplete() { return complete; }
     public void setComplete(boolean value) { complete = value; }
     public boolean isImported() { return imported; }
+
+    /** A replacement must be reviewed in this destination, even if the source finished setup elsewhere. */
+    public static SetupProgress replacementReview()
+    {
+        SetupProgress result = new SetupProgress(false, true);
+        result.set(SetupStep.SOURCE, State.CARRIED_OVER);
+        //Discovery is optional and does not describe the imported profile. It remains manually revisitable.
+        result.set(SetupStep.HARDWARE, State.DEFERRED);
+        return result;
+    }
     public State get(SetupStep step) { return states.get(step); }
     public void set(SetupStep step, State state) { states.put(step, state); }
     public boolean isDone(SetupStep step)
