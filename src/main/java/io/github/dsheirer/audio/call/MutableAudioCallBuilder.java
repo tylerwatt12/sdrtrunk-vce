@@ -487,10 +487,7 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
                     recordAudio = true;
                 }
 
-                for(String destination: unmatchedPolicy.getStreamDestinationNames())
-                {
-                    broadcastChannels.add(new BroadcastChannel(destination));
-                }
+                broadcastChannels.addAll(unmatchedPolicy.getStreamDestinations());
 
             }
         }

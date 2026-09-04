@@ -112,16 +112,86 @@ public final class SdrTrunkDatabaseSchema
         CREATE TABLE IF NOT EXISTS alias_broadcast_channel (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-            channel_name TEXT NOT NULL CHECK(length(trim(channel_name)) > 0),
-            UNIQUE(alias_id, channel_name)
+            broadcast_configuration_id TEXT NOT NULL REFERENCES
+                configuration_broadcast_stream(configuration_id)
+                DEFERRABLE INITIALLY DEFERRED,
+            UNIQUE(alias_id, broadcast_configuration_id)
         )
         """;
     private static final String ALIAS_LIST_UNMATCHED_TALKGROUP_STREAM_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS alias_list_unmatched_talkgroup_stream (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE,
-            channel_name TEXT NOT NULL CHECK(length(trim(channel_name)) > 0),
-            UNIQUE(alias_list_id, channel_name)
+            broadcast_configuration_id TEXT NOT NULL REFERENCES
+                configuration_broadcast_stream(configuration_id)
+                DEFERRABLE INITIALLY DEFERRED,
+            UNIQUE(alias_list_id, broadcast_configuration_id)
+        )
+        """;
+    private static final String CONFIGURATION_CHANNEL_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS configuration_channel (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            configuration_id TEXT NOT NULL UNIQUE CHECK(
+                length(configuration_id) = 36 AND configuration_id = lower(configuration_id)
+                AND substr(configuration_id, 9, 1) = '-'
+                AND substr(configuration_id, 14, 1) = '-'
+                AND substr(configuration_id, 19, 1) = '-'
+                AND substr(configuration_id, 24, 1) = '-'
+                AND length(replace(configuration_id, '-', '')) = 32
+                AND replace(configuration_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+            ),
+            channel_kind TEXT NOT NULL CHECK(channel_kind IN ('TRUNKED', 'CONVENTIONAL')),
+            sort_order INTEGER NOT NULL,
+            system_name TEXT,
+            site_name TEXT,
+            name TEXT,
+            alias_list_id INTEGER REFERENCES alias_list(id)
+                DEFERRABLE INITIALLY DEFERRED,
+            radres_guid TEXT CHECK(
+                radres_guid IS NULL OR length(trim(radres_guid)) = 0 OR (
+                    radres_guid = trim(radres_guid)
+                    AND length(radres_guid) = 36
+                    AND radres_guid = lower(radres_guid)
+                    AND substr(radres_guid, 9, 1) = '-'
+                    AND substr(radres_guid, 14, 1) = '-'
+                    AND substr(radres_guid, 19, 1) = '-'
+                    AND substr(radres_guid, 24, 1) = '-'
+                    AND length(replace(radres_guid, '-', '')) = 32
+                    AND replace(radres_guid, '-', '') NOT GLOB '*[^0-9a-f]*'
+                )
+            ),
+            auto_start INTEGER NOT NULL DEFAULT 0
+                CHECK(typeof(auto_start) = 'integer' AND auto_start IN (0, 1)),
+            auto_start_order INTEGER CHECK(
+                auto_start_order IS NULL OR (
+                    typeof(auto_start_order) = 'integer'
+                    AND auto_start_order BETWEEN -2147483648 AND 2147483647
+                )
+            ),
+            decoder_type TEXT,
+            primary_frequency_hz INTEGER,
+            config_json TEXT NOT NULL CHECK(json_valid(config_json)),
+            CHECK(
+                channel_kind = 'CONVENTIONAL' OR (
+                    radres_guid IS NOT NULL AND length(trim(radres_guid)) > 0
+                )
+            )
+        )
+        """;
+    private static final String CONFIGURATION_BROADCAST_STREAM_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS configuration_broadcast_stream (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            configuration_id TEXT NOT NULL UNIQUE CHECK(
+                length(configuration_id) = 36 AND configuration_id = lower(configuration_id)
+                AND substr(configuration_id, 9, 1) = '-'
+                AND substr(configuration_id, 14, 1) = '-'
+                AND substr(configuration_id, 19, 1) = '-'
+                AND substr(configuration_id, 24, 1) = '-'
+                AND length(replace(configuration_id, '-', '')) = 32
+                AND replace(configuration_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+            ),
+            sort_order INTEGER NOT NULL CHECK(sort_order >= 0),
+            config_json TEXT NOT NULL CHECK(json_valid(config_json))
         )
         """;
     private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_OBJECTS = List.of(
@@ -169,9 +239,9 @@ public final class SdrTrunkDatabaseSchema
             ON alias(protocol, min_value, max_value, alias_list_id, id)
             WHERE matcher_type = 'RADIO_ID_RANGE'
             """),
-        new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_channel_name",
-            "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_name " +
-                "ON alias_broadcast_channel(channel_name)"),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_configuration",
+            "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
+                "ON alias_broadcast_channel(broadcast_configuration_id)"),
         new SqliteSchemaValidator.Definition("view", "alias_talkgroup", """
             CREATE VIEW IF NOT EXISTS alias_talkgroup AS
             SELECT alias.id AS alias_id,
@@ -205,6 +275,11 @@ public final class SdrTrunkDatabaseSchema
               )
             """)
     );
+    private static final List<SqliteSchemaValidator.Definition> EXACT_CONFIGURATION_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("table", "configuration_channel",
+            CONFIGURATION_CHANNEL_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "configuration_broadcast_stream",
+            CONFIGURATION_BROADCAST_STREAM_TABLE_SQL));
     private static final List<SqliteSchemaValidator.Definition> EXACT_WEB_SETTINGS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "web_user", Format5SchemaSql.WEB_USER_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "web_access_policy",
@@ -217,7 +292,7 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_talkgroup_range",
         "idx_alias_radio_value",
         "idx_alias_radio_range",
-        "idx_alias_broadcast_channel_name",
+        "idx_alias_broadcast_configuration",
         "idx_scan_list_one_default",
         "idx_alias_scan_list_by_list",
         "idx_alias_list_unmatched_talkgroup_scan_list_by_list",
@@ -228,7 +303,6 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_channel_unique_radres_guid",
         "idx_configuration_channel_map_sort",
         "idx_configuration_broadcast_sort",
-        "idx_configuration_broadcast_type",
         "idx_web_user_one_primary_admin"
     );
     private static final List<String> VIEWS = List.of("alias_talkgroup", "alias_radio");
@@ -248,9 +322,10 @@ public final class SdrTrunkDatabaseSchema
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
                 "matcher_type", "protocol", "value", "min_value",
                 "max_value", "text_value", "numeric_value", "tone_sequence"),
-            new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "channel_name"),
+            new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id",
+                "broadcast_configuration_id"),
             new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_stream", "id", "alias_list_id",
-                "channel_name"),
+                "broadcast_configuration_id"),
             new SqliteSchemaValidator.Table("scan_list", "id", "sort_order", "name", "description", "published",
                 "is_default"),
             new SqliteSchemaValidator.Table("alias_scan_list_membership", "alias_id", "scan_list_id"),
@@ -258,12 +333,11 @@ public final class SdrTrunkDatabaseSchema
                 "scan_list_id"),
             new SqliteSchemaValidator.Table("configuration_channel", "id", "configuration_id", "channel_kind",
                 "sort_order", "system_name", "site_name",
-                "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
-                "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",
-                "event_logging_enabled", "config_json"),
+                "name", "alias_list_id", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
+                "primary_frequency_hz", "config_json"),
             new SqliteSchemaValidator.Table("configuration_channel_map", "id", "sort_order", "name", "config_json"),
-            new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "sort_order", "name",
-                "server_type", "enabled", "host", "port", "delay_ms", "maximum_recording_age_ms", "config_json"),
+            new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "configuration_id",
+                "sort_order", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
             new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms"),
             new SqliteSchemaValidator.Table("web_user", "id", "username", "tier", "primary_admin",
@@ -305,7 +379,7 @@ public final class SdrTrunkDatabaseSchema
                 SELECT 0, 'Default', NULL, 1, 1
                 WHERE NOT EXISTS (SELECT 1 FROM scan_list)
                 """);
-            Format5SchemaSql.createConfigurationChannel(statement);
+            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS configuration_channel_map (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,20 +388,7 @@ public final class SdrTrunkDatabaseSchema
                     config_json TEXT NOT NULL
                 )
                 """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS configuration_broadcast_stream (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sort_order INTEGER NOT NULL,
-                    name TEXT,
-                    server_type TEXT,
-                    enabled INTEGER NOT NULL DEFAULT 0,
-                    host TEXT,
-                    port INTEGER,
-                    delay_ms INTEGER,
-                    maximum_recording_age_ms INTEGER,
-                    config_json TEXT NOT NULL
-                )
-                """);
+            statement.executeUpdate(CONFIGURATION_BROADCAST_STREAM_TABLE_SQL);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS application_settings (
                     key TEXT PRIMARY KEY,
@@ -343,10 +404,19 @@ public final class SdrTrunkDatabaseSchema
                 )
                 """);
             Format5SchemaSql.createWebSettings(statement);
-            Format5SchemaSql.createConfigurationIndexes(statement);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_sort " +
+                "ON configuration_channel(sort_order, id)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_alias_list " +
+                "ON configuration_channel(alias_list_id)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_decoder " +
+                "ON configuration_channel(decoder_type)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_frequency " +
+                "ON configuration_channel(primary_frequency_hz)");
+            statement.executeUpdate(Format5SchemaSql.CONFIGURATION_RADRES_GUID_INDEX_SQL);
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_map_sort ON configuration_channel_map(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_type ON configuration_broadcast_stream(server_type, enabled)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
+                "ON alias_broadcast_channel(broadcast_configuration_id)");
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, "alias_schema_version", Integer.toString(ALIAS_SCHEMA_VERSION));
@@ -481,6 +551,7 @@ public final class SdrTrunkDatabaseSchema
     {
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS, METADATA);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);
         Format6ReceiverContextValidator.validate(connection);

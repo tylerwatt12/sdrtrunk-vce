@@ -132,7 +132,7 @@ public class AliasDatabaseStore
     public List<AliasListDefinition> loadAliasListDefinitions(Connection connection) throws SQLException
     {
         List<AliasListDefinition> definitions = new ArrayList<>();
-        Map<Long,List<String>> streamDestinations = loadUnmatchedTalkgroupStreams(connection);
+        Map<Long,List<BroadcastChannel>> streamDestinations = loadUnmatchedTalkgroupStreams(connection);
         Set<Long> loadedDefinitionIds = new HashSet<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -303,9 +303,10 @@ public class AliasDatabaseStore
                     "] has an invalid unmatched talkgroup policy");
             }
             Set<String> streamDestinations = new HashSet<>();
-            for(String destination: policy.getStreamDestinationNames())
+            for(BroadcastChannel destination: policy.getStreamDestinations())
             {
-                if(destination == null || destination.isBlank() || !streamDestinations.add(destination))
+                if(destination == null || !destination.isValid() ||
+                    !streamDestinations.add(destination.getConfigurationId()))
                 {
                     throw new SQLException("Alias list [" + definition.getName() +
                         "] has invalid unmatched talkgroup stream destinations");
@@ -429,27 +430,32 @@ public class AliasDatabaseStore
     private void insertUnmatchedTalkgroupStreams(Connection connection, AliasListDefinition definition)
         throws SQLException
     {
-        for(String destination: definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames())
+        for(BroadcastChannel destination: definition.getUnmatchedTalkgroupPolicy().getStreamDestinations())
         {
             try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO alias_list_unmatched_talkgroup_stream (alias_list_id, channel_name)
+                INSERT INTO alias_list_unmatched_talkgroup_stream (
+                    alias_list_id, broadcast_configuration_id
+                )
                 VALUES (?, ?)
                 """))
             {
                 statement.setLong(1, definition.getId());
-                statement.setString(2, destination);
+                statement.setString(2, destination.getConfigurationId());
                 statement.executeUpdate();
             }
         }
     }
 
-    private Map<Long,List<String>> loadUnmatchedTalkgroupStreams(Connection connection) throws SQLException
+    private Map<Long,List<BroadcastChannel>> loadUnmatchedTalkgroupStreams(Connection connection) throws SQLException
     {
-        Map<Long,List<String>> destinations = new LinkedHashMap<>();
+        Map<Long,List<BroadcastChannel>> destinations = new LinkedHashMap<>();
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT alias_list_id, channel_name
-            FROM alias_list_unmatched_talkgroup_stream
-            ORDER BY alias_list_id, id
+            SELECT route.alias_list_id, route.broadcast_configuration_id,
+                   json_extract(stream.config_json, '$.name') AS channel_name
+            FROM alias_list_unmatched_talkgroup_stream route
+            JOIN configuration_broadcast_stream stream
+              ON stream.configuration_id = route.broadcast_configuration_id
+            ORDER BY route.alias_list_id, route.id
             """);
             ResultSet resultSet = statement.executeQuery())
         {
@@ -461,11 +467,12 @@ public class AliasDatabaseStore
                     throw new SQLException("Unmatched talkgroup stream route has no valid alias_list_id");
                 }
 
-                String destination = resultSet.getString("channel_name");
-                if(destination == null || destination.isBlank())
+                BroadcastChannel destination = new BroadcastChannel(
+                    resultSet.getString("broadcast_configuration_id"), resultSet.getString("channel_name"));
+                if(!destination.isValid())
                 {
                     throw new SQLException("Unmatched talkgroup stream route for alias list [" + aliasListId +
-                        "] must have a nonblank name");
+                        "] must have a valid broadcast configuration ID");
                 }
                 destinations.computeIfAbsent(aliasListId, ignored -> new ArrayList<>()).add(destination);
             }
@@ -715,17 +722,17 @@ public class AliasDatabaseStore
     {
         for(BroadcastChannel broadcastChannel: alias.getBroadcastChannels())
         {
-            if(broadcastChannel.getChannelName() == null || broadcastChannel.getChannelName().isBlank())
+            if(!broadcastChannel.isValid())
             {
-                throw new SQLException("Alias [" + alias.getName() + "] contains a blank broadcast route");
+                throw new SQLException("Alias [" + alias.getName() + "] contains an invalid broadcast route");
             }
             try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO alias_broadcast_channel (alias_id, channel_name)
+                INSERT INTO alias_broadcast_channel (alias_id, broadcast_configuration_id)
                 VALUES (?, ?)
                 """))
             {
                 statement.setLong(1, aliasId);
-                statement.setString(2, broadcastChannel.getChannelName());
+                statement.setString(2, broadcastChannel.getConfigurationId());
                 statement.executeUpdate();
             }
         }
@@ -736,9 +743,12 @@ public class AliasDatabaseStore
     {
         Map<Long,List<BroadcastChannel>> channels = new LinkedHashMap<>();
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT alias_id, channel_name
-            FROM alias_broadcast_channel
-            ORDER BY alias_id, id
+            SELECT route.alias_id, route.broadcast_configuration_id,
+                   json_extract(stream.config_json, '$.name') AS channel_name
+            FROM alias_broadcast_channel route
+            JOIN configuration_broadcast_stream stream
+              ON stream.configuration_id = route.broadcast_configuration_id
+            ORDER BY route.alias_id, route.id
             """);
             ResultSet resultSet = statement.executeQuery())
         {
@@ -750,13 +760,15 @@ public class AliasDatabaseStore
                     throw new SQLException("Broadcast route references unknown alias_id [" + aliasId + "]");
                 }
 
-                String channelName = resultSet.getString("channel_name");
-                if(channelName == null || channelName.isBlank())
+                BroadcastChannel channel = new BroadcastChannel(
+                    resultSet.getString("broadcast_configuration_id"), resultSet.getString("channel_name"));
+                if(!channel.isValid())
                 {
-                    throw new SQLException("Broadcast route for alias [" + aliasId + "] must have a nonblank name");
+                    throw new SQLException("Broadcast route for alias [" + aliasId +
+                        "] must have a valid broadcast configuration ID");
                 }
                 channels.computeIfAbsent(aliasId, ignored -> new ArrayList<>())
-                    .add(new BroadcastChannel(channelName));
+                    .add(channel);
             }
         }
         return channels;

@@ -566,7 +566,9 @@ public class SiteEditor extends GridPane
         channel.setName(getNameTextField().getText());
         channel.setSite(getSiteTextField().getText());
         channel.setSystem(getSystemTextField().getText());
-        channel.setAliasListName(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
+        String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
+        channel.setAliasListDefinition(aliasListName != null ?
+            mConfigurationManager.getAliasModel().getAliasListDefinition(aliasListName) : null);
         return channel;
     }
 

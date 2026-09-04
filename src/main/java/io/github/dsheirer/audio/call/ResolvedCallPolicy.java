@@ -99,8 +99,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
     }
 
     /**
-     * Captures the current {@link BroadcastChannel#getChannelName()} values used by the runtime as routing keys.
-     * These names are not stable provider/configuration UUIDs and must not be treated as such by persistence code.
+     * Captures stable broadcast-configuration UUIDs used by the runtime as routing keys.
      */
     private static Set<String> broadcastRoutingKeys(Collection<BroadcastChannel> broadcastChannels)
     {
@@ -110,7 +109,8 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
         {
             for(BroadcastChannel broadcastChannel : broadcastChannels)
             {
-                String destination = normalize(broadcastChannel != null ? broadcastChannel.getChannelName() : null);
+                String destination = normalize(broadcastChannel != null ?
+                    broadcastChannel.getConfigurationId() : null);
 
                 if(destination != null)
                 {

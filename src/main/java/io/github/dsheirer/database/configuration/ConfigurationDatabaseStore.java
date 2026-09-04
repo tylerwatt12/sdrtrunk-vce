@@ -12,8 +12,11 @@
 package io.github.dsheirer.database.configuration;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
@@ -95,90 +98,36 @@ public class ConfigurationDatabaseStore
     }
 
     /**
-     * Clears channel references to deleted Alias Lists without rewriting unrelated channel or stream rows. The scalar
-     * column is authoritative when loading, and the matching JSON display field is removed in the same statement.
+     * Clears channel references to deleted Alias Lists without rewriting unrelated channel or stream rows.
      */
-    public void clearAliasListAssignments(Connection connection, Collection<String> aliasListNames)
+    public void clearAliasListAssignments(Connection connection, Collection<Long> aliasListIds)
         throws SQLException
     {
         if(connection == null || connection.getAutoCommit())
         {
             throw new IllegalArgumentException("Alias-list assignment updates require a caller-owned transaction");
         }
-        if(aliasListNames == null || aliasListNames.isEmpty())
+        if(aliasListIds == null || aliasListIds.isEmpty())
         {
             return;
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE configuration_channel
-            SET alias_list_name = NULL,
-                config_json = json_remove(config_json, '$.aliasListName')
-            WHERE alias_list_name = ? COLLATE NOCASE
+            SET alias_list_id = NULL
+            WHERE alias_list_id = ?
             """))
         {
-            for(String name: aliasListNames)
+            for(Long aliasListId: aliasListIds)
             {
-                if(name == null || name.isBlank())
+                if(aliasListId == null || aliasListId <= AliasListDefinition.UNASSIGNED_ID)
                 {
-                    throw new IllegalArgumentException("Deleted Alias-list names must be nonblank");
+                    throw new IllegalArgumentException("Deleted Alias-list IDs must be positive");
                 }
-                statement.setString(1, name.strip());
+                statement.setLong(1, aliasListId);
                 statement.addBatch();
             }
             statement.executeBatch();
-        }
-    }
-
-    /** Replaces only broadcast streams as one part of a caller-owned transaction. */
-    public void replaceBroadcastConfigurations(Connection connection,
-                                               List<BroadcastConfiguration> configurations)
-        throws IOException, SQLException
-    {
-        if(connection == null || connection.getAutoCommit())
-        {
-            throw new IllegalArgumentException("Broadcast configuration writes require a caller-owned transaction");
-        }
-        if(configurations == null)
-        {
-            throw new IllegalArgumentException("Broadcast configurations cannot be null");
-        }
-
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DELETE FROM configuration_broadcast_stream");
-        }
-        insertBroadcastConfigurations(connection, configurations);
-    }
-
-    /**
-     * Persists a stream rename without changing the live configuration before the surrounding Alias transaction
-     * commits. Stream names are unique in the active broadcast model, so exactly one persisted row must match.
-     */
-    public void replaceBroadcastConfigurationsWithRename(Connection connection,
-                                                          List<BroadcastConfiguration> configurations,
-                                                          String previousName, String updatedName)
-        throws IOException, SQLException
-    {
-        if(previousName == null || previousName.isBlank() || updatedName == null || updatedName.isBlank())
-        {
-            throw new IllegalArgumentException("Broadcast rename names must be nonblank");
-        }
-
-        replaceBroadcastConfigurations(connection, configurations);
-        try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE configuration_broadcast_stream
-            SET name = ?, config_json = json_set(config_json, '$.name', ?)
-            WHERE name = ?
-            """))
-        {
-            statement.setString(1, updatedName);
-            statement.setString(2, updatedName);
-            statement.setString(3, previousName);
-            if(statement.executeUpdate() != 1)
-            {
-                throw new SQLException("Expected exactly one broadcast stream named [" + previousName + "]");
-            }
         }
     }
 
@@ -187,24 +136,23 @@ public class ConfigurationDatabaseStore
         List<Channel> channels = new ArrayList<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT configuration_id, channel_kind, system_name, site_name, name, alias_list_name, radres_guid,
-                   auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
-                   recording_enabled, event_logging_enabled, config_json
-            FROM configuration_channel
-            ORDER BY sort_order, id
+            SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
+                   channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radres_guid,
+                   channel.auto_start, channel.auto_start_order, channel.decoder_type,
+                   channel.primary_frequency_hz, channel.config_json
+            FROM configuration_channel channel
+            LEFT JOIN alias_list list ON list.id = channel.alias_list_id
+            ORDER BY channel.sort_order, channel.id
             """);
             ResultSet resultSet = statement.executeQuery())
         {
             while(resultSet.next())
             {
                 String json = resultSet.getString("config_json");
-                String configurationId = requireConfigurationId(json, resultSet.getString("configuration_id"));
+                requireAbsent(json, "configurationId", "configuration_channel.config_json");
+                String configurationId = requireCanonicalConfigurationId(resultSet.getString("configuration_id"));
                 Channel channel = mObjectMapper.readValue(json, Channel.class);
-
-                if(!configurationId.equals(channel.getConfigurationId()))
-                {
-                    throw new IOException("Channel configuration identity changed while decoding persisted JSON");
-                }
+                channel.setConfigurationId(configurationId);
 
                 if(!ChannelConfigurationPolicy.requireChannelKind(channel).name()
                     .equals(resultSet.getString("channel_kind")))
@@ -218,6 +166,8 @@ public class ConfigurationDatabaseStore
                 channel.setSite(resultSet.getString("site_name"));
                 channel.setName(resultSet.getString("name"));
                 channel.setAliasListName(resultSet.getString("alias_list_name"));
+                Long aliasListId = readNullableLong(resultSet, "alias_list_id");
+                channel.setAliasListId(aliasListId != null ? aliasListId : AliasListDefinition.UNASSIGNED_ID);
                 channel.setRadresGuid(resultSet.getString("radres_guid"));
                 channel.setAutoStart(ConfigurationChannelProjection.readBooleanFlag(resultSet, "auto_start"));
                 channel.setAutoStartOrder(ConfigurationChannelProjection.readNullableInt(resultSet,
@@ -235,7 +185,7 @@ public class ConfigurationDatabaseStore
         List<BroadcastConfiguration> configurations = new ArrayList<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT config_json
+            SELECT configuration_id, config_json
             FROM configuration_broadcast_stream
             ORDER BY sort_order, id
             """);
@@ -244,7 +194,12 @@ public class ConfigurationDatabaseStore
             while(resultSet.next())
             {
                 String json = resultSet.getString("config_json");
-                configurations.add(mObjectMapper.readValue(json, BroadcastConfiguration.class));
+                requireAbsent(json, "configurationId", "configuration_broadcast_stream.config_json");
+                BroadcastConfiguration configuration =
+                    mObjectMapper.readValue(json, BroadcastConfiguration.class);
+                configuration.setConfigurationId(
+                    requireCanonicalConfigurationId(resultSet.getString("configuration_id")));
+                configurations.add(configuration);
             }
         }
 
@@ -281,11 +236,10 @@ public class ConfigurationDatabaseStore
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
-                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                     radres_guid,
-                    auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                    frequency_count, recording_enabled, event_logging_enabled, config_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """))
             {
                 statement.setString(1, requireCanonicalConfigurationId(channel.getConfigurationId()));
@@ -294,12 +248,13 @@ public class ConfigurationDatabaseStore
                 statement.setString(4, channel.getSystem());
                 statement.setString(5, channel.getSite());
                 statement.setString(6, channel.getName());
-                statement.setString(7, channel.getAliasListName());
+                setLong(statement, 7, channel.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
+                    channel.getAliasListId() : null);
                 statement.setString(8, radresGuid);
                 statement.setInt(9, channel.getAutoStart() ? 1 : 0);
                 setInteger(statement, 10, channel.getAutoStartOrder());
                 projection.bind(statement, 11);
-                statement.setString(17, mObjectMapper.writeValueAsString(channel));
+                statement.setString(13, channelPayload(channel));
                 statement.executeUpdate();
             }
         }
@@ -314,20 +269,13 @@ public class ConfigurationDatabaseStore
         {
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_broadcast_stream (
-                    sort_order, name, server_type, enabled, host, port, delay_ms, maximum_recording_age_ms, config_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    configuration_id, sort_order, config_json
+                ) VALUES (?, ?, ?)
                 """))
             {
-                statement.setInt(1, sortOrder++);
-                statement.setString(2, configuration.getName());
-                statement.setString(3, configuration.getBroadcastServerType() != null ?
-                    configuration.getBroadcastServerType().name() : null);
-                statement.setInt(4, configuration.isEnabled() ? 1 : 0);
-                statement.setString(5, configuration.getHost());
-                statement.setInt(6, configuration.getPort());
-                statement.setLong(7, configuration.getDelay());
-                statement.setLong(8, configuration.getMaximumRecordingAge());
-                statement.setString(9, mObjectMapper.writeValueAsString(configuration));
+                statement.setString(1, requireCanonicalConfigurationId(configuration.getConfigurationId()));
+                statement.setInt(2, sortOrder++);
+                statement.setString(3, broadcastPayload(configuration));
                 statement.executeUpdate();
             }
         }
@@ -345,17 +293,54 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private String requireConfigurationId(String json, String scalar) throws IOException
+    private static void setLong(PreparedStatement statement, int index, Long value) throws SQLException
     {
-        String jsonId = mObjectMapper.readTree(json).path("configurationId").textValue();
-        String canonicalScalar = requireCanonicalConfigurationId(scalar);
-
-        if(!canonicalScalar.equals(requireCanonicalConfigurationId(jsonId)) || !canonicalScalar.equals(jsonId))
+        if(value != null)
         {
-            throw new IOException("Channel configuration identity scalar does not match config_json");
+            statement.setLong(index, value);
         }
+        else
+        {
+            statement.setNull(index, Types.INTEGER);
+        }
+    }
 
-        return canonicalScalar;
+    private String channelPayload(Channel channel) throws IOException
+    {
+        ObjectNode payload = mObjectMapper.valueToTree(channel);
+        payload.remove(List.of("configurationId", "system", "site", "name", "aliasListName", "radresGuid",
+            "autoStart", "autoStartOrder", "channelType"));
+        return mObjectMapper.writeValueAsString(payload);
+    }
+
+    private String broadcastPayload(BroadcastConfiguration configuration) throws IOException
+    {
+        ObjectNode payload = mObjectMapper.valueToTree(configuration);
+        payload.remove("configurationId");
+        return mObjectMapper.writeValueAsString(payload);
+    }
+
+    private void requireAbsent(String json, String property, String source) throws IOException
+    {
+        JsonNode payload = mObjectMapper.readTree(json);
+        if(payload.has(property))
+        {
+            throw new IOException(source + " must not duplicate relational field [" + property + "]");
+        }
+    }
+
+    private static Long readNullableLong(ResultSet resultSet, String column) throws SQLException, IOException
+    {
+        Object value = resultSet.getObject(column);
+        if(value == null)
+        {
+            return null;
+        }
+        if(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)
+        {
+            return ((Number)value).longValue();
+        }
+        throw new IOException("configuration_channel " + column + " is not stored as an integer");
     }
 
     private static String requireCanonicalConfigurationId(String value) throws IOException

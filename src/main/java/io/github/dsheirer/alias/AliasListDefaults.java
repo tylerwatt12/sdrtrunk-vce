@@ -42,8 +42,8 @@ public record AliasListDefaults(UnmatchedTalkgroupPolicy unmatchedTalkgroupPolic
         return unmatchedTalkgroupPolicy.isRecordEnabled();
     }
 
-    public Set<String> streamDestinationNames()
+    public Set<io.github.dsheirer.alias.id.broadcast.BroadcastChannel> streamDestinations()
     {
-        return Set.copyOf(unmatchedTalkgroupPolicy.getStreamDestinationNames());
+        return Set.copyOf(unmatchedTalkgroupPolicy.getStreamDestinations());
     }
 }

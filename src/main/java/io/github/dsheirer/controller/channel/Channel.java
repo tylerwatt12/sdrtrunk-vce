@@ -21,6 +21,7 @@ package io.github.dsheirer.controller.channel;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -77,6 +78,7 @@ public class Channel extends Configuration
     private EventLogConfiguration mEventLogConfiguration = new EventLogConfiguration();
     private RecordConfiguration mRecordConfiguration = new RecordConfiguration();
 
+    private volatile long mAliasListId = AliasListDefinition.UNASSIGNED_ID;
     private StringProperty mAliasListName = new SimpleStringProperty();
     private StringProperty mSystem = new SimpleStringProperty();
     private StringProperty mSite = new SimpleStringProperty();
@@ -137,6 +139,7 @@ public class Channel extends Configuration
         channel.setSystem(mSystem.get());
         channel.setSite(mSite.get());
         channel.setAliasListName(mAliasListName.get());
+        channel.setAliasListId(mAliasListId);
         channel.setAutoStart(mAutoStart.get());
         channel.setAutoStartOrder(mAutoStartOrder.get());
 
@@ -724,6 +727,46 @@ public class Channel extends Configuration
     public void setAliasListName(String name)
     {
         mAliasListName.set(name);
+
+        if(name == null || name.isBlank())
+        {
+            mAliasListId = AliasListDefinition.UNASSIGNED_ID;
+        }
+    }
+
+    /**
+     * Stable Alias List relationship used by persistence and runtime lookup. The name remains presentation text and
+     * is never used as the durable relationship key.
+     */
+    @JsonIgnore
+    public long getAliasListId()
+    {
+        return mAliasListId;
+    }
+
+    public void setAliasListId(long aliasListId)
+    {
+        if(aliasListId < AliasListDefinition.UNASSIGNED_ID)
+        {
+            throw new IllegalArgumentException("Alias list ID cannot be negative");
+        }
+
+        mAliasListId = aliasListId;
+    }
+
+    /** Assigns or clears the stable relationship and its current display name together. */
+    public void setAliasListDefinition(AliasListDefinition definition)
+    {
+        if(definition == null)
+        {
+            mAliasListId = AliasListDefinition.UNASSIGNED_ID;
+            mAliasListName.set(null);
+        }
+        else
+        {
+            mAliasListId = definition.getId();
+            mAliasListName.set(definition.getName());
+        }
     }
 
     /**

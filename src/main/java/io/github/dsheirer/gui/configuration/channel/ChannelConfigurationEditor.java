@@ -288,7 +288,9 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getItem().setName(" ");
             getItem().setName(getNameField().getText());
             getItem().setRadresGuid(getRadresGuidField().getText());
-            getItem().setAliasListName(getAliasListComboBox().getSelectionModel().getSelectedItem());
+            String aliasListName = getAliasListComboBox().getSelectionModel().getSelectedItem();
+            getItem().setAliasListDefinition(aliasListName != null ?
+                mConfigurationManager.getAliasModel().getAliasListDefinition(aliasListName) : null);
             getItem().setAutoStart(getAutoStartSwitch().isSelected());
 
             Integer order = getAutoStartOrderSpinner().getValue();

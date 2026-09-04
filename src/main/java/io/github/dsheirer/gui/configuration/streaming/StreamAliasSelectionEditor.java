@@ -176,12 +176,12 @@ public class StreamAliasSelectionEditor extends VBox
      */
     private void updateListFilters()
     {
-        String streamName = getSelectedStreamName();
+        String configurationId = getSelectedConfigurationId();
         String filterText = getSearchField().getText();
 
-        mAvailableAliasPredicate.setStreamName(streamName);
+        mAvailableAliasPredicate.setConfigurationId(configurationId);
         mAvailableAliasPredicate.setFilterText(filterText);
-        mSelectedAliasPredicate.setStreamName(streamName);
+        mSelectedAliasPredicate.setConfigurationId(configurationId);
         mSelectedAliasPredicate.setFilterText(filterText);
 
         getAvailableFilteredList().setPredicate(null);
@@ -193,12 +193,11 @@ public class StreamAliasSelectionEditor extends VBox
     /**
      * Selected stream name or null
      */
-    private String getSelectedStreamName()
+    private String getSelectedConfigurationId()
     {
-        if(mSelectedBroadcastConfiguration != null && mSelectedBroadcastConfiguration.getName() != null &&
-            !mSelectedBroadcastConfiguration.getName().isEmpty())
+        if(mSelectedBroadcastConfiguration != null)
         {
-            return mSelectedBroadcastConfiguration.getName();
+            return mSelectedBroadcastConfiguration.getConfigurationId();
         }
 
         return null;
@@ -307,7 +306,7 @@ public class StreamAliasSelectionEditor extends VBox
             mAddButton.setAlignment(Pos.CENTER);
             mAddButton.setOnAction(event -> {
                 Alias selectedAlias = getAvailableAliasTableView().getSelectionModel().getSelectedItem();
-                String stream = getSelectedStreamName();
+                String stream = getSelectedConfigurationId();
 
                 if(selectedAlias != null && stream != null)
                 {
@@ -336,7 +335,7 @@ public class StreamAliasSelectionEditor extends VBox
                 {
                     List<Alias> selectedAliases =
                         new ArrayList<>(getAvailableAliasTableView().getSelectionModel().getSelectedItems());
-                    String stream = getSelectedStreamName();
+                    String stream = getSelectedConfigurationId();
 
                     if(!selectedAliases.isEmpty() && stream != null)
                     {
@@ -361,7 +360,7 @@ public class StreamAliasSelectionEditor extends VBox
             mRemoveButton.setAlignment(Pos.CENTER);
             mRemoveButton.setOnAction(event -> {
                 Alias selectedAlias = getSelectedAliasTableView().getSelectionModel().getSelectedItem();
-                String stream = getSelectedStreamName();
+                String stream = getSelectedConfigurationId();
 
                 if(selectedAlias != null && stream != null)
                 {
@@ -386,7 +385,7 @@ public class StreamAliasSelectionEditor extends VBox
             mRemoveAllButton.setOnAction(event -> {
                 List<Alias> selectedAliases =
                     new ArrayList<>(getSelectedAliasTableView().getSelectionModel().getSelectedItems());
-                String stream = getSelectedStreamName();
+                String stream = getSelectedConfigurationId();
 
                 if(!selectedAliases.isEmpty() && stream != null)
                 {
@@ -415,12 +414,12 @@ public class StreamAliasSelectionEditor extends VBox
      */
     public static class AvailableAliasPredicate implements Predicate<Alias>
     {
-        private String mStreamName;
+        private String mConfigurationId;
         private String mFilterText;
 
-        public void setStreamName(String streamName)
+        public void setConfigurationId(String configurationId)
         {
-            mStreamName = streamName;
+            mConfigurationId = configurationId;
         }
 
         public void setFilterText(String filterText)
@@ -431,7 +430,7 @@ public class StreamAliasSelectionEditor extends VBox
         @Override
         public boolean test(Alias alias)
         {
-            if(mStreamName == null || alias.hasBroadcastChannel(mStreamName))
+            if(mConfigurationId == null || alias.hasBroadcastConfiguration(mConfigurationId))
             {
                 return false;
             }
@@ -452,12 +451,12 @@ public class StreamAliasSelectionEditor extends VBox
      */
     public static class SelectedAliasPredicate implements Predicate<Alias>
     {
-        private String mStreamName;
+        private String mConfigurationId;
         private String mFilterText;
 
-        public void setStreamName(String streamName)
+        public void setConfigurationId(String configurationId)
         {
-            mStreamName = streamName;
+            mConfigurationId = configurationId;
         }
 
         public void setFilterText(String filterText)
@@ -468,7 +467,7 @@ public class StreamAliasSelectionEditor extends VBox
         @Override
         public boolean test(Alias alias)
         {
-            if(!alias.hasBroadcastChannel(mStreamName))
+            if(!alias.hasBroadcastConfiguration(mConfigurationId))
             {
                 return false;
             }

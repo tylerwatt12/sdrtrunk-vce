@@ -370,34 +370,36 @@ public class Alias
         }
     }
 
-    public void addBroadcastChannel(String channel)
+    public void addBroadcastChannel(String configurationId, String channelName)
     {
-        if(channel != null && !channel.isEmpty())
+        if(configurationId != null && !configurationId.isBlank())
         {
-            addBroadcastChannel(new BroadcastChannel(channel));
+            addBroadcastChannel(new BroadcastChannel(configurationId, channelName));
         }
     }
 
     public void addBroadcastChannel(BroadcastChannel broadcastChannel)
     {
-        if(broadcastChannel != null && broadcastChannel.isValid() && !mBroadcastChannels.contains(broadcastChannel))
+        if(broadcastChannel != null && (broadcastChannel.isValid() || broadcastChannel.hasDisplayName()) &&
+            !mBroadcastChannels.contains(broadcastChannel))
         {
             mBroadcastChannels.add(broadcastChannel);
         }
     }
 
-    public boolean hasBroadcastChannel(String channel)
+    public boolean hasBroadcastConfiguration(String configurationId)
     {
-        return channel != null && !channel.isEmpty() &&
+        return configurationId != null && !configurationId.isBlank() &&
             mBroadcastChannels.stream().anyMatch(broadcastChannel ->
-                channel.equals(broadcastChannel.getChannelName()));
+                configurationId.equals(broadcastChannel.getConfigurationId()));
     }
 
-    public void removeBroadcastChannel(String channel)
+    public void removeBroadcastConfiguration(String configurationId)
     {
-        if(channel != null && !channel.isEmpty())
+        if(configurationId != null && !configurationId.isBlank())
         {
-            mBroadcastChannels.removeIf(broadcastChannel -> channel.equals(broadcastChannel.getChannelName()));
+            mBroadcastChannels.removeIf(broadcastChannel ->
+                configurationId.equals(broadcastChannel.getConfigurationId()));
         }
     }
 

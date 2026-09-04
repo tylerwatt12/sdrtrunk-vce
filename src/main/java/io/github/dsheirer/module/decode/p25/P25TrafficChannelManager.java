@@ -609,6 +609,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private void syncTrafficChannelIdentity(Channel trafficChannel)
     {
         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+        trafficChannel.setAliasListId(mParentChannel.getAliasListId());
         trafficChannel.setSystem(mParentChannel.getSystem());
         trafficChannel.setSite(mParentChannel.getSite());
         trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());

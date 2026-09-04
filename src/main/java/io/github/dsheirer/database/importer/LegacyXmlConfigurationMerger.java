@@ -132,7 +132,7 @@ public final class LegacyXmlConfigurationMerger
 
         Set<String> streamNames = normalizedStreamNames(mergedStreams);
         Set<String> streamConfigurationIds = configurationIds(mergedStreams);
-        Map<String,String> importedStreamNames = new HashMap<>();
+        Map<String,BroadcastConfiguration> importedStreams = new HashMap<>();
         int renamedStreams = 0;
         int importedStreamCount = 0;
 
@@ -143,7 +143,7 @@ public final class LegacyXmlConfigurationMerger
             stream.setName(reservation.name());
             regenerateUniqueConfigurationId(stream, streamConfigurationIds);
             mergedStreams.add(stream);
-            importedStreamNames.putIfAbsent(normalize(originalName), reservation.name());
+            importedStreams.putIfAbsent(normalize(originalName), stream);
             importedStreamCount++;
 
             if(reservation.renamed())
@@ -153,7 +153,7 @@ public final class LegacyXmlConfigurationMerger
         }
 
         importedDefinitionsByOriginalName.values().forEach(definition ->
-            updateBroadcastRoutes(definition, importedStreamNames));
+            updateBroadcastRoutes(definition, importedStreams));
 
         int importedAliasCount = 0;
 
@@ -170,7 +170,7 @@ public final class LegacyXmlConfigurationMerger
 
             Alias importedAlias = AliasFactory.copyOf(sourceAlias);
             importedAlias.setAliasListDefinition(importedDefinition);
-            updateBroadcastRoutes(importedAlias, importedStreamNames);
+            updateBroadcastRoutes(importedAlias, importedStreams);
             mergedAliases.add(importedAlias);
             importedState.getLegacyAliasListenEnabled(sourceAlias).ifPresent(enabled ->
                 merged.setLegacyAliasListenEnabled(importedAlias, enabled));
@@ -194,7 +194,7 @@ public final class LegacyXmlConfigurationMerger
 
                 if(importedDefinition != null)
                 {
-                    channel.setAliasListName(importedDefinition.getName());
+                    channel.setAliasListDefinition(importedDefinition);
                 }
             }
 
@@ -234,28 +234,32 @@ public final class LegacyXmlConfigurationMerger
         return new MergeResult(merged, summary);
     }
 
-    private static void updateBroadcastRoutes(Alias alias, Map<String,String> importedStreamNames)
+    private static void updateBroadcastRoutes(Alias alias,
+                                              Map<String,BroadcastConfiguration> importedStreams)
     {
         for(BroadcastChannel route: alias.broadcastChannels())
         {
-            String importedName = importedStreamNames.get(normalize(route.getChannelName()));
+            BroadcastConfiguration stream = importedStreams.get(normalize(route.getChannelName()));
 
-            if(importedName != null)
+            if(stream != null)
             {
-                route.setChannelName(importedName);
+                route.setConfigurationId(stream.getConfigurationId());
+                route.setChannelName(stream.getName());
             }
         }
     }
 
     private static void updateBroadcastRoutes(AliasListDefinition definition,
-                                              Map<String,String> importedStreamNames)
+                                              Map<String,BroadcastConfiguration> importedStreams)
     {
         UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
-        Set<String> destinations = new LinkedHashSet<>();
+        Set<BroadcastChannel> destinations = new LinkedHashSet<>();
 
-        for(String destination: policy.getStreamDestinationNames())
+        for(BroadcastChannel destination: policy.getStreamDestinations())
         {
-            destinations.add(importedStreamNames.getOrDefault(normalize(destination), destination));
+            BroadcastConfiguration stream = importedStreams.get(normalize(destination.getChannelName()));
+            destinations.add(stream != null ?
+                new BroadcastChannel(stream.getConfigurationId(), stream.getName()) : destination);
         }
 
         definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(policy.isRecordEnabled(), destinations));
