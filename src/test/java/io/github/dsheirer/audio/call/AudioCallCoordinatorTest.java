@@ -728,7 +728,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void tiedQualityUsesExistingSiteGuidDeterministically() throws Exception
+    void tiedQualityUsesChannelConfigurationIdDeterministically() throws Exception
     {
         AliasList aliasList = aliasList(82);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -744,7 +744,7 @@ class AudioCallCoordinatorTest
             emitLeg(coordinator, alpha, fingerprints(130));
 
             await(() -> resolved.size() == 1);
-            assertEquals(alpha.callId(), resolved.getFirst().snapshot().callId());
+            assertEquals(zulu.callId(), resolved.getFirst().snapshot().callId());
         }
         finally
         {
