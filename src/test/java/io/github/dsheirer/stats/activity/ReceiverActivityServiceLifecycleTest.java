@@ -32,7 +32,7 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
@@ -548,7 +548,7 @@ class ReceiverActivityServiceLifecycleTest
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot);
         Channel channel = new Channel("Observation epochs", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000305");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000305");
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long oldTimestamp = System.currentTimeMillis();
         long disabledTimestamp = oldTimestamp + 5_000L;
@@ -659,9 +659,9 @@ class ReceiverActivityServiceLifecycleTest
             .identifiers(new IdentifierCollection())
             .build();
         CompletedAudioCall stale = conventionalCompletedCall(1, channel.getConfigurationId(),
-            channel.getRadresGuid(), frequency, start + 1_000L);
+            channel.getRadioResolveId(), frequency, start + 1_000L);
         CompletedAudioCall current = conventionalCompletedCall(2, channel.getConfigurationId(),
-            channel.getRadresGuid(), frequency, start + 2_000L);
+            channel.getRadioResolveId(), frequency, start + 2_000L);
         AtomicReference<Throwable> producerFailure = new AtomicReference<>();
         Thread staleProducer = new Thread(() -> {
             try
@@ -768,7 +768,7 @@ class ReceiverActivityServiceLifecycleTest
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot, pauseBeforeActivation);
         Channel channel = new Channel("Writer transition epochs", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000306");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000306");
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long start = System.currentTimeMillis();
         DecodeEvent oldActive = conventionalEvent(start);
@@ -929,7 +929,7 @@ class ReceiverActivityServiceLifecycleTest
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(guid));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(guid));
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
         AudioCallId callId = new AudioCallId(sequence, sequence + 1, 0);
@@ -1173,7 +1173,7 @@ class ReceiverActivityServiceLifecycleTest
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("LorainCountySO", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000302");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000302");
         channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
         manager.addDecodeEventListener(event -> service.getDecodeEventListener().accept(channel, event));
@@ -1215,7 +1215,7 @@ class ReceiverActivityServiceLifecycleTest
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("County Fire", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000301");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000301");
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
@@ -1329,7 +1329,7 @@ class ReceiverActivityServiceLifecycleTest
             assertEquals(ReceiverActivityStatus.State.DISABLED, service.getStatus().state());
 
             Channel channel = new Channel("Disabled collection", Channel.ChannelType.STANDARD);
-            channel.setRadresGuid("00000000-0000-0000-0000-000000000102");
+            channel.setRadioResolveId("00000000-0000-0000-0000-000000000102");
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(channel,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 1, 2, null, null, null, null,
                     null, null, List.of(), List.of()),
@@ -1410,7 +1410,7 @@ class ReceiverActivityServiceLifecycleTest
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
-            Channel reusedGuid = dmrChannel(trunked.getRadresGuid(), DMRChannelMode.TRUNKED);
+            Channel reusedGuid = dmrChannel(trunked.getRadioResolveId(), DMRChannelMode.TRUNKED);
             service.getControlChannelQualityListener().receive(quality(reusedGuid, now + 60_000L));
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
@@ -1525,7 +1525,7 @@ class ReceiverActivityServiceLifecycleTest
     private static Channel dmrChannel(String guid, DMRChannelMode mode)
     {
         Channel channel = new Channel("DMR", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid(guid);
+        channel.setRadioResolveId(guid);
         DecodeConfigDMR configuration = new DecodeConfigDMR();
         configuration.setChannelMode(mode);
         channel.setDecodeConfiguration(configuration);
@@ -1539,7 +1539,7 @@ class ReceiverActivityServiceLifecycleTest
 
     private static ControlChannelQualitySnapshot quality(Channel channel, long observedAt, boolean active)
     {
-        return new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(), 451_012_500L, observedAt,
+        return new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(), 451_012_500L, observedAt,
             active, -20.0, -21.0, -25.0, -18.0, 95.0, 100, 2, 1, 0, 0, observedAt);
     }
 

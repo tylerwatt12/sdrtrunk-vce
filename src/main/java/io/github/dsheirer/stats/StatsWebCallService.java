@@ -598,9 +598,10 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "radio_system_key", playbackTarget != null ? playbackTarget.systemKey() : null);
         putText(value, "site", recordingMetadata != null ? recordingMetadata.siteName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY));
-        putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.siteIdentity() : null);
-        Object siteGuid = identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID, Role.ANY);
-        putText(value, "site_guid", siteGuid);
+        putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.radioResolveId() : null);
+        Object radioResolveId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
+            Form.RADIORESOLVE_ID, Role.ANY);
+        putText(value, "site_guid", radioResolveId);
         putText(value, "channel", recordingMetadata != null ? recordingMetadata.channelName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
         putText(value, "channel_identity", recordingMetadata != null ? recordingMetadata.channelIdentity() :
@@ -666,7 +667,7 @@ final class StatsWebCallService implements AutoCloseable
             mNavigationCatalog.snapshot() : WebEntityNavigationCatalog.Snapshot.empty();
         WebEntityNavigationCatalog.Channel channel = navigation.channel(
             configurationId != null ? String.valueOf(configurationId) : null,
-            siteGuid != null ? String.valueOf(siteGuid) : null);
+            radioResolveId != null ? String.valueOf(radioResolveId) : null);
 
         if(channel != null)
         {

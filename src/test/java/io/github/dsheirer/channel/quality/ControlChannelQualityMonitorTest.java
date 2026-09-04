@@ -46,7 +46,7 @@ class ControlChannelQualityMonitorTest
     void publishesRollingSignalAndDecodeHealthAndClearsOnRotation()
     {
         Channel channel = new Channel("Test Site", ChannelType.STANDARD);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
         List<ControlChannelQualitySnapshot> snapshots = new CopyOnWriteArrayList<>();
         ControlChannelQualityMonitor monitor =
@@ -795,7 +795,7 @@ class ControlChannelQualityMonitorTest
     private static Channel channel(io.github.dsheirer.module.decode.config.DecodeConfiguration config)
     {
         Channel channel = new Channel("Test Site", ChannelType.STANDARD);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         channel.setDecodeConfiguration(config);
         return channel;
     }

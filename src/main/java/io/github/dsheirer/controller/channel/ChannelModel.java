@@ -179,7 +179,7 @@ public class ChannelModel implements Listener<ChannelEvent>
         switch(channel.getChannelType())
         {
             case STANDARD:
-                channel.getRadresGuid();
+                channel.getRadioResolveId();
                 mChannels.add(channel);
                 break;
             case TRAFFIC:

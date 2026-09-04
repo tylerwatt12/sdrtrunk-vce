@@ -168,7 +168,7 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(DecoderType.P25_CONVENTIONAL, state.channels().get(0).getDecodeConfiguration().getDecoderType());
         assertTrue(state.channels().get(0).getAutoStart());
         assertEquals(4, state.channels().get(0).getAutoStartOrder());
-        assertEquals("11111111-2222-3333-4444-555555555555", state.channels().get(0).getRadresGuid());
+        assertEquals("11111111-2222-3333-4444-555555555555", state.channels().get(0).getRadioResolveId());
         assertInstanceOf(SourceConfigTuner.class, state.channels().get(0).getSourceConfiguration());
 
         assertInstanceOf(DecodeConfigP25Phase1.class, state.channels().get(1).getDecodeConfiguration());

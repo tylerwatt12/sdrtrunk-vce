@@ -371,7 +371,7 @@ public class DecoderFactory
         return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
             channel != null ? channel.getConfigurationId() : null,
             channel != null ? channel.getName() : null,
-            channel != null ? channel.getRadresGuid() : null,
+            channel != null ? channel.getRadioResolveId() : null,
             aliasList != null ? aliasList.getId() : 0L,
             channel != null ? channel.getP25SiteIdentity() : null,
             channel != null ? ChannelConfigurationPolicy.requireChannelKind(channel) : null,

@@ -62,7 +62,7 @@ class ConfigurationDatabaseStoreTest
         channel.setAliasListName("County Aliases");
         channel.setAutoStart(true);
         channel.setAutoStartOrder(2);
-        channel.setRadresGuid("11111111-2222-3333-4444-555555555555");
+        channel.setRadioResolveId("11111111-2222-3333-4444-555555555555");
         channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 2));
 
         SourceConfigTuner sourceConfig = new SourceConfigTuner();
@@ -98,7 +98,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals("Control", loadedChannel.getName());
         assertEquals(configurationId, loadedChannel.getConfigurationId());
         assertEquals("County Aliases", loadedChannel.getAliasListName());
-        assertEquals("11111111-2222-3333-4444-555555555555", loadedChannel.getRadresGuid());
+        assertEquals("11111111-2222-3333-4444-555555555555", loadedChannel.getRadioResolveId());
         assertEquals(new P25SiteIdentity(0xBEE00, 0x123, 1, 2), loadedChannel.getP25SiteIdentity());
         assertTrue(loadedChannel.getAutoStart());
         assertEquals(2, loadedChannel.getAutoStartOrder());
@@ -324,7 +324,7 @@ class ConfigurationDatabaseStoreTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("P25 Conventional");
-        channel.setRadresGuid("22222222-3333-4444-5555-666666666666");
+        channel.setRadioResolveId("22222222-3333-4444-5555-666666666666");
         DecodeConfigP25Conventional decodeConfiguration = new DecodeConfigP25Conventional();
         decodeConfiguration.setModulation(Modulation.CQPSK);
         channel.setDecodeConfiguration(decodeConfiguration);
@@ -419,7 +419,7 @@ class ConfigurationDatabaseStoreTest
 
         Channel loadedBlank = store.load().channels().getFirst();
         assertEquals(configurationId, loadedBlank.getConfigurationId());
-        assertFalse(loadedBlank.hasRadresGuid(), "loading must preserve an explicitly blank correlation value");
+        assertFalse(loadedBlank.hasRadioResolveId(), "loading must preserve an explicitly blank correlation value");
 
         TestConfiguration replacement = new TestConfiguration();
         replacement.setChannels(List.of(loadedBlank));

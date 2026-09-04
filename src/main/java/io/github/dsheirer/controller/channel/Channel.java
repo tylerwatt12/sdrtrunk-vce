@@ -83,7 +83,7 @@ public class Channel extends Configuration
     private StringProperty mSystem = new SimpleStringProperty();
     private StringProperty mSite = new SimpleStringProperty();
     private StringProperty mName = new SimpleStringProperty();
-    private StringProperty mRadresGuid = new SimpleStringProperty();
+    private StringProperty mRadioResolveId = new SimpleStringProperty();
     private ObjectProperty<P25SiteIdentity> mP25SiteIdentity = new SimpleObjectProperty<>();
     private String mConfigurationId;
     private boolean mConfigurationIdPersistenceRequired;
@@ -300,11 +300,11 @@ public class Channel extends Configuration
     }
 
     /**
-     * Stable source GUID property.
+     * Stable identifier used to correlate this configured RF source with RadioResolve.
      */
-    public StringProperty radresGuidProperty()
+    public StringProperty radioResolveIdProperty()
     {
-        return mRadresGuid;
+        return mRadioResolveId;
     }
 
     /**
@@ -460,7 +460,7 @@ public class Channel extends Configuration
 
     /**
      * Stable internal identifier for this saved channel configuration.  Unlike {@link #getChannelID()}, this value is
-     * persisted and unlike {@link #getRadresGuid()}, it has no external site meaning.
+     * persisted and unlike {@link #getRadioResolveId()}, it has no external service meaning.
      */
     public String getConfigurationId()
     {
@@ -515,47 +515,49 @@ public class Channel extends Configuration
     }
 
     /**
-     * Stable site GUID for configured RF sources.
+     * Stable identifier used to correlate this configured RF source with RadioResolve. Standard saved channels are
+     * assigned an identifier when needed; temporary traffic channels inherit their parent's identifier.
      */
-    public String getRadresGuid()
+    public String getRadioResolveId()
     {
-        if(isStandardChannel() && !hasRadresGuid())
+        if(isStandardChannel() && !hasRadioResolveId())
         {
-            mRadresGuid.set(UUID.randomUUID().toString());
+            mRadioResolveId.set(UUID.randomUUID().toString());
         }
 
-        return mRadresGuid.get();
+        return mRadioResolveId.get();
     }
 
     /**
-     * Sets the stable site GUID.
+     * Restores the stable RadioResolve correlation identifier. Legacy JSON may still use the former property name.
      */
-    public void setRadresGuid(String radresGuid)
+    @JsonAlias({"radresGuid", "radres_guid"})
+    public void setRadioResolveId(String radioResolveId)
     {
-        if(radresGuid != null && !radresGuid.isBlank())
+        if(radioResolveId != null && !radioResolveId.isBlank())
         {
             try
             {
-                mRadresGuid.set(UUID.fromString(radresGuid.trim()).toString());
+                mRadioResolveId.set(UUID.fromString(radioResolveId.trim()).toString());
             }
             catch(IllegalArgumentException _)
             {
-                mRadresGuid.set(null);
+                mRadioResolveId.set(null);
             }
         }
         else
         {
-            mRadresGuid.set(null);
+            mRadioResolveId.set(null);
         }
     }
 
     /**
-     * Indicates if this channel has a site GUID.
+     * Indicates if this channel has a RadioResolve correlation identifier.
      */
     @JsonIgnore
-    public boolean hasRadresGuid()
+    public boolean hasRadioResolveId()
     {
-        return mRadresGuid != null && mRadresGuid.get() != null && !mRadresGuid.get().isBlank();
+        return mRadioResolveId != null && mRadioResolveId.get() != null && !mRadioResolveId.get().isBlank();
     }
 
     /**
@@ -963,6 +965,6 @@ public class Channel extends Configuration
     {
         return (Channel c) -> new Observable[] {c.processingProperty(), c.nameProperty(), c.aliasListNameProperty(),
             c.autoStartOrderProperty(), c.autoStartProperty(), c.siteProperty(), c.systemProperty(),
-            c.radresGuidProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
+            c.radioResolveIdProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
     }
 }

@@ -885,7 +885,7 @@ class AliasAdministrationServiceTest
                 .load().channels();
             assertEquals(1, storedChannels.size());
             assertNull(storedChannels.getFirst().getAliasListName());
-            assertTrue(storedChannels.getFirst().hasRadresGuid());
+            assertTrue(storedChannels.getFirst().hasRadioResolveId());
         }
         finally
         {

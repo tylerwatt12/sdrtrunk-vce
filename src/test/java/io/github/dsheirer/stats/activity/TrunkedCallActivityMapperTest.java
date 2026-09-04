@@ -82,7 +82,7 @@ class TrunkedCallActivityMapperTest
     {
         Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
         parent.setDecodeConfiguration(new DecodeConfigNXDN(TransmissionMode.TYPE_D));
-        parent.setRadresGuid(NXDN_GUID);
+        parent.setRadioResolveId(NXDN_GUID);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
         identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
@@ -159,7 +159,7 @@ class TrunkedCallActivityMapperTest
         parent.setDecodeConfiguration(config);
         parent.setSite("Downtown");
         parent.setAliasListName("Metro DMR");
-        parent.setRadresGuid(DMR_GUID);
+        parent.setRadioResolveId(DMR_GUID);
         return parent;
     }
 

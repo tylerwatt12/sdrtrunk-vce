@@ -11,6 +11,7 @@
 package io.github.dsheirer.audio.call;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,6 +22,10 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -30,6 +35,24 @@ import org.junit.jupiter.api.Test;
 
 class MutableAudioCallBuilderRecordingMetadataTest
 {
+    @Test
+    void keepsRadioResolveIdSeparateFromDisplayNames()
+    {
+        String radioResolveId = "11111111-2222-4333-8444-555555555555";
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            SystemConfigurationIdentifier.create("County"),
+            SiteConfigurationIdentifier.create("North"),
+            RadioResolveConfigurationIdentifier.create(radioResolveId)));
+
+        AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers);
+        assertEquals(radioResolveId, metadata.radioResolveId());
+
+        AudioCallRecordingMetadata withoutRadioResolveId = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection(List.of(SystemConfigurationIdentifier.create("County"),
+                SiteConfigurationIdentifier.create("North"))));
+        assertNull(withoutRadioResolveId.radioResolveId());
+    }
+
     @Test
     void freezesAliasNamesAndRecordDecisionWhenIdentifiersJoinTheCall()
     {

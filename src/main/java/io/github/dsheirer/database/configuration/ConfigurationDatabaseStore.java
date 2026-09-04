@@ -137,7 +137,7 @@ public class ConfigurationDatabaseStore
 
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
-                   channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radres_guid,
+                   channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radioresolve_id,
                    channel.auto_start, channel.auto_start_order, channel.decoder_type,
                    channel.primary_frequency_hz, channel.config_json
             FROM configuration_channel channel
@@ -150,6 +150,8 @@ public class ConfigurationDatabaseStore
             {
                 String json = resultSet.getString("config_json");
                 requireAbsent(json, "configurationId", "configuration_channel.config_json");
+                requireAbsent(json, "radioResolveId", "configuration_channel.config_json");
+                requireAbsent(json, "radresGuid", "configuration_channel.config_json");
                 String configurationId = requireCanonicalConfigurationId(resultSet.getString("configuration_id"));
                 Channel channel = mObjectMapper.readValue(json, Channel.class);
                 channel.setConfigurationId(configurationId);
@@ -168,7 +170,7 @@ public class ConfigurationDatabaseStore
                 channel.setAliasListName(resultSet.getString("alias_list_name"));
                 Long aliasListId = readNullableLong(resultSet, "alias_list_id");
                 channel.setAliasListId(aliasListId != null ? aliasListId : AliasListDefinition.UNASSIGNED_ID);
-                channel.setRadresGuid(resultSet.getString("radres_guid"));
+                channel.setRadioResolveId(resultSet.getString("radioresolve_id"));
                 channel.setAutoStart(ConfigurationChannelProjection.readBooleanFlag(resultSet, "auto_start"));
                 channel.setAutoStartOrder(ConfigurationChannelProjection.readNullableInt(resultSet,
                     "auto_start_order"));
@@ -228,16 +230,16 @@ public class ConfigurationDatabaseStore
 
             ChannelConfigurationPolicy.ChannelKind channelKind =
                 ChannelConfigurationPolicy.requireChannelKind(channel);
-            //Conventional routing is owned by configuration_id. radres_guid remains separate correlation metadata
-            //required by RadioResolve call uploads, so the lazy getter deliberately assigns it before scalar/JSON
-            //serialization and both persisted representations receive the same value.
-            String radresGuid = channel.getRadresGuid();
+            //Conventional routing is owned by configuration_id. radioresolve_id remains separate correlation metadata
+            //required by RadioResolve call uploads, so the lazy getter deliberately assigns it before the
+            //authoritative scalar is stored. The field is omitted from config_json.
+            String radioResolveId = channel.getRadioResolveId();
             ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
-                    radres_guid,
+                    radioresolve_id,
                     auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """))
@@ -250,7 +252,7 @@ public class ConfigurationDatabaseStore
                 statement.setString(6, channel.getName());
                 setLong(statement, 7, channel.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
                     channel.getAliasListId() : null);
-                statement.setString(8, radresGuid);
+                statement.setString(8, radioResolveId);
                 statement.setInt(9, channel.getAutoStart() ? 1 : 0);
                 setInteger(statement, 10, channel.getAutoStartOrder());
                 projection.bind(statement, 11);
@@ -308,7 +310,7 @@ public class ConfigurationDatabaseStore
     private String channelPayload(Channel channel) throws IOException
     {
         ObjectNode payload = mObjectMapper.valueToTree(channel);
-        payload.remove(List.of("configurationId", "system", "site", "name", "aliasListName", "radresGuid",
+        payload.remove(List.of("configurationId", "system", "site", "name", "aliasListName", "radioResolveId",
             "autoStart", "autoStartOrder", "channelType"));
         return mObjectMapper.writeValueAsString(payload);
     }

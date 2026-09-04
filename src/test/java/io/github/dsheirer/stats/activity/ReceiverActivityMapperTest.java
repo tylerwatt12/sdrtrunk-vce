@@ -34,7 +34,7 @@ import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
@@ -149,12 +149,12 @@ class ReceiverActivityMapperTest
         Channel dmr = new Channel("DMR Repeater", ChannelType.STANDARD);
         dmr.setDecodeConfiguration(dmrConfig);
         dmr.setConfigurationId(CONFIGURATION_ID);
-        dmr.setRadresGuid(GUID);
+        dmr.setRadioResolveId(GUID);
         DecodeConfigNXDN nxdnConfig = new DecodeConfigNXDN();
         nxdnConfig.setChannelMode(NXDNChannelMode.TRUNKED);
         Channel nxdn = new Channel("NXDN Site", ChannelType.STANDARD);
         nxdn.setDecodeConfiguration(nxdnConfig);
-        nxdn.setRadresGuid(GUID);
+        nxdn.setRadioResolveId(GUID);
         DecodeEvent registration = DecodeEvent.builder(DecodeEventType.RADIO_REGISTRATION_SERVICE, 1_000L)
             .protocol(Protocol.DMR)
             .build();
@@ -205,7 +205,7 @@ class ReceiverActivityMapperTest
         config.setChannelMode(DMRChannelMode.TRUNKED);
         Channel channel = new Channel("DMR Site", ChannelType.STANDARD);
         channel.setDecodeConfiguration(config);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         ReceiverActivityMapper mapper = new ReceiverActivityMapper();
         ReceiverActivityRecords.ActivityEvent register = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 451_000_000L, 1));
@@ -276,7 +276,7 @@ class ReceiverActivityMapperTest
         identifiers.update(APCO25Nac.create(0x348));
         identifiers.update(APCO25Rfss.create(2));
         identifiers.update(APCO25Site.create(1));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         EncryptionKeyIdentifier encryptionKey =
             EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101));
         identifiers.update(encryptionKey);
@@ -422,7 +422,7 @@ class ReceiverActivityMapperTest
         identifiers.update(FrequencyConfigurationIdentifier.create(854187500L));
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         EncryptionKeyIdentifier encryptionKey =
             EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101));
         identifiers.update(encryptionKey);
@@ -551,7 +551,7 @@ class ReceiverActivityMapperTest
         DecodeConfigDMR dmrConfig = new DecodeConfigDMR();
         dmrConfig.setChannelMode(DMRChannelMode.TRUNKED);
         dmr.setDecodeConfiguration(dmrConfig);
-        dmr.setRadresGuid("323e4567-e89b-12d3-a456-426614174000");
+        dmr.setRadioResolveId("323e4567-e89b-12d3-a456-426614174000");
         ReceiverActivityRecords.TalkerAliasUpdate dmrUpdate = new ReceiverActivityMapper().map(
             new TrunkedTalkerAliasEvent(dmr, Protocol.DMR, DMRRadio.createFrom(101),
                 DmrTalkerAliasIdentifier.create("ENGINE 4"), new MutableIdentifierCollection(),
@@ -561,7 +561,7 @@ class ReceiverActivityMapperTest
         DecodeConfigNXDN nxdnConfig = new DecodeConfigNXDN();
         nxdnConfig.setTransmissionMode(TransmissionMode.TYPE_D);
         nxdn.setDecodeConfiguration(nxdnConfig);
-        nxdn.setRadresGuid("423e4567-e89b-12d3-a456-426614174000");
+        nxdn.setRadioResolveId("423e4567-e89b-12d3-a456-426614174000");
         ReceiverActivityRecords.TalkerAliasUpdate nxdnUpdate = new ReceiverActivityMapper().map(
             new TrunkedTalkerAliasEvent(nxdn, Protocol.NXDN,
                 NXDNRadioIdentifier.createTypeDFrom(0x1234), new NXDNTalkerAliasIdentifier("UNIT 12"),
@@ -601,7 +601,7 @@ class ReceiverActivityMapperTest
         identifiers.update(APCO25Talkgroup.createAny(56133));
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
 
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.RESPONSE, 1000L,
             P25AffiliationEvent.Outcome.ACCEPTED, APCO25RadioIdentifier.createTo(1811524),
@@ -632,7 +632,7 @@ class ReceiverActivityMapperTest
         identifiers.update(APCO25RadioIdentifier.createTo(1811524));
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
 
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1000L,
             P25AffiliationEvent.Outcome.ACCEPTED, APCO25RadioIdentifier.createTo(1811524), null);
@@ -660,7 +660,7 @@ class ReceiverActivityMapperTest
         identifiers.update(APCO25FullyQualifiedTalkgroupIdentifier.createAny(56_133, 0xABCDE, 0x321, 1_200));
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.RESPONSE, 1_000L,
             P25AffiliationEvent.Outcome.ACCEPTED, APCO25RadioIdentifier.createTo(1_811_524),
             APCO25FullyQualifiedTalkgroupIdentifier.createAny(56_133, 0xABCDE, 0x321, 1_200));
@@ -680,7 +680,7 @@ class ReceiverActivityMapperTest
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
 
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.RESPONSE, 1000L,
             P25AffiliationEvent.Outcome.REJECTED, APCO25RadioIdentifier.createTo(1811524),
@@ -721,7 +721,7 @@ class ReceiverActivityMapperTest
         identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
         identifiers.update(APCO25FullyQualifiedTalkgroupIdentifier.createTo(56_138, 0xABCDE, 0x321, 1_200));
         identifiers.update(FrequencyConfigurationIdentifier.create(854_187_500L));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.P25_PHASE1));
         DecodeEvent event = P25DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
             .duration(1_000L)
@@ -746,7 +746,7 @@ class ReceiverActivityMapperTest
         zeroLocalIdentifiers.update(APCO25FullyQualifiedTalkgroupIdentifier.createTo(
             0, 0xABCDE, 0x321, 1_201));
         zeroLocalIdentifiers.update(FrequencyConfigurationIdentifier.create(854_187_500L));
-        zeroLocalIdentifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        zeroLocalIdentifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         zeroLocalIdentifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.P25_PHASE1));
         DecodeEvent zeroLocalEvent = P25DecodeEvent.builder(DecodeEventType.CALL_GROUP, 2_000L)
             .duration(1_000L)
@@ -777,7 +777,7 @@ class ReceiverActivityMapperTest
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(56_181, 0xABCDE, 0x321, 1_202));
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25PatchGroup.create(patch));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         DecodeEvent event = P25DecodeEvent.builder(DecodeEventType.CALL_PATCH_GROUP, 1_000L)
             .identifiers(identifiers)
             .build();
@@ -834,7 +834,7 @@ class ReceiverActivityMapperTest
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Talkgroup.create(56138));
         identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         AudioCallId callId = new AudioCallId(1L, 2L, 1);
         CallLegSource source = new CallLegSource(DecoderType.P25_CONVENTIONAL, CONFIGURATION_ID,
             "P25 Conventional", GUID, 0, null,
@@ -912,12 +912,12 @@ class ReceiverActivityMapperTest
         config.setChannelMode(NXDNChannelMode.TRUNKED);
         Channel channel = new Channel("NXDN Type-D Site", ChannelType.STANDARD);
         channel.setDecodeConfiguration(config);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
         identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
         DecodeEvent signaling = DecodeEvent.builder(DecodeEventType.PAGE, 2_000L)
             .protocol(Protocol.NXDN)
@@ -948,7 +948,7 @@ class ReceiverActivityMapperTest
         identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
         identifiers.update(APCO25RadioIdentifier.createTo(1_822_001));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         AudioCallId callId = new AudioCallId(7L, 10L, 1);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
@@ -992,7 +992,7 @@ class ReceiverActivityMapperTest
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(ChannelConfigurationIdentifier.create(CONFIGURATION_ID));
         identifiers.update(patchGroup());
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         AudioCallId callId = new AudioCallId(1L, 2L, 1);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
@@ -1050,7 +1050,7 @@ class ReceiverActivityMapperTest
             .build();
 
         Channel channel = channel(DecoderType.P25_PHASE1);
-        channel.setRadresGuid(null);
+        channel.setRadioResolveId(null);
         ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
         assertNull(record);
     }
@@ -1061,7 +1061,7 @@ class ReceiverActivityMapperTest
         Channel channel = new Channel("Control", ChannelType.STANDARD);
         channel.setSite(" Example Site ");
         channel.setAliasListName("Example System");
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
 
         P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25-1",
             new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x348, null),
@@ -1104,7 +1104,7 @@ class ReceiverActivityMapperTest
     void mapsCurrentSiteIdentityWithoutNetworkStatus()
     {
         Channel channel = new Channel("Control", ChannelType.STANDARD);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25-1", null,
             new P25NetworkConfigurationSnapshot.CurrentSite(0x321, 0x456, 7, 9, 2, false),
             List.of(), List.of(), List.of(), List.of(), List.of());
@@ -1126,7 +1126,7 @@ class ReceiverActivityMapperTest
     {
         Channel channel = new Channel(" Control ", ChannelType.STANDARD);
         channel.setSite(" ");
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
 
         ReceiverActivityRecords.SiteSnapshot record = new ReceiverActivityMapper().map(
             new SiteMetadataEvent(channel, siteMetadataSnapshot(1_000L, true), 1_000L));
@@ -1139,7 +1139,7 @@ class ReceiverActivityMapperTest
     void volatileTimingDoesNotChangeSiteInventoryHash()
     {
         Channel channel = new Channel("Example Site", ChannelType.STANDARD);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
         ReceiverActivityRecords.SiteSnapshot first =
@@ -1192,7 +1192,7 @@ class ReceiverActivityMapperTest
         identifiers.update(APCO25RadioIdentifier.createFrom(1811524));
         identifiers.update(APCO25Talkgroup.create(56138));
         identifiers.update(FrequencyConfigurationIdentifier.create(854187500L));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
 
         if(decoderType != null)
         {
@@ -1223,7 +1223,7 @@ class ReceiverActivityMapperTest
             default -> new DecodeConfigP25Phase1();
         });
         channel.setConfigurationId(CONFIGURATION_ID);
-        channel.setRadresGuid(GUID);
+        channel.setRadioResolveId(GUID);
         return channel;
     }
 
@@ -1252,7 +1252,7 @@ class ReceiverActivityMapperTest
         identifiers.update(FrequencyConfigurationIdentifier.create(854187500L));
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
 
         return P25DecodeEvent.builder(DecodeEventType.CALL_PATCH_GROUP, 1_000L)
             .duration(1_000L)
@@ -1268,7 +1268,7 @@ class ReceiverActivityMapperTest
         identifiers.update(DMRRadio.createFrom(source));
         identifiers.update(DMRTalkgroup.create(target));
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(GUID));
         return DecodeEvent.builder(eventType, 1_000L)
             .protocol(Protocol.DMR)
             .channel(new StandardChannel(frequency))

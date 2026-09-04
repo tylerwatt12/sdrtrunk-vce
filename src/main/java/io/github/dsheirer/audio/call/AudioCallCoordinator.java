@@ -1205,9 +1205,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         if(comparison == 0)
         {
-            comparison = compareNullable(first.snapshot.callLegSource().siteGuid(),
-                second.snapshot.callLegSource().siteGuid());
-            criterion = LogicalCallWinnerCriterion.SITE_GUID;
+            comparison = compareNullable(first.snapshot.callLegSource().radioResolveId(),
+                second.snapshot.callLegSource().radioResolveId());
+            criterion = LogicalCallWinnerCriterion.RADIORESOLVE_ID;
         }
 
         if(comparison == 0)
@@ -1469,7 +1469,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             case INGRESS_LOSS_OR_AUDIO_TRUNCATION -> textValue(Boolean.toString(
                 leg.ingressLoss || leg.audioTruncated));
             case RETAINED_AUDIO_SAMPLE_COUNT -> wholeValue(leg.audioSampleCount);
-            case SITE_GUID -> textValue(leg.snapshot.callLegSource().siteGuid());
+            case RADIORESOLVE_ID -> textValue(leg.snapshot.callLegSource().radioResolveId());
             case CHANNEL_CONFIGURATION_ID -> textValue(leg.snapshot.callLegSource().channelConfigurationId());
             case CALL_LEG_ID -> textValue(legId(leg));
             case SINGLE_LEG -> LogicalCallDiagnosticWinner.CriterionValue.empty();
@@ -1505,7 +1505,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return new LogicalCallDiagnosticLeg(legId(leg),
             source != null && source.decoderType() != null ? source.decoderType().name() : null,
             source != null ? source.channelConfigurationId() : null, source != null ? source.channelName() : null,
-            source != null ? source.siteGuid() : null,
+            source != null ? source.radioResolveId() : null,
             source != null ? source.aliasListId() : 0L, site != null ? site.wacn() : null,
             site != null ? site.system() : null, site != null ? site.rfss() : null,
             site != null ? site.site() : null, leg.startTimestamp, leg.endTimestamp,
@@ -1534,7 +1534,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return new LogicalCallDiagnosticLeg(callLegId,
             source != null && source.decoderType() != null ? source.decoderType().name() : null,
             source != null ? source.channelConfigurationId() : null, source != null ? source.channelName() : null,
-            source != null ? source.siteGuid() : null,
+            source != null ? source.radioResolveId() : null,
             source != null ? source.aliasListId() : 0L, site != null ? site.wacn() : null,
             site != null ? site.system() : null, site != null ? site.rfss() : null,
             site != null ? site.site() : null, snapshot.startTimestamp(), snapshot.lastActivityTimestamp(),

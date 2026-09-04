@@ -35,14 +35,14 @@ import org.junit.jupiter.api.Test;
 class LegacyXmlConfigurationMergerTest
 {
     private static final String EXISTING_CONFIGURATION_ID = "11111111-1111-1111-1111-111111111111";
-    private static final String DUPLICATE_RADIO_REFERENCE_GUID = "22222222-2222-2222-2222-222222222222";
+    private static final String DUPLICATE_RADIORESOLVE_ID = "22222222-2222-2222-2222-222222222222";
 
     @Test
     void renamesAllCaseInsensitiveConflictsAndUpdatesImportedReferences()
     {
         LegacyConfigurationState existing = state("County", "Control", "Calls", 100);
         existing.getChannels().getFirst().setConfigurationId(EXISTING_CONFIGURATION_ID);
-        existing.getChannels().getFirst().setRadresGuid(DUPLICATE_RADIO_REFERENCE_GUID);
+        existing.getChannels().getFirst().setRadioResolveId(DUPLICATE_RADIORESOLVE_ID);
         existing.getBroadcastConfigurations().getFirst().setConfigurationId(EXISTING_CONFIGURATION_ID);
 
         LegacyConfigurationState imported = state("county", "control", "calls", 200);
@@ -53,7 +53,7 @@ class LegacyXmlConfigurationMergerTest
         RadioResolveConfiguration importedSourceStream =
             (RadioResolveConfiguration)imported.getBroadcastConfigurations().getFirst();
         importedSourceChannel.setConfigurationId(EXISTING_CONFIGURATION_ID);
-        importedSourceChannel.setRadresGuid(DUPLICATE_RADIO_REFERENCE_GUID);
+        importedSourceChannel.setRadioResolveId(DUPLICATE_RADIORESOLVE_ID);
         importedSourceStream.setConfigurationId(EXISTING_CONFIGURATION_ID);
 
         var preview = LegacyXmlConfigurationMerger.preview(existing, imported);
@@ -96,7 +96,7 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("control (Imported)", importedChannel.getName());
         assertEquals("county (Imported)", importedChannel.getAliasListName());
         assertNotEquals(EXISTING_CONFIGURATION_ID, importedChannel.getConfigurationId());
-        assertFalse(importedChannel.hasRadresGuid());
+        assertFalse(importedChannel.hasRadioResolveId());
 
         RadioResolveConfiguration importedStream =
             (RadioResolveConfiguration)merged.getBroadcastConfigurations().get(1);
@@ -121,7 +121,7 @@ class LegacyXmlConfigurationMergerTest
     }
 
     @Test
-    void preservesNonConflictingNamesContentAndUniqueRadioReferenceGuid()
+    void preservesNonConflictingNamesContentAndUniqueRadioResolveId()
     {
         LegacyConfigurationState imported = state("Metro", "Primary", "Metro Calls", 1234);
         Alias sourceAlias = imported.getAliases().getFirst();
@@ -131,7 +131,7 @@ class LegacyXmlConfigurationMergerTest
 
         Channel sourceChannel = imported.getChannels().getFirst();
         sourceChannel.setConfigurationId(EXISTING_CONFIGURATION_ID);
-        sourceChannel.setRadresGuid(DUPLICATE_RADIO_REFERENCE_GUID);
+        sourceChannel.setRadioResolveId(DUPLICATE_RADIORESOLVE_ID);
         RadioResolveConfiguration sourceStream =
             (RadioResolveConfiguration)imported.getBroadcastConfigurations().getFirst();
         sourceStream.setConfigurationId(EXISTING_CONFIGURATION_ID);
@@ -142,7 +142,7 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("Metro", merged.getAliasListDefinitions().getFirst().getName());
         assertEquals("Primary", merged.getChannels().getFirst().getName());
         assertEquals("Metro Calls", merged.getBroadcastConfigurations().getFirst().getName());
-        assertEquals(DUPLICATE_RADIO_REFERENCE_GUID, merged.getChannels().getFirst().getRadresGuid());
+        assertEquals(DUPLICATE_RADIORESOLVE_ID, merged.getChannels().getFirst().getRadioResolveId());
         assertNotEquals(EXISTING_CONFIGURATION_ID, merged.getChannels().getFirst().getConfigurationId());
         assertNotEquals(EXISTING_CONFIGURATION_ID,
             merged.getBroadcastConfigurations().getFirst().getConfigurationId());

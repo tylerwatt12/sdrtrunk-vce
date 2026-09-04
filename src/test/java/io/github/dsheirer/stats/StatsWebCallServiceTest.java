@@ -35,7 +35,7 @@ import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
@@ -863,7 +863,7 @@ class StatsWebCallServiceTest
         List<Identifier> identifiers = new ArrayList<>();
         identifiers.add(SystemConfigurationIdentifier.create("Test System"));
         identifiers.add(SiteConfigurationIdentifier.create("Test Site"));
-        identifiers.add(SiteGuidConfigurationIdentifier.create("00000000-0000-0000-0000-000000000021"));
+        identifiers.add(RadioResolveConfigurationIdentifier.create("00000000-0000-0000-0000-000000000021"));
         identifiers.add(ChannelConfigurationIdentifier.create("00000000-0000-0000-0000-000000000737"));
         identifiers.add(FrequencyConfigurationIdentifier.create(854_187_500L));
         identifiers.add(APCO25RadioIdentifier.createFrom(9001));

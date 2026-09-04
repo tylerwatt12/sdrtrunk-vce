@@ -86,7 +86,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private TextField mSystemField;
     private TextField mSiteField;
     private TextField mNameField;
-    private TextField mRadresGuidField;
+    private TextField mRadioResolveIdField;
     private ComboBox<String> mAliasListComboBox;
     private FilteredList<String> mCompatibleAliasLists;
     private GridPane mTextFieldPane;
@@ -189,7 +189,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         getSystemField().setDisable(disable);
         getSiteField().setDisable(disable);
         getNameField().setDisable(disable);
-        getRadresGuidField().setDisable(disable || channel.isProcessing());
+        getRadioResolveIdField().setDisable(disable || channel.isProcessing());
         getAliasListComboBox().setDisable(disable);
         getAutoStartSwitch().setDisable(disable);
         updateClearSiteStatisticsButtonState();
@@ -199,7 +199,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getSystemField().setText(channel.getSystem());
             getSiteField().setText(channel.getSite());
             getNameField().setText(channel.getName());
-            getRadresGuidField().setText(channel.getRadresGuid());
+            getRadioResolveIdField().setText(channel.getRadioResolveId());
             updateAliasListCompatibility();
             String aliasListName = channel.getAliasListName();
 
@@ -252,7 +252,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getSystemField().setText(null);
             getSiteField().setText(null);
             getNameField().setText(null);
-            getRadresGuidField().setText(null);
+            getRadioResolveIdField().setText(null);
             getAliasListComboBox().getSelectionModel().select(null);
             getAutoStartSwitch().selectedProperty().set(false);
             getAutoStartOrderSpinner().setDisable(true);
@@ -274,7 +274,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     {
         if(modifiedProperty().get())
         {
-            if(!validateSiteGuid())
+            if(!validateRadioResolveId())
             {
                 return;
             }
@@ -287,7 +287,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             //Hack - change the name to something else and then set it to the real value to trigger change events
             getItem().setName(" ");
             getItem().setName(getNameField().getText());
-            getItem().setRadresGuid(getRadresGuidField().getText());
+            getItem().setRadioResolveId(getRadioResolveIdField().getText());
             String aliasListName = getAliasListComboBox().getSelectionModel().getSelectedItem();
             getItem().setAliasListDefinition(aliasListName != null ?
                 mConfigurationManager.getAliasModel().getAliasListDefinition(aliasListName) : null);
@@ -608,14 +608,14 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             GridPane.setHgrow(getAliasListComboBox(), Priority.ALWAYS);
             mTextFieldPane.getChildren().add(getAliasListComboBox());
 
-            Label radresGuidLabel = new Label("Site GUID");
-            GridPane.setHalignment(radresGuidLabel, HPos.RIGHT);
-            GridPane.setConstraints(radresGuidLabel, 0, ++row);
-            mTextFieldPane.getChildren().add(radresGuidLabel);
+            Label radioResolveIdLabel = new Label("RadioResolve ID");
+            GridPane.setHalignment(radioResolveIdLabel, HPos.RIGHT);
+            GridPane.setConstraints(radioResolveIdLabel, 0, ++row);
+            mTextFieldPane.getChildren().add(radioResolveIdLabel);
 
-            GridPane.setConstraints(getRadresGuidField(), 1, row);
-            GridPane.setHgrow(getRadresGuidField(), Priority.ALWAYS);
-            mTextFieldPane.getChildren().add(getRadresGuidField());
+            GridPane.setConstraints(getRadioResolveIdField(), 1, row);
+            GridPane.setHgrow(getRadioResolveIdField(), Priority.ALWAYS);
+            mTextFieldPane.getChildren().add(getRadioResolveIdField());
         }
 
         return mTextFieldPane;
@@ -660,40 +660,40 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mNameField;
     }
 
-    protected TextField getRadresGuidField()
+    protected TextField getRadioResolveIdField()
     {
-        if(mRadresGuidField == null)
+        if(mRadioResolveIdField == null)
         {
-            mRadresGuidField = new TextField();
-            mRadresGuidField.setDisable(true);
-            mRadresGuidField.setMaxWidth(Double.MAX_VALUE);
-            mRadresGuidField.setPrefColumnCount(22);
-            mRadresGuidField.textProperty().addListener(mEditorModificationListener);
+            mRadioResolveIdField = new TextField();
+            mRadioResolveIdField.setDisable(true);
+            mRadioResolveIdField.setMaxWidth(Double.MAX_VALUE);
+            mRadioResolveIdField.setPrefColumnCount(22);
+            mRadioResolveIdField.textProperty().addListener(mEditorModificationListener);
         }
 
-        return mRadresGuidField;
+        return mRadioResolveIdField;
     }
 
-    private boolean validateSiteGuid()
+    private boolean validateRadioResolveId()
     {
-        String guid = getRadresGuidField().getText();
+        String radioResolveId = getRadioResolveIdField().getText();
 
-        if(guid == null || guid.isBlank())
+        if(radioResolveId == null || radioResolveId.isBlank())
         {
             return true;
         }
 
         try
         {
-            UUID.fromString(guid.trim());
+            UUID.fromString(radioResolveId.trim());
             return true;
         }
         catch(IllegalArgumentException e)
         {
             Alert alert = new Alert(Alert.AlertType.ERROR,
-                "Site GUID must be blank or a valid UUID.", ButtonType.OK);
-            alert.setTitle("Invalid Site GUID");
-            alert.setHeaderText("Invalid Site GUID");
+                "RadioResolve ID must be blank or a valid UUID.", ButtonType.OK);
+            alert.setTitle("Invalid RadioResolve ID");
+            alert.setHeaderText("Invalid RadioResolve ID");
 
             if(getPlayButton().getScene() != null)
             {
@@ -970,7 +970,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             if(getItem() != null && newValue != null)
             {
                 setPlayButtonState(newValue);
-                getRadresGuidField().setDisable(newValue);
+                getRadioResolveIdField().setDisable(newValue);
                 updateClearSiteStatisticsButtonState();
                 channelProcessingStateChanged(newValue);
             }

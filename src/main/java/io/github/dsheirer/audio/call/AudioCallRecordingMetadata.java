@@ -36,10 +36,11 @@ import java.util.List;
  *
  * <p>This object deliberately contains no Alias, AliasList, IdentifierCollection, or other mutable runtime graph.
  * The standard recording writer can therefore use the same historical decision even if an administrator edits
- * aliases while a call is active or queued for disk.</p>
+ * aliases while a call is active or queued for disk. The RadioResolve identifier remains nullable and is never
+ * replaced with a display-name-derived fallback.</p>
  */
 public record AudioCallRecordingMetadata(String systemName, String systemIdentity, String siteName,
-                                         String siteIdentity, String channelName, String channelIdentity,
+                                         String radioResolveId, String channelName, String channelIdentity,
                                          String aliasListName, String destinationProtocol, String destinationValue,
                                          String destinationIdentity, String destinationAlias,
                                          String destinationDescription, String destinationGroup,
@@ -63,17 +64,17 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
     {
         String system = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
         String site = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY);
-        String siteGuid = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID, Role.ANY);
+        String radioResolveId = identifierText(identifiers, IdentifierClass.CONFIGURATION,
+            Form.RADIORESOLVE_ID, Role.ANY);
         String channel = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY);
         String channelIdentity =
             identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY);
         String aliasList = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY);
-        String stableSiteIdentity = hasText(siteGuid) ? siteGuid : nullSafe(system) + ':' + nullSafe(site);
         String stableChannelIdentity = hasText(channelIdentity) ? channelIdentity :
             nullSafe(system) + ':' + nullSafe(site) + ':' + nullSafe(channel);
         DestinationDecision safeDestination = destination != null ? destination : DestinationDecision.empty();
         SourceDecision safeSource = source != null ? source : SourceDecision.empty();
-        return new AudioCallRecordingMetadata(label(system), nullSafe(system), label(site), stableSiteIdentity,
+        return new AudioCallRecordingMetadata(label(system), nullSafe(system), label(site), radioResolveId,
             label(channel), stableChannelIdentity, label(aliasList), safeDestination.protocol(),
             safeDestination.value(), safeDestination.receivedIdentity(), safeDestination.aliasName(),
             safeDestination.aliasDescription(), safeDestination.aliasGroup(), safeDestination.matcherIdentity(),
@@ -94,7 +95,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
             receivedDestinationIdentity(destination) : destinationIdentity;
         String resolvedSourceProtocol = source != null ? protocol(source) : sourceProtocol;
         String resolvedSourceValue = source != null ? receivedSourceIdentity(source) : sourceValue;
-        return new AudioCallRecordingMetadata(systemName, systemIdentity, siteName, siteIdentity, channelName,
+        return new AudioCallRecordingMetadata(systemName, systemIdentity, siteName, radioResolveId, channelName,
             channelIdentity, aliasListName, resolvedDestinationProtocol, resolvedDestinationValue,
             resolvedDestinationIdentity, destinationAlias, destinationDescription, destinationGroup,
             destinationMatcherIdentity, destinationTalkgroupRecordEnabled, resolvedSourceProtocol,

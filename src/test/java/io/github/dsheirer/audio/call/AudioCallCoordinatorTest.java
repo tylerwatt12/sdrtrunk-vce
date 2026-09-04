@@ -1690,10 +1690,10 @@ class AudioCallCoordinatorTest
 
     private static Leg leg(long producerId, AliasList aliasList, Integer wacn, int system, int rfss, int site,
                            int talkgroup, long start, long end, VoiceCallQuality quality, boolean record,
-                           Set<BroadcastChannel> routes, String siteGuid)
+                           Set<BroadcastChannel> routes, String radioResolveId)
     {
         return leg(producerId, 1, new CallLegId(producerId, 1, 0), aliasList, wacn, system, rfss, site,
-            talkgroup, 9001, start, end, quality, record, routes, siteGuid);
+            talkgroup, 9001, start, end, quality, record, routes, radioResolveId);
     }
 
     private static Leg leg(long producerId, long callSequence, CallLegId callLegId, AliasList aliasList,
@@ -1708,12 +1708,12 @@ class AudioCallCoordinatorTest
     private static Leg leg(long producerId, long callSequence, CallLegId callLegId, AliasList aliasList,
                            Integer wacn, int system, int rfss, int site, int talkgroup, Integer radio,
                            long start, long end, VoiceCallQuality quality, boolean record,
-                           Set<BroadcastChannel> routes, String siteGuid)
+                           Set<BroadcastChannel> routes, String radioResolveId)
     {
         AudioCallId callId = new AudioCallId(producerId, callSequence, 0);
         P25SiteIdentity siteIdentity = wacn != null ? new P25SiteIdentity(wacn, system, rfss, site) : null;
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "channel-" + producerId,
-            "Site " + site, siteGuid, aliasList.getId(), siteIdentity,
+            "Site " + site, radioResolveId, aliasList.getId(), siteIdentity,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         return new Leg(callId, callLegId, aliasList, source, talkgroup, radio, start, end,
             quality, record, routes, false, null);
@@ -1733,7 +1733,7 @@ class AudioCallCoordinatorTest
     private static Leg withDecoder(Leg leg, DecoderType decoderType)
     {
         CallLegSource source = new CallLegSource(decoderType, leg.source().channelConfigurationId(),
-            leg.source().channelName(), leg.source().siteGuid(), leg.source().aliasListId(), null,
+            leg.source().channelName(), leg.source().radioResolveId(), leg.source().aliasListId(), null,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), source, leg.talkgroup(), leg.radio(),
             leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(), leg.encrypted(),

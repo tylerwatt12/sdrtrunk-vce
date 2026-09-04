@@ -26,7 +26,7 @@ class DecoderFactoryCallLegSourceTest
         Channel channel = new Channel("MARCS Site");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
         channel.setConfigurationId("11111111-1111-1111-1111-111111111111");
-        channel.setRadresGuid("22222222-2222-2222-2222-222222222222");
+        channel.setRadioResolveId("22222222-2222-2222-2222-222222222222");
         P25SiteIdentity identity = new P25SiteIdentity(0xBEE00, 0x348, 2, 19);
         channel.setP25SiteIdentity(identity);
         AliasListDefinition definition = new AliasListDefinition("MARCS", AliasListFamily.P25);
@@ -37,7 +37,7 @@ class DecoderFactoryCallLegSourceTest
         assertEquals(DecoderType.P25_PHASE2, source.decoderType());
         assertEquals("11111111-1111-1111-1111-111111111111", source.channelConfigurationId());
         assertEquals("MARCS Site", source.channelName());
-        assertEquals("22222222-2222-2222-2222-222222222222", source.siteGuid());
+        assertEquals("22222222-2222-2222-2222-222222222222", source.radioResolveId());
         assertEquals(42, source.aliasListId());
         assertEquals(identity, source.p25SiteIdentity());
         assertFalse(source.trafficChannel());

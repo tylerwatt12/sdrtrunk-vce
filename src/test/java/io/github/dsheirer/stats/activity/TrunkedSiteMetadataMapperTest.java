@@ -315,7 +315,7 @@ class TrunkedSiteMetadataMapperTest
         channel.setSystem("Metro Radio");
         channel.setSite("Downtown");
         channel.setAliasListName("County");
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000123");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000123");
         SourceConfigRecording recording = new SourceConfigRecording();
         recording.setFrequency(frequency);
         channel.setSourceConfiguration(recording);

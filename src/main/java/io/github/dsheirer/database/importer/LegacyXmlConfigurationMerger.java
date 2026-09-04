@@ -179,7 +179,7 @@ public final class LegacyXmlConfigurationMerger
 
         Set<String> channelKeys = channelKeys(mergedChannels);
         Set<String> channelConfigurationIds = channelConfigurationIds(mergedChannels);
-        Set<String> radioReferenceGuids = radioReferenceGuids(mergedChannels);
+        Set<String> radioResolveIds = radioResolveIds(mergedChannels);
         int renamedChannels = 0;
         int importedChannelCount = 0;
 
@@ -202,13 +202,13 @@ public final class LegacyXmlConfigurationMerger
             channel.setName(reservation.name());
             regenerateUniqueConfigurationId(channel, channelConfigurationIds);
 
-            if(channel.hasRadresGuid())
+            if(channel.hasRadioResolveId())
             {
-                String guid = normalize(channel.getRadresGuid());
+                String radioResolveId = normalize(channel.getRadioResolveId());
 
-                if(!radioReferenceGuids.add(guid))
+                if(!radioResolveIds.add(radioResolveId))
                 {
-                    channel.setRadresGuid(null);
+                    channel.setRadioResolveId(null);
                 }
             }
 
@@ -307,15 +307,15 @@ public final class LegacyXmlConfigurationMerger
         return identifiers;
     }
 
-    private static Set<String> radioReferenceGuids(List<Channel> channels)
+    private static Set<String> radioResolveIds(List<Channel> channels)
     {
         Set<String> identifiers = new HashSet<>();
 
         for(Channel channel: nonNullChannels(channels))
         {
-            if(channel.hasRadresGuid())
+            if(channel.hasRadioResolveId())
             {
-                identifiers.add(normalize(channel.getRadresGuid()));
+                identifiers.add(normalize(channel.getRadioResolveId()));
             }
         }
 

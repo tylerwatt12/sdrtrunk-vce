@@ -19,10 +19,12 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
  *
  * <p>The Alias List database identifier is intentionally carried instead of relying only on the mutable Alias List
  * object or its display name.  A zero identifier means that the list has not been durably assigned.  Learned P25
- * identity is nullable because conventional channels and newly started trunked channels may not have one.</p>
+ * identity is nullable because conventional channels and newly started trunked channels may not have one. The
+ * RadioResolve identifier is external upload-correlation data; it is not the internal identity of a channel, site,
+ * or radio system.</p>
  */
 public record CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
-                            String siteGuid, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                            String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
                             ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
 {
     public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null, null, false);
@@ -31,7 +33,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         channelConfigurationId = normalize(channelConfigurationId);
         channelName = normalize(channelName);
-        siteGuid = normalize(siteGuid);
+        radioResolveId = normalize(radioResolveId);
     }
 
     public boolean hasDurableAliasListId()
@@ -61,8 +63,8 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
      */
     public CallLegSource asTrafficChannel()
     {
-        return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName, siteGuid,
-            aliasListId, p25SiteIdentity, channelKind, true);
+        return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
+            radioResolveId, aliasListId, p25SiteIdentity, channelKind, true);
     }
 
     private static String normalize(String value)

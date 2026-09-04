@@ -147,17 +147,17 @@ public final class SdrTrunkDatabaseSchema
             name TEXT,
             alias_list_id INTEGER REFERENCES alias_list(id)
                 DEFERRABLE INITIALLY DEFERRED,
-            radres_guid TEXT CHECK(
-                radres_guid IS NULL OR length(trim(radres_guid)) = 0 OR (
-                    radres_guid = trim(radres_guid)
-                    AND length(radres_guid) = 36
-                    AND radres_guid = lower(radres_guid)
-                    AND substr(radres_guid, 9, 1) = '-'
-                    AND substr(radres_guid, 14, 1) = '-'
-                    AND substr(radres_guid, 19, 1) = '-'
-                    AND substr(radres_guid, 24, 1) = '-'
-                    AND length(replace(radres_guid, '-', '')) = 32
-                    AND replace(radres_guid, '-', '') NOT GLOB '*[^0-9a-f]*'
+            radioresolve_id TEXT CHECK(
+                radioresolve_id IS NULL OR length(trim(radioresolve_id)) = 0 OR (
+                    radioresolve_id = trim(radioresolve_id)
+                    AND length(radioresolve_id) = 36
+                    AND radioresolve_id = lower(radioresolve_id)
+                    AND substr(radioresolve_id, 9, 1) = '-'
+                    AND substr(radioresolve_id, 14, 1) = '-'
+                    AND substr(radioresolve_id, 19, 1) = '-'
+                    AND substr(radioresolve_id, 24, 1) = '-'
+                    AND length(replace(radioresolve_id, '-', '')) = 32
+                    AND replace(radioresolve_id, '-', '') NOT GLOB '*[^0-9a-f]*'
                 )
             ),
             auto_start INTEGER NOT NULL DEFAULT 0
@@ -173,7 +173,7 @@ public final class SdrTrunkDatabaseSchema
             config_json TEXT NOT NULL CHECK(json_valid(config_json)),
             CHECK(
                 channel_kind = 'CONVENTIONAL' OR (
-                    radres_guid IS NOT NULL AND length(trim(radres_guid)) > 0
+                    radioresolve_id IS NOT NULL AND length(trim(radioresolve_id)) > 0
                 )
             )
         )
@@ -300,7 +300,7 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_channel_alias_list",
         "idx_configuration_channel_decoder",
         "idx_configuration_channel_frequency",
-        "idx_configuration_channel_unique_radres_guid",
+        "idx_configuration_channel_unique_radioresolve_id",
         "idx_configuration_channel_map_sort",
         "idx_configuration_broadcast_sort",
         "idx_web_user_one_primary_admin"
@@ -333,7 +333,7 @@ public final class SdrTrunkDatabaseSchema
                 "scan_list_id"),
             new SqliteSchemaValidator.Table("configuration_channel", "id", "configuration_id", "channel_kind",
                 "sort_order", "system_name", "site_name",
-                "name", "alias_list_id", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
+                "name", "alias_list_id", "radioresolve_id", "auto_start", "auto_start_order", "decoder_type",
                 "primary_frequency_hz", "config_json"),
             new SqliteSchemaValidator.Table("configuration_channel_map", "id", "sort_order", "name", "config_json"),
             new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "configuration_id",
@@ -412,7 +412,10 @@ public final class SdrTrunkDatabaseSchema
                 "ON configuration_channel(decoder_type)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_frequency " +
                 "ON configuration_channel(primary_frequency_hz)");
-            statement.executeUpdate(Format5SchemaSql.CONFIGURATION_RADRES_GUID_INDEX_SQL);
+            statement.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "idx_configuration_channel_unique_radioresolve_id " +
+                "ON configuration_channel(lower(radioresolve_id)) " +
+                "WHERE radioresolve_id IS NOT NULL AND length(trim(radioresolve_id)) > 0");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_map_sort ON configuration_channel_map(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +

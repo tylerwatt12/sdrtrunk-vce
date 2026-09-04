@@ -92,7 +92,7 @@ class DMRDecoderStateConventionalCallTest
     {
         Channel channel = channel(DMRChannelMode.CONVENTIONAL, ChannelType.STANDARD);
         channel.setAliasListName("County DMR");
-        channel.setRadresGuid("123e4567-e89b-12d3-a456-426614174000");
+        channel.setRadioResolveId("123e4567-e89b-12d3-a456-426614174000");
         DMRDecoderState state = new DMRDecoderState(channel, 2, null);
         DecodeEvent call = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L)
             .channel(new DMRAbsoluteChannel(2, 2, 461_125_000L, 0))

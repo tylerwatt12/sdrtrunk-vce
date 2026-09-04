@@ -66,7 +66,7 @@ class ChannelActivitySnapshotTest
         String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
         Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
         channel.setConfigurationId(configurationId);
-        channel.setRadresGuid("86a927a5-fc21-4ee3-8bb3-6e8b943cc68f");
+        channel.setRadioResolveId("86a927a5-fc21-4ee3-8bb3-6e8b943cc68f");
         channel.setAliasListName("County Sheriff");
         Alias radio = new Alias("Car 12");
         radio.setId(301L);

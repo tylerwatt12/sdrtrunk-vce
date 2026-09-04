@@ -35,7 +35,7 @@ class NXDNDecoderStateConventionalCallTest
     {
         Channel channel = channel(NXDNChannelMode.CONVENTIONAL, ChannelType.STANDARD);
         channel.setAliasListName("County NXDN");
-        channel.setRadresGuid("123e4567-e89b-12d3-a456-426614174000");
+        channel.setRadioResolveId("123e4567-e89b-12d3-a456-426614174000");
         NXDNDecoderState state = new NXDNDecoderState(channel, null);
         state.receiveDecoderStateEvent(frequencyNotification(461_125_000L));
         ConventionalCallSubscriber subscriber = new ConventionalCallSubscriber();
