@@ -760,7 +760,7 @@ final class StatsWebCallService implements AutoCloseable
             String channel = recordingMetadata != null ? recordingMetadata.channelName() : null;
             String label = channel != null && !channel.isBlank() ? channel.strip() : "Saved channel";
             return playbackTarget.kind() == CallPlaybackTarget.Kind.CHANNEL_TIMESLOT ?
-                label + " · Timeslot " + (playbackTarget.timeslot() + 1) : label;
+                label + " · Timeslot " + playbackTarget.timeslot() : label;
         }
 
         String alias = recordingMetadata != null ? recordingMetadata.destinationAlias() : null;

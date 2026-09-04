@@ -13,6 +13,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -65,12 +66,14 @@ class CallPlaybackTargetTest
         CallLegSource source = source(DecoderType.DMR, CHANNEL_A, null,
             ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL);
         Identifier<?> talkgroup = new DMRTalkgroup(1);
-        CallPlaybackTarget first = target(source, talkgroup, 0);
-        CallPlaybackTarget second = target(source, talkgroup, 1);
+        CallPlaybackTarget first = target(source, talkgroup, DMRMessage.TIMESLOT_1);
+        CallPlaybackTarget second = target(source, talkgroup, DMRMessage.TIMESLOT_2);
 
         assertEquals(CallPlaybackTarget.Kind.CHANNEL_TIMESLOT, first.kind());
-        assertEquals("channel:" + CHANNEL_A + ":timeslot:0", first.key());
-        assertEquals("channel:" + CHANNEL_A + ":timeslot:1", second.key());
+        assertEquals("channel:" + CHANNEL_A + ":timeslot:1", first.key());
+        assertEquals("channel:" + CHANNEL_A + ":timeslot:2", second.key());
+        assertEquals(1, first.toMap("DMR").get("timeslot"));
+        assertEquals(2, second.toMap("DMR").get("timeslot"));
         assertNotEquals(first, second);
     }
 

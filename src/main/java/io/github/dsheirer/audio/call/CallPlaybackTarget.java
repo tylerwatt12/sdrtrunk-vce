@@ -49,9 +49,9 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
         key = key.strip();
         systemKey = text(systemKey);
 
-        if(kind == Kind.CHANNEL_TIMESLOT && (timeslot == null || timeslot < 0 || timeslot > 1))
+        if(kind == Kind.CHANNEL_TIMESLOT && (timeslot == null || timeslot < 1 || timeslot > 2))
         {
-            throw new IllegalArgumentException("DMR conventional playback target requires timeslot 0 or 1");
+            throw new IllegalArgumentException("DMR conventional playback target requires timeslot 1 or 2");
         }
         else if(kind != Kind.CHANNEL_TIMESLOT)
         {
@@ -100,7 +100,7 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
             {
                 int slot = snapshot.timeslot();
 
-                if(slot < 0 || slot > 1)
+                if(slot < 1 || slot > 2)
                 {
                     return null;
                 }
@@ -182,7 +182,7 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
         }
         if(timeslot != null)
         {
-            value.put("timeslot", timeslot + 1);
+            value.put("timeslot", timeslot);
         }
         if(label != null && !label.isBlank())
         {
