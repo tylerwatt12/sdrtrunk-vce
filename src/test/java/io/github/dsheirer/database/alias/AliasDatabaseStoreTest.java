@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.database.alias;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -26,6 +28,8 @@ import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.audio.broadcast.BroadcastFormat;
+import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
@@ -54,9 +58,14 @@ class AliasDatabaseStoreTest
     {
         Path database = database("round-trip.sqlite");
         AliasDatabaseStore store = new AliasDatabaseStore(database);
+        BroadcastifyCallConfiguration unknownCalls = stream("Unknown Calls");
+        BroadcastifyCallConfiguration archive = stream("Archive");
+        BroadcastifyCallConfiguration radioResolve = stream("RadioResolve");
+        new ConfigurationRepository(database).replaceChannelAndBroadcastConfiguration(List.of(),
+            List.of(unknownCalls, archive, radioResolve));
         AliasListDefinition definition = definition("Lake County", AliasListFamily.P25);
         definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(true,
-            List.of("Unknown Calls", "Archive")));
+            List.of(route(unknownCalls), route(archive))));
         Alias alias = alias("County Fire Dispatch", definition, 1001);
         alias.setDescription("Countywide fire dispatch");
         alias.setGroup("Fire");
@@ -64,7 +73,7 @@ class AliasDatabaseStoreTest
         alias.setIconName("Fire Truck");
         alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(42));
         alias.setRecordable(true);
-        alias.addBroadcastChannel(new BroadcastChannel("RadioResolve"));
+        alias.addBroadcastChannel(route(radioResolve));
 
         AliasConfigurationSnapshot committed = replace(store, List.of(alias), List.of(definition));
         Alias committedAlias = committed.aliases().getFirst();
@@ -80,7 +89,7 @@ class AliasDatabaseStoreTest
         assertEquals(AliasListFamily.P25, definitions.getFirst().getFamily());
         assertTrue(definitions.getFirst().getUnmatchedTalkgroupPolicy().isRecordEnabled());
         assertEquals(List.of("Unknown Calls", "Archive"),
-            definitions.getFirst().getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
+            routeNames(definitions.getFirst().getUnmatchedTalkgroupPolicy()));
         assertEquals(committedAlias.getId(), loaded.getId());
         assertEquals(definitions.getFirst().getId(), loaded.getAliasListId());
         assertEquals("Countywide fire dispatch", loaded.getDescription());
@@ -268,13 +277,6 @@ class AliasDatabaseStoreTest
         assertEquals("2", scalarText(recordStore.getDatabasePath(),
             "SELECT unmatched_talkgroup_record_enabled FROM alias_list"));
 
-        AliasDatabaseStore routeStore = populatedStore("malformed-unmatched-route.sqlite");
-        bypassChecks(routeStore.getDatabasePath(), """
-            INSERT INTO alias_list_unmatched_talkgroup_stream(alias_list_id, channel_name)
-            SELECT id, ' ' FROM alias_list
-            """);
-        assertThrows(SQLException.class, routeStore::loadAliasListDefinitions);
-
     }
 
     @Test
@@ -290,14 +292,12 @@ class AliasDatabaseStoreTest
         assertThrows(SQLException.class, () -> loadAliases(orphanStore));
 
         AliasDatabaseStore routeStore = populatedStore("duplicate-route.sqlite");
-        execute(routeStore.getDatabasePath(), """
-            INSERT INTO alias_broadcast_channel(alias_id, channel_name)
-            SELECT id, 'RadioResolve' FROM alias
-            """);
-        assertThrows(SQLException.class, () -> execute(routeStore.getDatabasePath(), """
-            INSERT INTO alias_broadcast_channel(alias_id, channel_name)
-            SELECT id, 'RadioResolve' FROM alias
-            """));
+        BroadcastifyCallConfiguration radioResolve = stream("RadioResolve");
+        new ConfigurationRepository(routeStore.getDatabasePath()).replaceChannelAndBroadcastConfiguration(List.of(),
+            List.of(radioResolve));
+        insertAliasRoute(routeStore.getDatabasePath(), radioResolve.getConfigurationId());
+        assertThrows(SQLException.class,
+            () -> insertAliasRoute(routeStore.getDatabasePath(), radioResolve.getConfigurationId()));
     }
 
     @Test
@@ -362,6 +362,26 @@ class AliasDatabaseStoreTest
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
         return alias;
+    }
+
+    private static BroadcastifyCallConfiguration stream(String name)
+    {
+        BroadcastifyCallConfiguration configuration = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+        configuration.setName(name);
+        return configuration;
+    }
+
+    private static void insertAliasRoute(Path database, String configurationId) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_broadcast_channel(alias_id, broadcast_configuration_id)
+                SELECT id, ? FROM alias
+                """))
+        {
+            statement.setString(1, configurationId);
+            statement.executeUpdate();
+        }
     }
 
     private static void bypassChecks(Path database, String sql) throws Exception

@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.audio.call;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -77,11 +79,11 @@ class AudioCallCoordinatorTest
         try
         {
             emitLeg(coordinator, leg(1, aliasList, 0x1, 1, 10, 101, 9001, 1_000, 4_000,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("Calls"))), fingerprints(10));
+                GOOD_QUALITY, true, Set.of(route("Calls"))), fingerprints(10));
             emitLeg(coordinator, leg(2, aliasList, 0x1, 1, 11, 102, 9001, 1_100, 4_100,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("Calls"))), fingerprints(10));
+                GOOD_QUALITY, true, Set.of(route("Calls"))), fingerprints(10));
             emitLeg(coordinator, leg(3, aliasList, 0x1, 1, 12, 103, 9001, 1_200, 4_200,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("Calls"))), fingerprints(10));
+                GOOD_QUALITY, true, Set.of(route("Calls"))), fingerprints(10));
 
             await(() -> resolved.size() == 1 && recorded.size() == 1 && streamed.size() == 1 && web.size() == 1);
             CompletedAudioCall call = resolved.getFirst();
@@ -710,15 +712,16 @@ class AudioCallCoordinatorTest
         try
         {
             emitLeg(coordinator, leg(90, aliasList, 0xB, 11, 110, 111, 9900, 1_000, 3_000,
-                GOOD_QUALITY, false, Set.of(new BroadcastChannel("North"))), fingerprints(120));
+                GOOD_QUALITY, false, Set.of(route("North"))), fingerprints(120));
             emitLeg(coordinator, leg(91, aliasList, 0xB, 11, 111, 112, 9900, 1_100, 3_100,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("South"))), fingerprints(120));
+                GOOD_QUALITY, true, Set.of(route("South"))), fingerprints(120));
 
             await(() -> resolved.size() == 1);
             CompletedAudioCall call = resolved.getFirst();
             assertTrue(call.snapshot().recordAudio());
-            assertEquals(Set.of("North", "South"), call.resolvedPolicy().broadcastRoutingKeys());
-            assertEquals(Set.of(new BroadcastChannel("North"), new BroadcastChannel("South")),
+            assertEquals(Set.of(route("North").getConfigurationId(), route("South").getConfigurationId()),
+                call.resolvedPolicy().broadcastRoutingKeys());
+            assertEquals(Set.of(route("North"), route("South")),
                 call.snapshot().broadcastChannels());
         }
         finally
@@ -1168,9 +1171,9 @@ class AudioCallCoordinatorTest
         try
         {
             Leg damaged = leg(121, aliasList, 0x12345, 0x234, 18, 181, 10_119, 9_001,
-                1_000, 4_000, DAMAGED_QUALITY, true, Set.of(new BroadcastChannel("South")));
+                1_000, 4_000, DAMAGED_QUALITY, true, Set.of(route("South")));
             Leg good = leg(122, aliasList, 0x12345, 0x234, 18, 182, 10_119, 9_001,
-                1_080, 4_080, GOOD_QUALITY, true, Set.of(new BroadcastChannel("North")));
+                1_080, 4_080, GOOD_QUALITY, true, Set.of(route("North")));
             emitLeg(coordinator, damaged, fingerprints(145));
             emitLeg(coordinator, good, fingerprints(145));
 
@@ -1207,7 +1210,8 @@ class AudioCallCoordinatorTest
             assertEquals(2, decision.callIdentity().uniqueLearnedSiteCount());
 
             assertTrue(decision.outputPolicy().recordRequested());
-            assertEquals(List.of("North", "South"), decision.outputPolicy().streamRoutingKeys());
+            assertEquals(Set.of(route("North").getConfigurationId(), route("South").getConfigurationId()),
+                Set.copyOf(decision.outputPolicy().streamRoutingKeys()));
             assertEquals(2, decision.outputPolicy().streamRoutingKeyCount());
             assertTrue(decision.outputPolicy().browserOffered());
             assertNotEquals(Thread.currentThread(), sinkThread.get());

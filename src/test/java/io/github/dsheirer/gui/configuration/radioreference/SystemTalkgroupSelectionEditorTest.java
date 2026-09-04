@@ -14,6 +14,7 @@ package io.github.dsheirer.gui.configuration.radioreference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
@@ -224,7 +225,8 @@ class SystemTalkgroupSelectionEditorTest
         alias.setColor(0x123456);
         alias.setIconName("Local icon");
         alias.setRecordable(true);
-        alias.addBroadcastChannel("Local Stream");
+        io.github.dsheirer.alias.id.broadcast.BroadcastChannel localStream = route("Local Stream");
+        alias.addBroadcastChannel(localStream);
         alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(9001));
         alias.setMatchIdentifier(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 125));
 
@@ -246,7 +248,7 @@ class SystemTalkgroupSelectionEditorTest
         assertEquals(0x123456, replacement.getColor());
         assertEquals("Local icon", replacement.getIconName());
         assertTrue(replacement.isRecordable());
-        assertTrue(replacement.hasBroadcastChannel("Local Stream"));
+        assertTrue(replacement.hasBroadcastConfiguration(localStream.getConfigurationId()));
         assertEquals(9001, replacement.getStreamTalkgroupAlias().getValue());
         assertTrue(alias.getMatchIdentifier().matches(replacement.getMatchIdentifier()));
     }

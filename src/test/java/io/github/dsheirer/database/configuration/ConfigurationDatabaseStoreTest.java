@@ -631,7 +631,6 @@ class ConfigurationDatabaseStoreTest
             }
         }
     }
-
     private static final class TestConfiguration
     {
         private List<Channel> mChannels = List.of();

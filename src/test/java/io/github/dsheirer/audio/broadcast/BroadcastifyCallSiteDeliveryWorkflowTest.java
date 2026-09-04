@@ -11,6 +11,9 @@
 
 package io.github.dsheirer.audio.broadcast;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.configurationId;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -102,7 +105,8 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             BroadcastifyCallBroadcaster broadcaster = harness.broadcaster(SITE_ROUTE);
             AudioRecording recording = harness.onlyRecording();
             assertEquals(1, broadcaster.getAudioQueueSize());
-            assertTrue(recording.getDeliveryEvidence().matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID));
+            assertTrue(recording.getDeliveryEvidence().matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID,
+                WEST_CHANNEL_ID));
             assertTrue(recording.hasPendingReplays(),
                 "An accepted provider must own one pending replay before it queues the recording");
 
@@ -129,7 +133,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             assertEquals(EAST_CHANNEL_ID, harness.electedChannelConfigurationId(),
                 "The selected West site must genuinely be the losing receiver copy in this fixture");
             assertTrue(harness.onlyRecording().getDeliveryEvidence()
-                .matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID),
+                .matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID, WEST_CHANNEL_ID),
                 "The elected audio must retain the losing site's independent delivery observation");
             assertEquals(1, harness.broadcaster(SITE_ROUTE).getAudioQueueSize());
         }
@@ -152,10 +156,12 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
 
             AudioRecording recording = harness.onlyRecording();
             assertEquals(EAST_CHANNEL_ID, harness.electedChannelConfigurationId());
-            assertTrue(recording.getDeliveryEvidence().matches(EAST_ROUTE, ALIAS_LIST_ID, EAST_CHANNEL_ID));
-            assertTrue(recording.getDeliveryEvidence().matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID));
+            assertTrue(recording.getDeliveryEvidence().matches(configurationId(EAST_ROUTE), ALIAS_LIST_ID,
+                EAST_CHANNEL_ID));
+            assertTrue(recording.getDeliveryEvidence().matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID,
+                WEST_CHANNEL_ID));
             assertFalse(recording.getDeliveryEvidence()
-                .matches(CENTRAL_ROUTE, ALIAS_LIST_ID, CENTRAL_CHANNEL_ID));
+                .matches(configurationId(CENTRAL_ROUTE), ALIAS_LIST_ID, CENTRAL_CHANNEL_ID));
             assertEquals(1, harness.broadcaster(EAST_ROUTE).getAudioQueueSize());
             assertEquals(1, harness.broadcaster(SITE_ROUTE).getAudioQueueSize());
             assertEquals(0, harness.broadcaster(CENTRAL_ROUTE).getAudioQueueSize(),
@@ -179,7 +185,8 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             harness.submit(eastRoute, westWithoutRoute);
 
             AudioRecording recording = harness.onlyRecording();
-            assertFalse(recording.getDeliveryEvidence().matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID),
+            assertFalse(recording.getDeliveryEvidence().matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID,
+                WEST_CHANNEL_ID),
                 "Delivery must not combine a route from East with a selected channel observed on West");
             assertEquals(0, harness.broadcaster(SITE_ROUTE).getAudioQueueSize());
             assertFalse(recording.hasPendingReplays(),
@@ -309,7 +316,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             configuration.setAliasListName(ALIAS_LIST_NAME);
             configuration.setChannelConfigurationId(channelConfigurationId);
             mBroadcastModel.addBroadcastConfiguration(configuration);
-            assertNotNull(mBroadcastModel.getBroadcaster(routeName));
+            assertNotNull(mBroadcastModel.getBroadcaster(configuration.getConfigurationId()));
         }
 
         private void addLegacyProvider(String routeName)
@@ -317,12 +324,13 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             BroadcastifyCallConfiguration configuration = new BroadcastifyCallConfiguration();
             configure(configuration, routeName);
             mBroadcastModel.addBroadcastConfiguration(configuration);
-            assertNotNull(mBroadcastModel.getBroadcaster(routeName));
+            assertNotNull(mBroadcastModel.getBroadcaster(configuration.getConfigurationId()));
         }
 
         private void configure(BroadcastifyCallConfiguration configuration, String routeName)
         {
             configuration.setName(routeName);
+            configuration.setConfigurationId(configurationId(routeName));
             configuration.setApiKey("test-key");
             configuration.setSystemID(1);
             configuration.setEnabled(true);
@@ -347,7 +355,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
 
             identifiers.add(APCO25Talkgroup.create(talkgroup));
             identifiers.add(APCO25RadioIdentifier.createFrom(radio));
-            Set<BroadcastChannel> broadcastChannels = routes.stream().map(BroadcastChannel::new)
+            Set<BroadcastChannel> broadcastChannels = routes.stream().map(routeName -> route(routeName))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
             long now = System.currentTimeMillis();
             long end = now + 1_000L;
@@ -413,7 +421,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
 
         private BroadcastifyCallBroadcaster broadcaster(String routeName)
         {
-            return (BroadcastifyCallBroadcaster)mBroadcastModel.getBroadcaster(routeName);
+            return (BroadcastifyCallBroadcaster)mBroadcastModel.getBroadcaster(configurationId(routeName));
         }
 
         private AudioRecording onlyRecording()

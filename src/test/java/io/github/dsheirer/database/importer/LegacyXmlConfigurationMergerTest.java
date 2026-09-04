@@ -17,6 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.hasRouteNamed;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.legacyRoute;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.legacyRoutes;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -47,7 +51,7 @@ class LegacyXmlConfigurationMergerTest
 
         LegacyConfigurationState imported = state("county", "control", "calls", 200);
         imported.getAliasListDefinitions().getFirst().setUnmatchedTalkgroupPolicy(
-            new UnmatchedTalkgroupPolicy(true, List.of("calls")));
+            new UnmatchedTalkgroupPolicy(true, legacyRoutes("calls")));
         Alias importedSourceAlias = imported.getAliases().getFirst();
         Channel importedSourceChannel = imported.getChannels().getFirst();
         RadioResolveConfiguration importedSourceStream =
@@ -82,13 +86,13 @@ class LegacyXmlConfigurationMergerTest
         assertEquals(AliasListDefinition.UNASSIGNED_ID, importedDefinition.getId());
         assertTrue(importedDefinition.getUnmatchedTalkgroupPolicy().isRecordEnabled());
         assertEquals(List.of("calls (Imported)"),
-            importedDefinition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
+            routeNames(importedDefinition.getUnmatchedTalkgroupPolicy()));
 
         Alias importedAlias = merged.getAliases().get(1);
         assertNotSame(importedSourceAlias, importedAlias);
         assertEquals("county (Imported)", importedAlias.getAliasListName());
         assertEquals(Alias.UNASSIGNED_ALIAS_LIST_ID, importedAlias.getAliasListId());
-        assertTrue(importedAlias.hasBroadcastChannel("calls (Imported)"));
+        assertTrue(hasRouteNamed(importedAlias, "calls (Imported)"));
         assertEquals(200, ((Talkgroup)importedAlias.getMatchIdentifier()).getValue());
 
         Channel importedChannel = merged.getChannels().get(1);
@@ -152,7 +156,7 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("Primary dispatch", copiedAlias.getDescription());
         assertEquals("Dispatch", copiedAlias.getGroup());
         assertTrue(copiedAlias.isRecordable());
-        assertTrue(copiedAlias.hasBroadcastChannel("Metro Calls"));
+        assertTrue(hasRouteNamed(copiedAlias, "Metro Calls"));
         assertEquals(1234, ((Talkgroup)copiedAlias.getMatchIdentifier()).getValue());
 
         assertEquals(4, result.summary().totalImported());
@@ -174,7 +178,7 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("CONTROL (Imported 2)", merged.getChannels().get(2).getName());
         assertEquals("CALLS (Imported 2)", merged.getBroadcastConfigurations().get(2).getName());
         assertEquals("COUNTY (Imported 2)", merged.getAliases().get(2).getAliasListName());
-        assertTrue(merged.getAliases().get(2).hasBroadcastChannel("CALLS (Imported 2)"));
+        assertTrue(hasRouteNamed(merged.getAliases().get(2), "CALLS (Imported 2)"));
         assertEquals(3, result.summary().totalRenamed());
     }
 
@@ -186,7 +190,7 @@ class LegacyXmlConfigurationMergerTest
         Alias alias = new Alias("Talkgroup " + talkgroup);
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
-        alias.addBroadcastChannel(streamName);
+        alias.addBroadcastChannel(legacyRoute(streamName));
 
         Channel channel = new Channel(channelName);
         channel.setSystem("System");

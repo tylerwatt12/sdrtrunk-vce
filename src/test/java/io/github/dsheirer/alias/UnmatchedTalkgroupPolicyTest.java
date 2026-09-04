@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.alias;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -46,22 +48,22 @@ class UnmatchedTalkgroupPolicyTest
     void validatesAndFreezesPolicyValues()
     {
         UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true,
-            List.of(" Primary ", "Archive"));
+            List.of(route("Primary"), route("Archive")));
 
         assertTrue(policy.isRecordEnabled());
-        assertEquals(List.of("Primary", "Archive"), policy.getStreamDestinationNames());
+        assertEquals(List.of("Primary", "Archive"), routeNames(policy));
         assertThrows(UnsupportedOperationException.class,
-            () -> policy.getStreamDestinationNames().add("Another"));
+            () -> policy.getStreamDestinations().add(route("Another")));
         assertThrows(IllegalArgumentException.class,
-            () -> new UnmatchedTalkgroupPolicy(false, List.of(" ")));
+            () -> new UnmatchedTalkgroupPolicy(false, List.of(new BroadcastChannel(" "))));
         assertThrows(IllegalArgumentException.class,
-            () -> new UnmatchedTalkgroupPolicy(false, List.of("Same", "Same")));
+            () -> new UnmatchedTalkgroupPolicy(false, List.of(route("Same"), route("Same"))));
     }
 
     @Test
     void exactAndRangeAliasesTakePrecedenceWithoutTurningThePolicyIntoAnAlias()
     {
-        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of("Unknown"));
+        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of(route("Unknown")));
         AliasList aliasList = new AliasList(new AliasListDefinition("County", AliasListFamily.P25, policy));
         Alias range = alias("Range", new TalkgroupRange(Protocol.APCO25, 1, 200), false, "Range Stream");
         Alias exact = alias("Exact", new Talkgroup(Protocol.APCO25, 100), false, "Exact Stream");
@@ -108,7 +110,7 @@ class UnmatchedTalkgroupPolicyTest
         for(ProtocolCase protocolCase: cases)
         {
             UnmatchedTalkgroupPolicy policy =
-                new UnmatchedTalkgroupPolicy(true, List.of("Live", "Archive"));
+                new UnmatchedTalkgroupPolicy(true, List.of(route("Live"), route("Archive")));
             AliasList aliasList = new AliasList(new AliasListDefinition(
                 protocolCase.family().name(), protocolCase.family(), policy));
             MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
@@ -130,7 +132,7 @@ class UnmatchedTalkgroupPolicyTest
     @Test
     void doesNotApplyPolicyAcrossProtocolFamilies()
     {
-        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of("Wrong Protocol"));
+        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of(route("Wrong Protocol")));
         AliasList dmrList = new AliasList(new AliasListDefinition("DMR", AliasListFamily.DMR, policy));
         Identifier<?> p25Talkgroup = APCO25Talkgroup.create(31001);
 
@@ -146,7 +148,7 @@ class UnmatchedTalkgroupPolicyTest
     @Test
     void unmatchedPatchUsesPolicyUntilARealTalkgroupAliasMatches()
     {
-        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of("Unknown"));
+        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of(route("Unknown")));
         AliasList aliasList = new AliasList(new AliasListDefinition("Patches", AliasListFamily.P25, policy));
         Alias radioAlias = alias("Console", new Radio(Protocol.APCO25, 9001), false, "Console");
         Alias member = alias("Member", new Talkgroup(Protocol.APCO25, 600), false, "Member");
@@ -182,7 +184,7 @@ class UnmatchedTalkgroupPolicyTest
     @Test
     void talkgroupPromotedToKnownPatchWithdrawsUnmatchedActions()
     {
-        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of("Unknown"));
+        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of(route("Unknown")));
         AliasList aliasList = new AliasList(new AliasListDefinition("Patches", AliasListFamily.P25, policy));
         aliasList.addAlias(alias("Member", new Talkgroup(Protocol.APCO25, 600), false, "Member"));
         MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
@@ -204,13 +206,13 @@ class UnmatchedTalkgroupPolicyTest
     void aliasModelCountsPolicyStreamDestinations()
     {
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25,
-            new UnmatchedTalkgroupPolicy(false, List.of("Old Stream", "Keep")));
+            new UnmatchedTalkgroupPolicy(false, List.of(route("Old Stream"), route("Keep"))));
         definition.setId(1L);
         AliasModel model = new AliasModel();
         model.setAliasListDefinitions(List.of(definition));
 
-        assertTrue(model.hasBroadcastChannelReferences("Old Stream"));
-        assertFalse(model.hasBroadcastChannelReferences("New Stream"));
+        assertTrue(model.hasBroadcastConfigurationReferences(route("Old Stream").getConfigurationId()));
+        assertFalse(model.hasBroadcastConfigurationReferences(route("New Stream").getConfigurationId()));
     }
 
     private static Alias alias(String name, io.github.dsheirer.alias.id.AliasID matcher, boolean record,
@@ -219,7 +221,7 @@ class UnmatchedTalkgroupPolicyTest
         Alias alias = new Alias(name);
         alias.setMatchIdentifier(matcher);
         alias.setRecordable(record);
-        alias.addBroadcastChannel(destination);
+        alias.addBroadcastChannel(route(destination));
         return alias;
     }
 

@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.configuration;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -386,7 +388,7 @@ class AliasAdministrationPersistenceTest
     }
 
     @Test
-    void failedMixedCommandsNeverPublishAndSuccessfulRenamePersists() throws Exception
+    void failedMixedCommandsNeverPublishOrMutateLiveState() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("mixed-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -398,12 +400,8 @@ class AliasAdministrationPersistenceTest
         {
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
-            BroadcastifyCallConfiguration oldStream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
-            oldStream.setName("Old Stream");
-            manager.getBroadcastModel().addBroadcastConfiguration(oldStream);
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             Alias original = alias("Dispatch", aliasListId, 101);
-            original.addBroadcastChannel("Old Stream");
             long aliasId = service.createAlias(original,
                 Set.of(manager.getScanListModel().defaultScanList().getId()), service.currentRevision())
                 .aliasIds().getFirst();
@@ -411,9 +409,6 @@ class AliasAdministrationPersistenceTest
             AliasList cachedAliasList = manager.getAliasModel().getAliasList("County P25");
             assertEquals(secondAliasId,
                 cachedAliasList.getAliases(APCO25Talkgroup.create(101)).getFirst().getId());
-            service.updateUnmatchedTalkgroupPolicy(aliasListId,
-                new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")), service.currentRevision());
-
             Alias replacement = service.getAlias(aliasId).alias();
             replacement.setName("Changed");
             manager.failNextSave();
@@ -434,41 +429,10 @@ class AliasAdministrationPersistenceTest
             assertEquals(secondAliasId,
                 cachedAliasList.getAliases(APCO25Talkgroup.create(101)).getFirst().getId());
 
-            manager.failNextSave();
-            assertThrows(AliasAdministrationService.PersistenceException.class,
-                () -> service.renameBroadcastChannelReferences("Old Stream", "New Stream"));
-
-            assertEquals("Old Stream", oldStream.getName());
-            Alias restored = service.getAlias(aliasId).alias();
-            assertTrue(restored.hasBroadcastChannel("Old Stream"));
-            assertFalse(restored.hasBroadcastChannel("New Stream"));
-            assertEquals(List.of("Old Stream"), manager.getAliasModel().getAliasListDefinition(aliasListId)
-                .getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
-
             AliasDatabaseStore store = new AliasDatabaseStore(database);
             List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
-            Alias stored = store.loadAliases(definitions).getFirst();
-            assertEquals(List.of("Old Stream"), stored.getBroadcastChannels().stream()
-                .map(BroadcastChannel::getChannelName).toList());
-            assertEquals(List.of("Old Stream"), aliasListDefinition(definitions, aliasListId)
-                .getUnmatchedTalkgroupPolicy()
-                .getStreamDestinationNames());
-
-            service.renameBroadcastChannelReferences("Old Stream", "New Stream");
-            assertEquals("New Stream", oldStream.getName());
-            Alias renamed = service.getAlias(aliasId).alias();
-            assertFalse(renamed.hasBroadcastChannel("Old Stream"));
-            assertTrue(renamed.hasBroadcastChannel("New Stream"));
-            assertEquals(List.of("New Stream"), manager.getAliasModel().getAliasListDefinition(aliasListId)
-                .getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
-
-            definitions = store.loadAliasListDefinitions();
-            stored = store.loadAliases(definitions).getFirst();
-            assertEquals(List.of("New Stream"), stored.getBroadcastChannels().stream()
-                .map(BroadcastChannel::getChannelName).toList());
-            assertEquals(List.of("New Stream"), aliasListDefinition(definitions, aliasListId)
-                .getUnmatchedTalkgroupPolicy()
-                .getStreamDestinationNames());
+            assertEquals(List.of("Dispatch", "Secondary"), store.loadAliases(definitions).stream()
+                .map(Alias::getName).toList());
         }
         finally
         {
@@ -477,7 +441,7 @@ class AliasAdministrationPersistenceTest
     }
 
     @Test
-    void broadcastRenameCommitsTheStreamAndAliasReferencesTogether() throws Exception
+    void broadcastRenameKeepsStableAliasReferencesUntouched() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("broadcast-rename-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -497,15 +461,16 @@ class AliasAdministrationPersistenceTest
 
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             Alias proposed = alias("Dispatch", aliasListId, 101);
-            proposed.addBroadcastChannel("Old Stream");
+            proposed.addBroadcastChannel(route(stream));
             long aliasId = service.createAlias(proposed,
                 Set.of(manager.getScanListModel().defaultScanList().getId()), service.currentRevision())
                 .aliasIds().getFirst();
             service.updateUnmatchedTalkgroupPolicy(aliasListId,
-                new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")), service.currentRevision());
+                new UnmatchedTalkgroupPolicy(false, List.of(route(stream))), service.currentRevision());
 
             assertEquals("Old Stream", stream.getName());
-            service.renameBroadcastChannelReferences("Old Stream", "New Stream");
+            stream.setName("New Stream");
+            manager.flushConfiguration();
 
             assertEquals("New Stream", stream.getName());
             assertEquals(List.of("New Stream"), new ConfigurationDatabaseStore(database).load()
@@ -513,11 +478,15 @@ class AliasAdministrationPersistenceTest
             List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
             Alias stored = new AliasDatabaseStore(database).loadAliases(definitions).stream()
                 .filter(alias -> alias.getId() == aliasId).findFirst().orElseThrow();
+            assertEquals(List.of(stream.getConfigurationId()), stored.getBroadcastChannels().stream()
+                .map(BroadcastChannel::getConfigurationId).toList());
             assertEquals(List.of("New Stream"), stored.getBroadcastChannels().stream()
                 .map(BroadcastChannel::getChannelName).toList());
-            assertEquals(List.of("New Stream"), aliasListDefinition(definitions, aliasListId)
-                .getUnmatchedTalkgroupPolicy()
-                .getStreamDestinationNames());
+            UnmatchedTalkgroupPolicy storedPolicy = aliasListDefinition(definitions, aliasListId)
+                .getUnmatchedTalkgroupPolicy();
+            assertEquals(List.of(stream.getConfigurationId()), storedPolicy.getStreamDestinations().stream()
+                .map(BroadcastChannel::getConfigurationId).toList());
+            assertEquals(List.of("New Stream"), routeNames(storedPolicy));
         }
         finally
         {
@@ -644,14 +613,14 @@ class AliasAdministrationPersistenceTest
 
         @Override
         public AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-            AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
+            AliasConfigurationPublication publication)
         {
             if(mFailNextSave.compareAndSet(true, false))
             {
                 throw new ConfigurationCommitException("Injected test failure", new IllegalStateException());
             }
 
-            return super.commitAliasConfiguration(proposed, publication, broadcastRename);
+            return super.commitAliasConfiguration(proposed, publication);
         }
     }
 
@@ -671,13 +640,13 @@ class AliasAdministrationPersistenceTest
 
         @Override
         protected AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-            AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
+            AliasConfigurationPublication publication)
         {
             if(mAddChannelDuringNextCommit.compareAndSet(true, false))
             {
                 getChannelModel().addChannel(new Channel("Late Channel"));
             }
-            return super.commitAliasConfiguration(proposed, publication, broadcastRename);
+            return super.commitAliasConfiguration(proposed, publication);
         }
     }
 
