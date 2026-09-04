@@ -26,6 +26,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog.Bandwidth;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
@@ -361,6 +362,89 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
+    void stableChannelSaveKeepsItsDatabaseRowAcrossRenameAndRetune() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("stable-channel-row.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel channel = conventionalChannel("Old Name", 155_250_000L);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+        long originalRowId = channelRowId(database, channel.getConfigurationId());
+
+        channel.setName("New Name");
+        channel.setSystem("Renamed System");
+        channel.setSite("Renamed Site");
+        ((SourceConfigTuner)channel.getSourceConfiguration()).setFrequency(155_500_000L);
+        replace(database, state);
+
+        assertEquals(originalRowId, channelRowId(database, channel.getConfigurationId()));
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT name, system_name, site_name, primary_frequency_hz
+                FROM configuration_channel WHERE configuration_id = ?
+                """))
+        {
+            statement.setString(1, channel.getConfigurationId());
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                assertEquals("New Name", resultSet.getString("name"));
+                assertEquals("Renamed System", resultSet.getString("system_name"));
+                assertEquals("Renamed Site", resultSet.getString("site_name"));
+                assertEquals(155_500_000L, resultSet.getLong("primary_frequency_hz"));
+            }
+        }
+    }
+
+    @Test
+    void decoderChangeReplacesOnlyTheChangedChannelRow() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("changed-channel-classification.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel changed = conventionalChannel("Changed", 155_250_000L);
+        Channel retained = conventionalChannel("Retained", 155_500_000L);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(changed, retained));
+        replace(database, state);
+        long changedRowId = channelRowId(database, changed.getConfigurationId());
+        long retainedRowId = channelRowId(database, retained.getConfigurationId());
+
+        changed.setDecodeConfiguration(new DecodeConfigNBFM());
+        replace(database, state);
+
+        assertTrue(channelRowId(database, changed.getConfigurationId()) > changedRowId);
+        assertEquals(retainedRowId, channelRowId(database, retained.getConfigurationId()));
+    }
+
+    @Test
+    void radioResolveIdsCanSwapWithoutReplacingStableChannelRows() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("swapped-radioresolve-ids.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel first = conventionalChannel("First", 155_250_000L);
+        Channel second = conventionalChannel("Second", 155_500_000L);
+        String firstRadioResolveId = "11111111-1111-4111-8111-111111111111";
+        String secondRadioResolveId = "22222222-2222-4222-8222-222222222222";
+        first.setRadioResolveId(firstRadioResolveId);
+        second.setRadioResolveId(secondRadioResolveId);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(first, second));
+        replace(database, state);
+        long firstRowId = channelRowId(database, first.getConfigurationId());
+        long secondRowId = channelRowId(database, second.getConfigurationId());
+
+        first.setRadioResolveId(secondRadioResolveId);
+        second.setRadioResolveId(firstRadioResolveId);
+        replace(database, state);
+
+        assertEquals(firstRowId, channelRowId(database, first.getConfigurationId()));
+        assertEquals(secondRowId, channelRowId(database, second.getConfigurationId()));
+        assertEquals(secondRadioResolveId, channelRadioResolveId(database, first.getConfigurationId()));
+        assertEquals(firstRadioResolveId, channelRadioResolveId(database, second.getConfigurationId()));
+    }
+
+    @Test
     void currentFormatLoadRefusesEveryTamperedChannelProjectionScalar() throws Exception
     {
         List<ProjectionTamper> tampers = List.of(
@@ -504,6 +588,46 @@ class ConfigurationDatabaseStoreTest
             {
                 assertTrue(keys.next());
                 return keys.getLong(1);
+            }
+        }
+    }
+
+    private static Channel conventionalChannel(String name, long frequency)
+    {
+        Channel channel = new Channel(name);
+        channel.setDecodeConfiguration(new DecodeConfigAM());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(frequency);
+        channel.setSourceConfiguration(source);
+        return channel;
+    }
+
+    private static long channelRowId(Path database, String configurationId) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT id FROM configuration_channel WHERE configuration_id = ?"))
+        {
+            statement.setString(1, configurationId);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return resultSet.getLong(1);
+            }
+        }
+    }
+
+    private static String channelRadioResolveId(Path database, String configurationId) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT radioresolve_id FROM configuration_channel WHERE configuration_id = ?"))
+        {
+            statement.setString(1, configurationId);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return resultSet.getString(1);
             }
         }
     }
