@@ -248,19 +248,6 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
             protocol != null ? protocol : Protocol.UNKNOWN;
     }
 
-    private static String protocolName(Protocol protocol)
-    {
-        return switch(canonicalProtocol(protocol))
-        {
-            case APCO25 -> "p25";
-            case DMR -> "dmr";
-            case NXDN -> "nxdn";
-            case AM -> "am";
-            case NBFM -> "nbfm";
-            default -> "unknown";
-        };
-    }
-
     private static String text(String value)
     {
         return value != null && !value.isBlank() ? value.strip() : null;
