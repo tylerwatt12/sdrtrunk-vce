@@ -136,6 +136,79 @@ class WizardComponentsTest
         });
     }
 
+    @Test void disclosureHasAButtonSurfaceAndPaddedExpandedSurface() throws Exception
+    {
+        SwingUtilities.invokeAndWait(() -> {
+            for(boolean dark : new boolean[]{false,true})
+            {
+                if(dark) FlatDarkLaf.setup(); else FlatLightLaf.setup();
+                WizardDisclosure disclosure=new WizardDisclosure("About secure access", "Your connections use HTTPS.");
+                JButton toggle=(JButton)disclosure.getComponent(0);
+                var body=(javax.swing.JTextArea)disclosure.getComponent(1);
+                assertFalse(body.isVisible());
+                assertEquals("Expand details",toggle.getAccessibleContext().getAccessibleDescription());
+                assertEquals(WizardStyles.surface(),toggle.getBackground());
+                assertNotEquals(WizardStyles.background(),toggle.getBackground());
+                int collapsed=disclosure.getPreferredSize().height;
+                toggle.doClick();
+                assertTrue(body.isVisible());
+                assertTrue(body.isOpaque());
+                assertEquals(WizardStyles.surface(),body.getBackground());
+                assertTrue(body.getInsets().left >= 16);
+                assertTrue(disclosure.getPreferredSize().height > collapsed);
+                assertEquals("Collapse details",toggle.getAccessibleContext().getAccessibleDescription());
+                assertEquals(disclosure.getPreferredSize().height,disclosure.getMaximumSize().height);
+                toggle.doClick();
+                assertFalse(body.isVisible());
+                assertEquals(collapsed,disclosure.getPreferredSize().height);
+            }
+        });
+    }
+
+    @Test void noticeSeverityAndErrorsHaveReadableMatchingSurfaces() throws Exception
+    {
+        SwingUtilities.invokeAndWait(() -> {
+            for(boolean dark : new boolean[]{false,true})
+            {
+                if(dark) FlatDarkLaf.setup(); else FlatLightLaf.setup();
+                for(var tone : new WizardNotice.Tone[]{WizardNotice.Tone.SUCCESS,WizardNotice.Tone.WARNING,WizardNotice.Tone.ERROR})
+                {
+                    WizardNotice notice=new WizardNotice("Explicit status", "Useful next step.",tone);
+                    assertTrue(notice.isOpaque());
+                    assertEquals(tone,notice.getClientProperty("wizard.noticeTone"));
+                    assertEquals("Explicit status",notice.getAccessibleContext().getAccessibleName());
+                    assertEquals(WizardNotice.background(tone),notice.getBackground());
+                    assertTrue(WizardStyles.contrast(WizardNotice.accent(tone),notice.getBackground())>=4.5);
+                }
+                var error=WizardStyles.prose("Connection failed. Try again.");
+                WizardNotice.styleError(error);
+                assertTrue(error.isOpaque());
+                assertEquals(WizardNotice.background(WizardNotice.Tone.ERROR),error.getBackground());
+                assertEquals(WizardNotice.accent(WizardNotice.Tone.ERROR),error.getForeground());
+                assertTrue(error.getInsets().left>=18);
+            }
+        });
+    }
+
+    @Test void noticeAndDisclosureFollowThemeChanges() throws Exception
+    {
+        SwingUtilities.invokeAndWait(() -> {
+            FlatLightLaf.setup();
+            WizardNotice notice=new WizardNotice("Ready", "Your account is connected.",WizardNotice.Tone.SUCCESS);
+            WizardDisclosure disclosure=new WizardDisclosure("Details", "Expanded details.");
+            ((JButton)disclosure.getComponent(0)).doClick();
+            var light=notice.getBackground();
+            FlatDarkLaf.setup();
+            SwingUtilities.updateComponentTreeUI(notice);
+            SwingUtilities.updateComponentTreeUI(disclosure);
+            assertNotEquals(light,notice.getBackground());
+            assertEquals(WizardNotice.accent(WizardNotice.Tone.SUCCESS),notice.getComponent(0).getForeground());
+            assertEquals(WizardStyles.surface(),disclosure.getComponent(0).getBackground());
+            assertEquals(WizardStyles.surface(),disclosure.getComponent(1).getBackground());
+            assertTrue(disclosure.getComponent(1).isVisible());
+        });
+    }
+
     private static void click(Component component)
     {
         component.dispatchEvent(new MouseEvent(component, MouseEvent.MOUSE_CLICKED,

@@ -80,6 +80,12 @@ public final class SetupWizardSmoke
             click(target,"Continue"); await(target,SetupStep.WEB);
             assertAndTypePort(target);
             capture(target,root,"03-web");
+            if(mode.equals("feedback"))
+            {
+                click(target,"▸  About secure access");
+                capture(target,root,"03b-web-expanded");
+                click(target,"▾  About secure access");
+            }
             click(target,"Continue"); await(target,SetupStep.JMBE);
             if(preferences(target).getApplicationPreference().getStatsWebServerPort()!=18091)
                 throw new AssertionError("The typed port was not committed");
@@ -87,7 +93,9 @@ public final class SetupWizardSmoke
         capture(target,root,"04-jmbe");
         if(mode.equals("jmbe-success")) exerciseJmbe(target,root); else click(target,"Set up later");
         await(target,SetupStep.RADIO_REFERENCE);
-        capture(target,root,"05-radioreference"); click(target,"Set up later");
+        capture(target,root,"05-radioreference");
+        if(mode.equals("feedback")) exerciseFeedback(target,root);
+        click(target,"Set up later");
         if(!mode.startsWith("import"))
         {
             await(target,SetupStep.ACTIVITY); capture(target,root,"06-activity");
@@ -133,6 +141,43 @@ public final class SetupWizardSmoke
             }
         }
         click(target,"Finish & launch");
+    }
+
+    /** Render result callbacks without making a RadioReference request or using real credentials. */
+    private static void exerciseFeedback(SetupWizard target,Path root) throws Exception
+    {
+        var callback=SetupWizard.class.getDeclaredMethod("showRadioReferenceResult",javax.swing.JPanel.class,boolean.class);
+        callback.setAccessible(true);
+        javax.swing.JPanel[] status={null};
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            for(var component:descendants(target)) if(component instanceof javax.swing.JPanel panel &&
+                "RadioReference connection status".equals(panel.getAccessibleContext().getAccessibleName())) status[0]=panel;
+            if(status[0]==null) throw new AssertionError("Connection status unavailable");
+            try { callback.invoke(target,status[0],true); } catch(Exception e) { throw new RuntimeException(e); }
+            if(((WizardNotice)status[0].getComponent(0)).getClientProperty("wizard.noticeTone")!=WizardNotice.Tone.SUCCESS)
+                throw new AssertionError("Premium access is not a success notice");
+        });
+        capture(target,root,"05b-premium-success");
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            namedInput(target,"RadioReference username").setText("smoke-only");
+            if(status[0].getComponent(0) instanceof WizardNotice) throw new AssertionError("Editing left a stale success notice");
+            try { callback.invoke(target,status[0],false); } catch(Exception e) { throw new RuntimeException(e); }
+            if(((WizardNotice)status[0].getComponent(0)).getClientProperty("wizard.noticeTone")!=WizardNotice.Tone.WARNING)
+                throw new AssertionError("Unavailable premium access is not a warning notice");
+        });
+        capture(target,root,"05c-premium-unavailable");
+        javax.swing.SwingUtilities.invokeAndWait(()-> {
+            namedInput(target,"RadioReference username").setText("smoke-edited");
+            try {
+                var fail=SetupWizard.class.getDeclaredMethod("fail",String.class); fail.setAccessible(true);
+                fail.invoke(target,"RadioReference connection failed. Check your account details and connection, then try again.");
+                var field=SetupWizard.class.getDeclaredField("danger"); field.setAccessible(true);
+                var danger=(javax.swing.JTextArea)field.get(target);
+                if(!danger.isVisible() || !danger.isOpaque() || !danger.getBackground().equals(WizardNotice.background(WizardNotice.Tone.ERROR)))
+                    throw new AssertionError("Failure is not a persistent red notice");
+            } catch(Exception e) { throw new RuntimeException(e); }
+        });
+        capture(target,root,"05d-connection-failure");
     }
 
     /** No file selectors belong to Start fresh, and each import choice retains only its own source path. */

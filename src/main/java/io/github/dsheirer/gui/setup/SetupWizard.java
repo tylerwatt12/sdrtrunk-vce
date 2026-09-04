@@ -70,6 +70,7 @@ public final class SetupWizard extends JDialog
     private boolean limitedVisit;
     private boolean webAdjusted;
     private boolean rrVerified;
+    private boolean rrPremium;
     private boolean administratorConfigured;
     private boolean vaultDeferred;
     private boolean editJmbe;
@@ -208,9 +209,8 @@ public final class SetupWizard extends JDialog
         JPanel footer = new JPanel();
         footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
         footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1,0,0,0,WizardStyles.border()),new EmptyBorder(16,0,0,0)));
-        danger.setForeground(new Color(185, 38, 52));
-        danger.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(185,38,52)),
-            new EmptyBorder(8,8,8,8)));
+        WizardNotice.styleError(danger);
+        danger.addPropertyChangeListener("UI", e -> WizardNotice.styleError(danger));
         danger.getAccessibleContext().setAccessibleName("Setup error. Needs attention.");
         danger.setVisible(false); footer.add(danger);
         meter.setStringPainted(true); meter.setVisible(false); footer.add(meter);
@@ -533,7 +533,7 @@ public final class SetupWizard extends JDialog
     private void webPage()
     {
         var app = preferences.getApplicationPreference();
-        paragraph("Use the web interface to edit aliases and manage your receiver in a browser. Choose where you want to access it.");
+        paragraph("Use the web interface to edit aliases, listen to calls, view spectrum and more. Choose where you want to access it.");
         if(webAdjusted) notice("Web access is now available on this computer", "Your previous installation had web access turned off. We’ve enabled it locally so you can edit aliases. Other devices still cannot connect.", false);
         else if(progress.get(step) == NEEDS_ATTENTION) notice("Please review your web access", "These settings changed or could not be started last time. Check them before continuing.", false);
         ButtonGroup group = new ButtonGroup();
@@ -637,21 +637,28 @@ public final class SetupWizard extends JDialog
     {
         var rr = preferences.getRadioReferencePreference();
         paragraph("Have a RadioReference account? Save it here to look up radio systems and import channels. You can also do this later.");
-        JTextArea verification = text(rrVerified ? "Connection verified in this session." :
-            present(rr.getUserName()) && present(rr.getPassword()) ?
-                (progress.get(step) == CARRIED_OVER ? "Carried over" : "Stored credentials") + " — connection not tested in this session." : "No complete stored credentials.");
+        JPanel verification = new JPanel(new BorderLayout()) {
+            public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
+        };
+        verification.setOpaque(false);
+        verification.getAccessibleContext().setAccessibleName("RadioReference connection status");
+        if(rrVerified) showRadioReferenceResult(verification, rrPremium);
+        else verification.add(text(present(rr.getUserName()) && present(rr.getPassword()) ?
+            (progress.get(step) == CARRIED_OVER ? "Carried over" : "Stored credentials") + " — connection not tested in this session." : "No complete stored credentials."));
         append(verification); append(Box.createVerticalStrut(20));
         JTextField username = field("RadioReference username", rr.getUserName() == null ? "" : rr.getUserName());
         JPasswordField secret = password("Password (leave blank to retain the stored password)");
         javax.swing.event.DocumentListener edited = new javax.swing.event.DocumentListener()
         {
-            private void changed() { rrVerified=false; verification.setText("Edited credentials — connection not verified."); }
+            private void changed() { rrVerified=false; verification.removeAll(); verification.add(text("Edited credentials — connection not verified.")); verification.revalidate(); verification.repaint(); }
             public void insertUpdate(javax.swing.event.DocumentEvent e) { changed(); }
             public void removeUpdate(javax.swing.event.DocumentEvent e) { changed(); }
             public void changedUpdate(javax.swing.event.DocumentEvent e) { changed(); }
         };
         username.getDocument().addDocumentListener(edited); secret.getDocument().addDocumentListener(edited);
         button("Test connection", () -> {
+            rrVerified=false;
+            verification.removeAll(); verification.add(text("Connection not verified yet.")); verification.revalidate(); verification.repaint();
             String name = username.getText().trim();
             char[] entered = secret.getPassword();
             char[] credential = entered.length > 0 ? entered : (rr.getPassword() == null ? new char[0] : rr.getPassword().toCharArray());
@@ -663,7 +670,7 @@ public final class SetupWizard extends JDialog
                     return result.premium();
                 }
                 finally { Arrays.fill(credential,'\0'); }
-            }, premium -> { rrVerified = true; verification.setText(premium ? "Connection verified: premium access available." : "Connection verified: premium subscription is expired."); page.revalidate(); });
+            }, premium -> showRadioReferenceResult(verification, premium));
         });
         defer("Set up later");
         accept = () -> {
@@ -681,6 +688,18 @@ public final class SetupWizard extends JDialog
             }
             finally { Arrays.fill(entered,'\0'); }
         };
+    }
+
+    private void showRadioReferenceResult(JPanel verification, boolean premium)
+    {
+        rrVerified=true; rrPremium=premium;
+        verification.removeAll();
+        verification.add(new WizardNotice(premium ? "Connection verified: premium access available" :
+            "Connection verified: premium access unavailable", premium ?
+            "Your account is ready to look up radio systems and import channels." :
+            "You signed in successfully, but subscriber-only imports need a premium subscription. Check your subscription or continue setup.",
+            premium ? WizardNotice.Tone.SUCCESS : WizardNotice.Tone.WARNING));
+        verification.revalidate(); verification.repaint(); page.revalidate();
     }
 
     private void activityPage()
@@ -724,7 +743,7 @@ public final class SetupWizard extends JDialog
                     for(var device: result.devices()) addTo(inventory,noticePanel("Detected · " + device.model(),device.identity() == null ? "Connected radio" : device.identity(),true));
                     if(result.devices().isEmpty()) addTo(inventory,noticePanel("No radios found yet", "That’s okay — you can connect one later. If a radio is already plugged in, check its cable and driver, then choose Rescan.",false));
                     for(String info:result.notices()) addTo(inventory,noticePanel("Optional radio support",info,false));
-                    for(String error:result.errors()) addTo(inventory,noticePanel("A radio could not be checked",error,false));
+                    for(String error:result.errors()) addTo(inventory,new WizardNotice("A radio could not be checked",error,WizardNotice.Tone.ERROR));
                     addTo(inventory,text("Detected means the radio was found, not that reception has been tested. You’ll choose how to use it after setup."));
                     inventory.revalidate(); inventory.repaint();
                     progress.set(step, stopped.get() ? DEFERRED : COMPLETE);
@@ -959,9 +978,7 @@ public final class SetupWizard extends JDialog
     private void attempt(Runnable action) { try { action.run(); } catch(Exception e) { fail(e instanceof IllegalArgumentException ? e.getMessage() : "This action failed. Check settings and retry."); } }
     private void fail(String message)
     {
-        Color color = ThemeManager.getInstance().isDarkMode() ? new Color(255,135,145) : new Color(174,28,42);
-        danger.setForeground(color);
-        danger.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(color),new EmptyBorder(8,8,8,8)));
+        WizardNotice.styleError(danger);
         danger.setText(message); danger.setVisible(true); danger.requestFocusInWindow();
         if(step == SetupStep.REVIEW) next.setText("Retry launch");
         else if(step == SetupStep.JMBE) next.setText("Try again");
@@ -1039,33 +1056,11 @@ public final class SetupWizard extends JDialog
     }
     private JPanel noticePanel(String heading,String message,boolean success)
     {
-        JPanel panel=stack(); panel.setOpaque(true);
-        JTextArea header=text((success?"✓  ":"")+heading); header.setFont(header.getFont().deriveFont(Font.BOLD,16f));
-        Runnable colors=() -> {
-            boolean dark=ThemeManager.getInstance().isDarkMode();
-            Color accent=success ? (dark?new Color(94,205,153):new Color(28,116,78)) : WizardStyles.accent();
-            panel.setBackground(success ? (dark?new Color(31,56,47):new Color(235,247,240)) : WizardStyles.surface());
-            panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0,4,0,0,accent),new EmptyBorder(18,18,16,18)));
-            header.setForeground(accent);
-        };
-        panel.addPropertyChangeListener("UI",event -> colors.run()); colors.run();
-        addTo(panel,header); panel.add(text(message));
-        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE,panel.getPreferredSize().height));
-        //Its parent determines wrapping width; height must be measured after layout, not frozen here.
-        JPanel sized=new JPanel(new BorderLayout()) {
-            public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
-        };
-        sized.setOpaque(false); sized.add(panel); return sized;
+        return new WizardNotice(heading,message,success ? WizardNotice.Tone.SUCCESS : WizardNotice.Tone.INFO);
     }
     private void details(String caption,String message)
     {
-        JPanel container=stack();
-        JButton toggle=action("▸  " + caption,()->{}); WizardStyles.quiet(toggle);
-        toggle.getAccessibleContext().setAccessibleName(caption);
-        toggle.getAccessibleContext().setAccessibleDescription("Expand details");
-        JTextArea content=text(message); content.setVisible(false); content.setForeground(WizardStyles.muted());
-        toggle.addActionListener(e -> { content.setVisible(!content.isVisible()); toggle.setText((content.isVisible()?"▾  ":"▸  ")+caption); toggle.getAccessibleContext().setAccessibleDescription(content.isVisible()?"Collapse details":"Expand details"); container.revalidate(); page.revalidate(); });
-        addTo(container,toggle); addTo(container,content); append(container); append(Box.createVerticalStrut(8));
+        append(new WizardDisclosure(caption,message)); append(Box.createVerticalStrut(16));
     }
     private void migrationDetails(DatabaseMigrationChain.PreflightReport plan)
     {
