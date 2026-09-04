@@ -13,4 +13,5 @@ public final class SetupJobOutput implements Consumer<String>
         if(text.length() > 65536) text.delete(0, text.length() - 65536);
     }
     public synchronized String snapshot() { return text.toString(); }
+    public synchronized void clear() { text.setLength(0); }
 }

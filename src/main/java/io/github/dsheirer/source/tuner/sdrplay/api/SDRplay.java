@@ -96,13 +96,33 @@ public class SDRplay
 
         if(mSdrplayLibraryLoaded)
         {
-            Status openStatus = open();
-
-            mAvailable = openStatus.success() && getVersion().isSupported();
-
-            if(openStatus == Status.FAIL)
+            boolean opened = false;
+            try
             {
-                throw new SDRPlayException("Service not available - open status: " + openStatus);
+                Status openStatus = open();
+                opened = openStatus.success();
+                if(!opened)
+                {
+                    throw new SDRPlayException("SDRplay API service could not be opened", openStatus);
+                }
+                mAvailable = getVersion().isSupported();
+            }
+            catch(SDRPlayException | RuntimeException | LinkageError failure)
+            {
+                // The caller has no instance to close when construction fails. Release only resources opened here.
+                try
+                {
+                    if(opened) sdrplay_api_h.sdrplay_api_Close();
+                }
+                catch(RuntimeException | LinkageError closeFailure)
+                {
+                    failure.addSuppressed(closeFailure);
+                }
+                finally
+                {
+                    mSharedArena.close();
+                }
+                throw failure;
             }
         }
         else
@@ -110,7 +130,8 @@ public class SDRplay
             mAvailable = false;
         }
 
-        if(sLibraryLoadStatusLogging.getAndSet(false))
+        // The loader already reports absent optional support. Do not label it as an unsupported version 0.0.
+        if(mSdrplayLibraryLoaded && sLibraryLoadStatusLogging.getAndSet(false))
         {
             if(isAvailable())
             {
@@ -169,7 +190,7 @@ public class SDRplay
         }
         else
         {
-            mLog.error("Couldn't load RSP devices from API.  Status: " + status);
+            throw new SDRPlayException("Couldn't list RSP devices from the SDRplay API", status);
         }
 
         return deviceStructs;

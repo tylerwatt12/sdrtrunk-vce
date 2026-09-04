@@ -21,6 +21,7 @@ package io.github.dsheirer.source.tuner.sdrplay.api;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.Predicate;
 import org.apache.commons.lang3.SystemUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,51 +51,77 @@ public class SDRPlayLibraryHelper
     public static final boolean LOADED;
     public static final boolean LOADED_FROM_PATH;
     public static final Path LIBRARY_PATH;
+    public static final LoadState LOAD_STATE;
+
+    /** Missing optional support is different from an installed library that could not be loaded. */
+    public enum LoadState { AVAILABLE, NOT_INSTALLED, LOAD_FAILED }
+
+    interface LibraryLoader
+    {
+        void loadLibrary(String name);
+        void load(String path);
+    }
+
+    record LoadResult(LoadState state, boolean fromPath) {}
 
     static
     {
-        boolean loaded = false;
-        boolean loadedFromPath = false;
         Path libraryPath = resolveSDRplayLibraryPath();
         LIBRARY_PATH = libraryPath != null ? libraryPath : Path.of("");
+        LoadResult result = load(libraryPath, Files::isRegularFile, new LibraryLoader()
+        {
+            @Override public void loadLibrary(String name) { System.loadLibrary(name); }
+            @Override public void load(String path) { System.load(path); }
+        });
+        LOAD_STATE = result.state();
+        LOADED = LOAD_STATE == LoadState.AVAILABLE;
+        LOADED_FROM_PATH = result.fromPath();
+    }
 
+    /** Testable loading policy; this loads the library only, never opens the API or a radio. */
+    static LoadResult load(Path libraryPath, Predicate<Path> isFile, LibraryLoader loader)
+    {
         try
         {
-            System.loadLibrary(SDRPLAY_API_LIBRARY_NAME);
+            loader.loadLibrary(SDRPLAY_API_LIBRARY_NAME);
             mLog.info("SDRPlay API library loaded by name [" + SDRPLAY_API_LIBRARY_NAME + "]");
-            loaded = true;
+            return new LoadResult(LoadState.AVAILABLE, false);
         }
-        catch(Throwable t)
+        catch(UnsatisfiedLinkError | SecurityException failure)
         {
-            if(libraryPath != null && Files.isRegularFile(libraryPath))
+            if(libraryPath != null && isFile.test(libraryPath))
             {
                 try
                 {
-                    System.load(libraryPath.toString());
+                    loader.load(libraryPath.toString());
                     mLog.info("SDRPlay API library loaded by path [" + libraryPath + "]");
-                    loaded = true;
-                    loadedFromPath = true;
+                    return new LoadResult(LoadState.AVAILABLE, true);
                 }
-                catch(Throwable t2)
+                catch(UnsatisfiedLinkError | SecurityException pathFailure)
                 {
                     mLog.warn("SDRPlay API native library was found but could not be loaded from [" + libraryPath + "]");
-                    mLog.debug("SDRPlay API native library load failure", t2);
+                    mLog.debug("SDRPlay API native library load failure", pathFailure);
+                    return new LoadResult(LoadState.LOAD_FAILED, false);
                 }
             }
-            else if(libraryPath != null)
+            else if(isMissingLibrary(failure))
             {
-                mLog.info("SDRPlay API native library not found at: " + libraryPath);
-                mLog.debug("SDRPlay API native library was not available by name", t);
+                mLog.info("SDRplay support is not installed; it is only needed for SDRplay RSP radios.");
+                return new LoadResult(LoadState.NOT_INSTALLED, false);
             }
             else
             {
-                mLog.info("SDRPlay API native library path is unavailable for this operating system");
-                mLog.debug("SDRPlay API native library was not available by name", t);
+                mLog.warn("SDRplay support could not be loaded. Check the SDRplay API installation.");
+                mLog.debug("SDRPlay API native library load failure", failure);
+                return new LoadResult(LoadState.LOAD_FAILED, false);
             }
         }
+    }
 
-        LOADED = loaded;
-        LOADED_FROM_PATH = loadedFromPath;
+    private static boolean isMissingLibrary(Throwable failure)
+    {
+        return failure instanceof UnsatisfiedLinkError && failure.getMessage() != null &&
+            failure.getMessage().startsWith("no " + SDRPLAY_API_LIBRARY_NAME + " in java.library.path");
     }
 
     /**
@@ -132,7 +159,7 @@ public class SDRPlayLibraryHelper
             }
         }
 
-        mLog.error("Unrecognized operating system.  Cannot identify sdrplay api library path");
+        mLog.debug("No platform-specific SDRplay API library path is configured for this operating system");
         return null;
     }
 }

@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
 import java.util.prefs.Preferences;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -52,6 +53,7 @@ public final class SetupWizard extends JDialog
     private final JTextArea danger = text("");
     private final JTextArea console = text("");
     private JScrollPane diagnostics;
+    private final JButton detailsToggle = new JButton("Show details");
     private final JProgressBar meter = new JProgressBar();
     private final JButton back = new JButton("Back");
     private final JButton next = new JButton("Continue");
@@ -70,6 +72,10 @@ public final class SetupWizard extends JDialog
     private boolean rrVerified;
     private boolean administratorConfigured;
     private boolean vaultDeferred;
+    private boolean editJmbe;
+    private boolean jmbeInstalled;
+    private boolean themeRefreshPending;
+    private BooleanSupplier canContinue = () -> true;
     private Runnable accept = () -> {};
     private Runnable cancellation;
     private long generation;
@@ -143,7 +149,7 @@ public final class SetupWizard extends JDialog
                     wizard.showPage(wizard.initialStep());
                 }
                 else wizard.showPage(SetupStep.SOURCE);
-                if(showInspectionFailure) wizard.fail("The installed database could not be validated. Use Inspect required changes to retry. No files have been changed.");
+                if(showInspectionFailure) wizard.fail("We couldn’t check your saved settings. Choose Check my settings to try again. No files have been changed.");
                 wizard.setVisible(true);
             });
             return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels) : null;
@@ -171,32 +177,37 @@ public final class SetupWizard extends JDialog
         ownsLock = existingLock == null;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { leave(); } });
-        JPanel shell = new JPanel(new BorderLayout(20, 0));
+        JPanel shell = new JPanel(new BorderLayout(28, 0));
         JPanel rail = new JPanel(new BorderLayout());
         rail.setPreferredSize(new Dimension(235, 600));
         rail.add(new RadioIllustration(), BorderLayout.NORTH);
-        JPanel lineage = new JPanel(new GridLayout(0, 1, 0, 4));
-        lineage.setBorder(new EmptyBorder(12, 12, 12, 8));
+        JPanel lineage = new JPanel(new GridLayout(0, 1, 0, 5));
+        lineage.setBorder(new EmptyBorder(16, 12, 16, 12));
         for(SetupStep id: SetupStep.values())
         {
             JButton button = new JButton(id.title());
             button.setHorizontalAlignment(SwingConstants.LEFT);
+            button.setMargin(new Insets(8,12,8,12));
+            button.putClientProperty("JButton.buttonType", "roundRect");
+            button.addPropertyChangeListener("UI",e -> refreshNavigationTheme());
             button.addActionListener(e -> { if(!busy && preferences != null) showPage(id); });
             steps.put(id, button); lineage.add(button);
         }
         rail.add(lineage, BorderLayout.CENTER);
         shell.add(rail, BorderLayout.WEST);
-        JPanel body = new JPanel(new BorderLayout(8, 14));
-        body.setBorder(new EmptyBorder(24, 0, 20, 24));
-        title.setFont(title.getFont().deriveFont(Font.BOLD, 25f));
+        JPanel body = new JPanel(new BorderLayout(8, 22));
+        body.setBorder(new EmptyBorder(30, 0, 22, 30));
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 27f));
         body.add(title, BorderLayout.NORTH);
         page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
+        page.setBorder(new EmptyBorder(0,0,8,8));
         JScrollPane scroll = new JScrollPane(page);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getVerticalScrollBar().setUnitIncrement(18);
         body.add(scroll, BorderLayout.CENTER);
         JPanel footer = new JPanel();
         footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
+        footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1,0,0,0,WizardStyles.border()),new EmptyBorder(16,0,0,0)));
         danger.setForeground(new Color(185, 38, 52));
         danger.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(185,38,52)),
             new EmptyBorder(8,8,8,8)));
@@ -211,11 +222,22 @@ public final class SetupWizard extends JDialog
         log.setPreferredSize(new Dimension(450, 80));
         log.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
         footer.add(log);
+        WizardStyles.quiet(detailsToggle);
+        detailsToggle.setAlignmentX(Component.LEFT_ALIGNMENT);
+        detailsToggle.setVisible(false);
+        detailsToggle.addActionListener(e -> {
+            diagnostics.setVisible(!diagnostics.isVisible());
+            detailsToggle.setText(diagnostics.isVisible() ? "Hide details" : "Show details");
+            footer.revalidate();
+        });
+        footer.add(detailsToggle);
         JPanel navigation = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         navigation.setAlignmentX(Component.LEFT_ALIGNMENT);
         exit.addActionListener(e -> leave());
         back.addActionListener(e -> { if(!busy && step.ordinal() > 0) showPage(SetupStep.values()[step.ordinal()-1]); });
         next.addActionListener(e -> { if(!busy) attempt(accept); });
+        WizardStyles.primary(next); WizardStyles.secondary(back);
+        WizardStyles.quiet(exit); WizardStyles.secondary(cancel);
         getRootPane().setDefaultButton(next);
         next.setMnemonic(java.awt.event.KeyEvent.VK_N);
         back.setMnemonic(java.awt.event.KeyEvent.VK_B);
@@ -226,7 +248,9 @@ public final class SetupWizard extends JDialog
         });
         navigation.add(exit); navigation.add(cancel); navigation.add(back); navigation.add(next);
         footer.add(navigation);
-        footer.add(text("Exit preserves accepted settings. Password drafts are never saved."));
+        JTextArea exitNote=text("You can exit and return later. Completed steps are saved.");
+        exitNote.addPropertyChangeListener("UI",e -> exitNote.setForeground(WizardStyles.muted()));
+        exitNote.setForeground(WizardStyles.muted()); footer.add(exitNote);
         body.add(footer, BorderLayout.SOUTH); shell.add(body, BorderLayout.CENTER);
         setContentPane(shell);
         Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
@@ -331,8 +355,10 @@ public final class SetupWizard extends JDialog
         step = id; generation++;
         page.removeAll(); danger.setVisible(false);
         diagnostics.setVisible(false);
-        title.setText((id.ordinal()+1) + ". " + id.title());
+        detailsToggle.setVisible(false); detailsToggle.setText("Show details");
+        title.setText(id.title());
         next.setText(id == SetupStep.REVIEW ? "Finish & launch" : "Continue");
+        canContinue = () -> true;
         accept = () -> completeAndContinue();
         switch(id)
         {
@@ -354,53 +380,66 @@ public final class SetupWizard extends JDialog
     {
         if(preferences != null)
         {
-            paragraph("Your selected database is installed. Going Back does not change or replace it. After setup, use File → Import SQLite Database for explicitly confirmed replacement.");
-            paragraph(database.toString());
+            notice("Your settings are in place", "Continue using this installation’s saved settings. You can review or change them in the following steps.", true);
+            details("Where my settings are saved", database + "\n\nTo replace this profile later, use File → Import SQLite Database from the main application. Returning to this page never replaces your data.");
             if(!migrationReport.isBlank())
             {
-                paragraph(migrationReport);
+                details("View the full import report",migrationReport);
                 button("Copy Message", () -> Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(migrationReport), null));
             }
             return;
         }
         if(Files.isRegularFile(database))
         {
-            paragraph("This installation needs database inspection or an upgrade. The Application Migrator inspects first, retains a safety backup, changes only a staged copy, and installs it only after validation.");
-            button("Inspect required changes", () -> job("Inspecting database…", null,
+            paragraph("Your settings were saved by an earlier version. We’ll check them before making any changes.");
+            notice("Your existing settings are protected", "The update keeps a recovery copy and checks the updated data before using it.", false);
+            Runnable inspect = () -> job("Checking your saved settings…", null,
                 () -> ApplicationMigrationService.readMigrationPlan(database), plan -> {
-                    paragraph(ApplicationMigrationService.describePlan(plan));
-                    if(plan.source().requiresMigration()) button("Back up and upgrade / Retry", () -> migrate(null, false, false, plan));
-                    else button("Resume installed profile", () -> job("Loading installed profile…", null,
-                        () -> { initialize(false); return true; }, ignored -> showPage(initialStep())));
+                    page.removeAll();
+                    paragraph("Your saved settings can be used with this version.");
+                    migrationDetails(plan);
+                    next.setText(plan.source().requiresMigration() ? "Update my settings" : "Continue setup");
+                    accept = plan.source().requiresMigration() ? () -> migrate(null, false, false, plan) :
+                        () -> job("Loading your settings…", null, () -> { initialize(false); return true; }, ignored -> showPage(initialStep()));
                     page.revalidate();
-                }));
-            next.setEnabled(false); accept = () -> {};
+                });
+            next.setText("Check my settings"); accept = inspect;
             return;
         }
-        paragraph("Choose a starting point. Your source installation and files will remain unchanged.");
+        paragraph("Welcome! Is this your first time using sdrtrunk-vce, or are you bringing settings from an older installation?");
         ButtonGroup group = new ButtonGroup();
-        JRadioButton fresh = card(group, "Start fresh — recommended for new users", "Create an empty profile, then set up access, digital audio and performance.", true);
-        JRadioButton folder = card(group, "Copy a previous VCE installation / data folder", "Copy configuration plus the vault, JMBE library and optional modules. Supported portable paths are remapped to this destination. Recordings and other external output files are not copied.", false);
-        JRadioButton sqlite = card(group, "Import a SQLite database only", "Copy only data inside the .sqlite file. No vault, JMBE JAR or modules are copied. Stored paths are preserved, not remapped, and may still point to old output folders.", false);
-        JRadioButton xml = card(group, "Import legacy XML", "Import supported configuration from an older XML playlist. This does not recover newer SQLite-only changes or external files.", false);
-        JTextField source = field("Source folder or file", "");
-        button("Browse…", () -> {
-            JFileChooser chooser = new JFileChooser();
-            chooser.setFileSelectionMode(folder.isSelected() ? JFileChooser.DIRECTORIES_ONLY : JFileChooser.FILES_ONLY);
-            if(chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) source.setText(chooser.getSelectedFile().toString());
-        });
+        WizardChoiceCard fresh = choice(group, "Start fresh — recommended for new users", "Begin with no saved channels. We’ll help you set up digital voice, access and decoding performance.", true);
+        WizardChoiceCard folder = choice(group, "Copy a previous VCE installation / data folder", "Bring your saved settings and digital voice tools into this installation. Your old installation stays unchanged; recordings and logs are not copied.", false);
+        WizardChoiceCard sqlite = choice(group, "Import a SQLite database only", "Use settings from a .sqlite file. Extra files such as digital voice tools and your encryption vault are not included. Output folders may still point to the old location.", false);
+        WizardChoiceCard xml = choice(group, "Import legacy XML", "Bring in channels and other supported settings from an older XML playlist. Use SQLite or an installation folder if it has newer changes.", false);
+        JPanel folderDetails=stack(), sqliteDetails=stack(), xmlDetails=stack();
+        JTextField folderPath=sourceField(folderDetails,"Previous installation or data folder",true);
+        JTextField sqlitePath=sourceField(sqliteDetails,"SQLite database file",false);
+        JTextField xmlPath=sourceField(xmlDetails,"XML playlist file",false);
         List<Path> nearby = PreviousBuildLocator.discover();
         if(!nearby.isEmpty())
         {
             JComboBox<Path> locations = new JComboBox<>(nearby.toArray(Path[]::new));
-            append(locations); button("Use nearby installation", () -> { folder.setSelected(true); source.setText(locations.getSelectedItem().toString()); });
+            locations.setMaximumSize(new Dimension(Integer.MAX_VALUE,38));
+            locations.getAccessibleContext().setAccessibleName("Nearby installations");
+            addTo(folderDetails,text("We found these nearby installations:")); addTo(folderDetails,locations);
+            addTo(folderDetails,action("Use this installation", () -> folderPath.setText(locations.getSelectedItem().toString())));
         }
         LegacyXmlConfigurationImporter.discoverPlaylist(io.github.dsheirer.portable.PortableApplicationPaths.getLegacyApplicationRoot()).ifPresent(found ->
-            button("Use found legacy XML", () -> { xml.setSelected(true); source.setText(found.toString()); }));
-        if(options.upgradeData() != null) { source.setText(options.upgradeData().toString()); (Files.isDirectory(options.upgradeData()) ? folder : sqlite).setSelected(true); }
-        if(options.importXml() != null) { source.setText(options.importXml().toString()); xml.setSelected(true); }
+            addTo(xmlDetails,action("Use the XML playlist we found", () -> xmlPath.setText(found.toString()))));
+        folder.setDetails(folderDetails); sqlite.setDetails(sqliteDetails); xml.setDetails(xmlDetails);
+        Runnable selectionChanged = () -> { next.setText(fresh.isSelected() ? "Start setup" : xml.isSelected() ? "Import XML" : "Review import"); page.revalidate(); page.repaint(); };
+        for(var item:List.of(fresh,folder,sqlite,xml)) item.radio().addItemListener(e -> selectionChanged.run());
+        if(options.upgradeData() != null) {
+            boolean directory=Files.isDirectory(options.upgradeData());
+            (directory ? folderPath : sqlitePath).setText(options.upgradeData().toString());
+            (directory ? folder : sqlite).radio().setSelected(true);
+        }
+        if(options.importXml() != null) { xmlPath.setText(options.importXml().toString()); xml.radio().setSelected(true); }
+        selectionChanged.run();
         accept = () -> {
             if(fresh.isSelected()) { migrate(null, true, false, null); return; }
+            JTextField source=folder.isSelected() ? folderPath : sqlite.isSelected() ? sqlitePath : xmlPath;
             if(source.getText().isBlank()) throw new IllegalArgumentException("Choose the source folder or file first.");
             Path input = Path.of(source.getText());
             if(xml.isSelected()) { migrate(input, false, true, null); return; }
@@ -408,12 +447,13 @@ public final class SetupWizard extends JDialog
             if(folder.isSelected() != selection.portableProfile()) throw new IllegalArgumentException("The selected path does not match the chosen folder/file import scope.");
             job("Inspecting source…", null, () -> ApplicationMigrationService.readMigrationPlan(selection.database()), plan -> {
                 page.removeAll();
-                paragraph("Confirm source: " + selection.path());
-                paragraph(ApplicationMigrationService.describePlan(plan));
-                selectedScope = selection.portableProfile() ? "Full folder: portable assets copied and supported paths remapped." : "SQLite only: external assets not copied; stored output paths unchanged.";
-                paragraph(selectedScope);
-                button("Confirm import", () -> migrate(input, false, false, plan));
+                notice("Ready to bring your settings over", "Your previous installation will stay unchanged. We’ll check the copied settings before using them.", false);
+                paragraph("Import from: " + selection.path());
+                selectedScope = selection.portableProfile() ? "Your settings, encryption vault, digital voice library and optional tools will be copied when available. Folders inside the old data folder will point to this installation. Recordings and logs are not copied; shared folders outside it stay unchanged." : "Only the database contents will be copied. Your vault, digital voice library and other files stay where they are. Saved output folders will not be changed — review them before starting reception.";
+                notice("What will be carried over",selectedScope,false);
+                migrationDetails(plan);
                 button("Choose a different source", () -> showPage(SetupStep.SOURCE));
+                next.setText("Confirm import");
                 accept = () -> migrate(input, false, false, plan);
                 page.revalidate();
             });
@@ -462,7 +502,7 @@ public final class SetupWizard extends JDialog
     private void administratorPage()
     {
         boolean exists = administratorConfigured;
-        paragraph(exists ? "Your administrator account is carried over. Leave the fields blank to keep it. Changing its password requires the current password; otherwise use the established account recovery workflow." : "Create the administrator password used to manage this receiver, including aliases. Use 7–256 characters.");
+        paragraph(exists ? "Your administrator account is already set up. Leave these fields blank to keep your password. To change it, enter your current password first." : "Choose a password to manage your channels, aliases and receiver settings. Use at least 7 characters (up to 256).");
         JPasswordField current = exists ? password("Current administrator password") : new JPasswordField();
         JPasswordField value = password("New administrator password");
         JPasswordField confirmation = password("Confirm new password");
@@ -493,16 +533,22 @@ public final class SetupWizard extends JDialog
     private void webPage()
     {
         var app = preferences.getApplicationPreference();
-        paragraph("The web interface is required for alias editing. HTTPS protects sign-in and administrative access.");
-        if(webAdjusted) paragraph("Adjusted during import/upgrade: your disabled web server is now enabled for this computer only. Network-facing access was not enabled.");
-        else if(progress.get(step) == NEEDS_ATTENTION) paragraph("Review required: web access was adjusted or did not pass its last startup check. Confirm the effective settings below.");
+        paragraph("Use the web interface to edit aliases and manage your receiver in a browser. Choose where you want to access it.");
+        if(webAdjusted) notice("Web access is now available on this computer", "Your previous installation had web access turned off. We’ve enabled it locally so you can edit aliases. Other devices still cannot connect.", false);
+        else if(progress.get(step) == NEEDS_ATTENTION) notice("Please review your web access", "These settings changed or could not be started last time. Check them before continuing.", false);
         ButtonGroup group = new ButtonGroup();
-        card(group, "This computer only — recommended", "Listen on localhost. Other computers cannot connect to this listener.", !app.isStatsWebServerAnyIpEnabled());
-        JRadioButton network = card(group, "Other devices", "Listen on network interfaces reachable through the host firewall. This is not a guaranteed LAN-only boundary. No firewall rules or router ports will be opened.", app.isStatsWebServerAnyIpEnabled());
-        JSpinner port = new JSpinner(new SpinnerNumberModel(app.getStatsWebServerPort(),1024,65535,1));
-        labelled("HTTPS port (default 8090)", port);
-        paragraph("The current HTTPS certificate policy is preserved. The final page tests the listener and reports certificate or port conflicts before setup completes.");
+        card(group, "This computer only — recommended", "Open the receiver in a browser on this computer. Other devices cannot connect.", !app.isStatsWebServerAnyIpEnabled());
+        WizardChoiceCard networkChoice = choice(group, "Other devices", "Also connect from a phone, tablet or another computer that can reach this receiver.", app.isStatsWebServerAnyIpEnabled());
+        JPanel networkDetails=stack();
+        addTo(networkDetails,text("Your firewall controls who can reach this computer. This choice is not limited to your home network; we do not change firewall rules or open router ports."));
+        networkChoice.setDetails(networkDetails);
+        JRadioButton network=networkChoice.radio();
+        JSpinner port = WizardStyles.integerSpinner(app.getStatsWebServerPort(),1024,65535);
+        labelled("Web port", port);
+        paragraph("8090 works for most installations. Change it only if another application already uses this port.");
+        details("About secure access", "Connections use HTTPS to protect your sign-in. Your existing certificate settings are kept. We’ll check that web access works before you finish setup.");
         accept = () -> {
+            commitNumber(port,"Enter a port from 1024 to 65535.");
             boolean changed = !app.isStatsWebServerHttpsEnabled() || app.getStatsWebServerPort() != (Integer)port.getValue() || app.isStatsWebServerAnyIpEnabled() != network.isSelected();
             app.setStatsWebServerHttpsEnabled(true);
             app.setStatsWebServerPort((Integer)port.getValue());
@@ -517,50 +563,84 @@ public final class SetupWizard extends JDialog
     private void jmbePage()
     {
         Path library = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-        paragraph("JMBE provides digital voice decoding. A saved path counts as complete only when the library is present and compatible.");
         boolean compatible = JmbeLibraryMetadata.isSupported(library);
-        paragraph(compatible ? "Compatible existing library: " + library : "No compatible library has been confirmed.");
-        if(compatible) button("Keep existing library", () -> { progress.set(step, COMPLETE); completeAndContinue(); });
-        JCheckBox consent = new JCheckBox("I agree to download and compile JMBE on this computer.");
-        paragraph("JMBE source is provided for educational use. Voice-codec algorithms may be subject to patents or other restrictions in your jurisdiction. Review the project's licensing and applicable restrictions before proceeding. Creation downloads a compiler/creator and runs its build tools.");
-        append(consent);
-        button("Create JMBE / Retry", () -> {
-            if(!consent.isSelected()) throw new IllegalArgumentException("Consent is required before downloading and compiling JMBE.");
-            AtomicBoolean stopped = new AtomicBoolean();
-            java.util.concurrent.atomic.AtomicReference<JmbeCreator> creator = new java.util.concurrent.atomic.AtomicReference<>();
-            job("Finding JMBE creator…", () -> { stopped.set(true); if(creator.get() != null) creator.get().cancel(); }, () -> {
-                var release = GitHub.getLatestRelease(JmbeCreator.GITHUB_JMBE_RELEASES_URL);
-                if(stopped.get()) throw new InterruptedException();
-                if(release == null) throw new IllegalStateException("JMBE release lookup failed. Check the connection and retry.");
-                Path target = root.resolve("jmbe").resolve("jmbe-" + release.getVersion() + ".jar");
-                JmbeCreator task = new JmbeCreator(release, target); creator.set(task);
-                if(stopped.get()) task.cancel();
-                Path installed = task.run(message -> { operation = message; output.accept(message); });
-                preferences.getJmbeLibraryPreference().installLibrary(installed);
-                return installed;
-            }, installed -> { progress.set(step, COMPLETE); persist(); showPage(step); });
-        });
-        button("Choose existing JMBE library…", () -> {
-            JFileChooser chooser = new JFileChooser();
-            if(chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
-            Path chosen = chooser.getSelectedFile().toPath();
-            job("Validating and installing JMBE…", null, () -> {
-                if(!JmbeLibraryMetadata.isSupported(chosen)) throw new IllegalArgumentException("That file is not a compatible JMBE library.");
-                preferences.getJmbeLibraryPreference().installLibrary(chosen); return true;
-            }, ignored -> { progress.set(step, COMPLETE); persist(); showPage(step); });
-        });
+        if(compatible && !editJmbe)
+        {
+            notice("Digital voice is ready", jmbeInstalled ? "JMBE was installed successfully. You can now listen to supported digital voice channels. Choose Continue to move on." : "A compatible JMBE library is already available. You’re ready to listen to supported digital voice channels.",true);
+            details("Installed library details", "Version: " + JmbeLibraryMetadata.getVersion(library) + "\nLocation: " + library);
+            button("Change digital voice setup…", () -> { editJmbe=true; showPage(step); });
+            accept = () -> { progress.set(step,progress.get(step)==CARRIED_OVER ? CARRIED_OVER : COMPLETE); completeAndContinue(); };
+            return;
+        }
+        paragraph("Want to hear digital voice? JMBE adds audio support for systems such as P25 and DMR. We recommend setting it up now; analog listening does not need it.");
+        ButtonGroup group=new ButtonGroup();
+        WizardChoiceCard create=choice(group,"Set up digital voice — recommended", "We’ll download the JMBE tools, build the voice library and install it for you. This may take a few minutes and needs an internet connection.",true);
+        JPanel createDetails=stack();
+        addTo(createDetails,text("JMBE source is provided for educational use. Voice-codec algorithms may be subject to patents or other restrictions in your jurisdiction. Review the project’s licensing and applicable restrictions before proceeding. Setup downloads and runs build tools on this computer."));
+        JCheckBox consent = new JCheckBox("I agree to download and build JMBE on this computer.");
+        consent.setFont(text("").getFont()); addTo(createDetails,consent); create.setDetails(createDetails);
+        WizardChoiceCard existing=choice(group,"Use a JMBE file I already have", "Choose a compatible JMBE .jar file. We’ll check it and copy it into this installation.",false);
+        JPanel existingDetails=stack();
+        JTextField selectedFile=sourceField(existingDetails,"JMBE library file",false); existing.setDetails(existingDetails);
+        if(compatible) button("Keep current setup", () -> { editJmbe=false; progress.set(step,COMPLETE); if(persist()) showPage(step); });
         defer("Set up later");
-        accept = () -> { if(!progress.isDone(step)) throw new IllegalArgumentException("Create or select a compatible library, or choose Set up later."); completeAndContinue(); };
+        Runnable changed=() -> {
+            next.setText(create.isSelected() ? "Set up digital voice" : "Use this file");
+            canContinue=() -> create.isSelected() ? consent.isSelected() : !selectedFile.getText().isBlank();
+            updateNavigation();
+        };
+        create.radio().addItemListener(e -> changed.run()); existing.radio().addItemListener(e -> changed.run());
+        consent.addItemListener(e -> changed.run()); changedText(selectedFile,changed);
+        accept = () -> {
+            if(create.isSelected())
+            {
+                if(!consent.isSelected()) throw new IllegalArgumentException("Please agree to the download and build before continuing.");
+                createDigitalVoice();
+            }
+            else
+            {
+                Path chosen=Path.of(selectedFile.getText().trim());
+                job("Checking your JMBE file…", null, () -> {
+                    preferences.getJmbeLibraryPreference().installLibrary(chosen); return true;
+                }, ignored -> digitalVoiceReady());
+            }
+        };
+        changed.run();
+    }
+
+    private void createDigitalVoice()
+    {
+        AtomicBoolean stopped=new AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<JmbeCreator> creator=new java.util.concurrent.atomic.AtomicReference<>();
+        job("Finding the digital voice tools…", () -> { stopped.set(true); if(creator.get()!=null) creator.get().cancel(); }, () -> {
+            var release=GitHub.getLatestRelease(JmbeCreator.GITHUB_JMBE_RELEASES_URL);
+            if(stopped.get()) throw new InterruptedException();
+            if(release==null) throw new IllegalStateException("Release lookup failed");
+            Path target=root.resolve("jmbe").resolve("jmbe-"+release.getVersion()+".jar");
+            JmbeCreator task=new JmbeCreator(release,target); creator.set(task);
+            if(stopped.get()) task.cancel();
+            Path installed=task.run(message -> {
+                String stage=JmbeSetupMessages.stage(message);
+                if(stage!=null) operation=stage;
+                output.accept(message);
+            });
+            preferences.getJmbeLibraryPreference().installLibrary(installed); return true;
+        }, ignored -> digitalVoiceReady());
+    }
+    private void digitalVoiceReady()
+    {
+        jmbeInstalled=true; editJmbe=false; progress.set(step,COMPLETE);
+        if(persist()) showPage(step);
     }
 
     private void radioReferencePage()
     {
         var rr = preferences.getRadioReferencePreference();
-        paragraph("RadioReference is optional. Stored credentials are carried over without revealing your password. Storing credentials does not verify the connection or subscription.");
+        paragraph("Have a RadioReference account? Save it here to look up radio systems and import channels. You can also do this later.");
         JTextArea verification = text(rrVerified ? "Connection verified in this session." :
             present(rr.getUserName()) && present(rr.getPassword()) ?
                 (progress.get(step) == CARRIED_OVER ? "Carried over" : "Stored credentials") + " — connection not tested in this session." : "No complete stored credentials.");
-        append(verification);
+        append(verification); append(Box.createVerticalStrut(20));
         JTextField username = field("RadioReference username", rr.getUserName() == null ? "" : rr.getUserName());
         JPasswordField secret = password("Password (leave blank to retain the stored password)");
         javax.swing.event.DocumentListener edited = new javax.swing.event.DocumentListener()
@@ -571,7 +651,7 @@ public final class SetupWizard extends JDialog
             public void changedUpdate(javax.swing.event.DocumentEvent e) { changed(); }
         };
         username.getDocument().addDocumentListener(edited); secret.getDocument().addDocumentListener(edited);
-        button("Test connection / Retry", () -> {
+        button("Test connection", () -> {
             String name = username.getText().trim();
             char[] entered = secret.getPassword();
             char[] credential = entered.length > 0 ? entered : (rr.getPassword() == null ? new char[0] : rr.getPassword().toCharArray());
@@ -608,36 +688,45 @@ public final class SetupWizard extends JDialog
         var app = preferences.getApplicationPreference();
         boolean initiallyOff = !app.isStatsLoggingEnabled();
         boolean storedDetailed = app.isStatsDetailedHistoryEnabled();
-        paragraph("Statistics and activity history are separate from audio recordings and ordinary application log files. Imported Off settings are preserved.");
+        paragraph("Choose how much listening activity to keep. These settings do not change your audio recordings or application log files.");
         ButtonGroup group = new ButtonGroup();
         JRadioButton off = card(group,"Off", "Do not collect statistics or detailed activity history.",!app.isStatsLoggingEnabled());
-        card(group,"Summary statistics — recommended", "Collect compact summaries. Detailed history stays off.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
-        JRadioButton detailed = card(group,"Summaries plus detailed history", "Also retain detailed activity under the existing retention limits. This uses additional database space.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
-        JSpinner days = new JSpinner(new SpinnerNumberModel(app.getStatsLoggingRetentionDays(),1,365,1));
-        labelled("Time-based data retention in days (default 30)",days);
+        card(group,"Summary statistics — recommended", "Keep useful activity totals without a detailed event-by-event history.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
+        JRadioButton detailed = card(group,"Summaries plus detailed history", "Also keep individual activity events for troubleshooting and review. This uses more storage.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
+        JSpinner days = WizardStyles.integerSpinner(app.getStatsLoggingRetentionDays(),1,365);
+        JPanel retention=stack();
+        addTo(retention,text("Keep time-based activity for this many days (30 recommended):"));
+        days.getAccessibleContext().setAccessibleName("Activity retention in days"); addTo(retention,days);
+        append(retention); retention.setVisible(!off.isSelected());
+        off.addItemListener(e -> { retention.setVisible(!off.isSelected()); page.revalidate(); });
         accept = () -> {
+            if(!off.isSelected()) commitNumber(days,"Enter a number of days from 1 to 365.");
+            int retentionDays=off.isSelected() ? app.getStatsLoggingRetentionDays() : (Integer)days.getValue();
             //Reviewing an imported Off choice must not rewrite its dormant detailed-history preference.
             boolean saveDetailed = initiallyOff && off.isSelected() ? storedDetailed : detailed.isSelected();
-            boolean changed = app.isStatsLoggingEnabled() == off.isSelected() || app.isStatsDetailedHistoryEnabled() != saveDetailed || app.getStatsLoggingRetentionDays() != (Integer)days.getValue();
+            boolean changed = app.isStatsLoggingEnabled() == off.isSelected() || app.isStatsDetailedHistoryEnabled() != saveDetailed || app.getStatsLoggingRetentionDays() != retentionDays;
             app.setStatsLoggingEnabled(!off.isSelected());
             app.setStatsDetailedHistoryEnabled(saveDetailed);
-            app.setStatsLoggingRetentionDays((Integer)days.getValue()); if(changed) progress.set(step, COMPLETE); completeAndContinue();
+            app.setStatsLoggingRetentionDays(retentionDays); if(changed) progress.set(step, COMPLETE); completeAndContinue();
         };
     }
 
     private void hardwarePage()
     {
-        paragraph("Physical tuner discovery only. Detected does not mean opened, configured or tested. No tuning, configuration changes or channel startup occur here. Missing hardware is not a setup error.");
-        JTextArea inventory = text("Scanning…"); append(inventory);
+        paragraph("Let’s see which radios are connected. We’re only looking for devices — nothing will start receiving yet.");
+        JPanel inventory=stack(); append(inventory);
+        addTo(inventory,text("Looking for connected radios…"));
         Runnable scan = () -> {
             AtomicBoolean stopped = new AtomicBoolean();
-            job("Discovering physical tuners…", () -> stopped.set(true),
+            job("Looking for connected radios…", () -> stopped.set(true),
                 () -> new TunerHardwareDiscovery().scan(stopped::get), result -> {
-                    StringBuilder description = new StringBuilder();
-                    for(var device: result.devices()) description.append("Detected: ").append(device.model()).append(" — ").append(device.identity()).append('\n');
-                    if(result.devices().isEmpty()) description.append("No physical tuners detected. You can connect hardware later.\n");
-                    for(String error: result.errors()) description.append(error).append('\n');
-                    inventory.setText(description.toString());
+                    inventory.removeAll();
+                    for(var device: result.devices()) addTo(inventory,noticePanel("Detected · " + device.model(),device.identity() == null ? "Connected radio" : device.identity(),true));
+                    if(result.devices().isEmpty()) addTo(inventory,noticePanel("No radios found yet", "That’s okay — you can connect one later. If a radio is already plugged in, check its cable and driver, then choose Rescan.",false));
+                    for(String info:result.notices()) addTo(inventory,noticePanel("Optional radio support",info,false));
+                    for(String error:result.errors()) addTo(inventory,noticePanel("A radio could not be checked",error,false));
+                    addTo(inventory,text("Detected means the radio was found, not that reception has been tested. You’ll choose how to use it after setup."));
+                    inventory.revalidate(); inventory.repaint();
                     progress.set(step, stopped.get() ? DEFERRED : COMPLETE);
                     if(persist() && stopped.get()) showPage(nextStep());
                 });
@@ -651,28 +740,33 @@ public final class SetupWizard extends JDialog
     {
         CalibrationManager manager = CalibrationManager.getInstance(preferences);
         int pending = manager.getUncalibrated().size();
-        JTextArea warning = text("Close other applications before benchmarking. Pause downloads, games, backups and other CPU-heavy work; leave this wizard open. Background activity can distort the results.");
-        warning.setFont(warning.getFont().deriveFont(Font.BOLD));
-        warning.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(198,135,48),2),new EmptyBorder(12,12,12,12)));
-        append(warning); append(Box.createVerticalStrut(16));
-        paragraph(pending + " pending tests · " + (manager.getCalibrationTypes().size()-pending) + " valid results reused. " + manager.getPendingReason());
-        ButtonGroup group = new ButtonGroup();
-        JRadioButton now = card(group,"Benchmark now — recommended", "Choose the fastest compatible DSP implementation for this computer. Only outstanding tests run; completed valid results are preserved on retry.",true);
-        card(group,"Skip this time", "Use available/default implementations for now. Pending tests can be offered at a later launch.",false);
-        button("Run benchmark / Retry", this::benchmark);
+        if(pending==0)
+        {
+            notice("Decoding is optimized", "The best available decoding methods have been saved for this computer. These choices will be used when you start listening.",true);
+            paragraph(manager.getCalibrationTypes().size()+" saved checks are up to date. There’s nothing else to run.");
+            accept=this::completeAndContinue;
+            return;
+        }
+        paragraph("Help sdrtrunk-vce decode signals efficiently on this computer. We’ll compare a few processing methods and save the fastest supported choices. This is not a computer score, and it won’t change your channels.");
+        notice("Before you start", "Close other applications and pause downloads, games and backups. Leave this wizard open. A quiet computer gives more reliable results.",false);
+        paragraph(pending + " checks to run · " + (manager.getCalibrationTypes().size()-pending) + " saved checks reused");
+        details("Why are these checks needed?", manager.getPendingReason() + "\n\nOnly new, changed or missing checks run. Valid results are kept if you stop or retry. A different processor or Java version may require all checks again.");
+        next.setText(progress.get(step)==NEEDS_ATTENTION ? "Try remaining checks" : "Optimize now");
         defer("Skip this time");
-        accept = () -> { if(pending == 0) completeAndContinue(); else if(now.isSelected()) benchmark(); else deferCurrent(); };
+        paragraph("Recommended now. You can skip this time and use the available defaults; we’ll offer unfinished checks on a later launch.");
+        accept = this::benchmark;
     }
 
     private void benchmark()
     {
         CalibrationManager manager = CalibrationManager.getInstance(preferences);
         CalibrationRunner runner = new CalibrationRunner();
-        job("Preparing benchmark…",runner::cancel,() -> runner.run(manager.getUncalibrated(), value -> {
-            completed=value.completed(); total=value.total(); operation=value.operation();
+        job("Preparing to optimize decoding…",runner::cancel,() -> runner.run(manager.getUncalibrated(), value -> {
+            completed=value.completed(); total=value.total();
+            operation=completed==total ? "Saving your decoding choices…" : "Checking decoding methods · " + (completed+1) + " of " + total;
         },output), result -> {
-            if(result.cancelled()) { progress.set(step,DEFERRED); persist(); showPage(step); return; }
-            if(result.failed()>0) { progress.set(step,NEEDS_ATTENTION); persist(); fail("Some tests failed. Retry runs only outstanding tests; valid results were preserved."); return; }
+            if(result.cancelled()) { progress.set(step,DEFERRED); persist(); showPage(step); detailsToggle.setVisible(true); notice("Optimization stopped", "Completed checks are saved. You can run the remaining checks now or skip this time.",false); return; }
+            if(result.failed()>0) { progress.set(step,NEEDS_ATTENTION); persist(); showPage(step); detailsToggle.setVisible(true); fail("Some checks couldn’t finish. Your successful results are saved. Try the remaining checks again, or skip this time."); return; }
             progress.set(step,COMPLETE); persist(); showPage(step);
         });
     }
@@ -692,15 +786,22 @@ public final class SetupWizard extends JDialog
 
     private void reviewPage()
     {
-        paragraph("Review before launching. Accepted settings are already saved; receiving and streaming have not started.");
-        for(SetupStep id: SetupStep.values()) if(id != SetupStep.REVIEW) paragraph(id.title() + " — " + label(progress.get(id)));
+        paragraph("You’re almost ready. Review your choices below. Nothing will start receiving until you choose Finish & launch.");
+        JPanel summary=new JPanel(new GridLayout(0,2,24,12)); summary.setOpaque(false);
+        for(SetupStep id: SetupStep.values()) if(id != SetupStep.REVIEW)
+        {
+            JLabel name=new JLabel(id.title()); name.setFont(text("").getFont()); summary.add(name);
+            JLabel state=new JLabel(label(progress.get(id))); state.setFont(text("").getFont().deriveFont(Font.BOLD)); summary.add(state);
+        }
+        summary.setMaximumSize(new Dimension(Integer.MAX_VALUE,summary.getPreferredSize().height));
+        append(summary); append(Box.createVerticalStrut(24));
         if(!selectedScope.isBlank()) paragraph(selectedScope);
         var dirs = preferences.getDirectoryPreference();
-        paragraph("Effective output folders\nRecordings: " + dirs.getDirectoryRecording() + "\nScreenshots: " + dirs.getDirectoryScreenCapture() + "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " + dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
+        details("Recording and other output folders", "Recordings: " + dirs.getDirectoryRecording() + "\nScreenshots: " + dirs.getDirectoryScreenCapture() + "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " + dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
         var app = preferences.getApplicationPreference();
         paragraph("Web address: " + (app.isStatsWebServerHttpsEnabled() ? "https" : "http") + "://localhost:" + app.getStatsWebServerPort() + "/" +
             (app.isStatsWebServerAnyIpEnabled() ? "\nOther devices: use this computer's reachable address; host firewall restrictions still apply." : " — this computer only"));
-        paragraph("Existing auto-start selections: " + (autoStart.isEmpty() ? "None" : String.join(", ",autoStart)));
+        paragraph("Channels selected to start: " + (autoStart.isEmpty() ? "None — you can add channels after setup." : String.join(", ",autoStart)));
         JCheckBox launchChannels = new JCheckBox("Start configured channels after setup", startChannels);
         if(!autoStart.isEmpty()) append(launchChannels);
         if(vaultLocked())
@@ -751,10 +852,10 @@ public final class SetupWizard extends JDialog
         SetupProgress.State previous = progress == null ? PENDING : progress.get(step);
         busy=true; cancellation=cancelAction; long attempt=++generation;
         if(progress != null) { progress.set(step,RUNNING); persist(); }
-        danger.setVisible(false); operation=description; completed=0; total=0; output.accept(description);
+        danger.setVisible(false); operation=description; completed=0; total=0; output.clear(); output.accept(description);
         meter.setVisible(true); cancel.setVisible(cancelAction!=null); cancel.setEnabled(true); updateNavigation();
         cancel.setText(step == SetupStep.HARDWARE ? "Skip" : "Cancel operation");
-        diagnostics.setVisible(true);
+        diagnostics.setVisible(false); detailsToggle.setVisible(true); detailsToggle.setText("Show details");
         worker.submit(() -> {
             T result=null; Throwable failure=null;
             try { result=work.call(); } catch(Exception | LinkageError e) { failure=e; }
@@ -766,7 +867,7 @@ public final class SetupWizard extends JDialog
                 {
                     boolean stopped=problem instanceof InterruptedException;
                     if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
-                    fail(stopped ? "Operation cancelled. You can retry or defer this step." : safeFailure(problem));
+                    fail(stopped ? "Stopped safely. You can try again or set this up later." : safeFailure(problem));
                 }
                 else
                 {
@@ -782,10 +883,10 @@ public final class SetupWizard extends JDialog
     {
         //Remote/subprocess exceptions may contain passwords, request URLs or provider responses.
         if(step==SetupStep.RADIO_REFERENCE) return "RadioReference connection failed. Check credentials, subscription and connection, then retry or set up later.";
-        if(step==SetupStep.JMBE) return "JMBE preparation failed. Your previous library is preserved. Check the connection and build output; Retry, choose an existing library, or set up later.";
+        if(step==SetupStep.JMBE) return "Digital voice setup couldn’t finish. Check your internet connection or the JMBE file you selected, then try again. Any working library is still safe. You can also set this up later.";
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
-        if(step==SetupStep.REVIEW) return "Launch readiness check failed: " + (failure instanceof IllegalArgumentException ? failure.getMessage() : "check web port, certificate configuration and database access, then retry.");
-        return "Setup could not complete this step: " + failure.getClass().getSimpleName() + ". Check the selected source and available disk space, then retry. No incomplete migration is promoted.";
+        if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
+        return "We couldn’t finish this step. Check the file or folder you selected and make sure there is enough free space, then try again. Your original data has not been replaced by an incomplete import.";
     }
 
     private void completeAndContinue()
@@ -808,7 +909,7 @@ public final class SetupWizard extends JDialog
         return SetupStep.REVIEW;
     }
     private void deferCurrent() { progress.set(step,DEFERRED); if(persist()) showPage(nextStep()); }
-    private void defer(String caption) { button(caption,this::deferCurrent); }
+    private void defer(String caption) { WizardStyles.quiet(button(caption,this::deferCurrent)); }
     private void save() throws Exception { Preferences.userRoot().flush(); progress.save(database); }
     private boolean persist()
     {
@@ -820,21 +921,34 @@ public final class SetupWizard extends JDialog
         if(preferences==null || persist()) dispose();
     }
     private void stopCountdown() { if(countdown!=null) { countdown.stop(); countdown=null; } }
+    private void refreshNavigationTheme()
+    {
+        if(themeRefreshPending) return;
+        themeRefreshPending=true;
+        SwingUtilities.invokeLater(() -> { themeRefreshPending=false; updateNavigation(); });
+    }
     private void updateNavigation()
     {
         enableTree(page,!busy);
         back.setEnabled(!busy && preferences!=null && step.ordinal()>0);
-        next.setEnabled(!busy && !(step==SetupStep.SOURCE && preferences==null && Files.isRegularFile(database)));
+        next.setEnabled(!busy && canContinue.getAsBoolean());
         exit.setEnabled(!busy);
         for(var entry:steps.entrySet())
         {
             SetupStep id=entry.getKey(); JButton button=entry.getValue();
             SetupProgress.State state=progress==null?PENDING:progress.get(id);
-            button.setText("<html>"+(progress!=null && progress.isDone(id)?"✓ ":"")+(id.ordinal()+1)+". "+id.title()+"<br><small>"+label(state)+"</small></html>");
+            String ink=colorHex(id==step || progress!=null && progress.isDone(id) ? WizardStyles.foreground() : WizardStyles.muted());
+            button.setText("<html><font color='"+ink+"'>"+(progress!=null && progress.isDone(id)?"✓ ":"")+(id.ordinal()+1)+". "+id.title()+"<br><small>"+label(state)+"</small></font></html>");
             button.setToolTipText(label(state)); button.getAccessibleContext().setAccessibleDescription(label(state));
-            button.setEnabled(!busy && preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
-                (id==step || progress.isDone(id) || state==DEFERRED || state==NEEDS_ATTENTION));
+            button.setEnabled(!busy && (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
+                (progress.isDone(id) || state==DEFERRED || state==NEEDS_ATTENTION)));
             button.setFont(button.getFont().deriveFont(id==step?Font.BOLD:Font.PLAIN));
+            Color fill=id==step ? WizardStyles.surface() : UIManager.getColor("Panel.background");
+            button.setBackground(fill);
+            button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0,id==step?3:0,0,0,WizardStyles.accent()),new EmptyBorder(8,12,8,8)));
+            //Unread steps are unavailable, not visually washed out: the state is still useful navigation context.
+            button.putClientProperty("FlatLaf.style", "disabledText: " + colorHex(WizardStyles.muted()));
         }
     }
     private static void enableTree(Component component,boolean enabled)
@@ -850,38 +964,120 @@ public final class SetupWizard extends JDialog
         danger.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(color),new EmptyBorder(8,8,8,8)));
         danger.setText(message); danger.setVisible(true); danger.requestFocusInWindow();
         if(step == SetupStep.REVIEW) next.setText("Retry launch");
+        else if(step == SetupStep.JMBE) next.setText("Try again");
         updateNavigation();
     }
-    private void paragraph(String message) { append(text(message)); append(Box.createVerticalStrut(12)); }
+    private void paragraph(String message) { append(text(message)); append(Box.createVerticalStrut(20)); }
     private void append(JComponent component) { component.setAlignmentX(Component.LEFT_ALIGNMENT); page.add(component); }
     private void append(Component component) { page.add(component); }
     private JButton button(String caption,Runnable action)
     {
-        JButton button=new JButton(caption); button.addActionListener(e -> attempt(action)); append(button); append(Box.createVerticalStrut(10)); return button;
+        JButton button=action(caption,action); append(button); append(Box.createVerticalStrut(14)); return button;
+    }
+    private JButton action(String caption,Runnable action)
+    {
+        JButton button=new JButton(caption); WizardStyles.secondary(button);
+        button.addActionListener(e -> attempt(action)); return button;
     }
     private JTextField field(String caption,String value) { JTextField field=new JTextField(value,28); labelled(caption,field); return field; }
     private JPasswordField password(String caption) { JPasswordField field=new JPasswordField(28); labelled(caption,field); return field; }
     private void labelled(String caption,JComponent field)
     {
-        JLabel label=new JLabel(caption); label.setLabelFor(field); append(label);
-        field.getAccessibleContext().setAccessibleName(caption); field.setMaximumSize(new Dimension(Integer.MAX_VALUE,34)); append(field); append(Box.createVerticalStrut(12));
+        JLabel label=new JLabel(caption); label.setLabelFor(field); label.setFont(text("").getFont().deriveFont(Font.BOLD));
+        append(label); append(Box.createVerticalStrut(8));
+        field.getAccessibleContext().setAccessibleName(caption);
+        if(!(field instanceof JSpinner)) { field.setFont(text("").getFont()); field.setMaximumSize(new Dimension(560,40)); }
+        append(field); append(Box.createVerticalStrut(20));
     }
     private JRadioButton card(ButtonGroup group,String caption,String description,boolean selected)
     {
-        JPanel card=new JPanel(new BorderLayout(4,6)); card.setBorder(BorderFactory.createCompoundBorder(UIManager.getBorder("TextField.border"),new EmptyBorder(12,12,12,12)));
-        JRadioButton radio=new JRadioButton("<html>"+caption+"</html>",selected); radio.setFont(radio.getFont().deriveFont(Font.BOLD)); group.add(radio);
-        radio.getAccessibleContext().setAccessibleName(caption);
-        radio.getAccessibleContext().setAccessibleDescription(description);
-        JTextArea explanation=text(description);
-        var select=new java.awt.event.MouseAdapter() { public void mouseClicked(java.awt.event.MouseEvent event) { if(radio.isEnabled()) { radio.setSelected(true); radio.requestFocusInWindow(); } } };
-        card.addMouseListener(select); explanation.addMouseListener(select);
-        card.add(radio,BorderLayout.NORTH); card.add(explanation,BorderLayout.CENTER);
-        card.setMaximumSize(new Dimension(Integer.MAX_VALUE,Integer.MAX_VALUE)); append(card); append(Box.createVerticalStrut(10)); return radio;
+        return choice(group,caption,description,selected).radio();
     }
+    private WizardChoiceCard choice(ButtonGroup group,String caption,String description,boolean selected)
+    {
+        WizardChoiceCard card=new WizardChoiceCard(group,caption,description,selected);
+        append(card); append(Box.createVerticalStrut(14)); return card;
+    }
+    private static JPanel stack()
+    {
+        JPanel panel=new JPanel(); panel.setOpaque(false); panel.setLayout(new BoxLayout(panel,BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT); return panel;
+    }
+    private static void addTo(JPanel panel,JComponent child)
+    {
+        child.setAlignmentX(Component.LEFT_ALIGNMENT); panel.add(child); panel.add(Box.createVerticalStrut(12));
+    }
+    private JTextField sourceField(JPanel panel,String caption,boolean directory)
+    {
+        JTextField field=new JTextField(28); field.setFont(text("").getFont());
+        field.setMaximumSize(new Dimension(Integer.MAX_VALUE,40));
+        field.getAccessibleContext().setAccessibleName(caption);
+        JLabel label=new JLabel(caption); label.setLabelFor(field); addTo(panel,label); addTo(panel,field);
+        addTo(panel,action("Browse…",() -> {
+            JFileChooser chooser=new JFileChooser();
+            chooser.setFileSelectionMode(directory ? JFileChooser.DIRECTORIES_ONLY : JFileChooser.FILES_ONLY);
+            if(chooser.showOpenDialog(this)==JFileChooser.APPROVE_OPTION) field.setText(chooser.getSelectedFile().toString());
+        }));
+        return field;
+    }
+    private static void changedText(JTextField field,Runnable changed)
+    {
+        field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { changed.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { changed.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { changed.run(); }
+        });
+    }
+    private static void commitNumber(JSpinner spinner,String message)
+    {
+        try { spinner.commitEdit(); }
+        catch(java.text.ParseException e) { throw new IllegalArgumentException(message); }
+    }
+    private void notice(String heading,String message,boolean success)
+    {
+        append(noticePanel(heading,message,success)); append(Box.createVerticalStrut(20));
+    }
+    private JPanel noticePanel(String heading,String message,boolean success)
+    {
+        JPanel panel=stack(); panel.setOpaque(true);
+        JTextArea header=text((success?"✓  ":"")+heading); header.setFont(header.getFont().deriveFont(Font.BOLD,16f));
+        Runnable colors=() -> {
+            boolean dark=ThemeManager.getInstance().isDarkMode();
+            Color accent=success ? (dark?new Color(94,205,153):new Color(28,116,78)) : WizardStyles.accent();
+            panel.setBackground(success ? (dark?new Color(31,56,47):new Color(235,247,240)) : WizardStyles.surface());
+            panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0,4,0,0,accent),new EmptyBorder(18,18,16,18)));
+            header.setForeground(accent);
+        };
+        panel.addPropertyChangeListener("UI",event -> colors.run()); colors.run();
+        addTo(panel,header); panel.add(text(message));
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE,panel.getPreferredSize().height));
+        //Its parent determines wrapping width; height must be measured after layout, not frozen here.
+        JPanel sized=new JPanel(new BorderLayout()) {
+            public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
+        };
+        sized.setOpaque(false); sized.add(panel); return sized;
+    }
+    private void details(String caption,String message)
+    {
+        JPanel container=stack();
+        JButton toggle=action("▸  " + caption,()->{}); WizardStyles.quiet(toggle);
+        toggle.getAccessibleContext().setAccessibleName(caption);
+        toggle.getAccessibleContext().setAccessibleDescription("Expand details");
+        JTextArea content=text(message); content.setVisible(false); content.setForeground(WizardStyles.muted());
+        toggle.addActionListener(e -> { content.setVisible(!content.isVisible()); toggle.setText((content.isVisible()?"▾  ":"▸  ")+caption); toggle.getAccessibleContext().setAccessibleDescription(content.isVisible()?"Collapse details":"Expand details"); container.revalidate(); page.revalidate(); });
+        addTo(container,toggle); addTo(container,content); append(container); append(Box.createVerticalStrut(8));
+    }
+    private void migrationDetails(DatabaseMigrationChain.PreflightReport plan)
+    {
+        for(var migration:plan.steps()) for(var effect:migration.effects())
+            if(effect.kind()==DatabaseMigrationEffect.Kind.RESET || effect.kind()==DatabaseMigrationEffect.Kind.DROP)
+                paragraph("Please note: " + effect.subject() + " — " + effect.detail());
+        details("Technical import details",ApplicationMigrationService.describePlan(plan));
+    }
+    private static String colorHex(Color color) { return String.format("#%02x%02x%02x",color.getRed(),color.getGreen(),color.getBlue()); }
     private static JTextArea text(String value)
     {
-        JTextArea area=new SetupText(value); area.setEditable(false); area.setLineWrap(true); area.setWrapStyleWord(true); area.setOpaque(false);
-        area.setFont(UIManager.getFont("Label.font")); area.setAlignmentX(Component.LEFT_ALIGNMENT); return area;
+        return WizardStyles.prose(value);
     }
     private static boolean present(String value) { return value!=null && !value.isBlank(); }
     private static String label(SetupProgress.State value)

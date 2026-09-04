@@ -23,8 +23,11 @@ portable data from an earlier sdrtrunk-vce build. The unified Setup Wizard offer
   optional modules, or neighboring files, and does not remap stored output paths.
 - **Import legacy XML** reads supported configuration from an older playlist without modifying the source XML.
 
+Source-selection controls appear only for the selected import option. Start fresh does not require a file or folder;
+nearby installations are offered with the folder option, and older XML playlists with the XML option.
+
 The wizard's fixed sequence is Starting point, Administrator, Web access, Digital audio, RadioReference,
-Statistics & history, Tuner hardware, CPU benchmark, and Review & finish. Every step remains visible. Valid imported
+Statistics & history, Your radios, Optimize decoding, and Review & finish. Every step remains visible. Valid imported
 settings are marked **Carried over** and skipped by Continue; click a completed step to review or edit it. Deferred
 and failed steps are not shown as successful. Exit preserves accepted settings, but never saves password drafts.
 
@@ -35,7 +38,9 @@ interfaces under the host firewall; it is not a guaranteed LAN-only boundary and
 Existing administrator credentials are preserved. Changing an imported administrator password requires the current
 password or the established account recovery workflow.
 
-Digital audio setup validates an existing JMBE JAR or builds it inline after explicit download/compile consent.
+Digital audio setup recommends setting up JMBE so supported digital radio calls can be heard. It validates an existing
+JMBE library or downloads and builds one inline after explicit download/compile consent. A successful installation
+is confirmed on the page before Continue; a failed attempt offers retry, an existing library, or setup later.
 RadioReference distinguishes stored credentials from a verified connection; passwords stay masked. Both are optional.
 Fresh profiles collect summary statistics; detailed activity history is opt-in. Imported Off choices remain Off.
 Time-based activity retention defaults to 30 days (1–365 days); these controls do not change recordings or ordinary logs.
@@ -44,11 +49,13 @@ Tuner discovery lists physical devices as **Detected**, not Ready. It only enume
 not open, configure, tune, or start receiving from a tuner. Rescan and Skip are available, and no hardware or missing
 drivers do not prevent setup. Discovery runs again when revisiting the page rather than reusing an imported inventory.
 
-**Benchmark now** is recommended. Close other applications and pause CPU-heavy background work first. Existing valid
-per-test results are reused; missing, reset, or updated tests run individually. A changed CPU/JVM environment can
+**Optimize decoding** helps sdrtrunk-vce choose the fastest supported way to process radio signals on this computer;
+it is not a general-purpose computer performance score. Running it during setup is recommended. Close other
+applications and pause CPU-heavy background work first. Existing valid per-test results are reused; missing, reset,
+or updated tests run individually. A changed CPU/JVM environment can
 invalidate all tests. Retry keeps completed valid results. **Skip this time** does not permanently suppress future
-prompts. JMBE and benchmarking display progress within the wizard; once started, navigation waits until completion,
-failure, or acknowledged cancellation. Cancellation of calibration takes effect between tests.
+prompts. Digital audio setup and decoding optimization display progress within the wizard; once started, navigation
+waits until completion, failure, or acknowledged cancellation. Cancellation takes effect between optimization tests.
 
 Review lists effective output folders, web access, and existing auto-start selections. Applicable release information
 and vault-unlock controls appear here. The listener is checked before setup completes, and receiver construction
