@@ -26,7 +26,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -69,13 +69,13 @@ class StatsWebDatabase
     static final int MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS = 200;
     static final int MAXIMUM_SYSTEM_DIRECTORY_WITH_SITE_PREVIEW = 25;
     static final int MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW = 25;
-    private static final int IDENTITY_ROLE_DESTINATION = P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION;
-    private static final int IDENTITY_ROLE_SOURCE = P25ActivityLogSchema.IDENTITY_ROLE_SOURCE;
+    private static final int IDENTITY_ROLE_DESTINATION = ReceiverActivitySchema.IDENTITY_ROLE_DESTINATION;
+    private static final int IDENTITY_ROLE_SOURCE = ReceiverActivitySchema.IDENTITY_ROLE_SOURCE;
     private static final int IDENTITY_KIND_CHANNEL_OR_UNKNOWN =
-        P25ActivityLogSchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN;
-    private static final int IDENTITY_KIND_TALKGROUP = P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP;
-    private static final int IDENTITY_KIND_RADIO = P25ActivityLogSchema.IDENTITY_KIND_RADIO;
-    private static final int IDENTITY_KIND_PATCH_GROUP = P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP;
+        ReceiverActivitySchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN;
+    private static final int IDENTITY_KIND_TALKGROUP = ReceiverActivitySchema.IDENTITY_KIND_TALKGROUP;
+    private static final int IDENTITY_KIND_RADIO = ReceiverActivitySchema.IDENTITY_KIND_RADIO;
+    private static final int IDENTITY_KIND_PATCH_GROUP = ReceiverActivitySchema.IDENTITY_KIND_PATCH_GROUP;
     private static final String MATCHING_CONFIGURATION_GUID_CTE = """
         matching_configuration_guid AS MATERIALIZED (
             SELECT DISTINCT radres_guid
@@ -319,7 +319,7 @@ class StatsWebDatabase
          AND activity.context_key = 'CONFIGURATION:' || conventional_config.configuration_id
         """;
     static final String ACTIVITY_SELECT_SQL = ACTIVITY_PROJECTION_SQL + """
-        FROM p25_activity_event_resolved activity
+        FROM receiver_activity_event_resolved activity
         """ + ACTIVITY_RELATED_JOINS_SQL + """
         WHERE 1 = 1
         """;
@@ -714,7 +714,7 @@ class StatsWebDatabase
             status.putAll(read(connection -> {
                 Map<String,Object> details = new LinkedHashMap<>();
                 long lastDetailedHistoryMs = scalarLong(connection, """
-                    SELECT COALESCE((SELECT observed_at_ms FROM p25_activity_event ORDER BY id DESC LIMIT 1), 0)
+                    SELECT COALESCE((SELECT observed_at_ms FROM receiver_activity_event ORDER BY id DESC LIMIT 1), 0)
                     """);
                 details.put("logger", loggerStatus(connection));
                 details.put("detailedHistoryAvailable", lastDetailedHistoryMs > 0);
@@ -1226,10 +1226,10 @@ class StatsWebDatabase
             FROM (
                 %s
             ) site
-            LEFT JOIN p25_control_channel_quality quality ON quality.guid = site.guid AND
+            LEFT JOIN trunked_control_channel_quality quality ON quality.guid = site.guid AND
                 (quality.frequency_hz, quality.bucket_start_ms) = (
                     SELECT candidate.frequency_hz, candidate.bucket_start_ms
-                    FROM p25_control_channel_quality candidate
+                    FROM trunked_control_channel_quality candidate
                     WHERE candidate.guid = site.guid
                     ORDER BY candidate.observed_at_ms DESC, candidate.frequency_hz DESC
                     LIMIT 1
@@ -1296,7 +1296,7 @@ class StatsWebDatabase
                 CASE WHEN min(frequency_hz) = max(frequency_hz) THEN min(frequency_hz) END AS frequency_hz,
                 count(DISTINCT frequency_hz) AS frequency_count, count(*) AS sample_count,
                 max(observed_at_ms) AS last_observed_ms
-            FROM p25_control_channel_quality INDEXED BY idx_p25_control_quality_guid_time
+            FROM trunked_control_channel_quality INDEXED BY idx_trunked_control_quality_guid_time
             WHERE guid = ? AND observed_at_ms >= ? AND observed_at_ms <= ?
             GROUP BY time_ms
             ORDER BY time_ms
@@ -1526,10 +1526,10 @@ class StatsWebDatabase
                     FROM (
                         %s
                     ) site
-                    JOIN p25_control_channel_quality quality ON quality.guid = site.guid AND
+                    JOIN trunked_control_channel_quality quality ON quality.guid = site.guid AND
                         (quality.frequency_hz, quality.bucket_start_ms) = (
                         SELECT candidate.frequency_hz, candidate.bucket_start_ms
-                        FROM p25_control_channel_quality candidate
+                        FROM trunked_control_channel_quality candidate
                         WHERE candidate.guid = site.guid
                         ORDER BY candidate.observed_at_ms DESC, candidate.frequency_hz DESC LIMIT 1
                     )
@@ -1572,7 +1572,7 @@ class StatsWebDatabase
                         CASE WHEN min(frequency_hz) = max(frequency_hz) THEN min(frequency_hz) END AS frequency_hz,
                         count(DISTINCT frequency_hz) AS frequency_count, count(*) AS sample_count,
                         max(observed_at_ms) AS last_observed_ms
-                    FROM p25_control_channel_quality
+                    FROM trunked_control_channel_quality
                     WHERE observed_at_ms >= ? AND observed_at_ms <= ?%s
                     GROUP BY guid, time_ms
                     ORDER BY guid, time_ms
@@ -3502,7 +3502,7 @@ class StatsWebDatabase
                     event.source_radio_id AS radio_id, COUNT(*) AS observation_count,
                     MAX(event.observed_at_ms) AS last_seen_ms
                 FROM action_slices AS slice
-                CROSS JOIN p25_activity_event AS event INDEXED BY idx_p25_activity_event_context_time
+                CROSS JOIN receiver_activity_event AS event INDEXED BY idx_receiver_activity_event_context_time
                 LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = event.context_id
                 WHERE event.context_id = slice.context_id
                   AND event.observed_at_ms >= slice.bucket_start_ms
@@ -3735,7 +3735,7 @@ class StatsWebDatabase
             if(beforeId != Long.MAX_VALUE)
             {
                 List<Map<String,Object>> cursor = queryRows(connection,
-                    "SELECT observed_at_ms FROM p25_activity_event WHERE id = ?", beforeId);
+                    "SELECT observed_at_ms FROM receiver_activity_event WHERE id = ?", beforeId);
 
                 if(cursor.isEmpty())
                 {
@@ -3792,7 +3792,7 @@ class StatsWebDatabase
                     sql.append("""
                          AND activity.id IN (
                              SELECT event.id
-                             FROM p25_activity_event event
+                             FROM receiver_activity_event event
                              WHERE event.target_id = ? AND event.target_kind_code = ?
                              UNION
                              SELECT member.event_id
@@ -3912,7 +3912,7 @@ class StatsWebDatabase
             }
 
             sql.append("SELECT id, observed_at_ms FROM (")
-                .append("SELECT id, observed_at_ms FROM p25_activity_event_resolved ")
+                .append("SELECT id, observed_at_ms FROM receiver_activity_event_resolved ")
                 .append("WHERE context_id = ?");
             parameters.add(contextIds.get(index));
 
@@ -4715,7 +4715,7 @@ class StatsWebDatabase
         // text such as last_write_error cannot expose local paths or SQL details.
         return queryRows(connection, """
             SELECT key, CAST(value AS INTEGER) AS value, updated_at_ms
-            FROM logger_status
+            FROM statistics_status
             WHERE key = 'last_successful_write_ms'
             """);
     }
@@ -5256,21 +5256,21 @@ class StatsWebDatabase
     {
         return scalarLong(connection, """
             SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
-            """, P25ActivityLogSchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
+            """, ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
     }
 
     private static long conventionalCallOutputMetricsStartedAt(Connection connection) throws SQLException
     {
         return scalarLong(connection, """
             SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
-            """, P25ActivityLogSchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+            """, ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
     }
 
     private static long scopeMetricStartedAt(Connection connection) throws SQLException
     {
         return scalarLong(connection, """
             SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
-            """, P25ActivityLogSchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
+            """, ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
     }
 
     private static int targetKind(StatsRequest request)

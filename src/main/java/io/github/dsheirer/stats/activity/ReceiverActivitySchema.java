@@ -24,7 +24,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,14 +35,14 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v29 semantics use canonical saved-channel identities. Trunked P25, DMR and NXDN share one protocol-neutral
+ * The v30 semantics use canonical saved-channel identities. Trunked P25, DMR and NXDN share one protocol-neutral
  * identity projection while
  * receiver contexts own site observations. Detailed event rows are optional, while compact identity and hourly
  * summaries are always updated when stats logging is enabled.
  */
-public class P25ActivityLogSchema
+public class ReceiverActivitySchema
 {
-    public static final int SCHEMA_VERSION = 29;
+    public static final int SCHEMA_VERSION = 30;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
         "conventional_call_output_metrics_started_at_ms";
@@ -82,15 +81,20 @@ public class P25ActivityLogSchema
     private static final int P25_EVERYONE_TALKGROUP = 0xFFFF;
     private static final int P25_FIRST_SPECIAL_RADIO = 0xFFFFFC;
 
-    private static final List<P25ActivityLogRecords.Action> ACTIONS =
-        Arrays.asList(P25ActivityLogRecords.Action.values());
-    private static final List<P25ActivityLogRecords.Action> TRUNKED_SIGNALING_ACTIONS = ACTIONS.stream()
-        .filter(action -> action != P25ActivityLogRecords.Action.CALL).toList();
+    private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes();
+    private static final String ACTION_CODES = ACTIONS.stream()
+        .map(action -> Integer.toString(action.code()))
+        .collect(Collectors.joining(", "));
+    private static final String EVENT_TYPE_CODES = ReceiverActivityCodes.eventTypeCodes().stream()
+        .map(eventType -> Integer.toString(eventType.code()))
+        .collect(Collectors.joining(", "));
+    private static final List<ReceiverActivityRecords.Action> TRUNKED_SIGNALING_ACTIONS = ACTIONS.stream()
+        .filter(action -> action != ReceiverActivityRecords.Action.CALL).toList();
     private static final List<String> ACTION_COUNT_COLUMNS = ACTIONS.stream()
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
         .toList();
     private static final String ACTION_COUNT_DEFINITIONS = ACTION_COUNT_COLUMNS.stream()
-        .map(column -> column + " INTEGER NOT NULL DEFAULT 0")
+        .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(" + column + " >= 0)")
         .collect(Collectors.joining(",\n                    "));
     private static final String ACTION_INSERT_COLUMNS = String.join(", ", ACTION_COUNT_COLUMNS);
     private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
@@ -108,7 +112,7 @@ public class P25ActivityLogSchema
     private static final String TRUNKED_SIGNALING_ACTION_INSERT_PLACEHOLDERS =
         TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS.stream().map(column -> "?").collect(Collectors.joining(", "));
 
-    private P25ActivityLogSchema()
+    private ReceiverActivitySchema()
     {
     }
 
@@ -118,54 +122,57 @@ public class P25ActivityLogSchema
         {
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS p25_system (
-                    system_key INTEGER PRIMARY KEY,
-                    wacn INTEGER NOT NULL,
-                    system_id INTEGER NOT NULL,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
+                    system_key INTEGER PRIMARY KEY CHECK(system_key > 0),
+                    wacn INTEGER NOT NULL CHECK(wacn BETWEEN 0 AND 1048575),
+                    system_id INTEGER NOT NULL CHECK(system_id BETWEEN 0 AND 4095),
+                    first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                    last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
                     UNIQUE(wacn, system_id)
                 )
                 """);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS receiver_context (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    context_key TEXT NOT NULL UNIQUE,
-                    guid TEXT,
-                    kind_code INTEGER NOT NULL,
-                    protocol_code INTEGER,
+                    context_key TEXT NOT NULL UNIQUE CHECK(length(trim(context_key)) > 0),
+                    guid TEXT UNIQUE CHECK(guid IS NULL OR length(trim(guid)) > 0),
+                    kind_code INTEGER NOT NULL CHECK(kind_code IN (1, 2, 3, 4, 10)),
+                    protocol_code INTEGER CHECK(protocol_code IS NULL OR protocol_code IN (0, 1, 2, 3, 4, 10, 11)),
                     channel_name TEXT,
                     alias_list_name TEXT,
                     decoder TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    system_key INTEGER,
-                    nac INTEGER,
-                    rfss INTEGER,
-                    site INTEGER,
-                    primary_frequency_hz INTEGER,
-                    current_control_hz INTEGER,
-                    alias_list_id INTEGER
+                    first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                    last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                    system_key INTEGER REFERENCES p25_system(system_key) ON DELETE SET NULL,
+                    nac INTEGER CHECK(nac IS NULL OR nac BETWEEN 0 AND 4095),
+                    rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
+                    site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
+                    primary_frequency_hz INTEGER CHECK(primary_frequency_hz IS NULL OR primary_frequency_hz > 0),
+                    current_control_hz INTEGER CHECK(current_control_hz IS NULL OR current_control_hz > 0),
+                    alias_list_id INTEGER REFERENCES alias_list(id) ON DELETE SET NULL,
+                    CHECK(system_key IS NULL OR (kind_code = 1 AND protocol_code IN (1, 2)))
                 )
                 """);
             statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS p25_activity_event (
+                CREATE TABLE IF NOT EXISTS receiver_activity_event (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    context_id INTEGER NOT NULL,
-                    observed_at_ms INTEGER NOT NULL,
-                    action_code INTEGER NOT NULL,
-                    event_type_code INTEGER,
-                    source_radio_id INTEGER,
-                    target_id INTEGER,
-                    target_kind_code INTEGER,
-                    frequency_hz INTEGER,
-                    lcn_band INTEGER,
-                    lcn_number INTEGER,
-                    timeslot INTEGER,
-                    encrypted INTEGER NOT NULL DEFAULT 0,
+                    context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
+                    observed_at_ms INTEGER NOT NULL CHECK(observed_at_ms > 0),
+                    action_code INTEGER NOT NULL CHECK(action_code IN (%s)),
+                    event_type_code INTEGER CHECK(event_type_code IS NULL OR event_type_code IN (%s)),
+                    source_radio_id INTEGER CHECK(source_radio_id IS NULL OR source_radio_id >= 0),
+                    target_id INTEGER CHECK(target_id IS NULL OR target_id >= 0),
+                    target_kind_code INTEGER CHECK(target_kind_code IS NULL OR target_kind_code IN (1, 2, 3)),
+                    frequency_hz INTEGER CHECK(frequency_hz IS NULL OR frequency_hz > 0),
+                    lcn_band INTEGER CHECK(lcn_band IS NULL OR lcn_band >= 0),
+                    lcn_number INTEGER CHECK(lcn_number IS NULL OR lcn_number >= 0),
+                    timeslot INTEGER CHECK(timeslot IS NULL OR timeslot >= 0),
+                    encrypted INTEGER NOT NULL DEFAULT 0 CHECK(encrypted IN (0, 1)),
                     encryption_algorithm_id INTEGER,
-                    encryption_key_id INTEGER
+                    encryption_key_id INTEGER,
+                    CHECK((lcn_band IS NULL) = (lcn_number IS NULL)),
+                    CHECK(target_id IS NOT NULL OR target_kind_code IS NULL)
                 )
-                """);
+                """.formatted(ACTION_CODES, EVENT_TYPE_CODES));
             statement.executeUpdate(createActivityEventTalkgroupMemberSql());
             createTrunkedCallTables(statement);
             TrunkedIdentitySchema.create(statement);
@@ -174,10 +181,10 @@ public class P25ActivityLogSchema
             createP25SiteTables(statement);
             createControlChannelQualityTable(statement);
             statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS logger_status (
-                    key TEXT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS statistics_status (
+                    key TEXT PRIMARY KEY CHECK(length(trim(key)) > 0),
                     value TEXT,
-                    updated_at_ms INTEGER NOT NULL
+                    updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms > 0)
                 )
                 """);
             createIndexesAndViews(statement);
@@ -212,12 +219,13 @@ public class P25ActivityLogSchema
                 createP25SiteCallBucketSql()),
             new SqliteSchemaValidator.Definition("table", "p25_site_call_identity_bucket",
                 createP25SiteCallIdentityBucketSql()),
-            new SqliteSchemaValidator.Definition("view", "p25_activity_event_resolved", createResolvedViewSql())));
+            new SqliteSchemaValidator.Definition("view", "receiver_activity_event_resolved", createResolvedViewSql())));
         SqliteSchemaValidator.validateDefinitions(connection, exactDefinitions);
+        validateRequiredForeignKeys(connection);
         validatePositiveMetadataTimestamp(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
         validatePositiveMetadataTimestamp(connection, TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY);
         validatePositiveMetadataTimestamp(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
-        validateIndexColumns(connection, "idx_p25_control_quality_retention",
+        validateIndexColumns(connection, "idx_trunked_control_quality_retention",
             List.of("observed_at_ms", "guid", "frequency_hz", "bucket_start_ms"));
         validateIndexColumns(connection, "idx_conventional_bucket_dashboard_time",
             List.of("bucket_start_ms", "context_id"));
@@ -237,11 +245,11 @@ public class P25ActivityLogSchema
                 "identity_kind_code", "identity_id"));
     }
 
-    static Long recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
+    static Long recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
                                boolean detailedEventHistoryEnabled) throws SQLException
     {
         Long activityId = null;
-        Integer systemKey = activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE ?
+        Integer systemKey = activity.contextKind() == ReceiverActivityRecords.ContextKind.TRUNKED_SITE ?
             resolveP25SystemKey(connection, activity) : null;
         int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(activity, systemKey));
         ReceiverContextIdentity context = selectContextIdentity(connection, activity.contextKey());
@@ -258,7 +266,7 @@ public class P25ActivityLogSchema
             return null;
         }
 
-        if(activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
+        if(activity.contextKind() == ReceiverActivityRecords.ContextKind.TRUNKED_SITE)
         {
             TrunkedIdentitySchema.Scope scope =
                 TrunkedIdentitySchema.recordActivity(connection, activity, contextId);
@@ -270,9 +278,9 @@ public class P25ActivityLogSchema
                 return null;
             }
 
-            if(detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
+            if(detailedEventHistoryEnabled && activity.action() != ReceiverActivityRecords.Action.CONTINUE)
             {
-                activityId = insertP25ActivityEvent(connection, activity, contextId);
+                activityId = insertReceiverActivityEvent(connection, activity, contextId);
             }
 
             upsertTrunkedSignalingMetrics(connection, activity, contextId);
@@ -280,9 +288,9 @@ public class P25ActivityLogSchema
         }
         else if(isConventional(activity.contextKind()))
         {
-            if(detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
+            if(detailedEventHistoryEnabled && activity.action() != ReceiverActivityRecords.Action.CONTINUE)
             {
-                activityId = insertP25ActivityEvent(connection, activity, contextId);
+                activityId = insertReceiverActivityEvent(connection, activity, contextId);
             }
 
             upsertConventionalSummary(connection, activity, contextId);
@@ -297,7 +305,7 @@ public class P25ActivityLogSchema
     }
 
     static boolean applyConventionalCallOutput(Connection connection,
-                                               P25ActivityLogRecords.ConventionalCallOutput conventionalOutput)
+                                               ReceiverActivityRecords.ConventionalCallOutput conventionalOutput)
         throws SQLException
     {
         if(conventionalOutput == null || conventionalOutput.callStartEpochMilliseconds() <= 0 ||
@@ -315,8 +323,8 @@ public class P25ActivityLogSchema
             return false;
         }
 
-        int recorded = conventionalOutput.output() == P25ActivityLogRecords.CallOutput.RECORDED ? 1 : 0;
-        int streamed = conventionalOutput.output() == P25ActivityLogRecords.CallOutput.STREAMED ? 1 : 0;
+        int recorded = conventionalOutput.output() == ReceiverActivityRecords.CallOutput.RECORDED ? 1 : 0;
+        int streamed = conventionalOutput.output() == ReceiverActivityRecords.CallOutput.STREAMED ? 1 : 0;
         long callStart = conventionalOutput.callStartEpochMilliseconds();
         long bucket = bucketStart(callStart);
 
@@ -384,7 +392,7 @@ public class P25ActivityLogSchema
      * Stores one coordinator-resolved trunked call. P25 additionally records one observation for each distinct
      * learned site. The process-local logical id is intentionally not persisted.
      */
-    static boolean recordResolvedLogicalCall(Connection connection, P25ActivityLogRecords.ResolvedLogicalCall call)
+    static boolean recordResolvedLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call)
         throws SQLException
     {
         if(call == null)
@@ -427,7 +435,7 @@ public class P25ActivityLogSchema
         return true;
     }
 
-    static boolean applyLogicalCallOutput(Connection connection, P25ActivityLogRecords.LogicalCallOutput output)
+    static boolean applyLogicalCallOutput(Connection connection, ReceiverActivityRecords.LogicalCallOutput output)
         throws SQLException
     {
         if(output == null)
@@ -435,7 +443,7 @@ public class P25ActivityLogSchema
             return false;
         }
 
-        P25ActivityLogRecords.ResolvedLogicalCall call = output.call();
+        ReceiverActivityRecords.ResolvedLogicalCall call = output.call();
         int protocol = TrunkedIdentityPolicy.protocolFamilyCode(call.protocol());
         TrunkedIdentitySchema.Scope scope = resolveLogicalCallScope(connection, call, protocol);
         if(scope == null)
@@ -443,8 +451,8 @@ public class P25ActivityLogSchema
             return false;
         }
 
-        int recorded = output.output() == P25ActivityLogRecords.CallOutput.RECORDED ? 1 : 0;
-        int streamed = output.output() == P25ActivityLogRecords.CallOutput.STREAMED ? 1 : 0;
+        int recorded = output.output() == ReceiverActivityRecords.CallOutput.RECORDED ? 1 : 0;
+        int streamed = output.output() == ReceiverActivityRecords.CallOutput.STREAMED ? 1 : 0;
         long bucket = bucketStart(call.callStartEpochMilliseconds());
         upsertLogicalCallBucket(connection, scope.scopeId(), bucket, 0, 0, recorded, streamed);
         upsertLogicalCallIdentities(connection, scope.scopeId(), bucket, call, 0, 0, recorded, streamed, false, null);
@@ -453,7 +461,7 @@ public class P25ActivityLogSchema
     }
 
     private static TrunkedIdentitySchema.Scope resolveLogicalCallScope(
-        Connection connection, P25ActivityLogRecords.ResolvedLogicalCall call, int protocol) throws SQLException
+        Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call, int protocol) throws SQLException
     {
         if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25)
         {
@@ -512,7 +520,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertLogicalCallIdentities(Connection connection, int scopeId, long bucket,
-                                                     P25ActivityLogRecords.ResolvedLogicalCall call, int calls,
+                                                     ReceiverActivityRecords.ResolvedLogicalCall call, int calls,
                                                      int encrypted, int recorded, int streamed, boolean site,
                                                      Integer learnedSiteId) throws SQLException
     {
@@ -656,7 +664,7 @@ public class P25ActivityLogSchema
      * Atomically enriches an already-counted trunked call without changing physical or action counts.
      */
     static boolean applyTrunkedCallAttribution(
-        Connection connection, P25ActivityLogRecords.TrunkedCallAttribution attribution) throws SQLException
+        Connection connection, ReceiverActivityRecords.TrunkedCallAttribution attribution) throws SQLException
     {
         if(attribution == null || attribution.callStartEpochMilliseconds() <= 0 ||
             (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
@@ -698,7 +706,7 @@ public class P25ActivityLogSchema
      * remain unchanged; this only fills facts that were not present on the first grant.
      */
     private static void enrichDetailedTrunkedCall(Connection connection, int contextId, int protocol,
-                                                   P25ActivityLogRecords.TrunkedCallAttribution attribution)
+                                                   ReceiverActivityRecords.TrunkedCallAttribution attribution)
         throws SQLException
     {
         Long activityId = findDetailedTrunkedCallId(connection, contextId, attribution);
@@ -714,7 +722,7 @@ public class P25ActivityLogSchema
         boolean encryptionKnown = attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE p25_activity_event
+            UPDATE receiver_activity_event
             SET source_radio_id = CASE
                     WHEN ? = 1 AND (source_radio_id IS NULL OR source_radio_id <= 0) THEN ?
                     ELSE source_radio_id
@@ -758,7 +766,7 @@ public class P25ActivityLogSchema
      * contains it, and timeslot is matched null-safely so simultaneous DMR slots cannot update each other.
      */
     private static Long findDetailedTrunkedCallId(Connection connection, int contextId,
-                                                   P25ActivityLogRecords.TrunkedCallAttribution attribution)
+                                                   ReceiverActivityRecords.TrunkedCallAttribution attribution)
         throws SQLException
     {
         if(attribution.frequencyHertz() != null && attribution.frequencyHertz() > 0)
@@ -783,13 +791,13 @@ public class P25ActivityLogSchema
     }
 
     private static Long findDetailedTrunkedCallId(
-        Connection connection, int contextId, P25ActivityLogRecords.TrunkedCallAttribution attribution,
+        Connection connection, int contextId, ReceiverActivityRecords.TrunkedCallAttribution attribution,
         String frequencyPredicate, Long frequency, int frequencyParameterCount, boolean requireUnique)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT id
-            FROM p25_activity_event
+            FROM receiver_activity_event
             WHERE context_id = ? AND observed_at_ms = ? AND action_code = ?
               AND %s
               AND ((? IS NULL AND timeslot IS NULL) OR timeslot = ?)
@@ -800,7 +808,7 @@ public class P25ActivityLogSchema
             int index = 1;
             statement.setInt(index++, contextId);
             statement.setLong(index++, attribution.callStartEpochMilliseconds());
-            statement.setInt(index++, actionCode(P25ActivityLogRecords.Action.CALL));
+            statement.setInt(index++, actionCode(ReceiverActivityRecords.Action.CALL));
 
             for(int x = 0; x < frequencyParameterCount; x++)
             {
@@ -826,7 +834,7 @@ public class P25ActivityLogSchema
     /**
      * Aggregates one exactly-once completed DMR conventional call without retaining optional detailed event history.
      */
-    static Long recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
+    static Long recordDmrConventionalCall(Connection connection, ReceiverActivityRecords.DmrConventionalCall call)
         throws SQLException
     {
         return recordDmrConventionalCall(connection, call, false);
@@ -837,7 +845,7 @@ public class P25ActivityLogSchema
      * compact DMR identity summaries, and optionally retains one detailed event row. The event row is inserted
      * directly so the summaries are not counted a second time through {@link #recordActivity}.
      */
-    static Long recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call,
+    static Long recordDmrConventionalCall(Connection connection, ReceiverActivityRecords.DmrConventionalCall call,
                                           boolean detailedEventHistoryEnabled) throws SQLException
     {
         if(call == null)
@@ -854,32 +862,32 @@ public class P25ActivityLogSchema
             return null;
         }
 
-        String targetId = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP &&
+        String targetId = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP &&
             call.talkgroupId() != null ? call.talkgroupId().toString() :
-            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE &&
+            call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE &&
                 call.targetRadioId() != null ? call.targetRadioId().toString() : null;
-        String targetKind = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP ? Form.TALKGROUP.name() :
-            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ? Form.RADIO.name() : null;
-        String eventType = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP ?
+        String targetKind = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP ? Form.TALKGROUP.name() :
+            call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE ? Form.RADIO.name() : null;
+        String eventType = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP ?
             (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
-            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ?
+            call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE ?
                 (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
                     DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
                 (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
-        P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogRecords.ActivityEvent(
+        ReceiverActivityRecords.ActivityEvent activity = new ReceiverActivityRecords.ActivityEvent(
             call.callStartEpochMilliseconds(), call.contextKey(), call.guid(),
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, "DMR", P25ActivityLogRecords.Action.CALL,
+            ReceiverActivityRecords.ContextKind.CONVENTIONAL_DMR, "DMR", ReceiverActivityRecords.Action.CALL,
             eventType, call.sourceRadioId() != null ? call.sourceRadioId().toString() : null, targetId, targetKind,
             call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null, null, null,
             call.channelName(), "DMR", null, true, null, null);
         upsertConventionalSummary(connection, activity, contextId);
         upsertCallIdentityBuckets(connection, activity, contextId);
         DmrActivitySchema.recordCompletedCall(connection, contextId, call);
-        return detailedEventHistoryEnabled ? insertP25ActivityEvent(connection, activity, contextId) : null;
+        return detailedEventHistoryEnabled ? insertReceiverActivityEvent(connection, activity, contextId) : null;
     }
 
     static Long recordNxdnConventionalCall(Connection connection,
-                                           P25ActivityLogRecords.NxdnConventionalCall call,
+                                           ReceiverActivityRecords.NxdnConventionalCall call,
                                            boolean detailedEventHistoryEnabled) throws SQLException
     {
         if(call == null)
@@ -896,31 +904,31 @@ public class P25ActivityLogSchema
             return null;
         }
 
-        String targetId = call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP ?
+        String targetId = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP ?
             value(call.talkgroupId()) :
-            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE ?
+            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE ?
                 value(call.targetRadioId()) : null;
-        String targetKind = call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP ?
+        String targetKind = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP ?
             Form.TALKGROUP.name() :
-            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE ? Form.RADIO.name() : null;
-        String eventType = call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP ?
+            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE ? Form.RADIO.name() : null;
+        String eventType = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP ?
             (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
-            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE ?
+            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE ?
                 (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
                     DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
                 (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
-        P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogRecords.ActivityEvent(
+        ReceiverActivityRecords.ActivityEvent activity = new ReceiverActivityRecords.ActivityEvent(
             call.callStartEpochMilliseconds(), call.contextKey(), call.guid(),
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN, "NXDN", P25ActivityLogRecords.Action.CALL,
+            ReceiverActivityRecords.ContextKind.CONVENTIONAL_NXDN, "NXDN", ReceiverActivityRecords.Action.CALL,
             eventType, value(call.sourceRadioId()), targetId, targetKind, call.frequencyHertz(), null, null,
             call.encrypted(), null, null, null, null, null, null, null, call.channelName(), "NXDN", null,
             true, null, null);
         upsertConventionalSummary(connection, activity, contextId);
         upsertCallIdentityBuckets(connection, activity, contextId);
-        return detailedEventHistoryEnabled ? insertP25ActivityEvent(connection, activity, contextId) : null;
+        return detailedEventHistoryEnabled ? insertReceiverActivityEvent(connection, activity, contextId) : null;
     }
 
-    private static void validateNxdnConventionalCall(P25ActivityLogRecords.NxdnConventionalCall call)
+    private static void validateNxdnConventionalCall(ReceiverActivityRecords.NxdnConventionalCall call)
         throws SQLException
     {
         if(call.callStartEpochMilliseconds() <= 0 ||
@@ -932,9 +940,9 @@ public class P25ActivityLogSchema
             throw new SQLException("Invalid completed conventional NXDN call");
         }
 
-        if(call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP && call.targetRadioId() != null ||
-            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE && call.talkgroupId() != null ||
-            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.UNKNOWN &&
+        if(call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP && call.targetRadioId() != null ||
+            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE && call.talkgroupId() != null ||
+            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.UNKNOWN &&
                 (call.talkgroupId() != null || call.targetRadioId() != null))
         {
             throw new SQLException("NXDN target identity does not match the call type");
@@ -951,7 +959,7 @@ public class P25ActivityLogSchema
         return identifier != null ? identifier.toString() : null;
     }
 
-    static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
+    static void updateTalkerAlias(Connection connection, ReceiverActivityRecords.TalkerAliasUpdate update)
         throws SQLException
     {
         ReceiverContextIdentity context = selectContextIdentity(connection, update.contextKey());
@@ -964,7 +972,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    static void insertSite(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot) throws SQLException
+    static void insertSite(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot) throws SQLException
     {
         SiteSnapshotState previous = siteSnapshotState(connection, snapshot.guid());
         ReceiverContextState previousContext =
@@ -1006,7 +1014,7 @@ public class P25ActivityLogSchema
         TrunkedSiteSchema.clearSiteStats(connection, snapshot.guid());
         upsertSiteSnapshot(connection, snapshot, systemKey);
         TrunkedIdentitySchema.ensureScope(connection, contextId, snapshot.observedAtEpochMilliseconds(),
-            P25ActivityLogRecords.IdentityDomain.STANDARD);
+            ReceiverActivityRecords.IdentityDomain.STANDARD);
 
         if(changed)
         {
@@ -1113,22 +1121,24 @@ public class P25ActivityLogSchema
         //DMR/NXDN now owns this receiver GUID, so no P25 site row may remain available to web routing.
         clearP25SiteProjection(connection, snapshot.guid());
 
-        P25ActivityLogRecords.IdentityDomain identityDomain =
+        ReceiverActivityRecords.IdentityDomain identityDomain =
             snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN &&
                 (snapshot.variantCode() == 2 || snapshot.identityDomainCode() == 4) ?
-                P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D :
+                ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D :
                 snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN ?
-                    P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C :
-                    P25ActivityLogRecords.IdentityDomain.STANDARD;
+                    ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C :
+                    ReceiverActivityRecords.IdentityDomain.STANDARD;
         TrunkedIdentitySchema.ensureScope(connection, contextId, snapshot.observedAtEpochMilliseconds(),
             identityDomain);
     }
 
     static void insertControlChannelQuality(Connection connection,
-                                            P25ActivityLogRecords.ControlChannelQuality quality) throws SQLException
+                                            ReceiverActivityRecords.ControlChannelQuality quality) throws SQLException
     {
+        ensureControlChannelQualityContext(connection, quality);
+
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO p25_control_channel_quality (
+            INSERT INTO trunked_control_channel_quality (
                 guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs, average_signal_dbfs,
                 minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct, valid_frames, invalid_frames,
                 corrected_bits, sync_loss_bits, dropped_bits, last_valid_decode_ms
@@ -1146,7 +1156,7 @@ public class P25ActivityLogSchema
                 sync_loss_bits = excluded.sync_loss_bits,
                 dropped_bits = excluded.dropped_bits,
                 last_valid_decode_ms = excluded.last_valid_decode_ms
-            WHERE excluded.observed_at_ms >= p25_control_channel_quality.observed_at_ms
+            WHERE excluded.observed_at_ms >= trunked_control_channel_quality.observed_at_ms
             """))
         {
             statement.setString(1, quality.guid());
@@ -1168,13 +1178,65 @@ public class P25ActivityLogSchema
         }
     }
 
+    /**
+     * Quality samples can arrive before the first decoded site snapshot.  Establish a minimal shared receiver owner
+     * so the quality table can use a real cascading foreign key without changing a known protocol classification.
+     */
+    private static void ensureControlChannelQualityContext(Connection connection,
+                                                           ReceiverActivityRecords.ControlChannelQuality quality)
+        throws SQLException
+    {
+        String contextKey = ReceiverContextKey.trunked(quality.guid());
+
+        if(contextKey == null)
+        {
+            contextKey = "GUID:" + quality.guid().strip();
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO receiver_context(
+                context_key, guid, kind_code, protocol_code, first_seen_ms, last_seen_ms, current_control_hz
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (SELECT 1 FROM receiver_context WHERE guid = ?)
+            """))
+        {
+            statement.setString(1, contextKey);
+            statement.setString(2, quality.guid());
+            statement.setInt(3, CONTEXT_TRUNKED_SITE);
+            statement.setInt(4, PROTOCOL_UNKNOWN);
+            statement.setLong(5, quality.observedAtEpochMilliseconds());
+            statement.setLong(6, quality.observedAtEpochMilliseconds());
+            statement.setLong(7, quality.frequencyHertz());
+            statement.setString(8, quality.guid());
+            statement.executeUpdate();
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE receiver_context
+            SET first_seen_ms = min(first_seen_ms, ?),
+                current_control_hz = CASE WHEN ? >= last_seen_ms THEN ? ELSE current_control_hz END,
+                last_seen_ms = max(last_seen_ms, ?)
+            WHERE guid = ? AND kind_code = ?
+            """))
+        {
+            statement.setLong(1, quality.observedAtEpochMilliseconds());
+            statement.setLong(2, quality.observedAtEpochMilliseconds());
+            statement.setLong(3, quality.frequencyHertz());
+            statement.setLong(4, quality.observedAtEpochMilliseconds());
+            statement.setString(5, quality.guid());
+            statement.setInt(6, CONTEXT_TRUNKED_SITE);
+            statement.executeUpdate();
+        }
+    }
+
     static int deleteOlderThan(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
         int deleted = 0;
         //Hourly rows can contain observations on both sides of an arbitrary retention instant. Preserve that
         //overlapping hour and delete only buckets that end at or before the cutoff.
         long hourlyBucketCutoff = bucketStart(cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_activity_event", "observed_at_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "receiver_activity_event", "observed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "trunked_logical_call_identity_bucket", "bucket_start_ms",
             hourlyBucketCutoff);
         deleted += deleteByTime(connection, "trunked_logical_call_bucket", "bucket_start_ms",
@@ -1246,7 +1308,7 @@ public class P25ActivityLogSchema
                       WHERE configured.radres_guid = context.guid
                   )
                   AND NOT EXISTS (
-                      SELECT 1 FROM p25_activity_event fact WHERE fact.context_id = context.id
+                      SELECT 1 FROM receiver_activity_event fact WHERE fact.context_id = context.id
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM trunked_signaling_activity_bucket fact WHERE fact.context_id = context.id
@@ -1318,7 +1380,7 @@ public class P25ActivityLogSchema
                       SELECT 1 FROM p25_site_patch_group_radio_summary fact WHERE fact.guid = context.guid
                   )
                   AND NOT EXISTS (
-                      SELECT 1 FROM p25_control_channel_quality fact WHERE fact.guid = context.guid
+                      SELECT 1 FROM trunked_control_channel_quality fact WHERE fact.guid = context.guid
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM trunked_site_snapshot fact WHERE fact.guid = context.guid
@@ -1384,7 +1446,7 @@ public class P25ActivityLogSchema
     static int resetStats(Connection connection) throws SQLException
     {
         int deleted = 0;
-        deleted += deleteAll(connection, "p25_activity_event");
+        deleted += deleteAll(connection, "receiver_activity_event");
         deleted += deleteAll(connection, "p25_site_call_identity_bucket");
         deleted += deleteAll(connection, "p25_site_call_bucket");
         deleted += deleteAll(connection, "trunked_logical_call_identity_bucket");
@@ -1412,10 +1474,10 @@ public class P25ActivityLogSchema
         deleted += deleteAll(connection, "p25_site_channel_tag");
         deleted += deleteAll(connection, "p25_site_channel");
         deleted += deleteAll(connection, "p25_site_snapshot");
-        deleted += deleteAll(connection, "p25_control_channel_quality");
+        deleted += deleteAll(connection, "trunked_control_channel_quality");
         deleted += deleteAll(connection, "receiver_context");
         deleted += deleteAll(connection, "p25_system");
-        deleted += deleteAll(connection, "logger_status");
+        deleted += deleteAll(connection, "statistics_status");
         SdrTrunkDatabaseStartup.setMetadata(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,
             Long.toString(System.currentTimeMillis()));
         SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
@@ -1442,14 +1504,14 @@ public class P25ActivityLogSchema
             deleted += TrunkedIdentitySchema.clearContext(connection, contextId);
         }
 
-        deleted += deleteByContextGuid(connection, "p25_activity_event", guid);
+        deleted += deleteByContextGuid(connection, "receiver_activity_event", guid);
         deleted += deleteByContextGuid(connection, "trunked_signaling_activity_bucket", guid);
         deleted += deleteByContextGuid(connection, "conventional_call_identity_bucket", guid);
         deleted += deleteByContextGuid(connection, "conventional_activity_bucket", guid);
         deleted += deleteByContextGuid(connection, "conventional_activity_summary", guid);
         deleted += clearLearnedSiteCallFacts(connection, learnedSiteIds);
         deleted += clearP25SiteProjection(connection, guid);
-        deleted += deleteByGuid(connection, "p25_control_channel_quality", guid);
+        deleted += deleteByGuid(connection, "trunked_control_channel_quality", guid);
         deleted += deleteByGuid(connection, "receiver_context", guid);
         return deleted;
     }
@@ -1524,7 +1586,7 @@ public class P25ActivityLogSchema
     static void updateStatus(Connection connection, String key, String value) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO logger_status (key, value, updated_at_ms)
+            INSERT INTO statistics_status (key, value, updated_at_ms)
             VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
                 value = excluded.value,
@@ -1541,7 +1603,7 @@ public class P25ActivityLogSchema
     static long readStatusLong(Connection connection, String key) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT value FROM logger_status WHERE key = ?"))
+            "SELECT value FROM statistics_status WHERE key = ?"))
         {
             statement.setString(1, key);
 
@@ -1568,12 +1630,12 @@ public class P25ActivityLogSchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_learned_site (
-                learned_site_id INTEGER PRIMARY KEY,
+                learned_site_id INTEGER PRIMARY KEY CHECK(learned_site_id > 0),
                 system_key INTEGER NOT NULL REFERENCES p25_system(system_key) ON DELETE CASCADE,
                 rfss INTEGER NOT NULL CHECK(rfss BETWEEN 0 AND 255),
                 site INTEGER NOT NULL CHECK(site BETWEEN 0 AND 255),
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
                 UNIQUE(system_key, rfss, site)
             )
             """);
@@ -1584,7 +1646,7 @@ public class P25ActivityLogSchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS trunked_signaling_activity_bucket (
                 context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 %s,
                 PRIMARY KEY(context_id, bucket_start_ms)
             ) WITHOUT ROWID
@@ -1596,7 +1658,7 @@ public class P25ActivityLogSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_logical_call_bucket (
                 scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
                 encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
                     CHECK(encrypted_logical_call_count >= 0),
@@ -1612,7 +1674,7 @@ public class P25ActivityLogSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_logical_call_identity_bucket (
                 scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
                 identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
                 identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
@@ -1642,7 +1704,7 @@ public class P25ActivityLogSchema
             CREATE TABLE IF NOT EXISTS p25_site_call_bucket (
                 scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
                 learned_site_id INTEGER NOT NULL REFERENCES p25_learned_site(learned_site_id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(observed_call_count >= 0),
                 encrypted_observed_call_count INTEGER NOT NULL DEFAULT 0
                     CHECK(encrypted_observed_call_count >= 0),
@@ -1657,7 +1719,7 @@ public class P25ActivityLogSchema
             CREATE TABLE IF NOT EXISTS p25_site_call_identity_bucket (
                 scope_id INTEGER NOT NULL REFERENCES trunked_identity_scope(scope_id) ON DELETE CASCADE,
                 learned_site_id INTEGER NOT NULL REFERENCES p25_learned_site(learned_site_id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
                 identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
                 identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
@@ -1684,29 +1746,29 @@ public class P25ActivityLogSchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS conventional_activity_summary (
-                context_id INTEGER NOT NULL,
-                frequency_hz INTEGER NOT NULL,
-                timeslot INTEGER NOT NULL DEFAULT -1,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
+                context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
+                frequency_hz INTEGER NOT NULL CHECK(frequency_hz > 0),
+                timeslot INTEGER NOT NULL DEFAULT -1 CHECK(timeslot >= -1),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
                 %s,
-                last_event_type_code INTEGER,
-                encrypted_count INTEGER NOT NULL DEFAULT 0,
-                recorded_count INTEGER NOT NULL DEFAULT 0,
-                streamed_count INTEGER NOT NULL DEFAULT 0,
+                last_event_type_code INTEGER CHECK(last_event_type_code IS NULL OR last_event_type_code IN (%s)),
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
                 PRIMARY KEY(context_id, frequency_hz, timeslot)
             )
-            """.formatted(ACTION_COUNT_DEFINITIONS));
+            """.formatted(ACTION_COUNT_DEFINITIONS, EVENT_TYPE_CODES));
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS conventional_activity_bucket (
-                context_id INTEGER NOT NULL,
-                frequency_hz INTEGER NOT NULL,
-                timeslot INTEGER NOT NULL DEFAULT -1,
-                bucket_start_ms INTEGER NOT NULL,
+                context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
+                frequency_hz INTEGER NOT NULL CHECK(frequency_hz >= 0),
+                timeslot INTEGER NOT NULL DEFAULT -1 CHECK(timeslot >= -1),
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 %s,
-                encrypted_count INTEGER NOT NULL DEFAULT 0,
-                recorded_count INTEGER NOT NULL DEFAULT 0,
-                streamed_count INTEGER NOT NULL DEFAULT 0,
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
                 PRIMARY KEY(context_id, frequency_hz, timeslot, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
@@ -1735,7 +1797,7 @@ public class P25ActivityLogSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS activity_event_talkgroup_member (
-                event_id INTEGER NOT NULL REFERENCES p25_activity_event(id) ON DELETE CASCADE,
+                event_id INTEGER NOT NULL REFERENCES receiver_activity_event(id) ON DELETE CASCADE,
                 talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
                 PRIMARY KEY(event_id, talkgroup_id)
             ) WITHOUT ROWID
@@ -1747,7 +1809,7 @@ public class P25ActivityLogSchema
         return """
             CREATE TABLE IF NOT EXISTS conventional_call_identity_bucket (
                 context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
                 identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
                 identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
                 identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
@@ -1774,236 +1836,256 @@ public class P25ActivityLogSchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_snapshot (
-                guid TEXT PRIMARY KEY,
+                guid TEXT PRIMARY KEY REFERENCES receiver_context(guid) ON DELETE CASCADE
+                    CHECK(length(trim(guid)) > 0),
                 snapshot_hash TEXT,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                protocol TEXT,
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                protocol TEXT CHECK(protocol IS NULL OR protocol IN ('APCO25', 'APCO25_PHASE2')),
                 channel_name TEXT,
                 alias_list_name TEXT,
                 decoder TEXT,
-                system_key INTEGER,
-                nac INTEGER,
-                rfss INTEGER,
-                site INTEGER,
-                lra INTEGER,
-                mfid INTEGER,
-                broadcast_clock_ms INTEGER,
-                micro_slots INTEGER,
-                data_service INTEGER,
+                system_key INTEGER REFERENCES p25_system(system_key) ON DELETE SET NULL,
+                nac INTEGER CHECK(nac IS NULL OR nac BETWEEN 0 AND 4095),
+                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
+                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
+                lra INTEGER CHECK(lra IS NULL OR lra BETWEEN 0 AND 255),
+                mfid INTEGER CHECK(mfid IS NULL OR mfid BETWEEN 0 AND 255),
+                broadcast_clock_ms INTEGER CHECK(broadcast_clock_ms IS NULL OR broadcast_clock_ms >= 0),
+                micro_slots INTEGER CHECK(micro_slots IS NULL OR micro_slots >= 0),
+                data_service INTEGER CHECK(data_service IS NULL OR data_service IN (0, 1)),
                 data_access TEXT,
-                wuid_lease_minutes INTEGER,
-                registration_service INTEGER,
-                tdma INTEGER,
-                voice_service INTEGER,
-                primary_frequency_hz INTEGER,
-                current_control_hz INTEGER,
-                active_rfss_network_connection INTEGER,
-                system_id INTEGER
+                wuid_lease_minutes INTEGER CHECK(wuid_lease_minutes IS NULL OR wuid_lease_minutes >= 0),
+                registration_service INTEGER CHECK(registration_service IS NULL OR registration_service IN (0, 1)),
+                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
+                voice_service INTEGER CHECK(voice_service IS NULL OR voice_service IN (0, 1)),
+                primary_frequency_hz INTEGER CHECK(primary_frequency_hz IS NULL OR primary_frequency_hz > 0),
+                current_control_hz INTEGER CHECK(current_control_hz IS NULL OR current_control_hz > 0),
+                active_rfss_network_connection INTEGER
+                    CHECK(active_rfss_network_connection IS NULL OR active_rfss_network_connection IN (0, 1)),
+                system_id INTEGER CHECK(system_id IS NULL OR system_id BETWEEN 0 AND 4095)
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel (
                 guid TEXT NOT NULL,
-                channel_key TEXT NOT NULL,
+                channel_key TEXT NOT NULL CHECK(length(trim(channel_key)) > 0),
                 descriptor TEXT,
-                downlink_hz INTEGER,
-                uplink_hz INTEGER,
-                tdma INTEGER,
-                timeslots INTEGER,
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
+                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
+                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
                 callsign TEXT,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, channel_key)
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, channel_key),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel_summary (
                 guid TEXT NOT NULL,
-                channel_key TEXT NOT NULL,
+                channel_key TEXT NOT NULL CHECK(length(trim(channel_key)) > 0),
                 descriptor TEXT,
-                downlink_hz INTEGER,
-                uplink_hz INTEGER,
-                tdma INTEGER,
-                timeslots INTEGER,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
+                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
+                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
                 callsign TEXT,
-                PRIMARY KEY(guid, channel_key)
+                PRIMARY KEY(guid, channel_key),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel_tag (
                 guid TEXT NOT NULL,
                 channel_key TEXT NOT NULL,
-                tag TEXT NOT NULL,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, channel_key, tag)
+                tag TEXT NOT NULL CHECK(length(trim(tag)) > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, channel_key, tag),
+                FOREIGN KEY(guid, channel_key) REFERENCES p25_site_channel(guid, channel_key) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel_tag_summary (
                 guid TEXT NOT NULL,
                 channel_key TEXT NOT NULL,
-                tag TEXT NOT NULL,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, channel_key, tag)
+                tag TEXT NOT NULL CHECK(length(trim(tag)) > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, channel_key, tag),
+                FOREIGN KEY(guid, channel_key) REFERENCES p25_site_channel_summary(guid, channel_key)
+                    ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_band (
                 guid TEXT NOT NULL,
-                band INTEGER NOT NULL,
-                tdma INTEGER,
-                base_hz INTEGER,
-                bandwidth INTEGER,
-                spacing_hz INTEGER,
+                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
+                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
+                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
+                bandwidth INTEGER CHECK(bandwidth IS NULL OR bandwidth > 0),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
                 transmit_offset_hz INTEGER,
-                timeslots INTEGER,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, band)
+                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, band),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_band_summary (
                 guid TEXT NOT NULL,
-                band INTEGER NOT NULL,
-                tdma INTEGER,
-                base_hz INTEGER,
-                bandwidth INTEGER,
-                spacing_hz INTEGER,
+                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
+                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
+                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
+                bandwidth INTEGER CHECK(bandwidth IS NULL OR bandwidth > 0),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
                 transmit_offset_hz INTEGER,
-                timeslots INTEGER,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, band)
+                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, band),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         createForeignSystemBandTables(statement);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_neighbor (
                 guid TEXT NOT NULL,
-                neighbor_key TEXT NOT NULL,
-                system_id INTEGER,
-                rfss INTEGER,
-                site INTEGER,
-                lra INTEGER,
+                neighbor_key TEXT NOT NULL CHECK(length(trim(neighbor_key)) > 0),
+                system_id INTEGER CHECK(system_id IS NULL OR system_id BETWEEN 0 AND 4095),
+                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
+                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
+                lra INTEGER CHECK(lra IS NULL OR lra BETWEEN 0 AND 255),
                 channel_descriptor TEXT,
-                downlink_hz INTEGER,
-                uplink_hz INTEGER,
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
                 status TEXT,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, neighbor_key)
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, neighbor_key),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_neighbor_summary (
                 guid TEXT NOT NULL,
-                neighbor_key TEXT NOT NULL,
-                system_id INTEGER,
-                rfss INTEGER,
-                site INTEGER,
-                lra INTEGER,
+                neighbor_key TEXT NOT NULL CHECK(length(trim(neighbor_key)) > 0),
+                system_id INTEGER CHECK(system_id IS NULL OR system_id BETWEEN 0 AND 4095),
+                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
+                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
+                lra INTEGER CHECK(lra IS NULL OR lra BETWEEN 0 AND 255),
                 channel_descriptor TEXT,
-                downlink_hz INTEGER,
-                uplink_hz INTEGER,
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
                 status TEXT,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, neighbor_key)
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, neighbor_key),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group (
                 guid TEXT NOT NULL,
-                patch_group INTEGER NOT NULL,
-                version INTEGER,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, patch_group)
+                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
+                version INTEGER CHECK(version IS NULL OR version >= 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, patch_group),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_summary (
                 guid TEXT NOT NULL,
-                patch_group INTEGER NOT NULL,
-                version INTEGER,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, patch_group)
+                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
+                version INTEGER CHECK(version IS NULL OR version >= 0),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, patch_group),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup (
                 guid TEXT NOT NULL,
-                patch_group INTEGER NOT NULL,
-                talkgroup_id INTEGER NOT NULL,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, patch_group, talkgroup_id)
+                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
+                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, patch_group, talkgroup_id),
+                FOREIGN KEY(guid, patch_group) REFERENCES p25_site_patch_group(guid, patch_group)
+                    ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup_summary (
                 guid TEXT NOT NULL,
-                patch_group INTEGER NOT NULL,
-                talkgroup_id INTEGER NOT NULL,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, patch_group, talkgroup_id)
+                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
+                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, patch_group, talkgroup_id),
+                FOREIGN KEY(guid, patch_group)
+                    REFERENCES p25_site_patch_group_summary(guid, patch_group) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_radio (
                 guid TEXT NOT NULL,
-                patch_group INTEGER NOT NULL,
-                radio_id INTEGER NOT NULL,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, patch_group, radio_id)
+                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
+                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, patch_group, radio_id),
+                FOREIGN KEY(guid, patch_group) REFERENCES p25_site_patch_group(guid, patch_group)
+                    ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_radio_summary (
                 guid TEXT NOT NULL,
-                patch_group INTEGER NOT NULL,
-                radio_id INTEGER NOT NULL,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, patch_group, radio_id)
+                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
+                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, patch_group, radio_id),
+                FOREIGN KEY(guid, patch_group)
+                    REFERENCES p25_site_patch_group_summary(guid, patch_group) ON DELETE CASCADE
             )
             """);
     }
 
     private static void createControlChannelQualityTable(Statement statement) throws SQLException
     {
-        /*
-         * The deployed table name predates DMR/NXDN quality collection.  Its GUID-scoped bucket shape is shared by
-         * every supported trunked protocol, so keep the name for schema compatibility instead of forcing a
-         * data-moving migration for a cosmetic rename.
-         */
         statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS p25_control_channel_quality (
-                guid TEXT NOT NULL,
-                frequency_hz INTEGER NOT NULL,
-                bucket_start_ms INTEGER NOT NULL,
-                observed_at_ms INTEGER NOT NULL,
+            CREATE TABLE IF NOT EXISTS trunked_control_channel_quality (
+                guid TEXT NOT NULL REFERENCES receiver_context(guid) ON DELETE CASCADE,
+                frequency_hz INTEGER NOT NULL CHECK(frequency_hz > 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
+                observed_at_ms INTEGER NOT NULL CHECK(
+                    observed_at_ms >= bucket_start_ms AND observed_at_ms < bucket_start_ms + 10000
+                ),
                 signal_dbfs REAL,
                 average_signal_dbfs REAL,
                 minimum_signal_dbfs REAL,
                 maximum_signal_dbfs REAL,
-                decode_health_pct REAL,
-                valid_frames INTEGER NOT NULL DEFAULT 0,
-                invalid_frames INTEGER NOT NULL DEFAULT 0,
-                corrected_bits INTEGER NOT NULL DEFAULT 0,
-                sync_loss_bits INTEGER NOT NULL DEFAULT 0,
-                dropped_bits INTEGER NOT NULL DEFAULT 0,
-                last_valid_decode_ms INTEGER NOT NULL DEFAULT 0,
+                decode_health_pct REAL CHECK(
+                    decode_health_pct IS NULL OR decode_health_pct BETWEEN 0.0 AND 100.0
+                ),
+                valid_frames INTEGER NOT NULL DEFAULT 0 CHECK(valid_frames >= 0),
+                invalid_frames INTEGER NOT NULL DEFAULT 0 CHECK(invalid_frames >= 0),
+                corrected_bits INTEGER NOT NULL DEFAULT 0 CHECK(corrected_bits >= 0),
+                sync_loss_bits INTEGER NOT NULL DEFAULT 0 CHECK(sync_loss_bits >= 0),
+                dropped_bits INTEGER NOT NULL DEFAULT 0 CHECK(dropped_bits >= 0),
+                last_valid_decode_ms INTEGER NOT NULL DEFAULT 0 CHECK(last_valid_decode_ms >= 0),
                 PRIMARY KEY(guid, frequency_hz, bucket_start_ms)
             ) WITHOUT ROWID
             """);
@@ -2015,31 +2097,33 @@ public class P25ActivityLogSchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band (
                 guid TEXT NOT NULL,
-                foreign_wacn INTEGER NOT NULL,
-                foreign_system_id INTEGER NOT NULL,
-                band INTEGER NOT NULL,
-                channel_type INTEGER NOT NULL,
-                base_hz INTEGER,
-                spacing_hz INTEGER,
+                foreign_wacn INTEGER NOT NULL CHECK(foreign_wacn BETWEEN 0 AND 1048575),
+                foreign_system_id INTEGER NOT NULL CHECK(foreign_system_id BETWEEN 0 AND 4095),
+                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
+                channel_type INTEGER NOT NULL CHECK(channel_type >= 0),
+                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
                 transmit_offset_hz INTEGER,
-                confirmed_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(guid, foreign_wacn, foreign_system_id, band)
+                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                PRIMARY KEY(guid, foreign_wacn, foreign_system_id, band),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             ) WITHOUT ROWID
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band_summary (
                 guid TEXT NOT NULL,
-                foreign_wacn INTEGER NOT NULL,
-                foreign_system_id INTEGER NOT NULL,
-                band INTEGER NOT NULL,
-                channel_type INTEGER NOT NULL,
-                base_hz INTEGER,
-                spacing_hz INTEGER,
+                foreign_wacn INTEGER NOT NULL CHECK(foreign_wacn BETWEEN 0 AND 1048575),
+                foreign_system_id INTEGER NOT NULL CHECK(foreign_system_id BETWEEN 0 AND 4095),
+                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
+                channel_type INTEGER NOT NULL CHECK(channel_type >= 0),
+                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
                 transmit_offset_hz INTEGER,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
-                observation_count INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(guid, foreign_wacn, foreign_system_id, band)
+                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                PRIMARY KEY(guid, foreign_wacn, foreign_system_id, band),
+                FOREIGN KEY(guid) REFERENCES p25_site_snapshot(guid) ON DELETE CASCADE
             ) WITHOUT ROWID
             """);
     }
@@ -2048,19 +2132,19 @@ public class P25ActivityLogSchema
     private static void createControlChannelQualityRetentionIndex(Statement statement) throws SQLException
     {
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_p25_control_quality_retention
-            ON p25_control_channel_quality(observed_at_ms, guid, frequency_hz, bucket_start_ms)
+            CREATE INDEX IF NOT EXISTS idx_trunked_control_quality_retention
+            ON trunked_control_channel_quality(observed_at_ms, guid, frequency_hz, bucket_start_ms)
             """);
     }
 
     private static void createIndexesAndViews(Statement statement) throws SQLException
     {
         statement.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_receiver_context_guid ON receiver_context(guid) WHERE guid IS NOT NULL");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_activity_event_context_time ON p25_activity_event(context_id, observed_at_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_activity_event_target_time ON p25_activity_event(target_id, observed_at_ms) WHERE target_id IS NOT NULL");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_activity_event_source_time ON p25_activity_event(source_radio_id, observed_at_ms) WHERE source_radio_id IS NOT NULL");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_activity_event_frequency_time ON p25_activity_event(frequency_hz, observed_at_ms) WHERE frequency_hz IS NOT NULL");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_activity_event_encryption ON p25_activity_event(encryption_algorithm_id, encryption_key_id, observed_at_ms) WHERE encrypted = 1");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_context_time ON receiver_activity_event(context_id, observed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_time ON receiver_activity_event(target_id, observed_at_ms) WHERE target_id IS NOT NULL");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_time ON receiver_activity_event(source_radio_id, observed_at_ms) WHERE source_radio_id IS NOT NULL");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_frequency_time ON receiver_activity_event(frequency_hz, observed_at_ms) WHERE frequency_hz IS NOT NULL");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_encryption ON receiver_activity_event(encryption_algorithm_id, encryption_key_id, observed_at_ms) WHERE encrypted = 1");
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_activity_event_member_talkgroup_event
             ON activity_event_talkgroup_member(talkgroup_id, event_id)
@@ -2104,7 +2188,7 @@ public class P25ActivityLogSchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_radio ON p25_site_patch_group_radio(radio_id, guid)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_summary_guid_frequency ON p25_site_channel_summary(guid, downlink_hz)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_summary_guid_site ON p25_site_neighbor_summary(guid, system_id, rfss, site)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_control_quality_guid_time ON p25_control_channel_quality(guid, observed_at_ms DESC)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_control_quality_guid_time ON trunked_control_channel_quality(guid, observed_at_ms DESC)");
         createControlChannelQualityRetentionIndex(statement);
         statement.executeUpdate(createResolvedViewSql());
     }
@@ -2114,7 +2198,7 @@ public class P25ActivityLogSchema
         table("receiver_context", "id", "context_key", "guid", "kind_code", "protocol_code", "channel_name",
             "alias_list_name", "decoder", "first_seen_ms", "last_seen_ms", "system_key", "nac", "rfss",
             "site", "primary_frequency_hz", "current_control_hz", "alias_list_id"),
-        table("p25_activity_event", "id", "context_id", "observed_at_ms", "action_code", "event_type_code",
+        table("receiver_activity_event", "id", "context_id", "observed_at_ms", "action_code", "event_type_code",
             "source_radio_id", "target_id", "target_kind_code", "frequency_hz", "lcn_band", "lcn_number",
             "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id"),
         table("activity_event_talkgroup_member", "event_id", "talkgroup_id"),
@@ -2175,19 +2259,19 @@ public class P25ActivityLogSchema
         table("p25_site_patch_group_radio", "guid", "patch_group", "radio_id", "confirmed_at_ms"),
         table("p25_site_patch_group_radio_summary", "guid", "patch_group", "radio_id", "first_seen_ms",
             "last_seen_ms", "observation_count"),
-        table("p25_control_channel_quality", "guid", "frequency_hz", "bucket_start_ms", "observed_at_ms",
+        table("trunked_control_channel_quality", "guid", "frequency_hz", "bucket_start_ms", "observed_at_ms",
             "signal_dbfs", "average_signal_dbfs", "minimum_signal_dbfs", "maximum_signal_dbfs",
             "decode_health_pct", "valid_frames", "invalid_frames", "corrected_bits", "sync_loss_bits",
             "dropped_bits", "last_valid_decode_ms"),
-        table("logger_status", "key", "value", "updated_at_ms")
+        table("statistics_status", "key", "value", "updated_at_ms")
     ).stream(), TrunkedIdentitySchema.tables().stream()).toList();
     private static final List<String> INDEXES = java.util.stream.Stream.concat(List.of(
         "idx_receiver_context_guid",
-        "idx_p25_activity_event_context_time",
-        "idx_p25_activity_event_target_time",
-        "idx_p25_activity_event_source_time",
-        "idx_p25_activity_event_frequency_time",
-        "idx_p25_activity_event_encryption",
+        "idx_receiver_activity_event_context_time",
+        "idx_receiver_activity_event_target_time",
+        "idx_receiver_activity_event_source_time",
+        "idx_receiver_activity_event_frequency_time",
+        "idx_receiver_activity_event_encryption",
         "idx_activity_event_member_talkgroup_event",
         "idx_trunked_signaling_activity_time",
         "idx_trunked_logical_call_bucket_time",
@@ -2206,19 +2290,59 @@ public class P25ActivityLogSchema
         "idx_p25_site_patch_radio",
         "idx_p25_site_channel_summary_guid_frequency",
         "idx_p25_site_neighbor_summary_guid_site",
-        "idx_p25_control_quality_guid_time",
-        "idx_p25_control_quality_retention"
+        "idx_trunked_control_quality_guid_time",
+        "idx_trunked_control_quality_retention"
     ).stream(), TrunkedIdentitySchema.indexes().stream()).toList();
 
-    private static final List<String> VIEWS = List.of("p25_activity_event_resolved");
+    private static final List<String> VIEWS = List.of("receiver_activity_event_resolved");
+    private static final List<ForeignKeyDefinition> REQUIRED_FOREIGN_KEYS = List.of(
+        foreignKey("receiver_context", List.of("system_key"), "p25_system", List.of("system_key"), "SET NULL"),
+        foreignKey("receiver_context", List.of("alias_list_id"), "alias_list", List.of("id"), "SET NULL"),
+        foreignKey("receiver_activity_event", List.of("context_id"), "receiver_context", List.of("id"), "CASCADE"),
+        foreignKey("activity_event_talkgroup_member", List.of("event_id"), "receiver_activity_event",
+            List.of("id"), "CASCADE"),
+        foreignKey("conventional_activity_summary", List.of("context_id"), "receiver_context", List.of("id"),
+            "CASCADE"),
+        foreignKey("conventional_activity_bucket", List.of("context_id"), "receiver_context", List.of("id"),
+            "CASCADE"),
+        foreignKey("p25_site_snapshot", List.of("guid"), "receiver_context", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_snapshot", List.of("system_key"), "p25_system", List.of("system_key"), "SET NULL"),
+        foreignKey("p25_site_channel", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_channel_summary", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_channel_tag", List.of("guid", "channel_key"), "p25_site_channel",
+            List.of("guid", "channel_key"), "CASCADE"),
+        foreignKey("p25_site_channel_tag_summary", List.of("guid", "channel_key"), "p25_site_channel_summary",
+            List.of("guid", "channel_key"), "CASCADE"),
+        foreignKey("p25_site_frequency_band", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_frequency_band_summary", List.of("guid"), "p25_site_snapshot", List.of("guid"),
+            "CASCADE"),
+        foreignKey("p25_foreign_system_band", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_foreign_system_band_summary", List.of("guid"), "p25_site_snapshot", List.of("guid"),
+            "CASCADE"),
+        foreignKey("p25_site_neighbor", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_neighbor_summary", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_patch_group", List.of("guid"), "p25_site_snapshot", List.of("guid"), "CASCADE"),
+        foreignKey("p25_site_patch_group_summary", List.of("guid"), "p25_site_snapshot", List.of("guid"),
+            "CASCADE"),
+        foreignKey("p25_site_patch_group_talkgroup", List.of("guid", "patch_group"), "p25_site_patch_group",
+            List.of("guid", "patch_group"), "CASCADE"),
+        foreignKey("p25_site_patch_group_talkgroup_summary", List.of("guid", "patch_group"),
+            "p25_site_patch_group_summary", List.of("guid", "patch_group"), "CASCADE"),
+        foreignKey("p25_site_patch_group_radio", List.of("guid", "patch_group"), "p25_site_patch_group",
+            List.of("guid", "patch_group"), "CASCADE"),
+        foreignKey("p25_site_patch_group_radio_summary", List.of("guid", "patch_group"),
+            "p25_site_patch_group_summary", List.of("guid", "patch_group"), "CASCADE"),
+        foreignKey("trunked_control_channel_quality", List.of("guid"), "receiver_context", List.of("guid"),
+            "CASCADE")
+    );
 
     private static void upsertTrunkedSignalingMetrics(Connection connection,
-                                                      P25ActivityLogRecords.ActivityEvent activity,
+                                                      ReceiverActivityRecords.ActivityEvent activity,
                                                       int contextId) throws SQLException
     {
-        if(activity.action() == null || activity.action() == P25ActivityLogRecords.Action.UNKNOWN ||
-            activity.action() == P25ActivityLogRecords.Action.CALL ||
-            activity.action() == P25ActivityLogRecords.Action.CONTINUE)
+        if(activity.action() == null || activity.action() == ReceiverActivityRecords.Action.UNKNOWN ||
+            activity.action() == ReceiverActivityRecords.Action.CALL ||
+            activity.action() == ReceiverActivityRecords.Action.CONTINUE)
         {
             return;
         }
@@ -2236,7 +2360,7 @@ public class P25ActivityLogSchema
             int index = 1;
             statement.setInt(index++, contextId);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            for(P25ActivityLogRecords.Action action: TRUNKED_SIGNALING_ACTIONS)
+            for(ReceiverActivityRecords.Action action: TRUNKED_SIGNALING_ACTIONS)
             {
                 statement.setInt(index++, activity.action() == action ? 1 : 0);
             }
@@ -2245,7 +2369,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertCallIdentityBuckets(Connection connection,
-                                                  P25ActivityLogRecords.ActivityEvent activity,
+                                                  ReceiverActivityRecords.ActivityEvent activity,
                                                   int contextId) throws SQLException
     {
         long bucket = bucketStart(activity.observedAtEpochMilliseconds());
@@ -2261,7 +2385,7 @@ public class P25ActivityLogSchema
 
         Integer source = positiveInteger(activity.sourceRadioId());
 
-        if(source != null && (activity.contextKind() != P25ActivityLogRecords.ContextKind.TRUNKED_SITE ||
+        if(source != null && (activity.contextKind() != ReceiverActivityRecords.ContextKind.TRUNKED_SITE ||
             TrunkedIdentityPolicy.isDirectoryRadio(protocol, activity.identityDomain(), source)))
         {
             upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_SOURCE, IDENTITY_KIND_RADIO,
@@ -2270,7 +2394,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertConventionalCallOutputIdentityBuckets(
-        Connection connection, P25ActivityLogRecords.ConventionalCallOutput output, int contextId,
+        Connection connection, ReceiverActivityRecords.ConventionalCallOutput output, int contextId,
         int protocol, int recorded, int streamed) throws SQLException
     {
         long bucket = bucketStart(output.callStartEpochMilliseconds());
@@ -2324,7 +2448,7 @@ public class P25ActivityLogSchema
 
     private static List<CallIdentity> destinationIdentities(String targetId, String targetKind,
                                                              List<Integer> patchMembers, int protocol,
-                                                             P25ActivityLogRecords.IdentityDomain identityDomain)
+                                                             ReceiverActivityRecords.IdentityDomain identityDomain)
     {
         Integer target = positiveInteger(targetId);
         List<CallIdentity> identities = new ArrayList<>();
@@ -2365,14 +2489,15 @@ public class P25ActivityLogSchema
         return identities;
     }
 
-    private static long insertP25ActivityEvent(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
-                                               int contextId) throws SQLException
+    private static long insertReceiverActivityEvent(Connection connection,
+                                                    ReceiverActivityRecords.ActivityEvent activity,
+                                                    int contextId) throws SQLException
     {
         Lcn lcn = Lcn.parse(activity.lcn());
         Long activityId = null;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO p25_activity_event (
+            INSERT INTO receiver_activity_event (
                 context_id, observed_at_ms, action_code, event_type_code, source_radio_id, target_id, target_kind_code,
                 frequency_hz, lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2412,7 +2537,7 @@ public class P25ActivityLogSchema
     }
 
     private static void insertActivityEventTalkgroupMembers(Connection connection, long activityId,
-                                                            P25ActivityLogRecords.ActivityEvent activity)
+                                                            ReceiverActivityRecords.ActivityEvent activity)
         throws SQLException
     {
         int protocol = TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol());
@@ -2423,7 +2548,7 @@ public class P25ActivityLogSchema
     private static void insertActivityEventTalkgroupMembers(Connection connection, long activityId,
                                                             String targetKind, List<Integer> patchMemberTalkgroupIds,
                                                             int protocol,
-                                                            P25ActivityLogRecords.IdentityDomain identityDomain)
+                                                            ReceiverActivityRecords.IdentityDomain identityDomain)
         throws SQLException
     {
         List<Integer> members = ("PATCH_GROUP".equals(targetKind) ?
@@ -2453,7 +2578,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void upsertConventionalSummary(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
+    private static void upsertConventionalSummary(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
                                                   int contextId) throws SQLException
     {
         long frequencyHertz = activity.frequencyHertz() != null && activity.frequencyHertz() > 0 ?
@@ -2548,7 +2673,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static Integer resolveP25SystemKey(Connection connection, P25ActivityLogRecords.ActivityEvent activity)
+    private static Integer resolveP25SystemKey(Connection connection, ReceiverActivityRecords.ActivityEvent activity)
         throws SQLException
     {
         return resolveEstablishedP25SystemKey(connection, activity.observedAtEpochMilliseconds(),
@@ -2604,7 +2729,7 @@ public class P25ActivityLogSchema
     private static int upsertReceiverContext(Connection connection, ReceiverContextMetadata metadata)
         throws SQLException
     {
-        boolean trunkedSite = metadata.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
+        boolean trunkedSite = metadata.contextKind() == ReceiverActivityRecords.ContextKind.TRUNKED_SITE;
         ReceiverContextState previous = receiverContextState(connection, metadata.contextKey());
         boolean authoritative = previous == null ||
             metadata.lastSeenEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
@@ -2705,7 +2830,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void upsertSiteSnapshot(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
+    private static void upsertSiteSnapshot(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
                                            Integer systemKey) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -2779,7 +2904,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void upsertSiteChannelSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
+    private static void upsertSiteChannelSummaries(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
                                                    Map<String,SiteChannelEvidence> channels)
         throws SQLException
     {
@@ -2831,7 +2956,7 @@ public class P25ActivityLogSchema
      * without feeding dynamic traffic back into the network stabilizer.
      */
     static void upsertGrantedChannelSummary(Connection connection,
-                                            P25ActivityLogRecords.ChannelFact fact) throws SQLException
+                                            ReceiverActivityRecords.ChannelFact fact) throws SQLException
     {
         Lcn lcn = Lcn.parse(fact.lcn());
         ChannelTag serviceTag = fact.serviceTag();
@@ -2903,7 +3028,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertSiteFrequencyBandSummaries(Connection connection,
-                                                         P25ActivityLogRecords.SiteSnapshot snapshot)
+                                                         ReceiverActivityRecords.SiteSnapshot snapshot)
         throws SQLException
     {
         if(snapshot.frequencyBands() == null)
@@ -2949,7 +3074,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void upsertSiteNeighborSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static void upsertSiteNeighborSummaries(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot)
         throws SQLException
     {
         if(snapshot.neighborSites() == null)
@@ -3002,7 +3127,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertForeignSystemBandSummaries(Connection connection,
-                                                         P25ActivityLogRecords.SiteSnapshot snapshot)
+                                                         ReceiverActivityRecords.SiteSnapshot snapshot)
         throws SQLException
     {
         for(P25NetworkConfigurationSnapshot.ForeignSystemBand band: list(snapshot.foreignSystemBands()))
@@ -3035,7 +3160,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void upsertSitePatchSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static void upsertSitePatchSummaries(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot)
         throws SQLException
     {
         if(snapshot.patchGroups() == null)
@@ -3074,7 +3199,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertSitePatchTalkgroupSummaries(Connection connection,
-        P25ActivityLogRecords.SiteSnapshot snapshot, P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
+        ReceiverActivityRecords.SiteSnapshot snapshot, P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
         throws SQLException
     {
         if(patchGroup.talkgroups() == null)
@@ -3109,7 +3234,7 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertSitePatchRadioSummaries(Connection connection,
-        P25ActivityLogRecords.SiteSnapshot snapshot, P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
+        ReceiverActivityRecords.SiteSnapshot snapshot, P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
         throws SQLException
     {
         if(patchGroup.radios() == null)
@@ -3167,12 +3292,13 @@ public class P25ActivityLogSchema
     }
 
     private static boolean isCurrentP25SiteGeneration(Connection connection,
-                                                       P25ActivityLogRecords.ChannelFact fact)
+                                                       ReceiverActivityRecords.ChannelFact fact)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1
             FROM receiver_context context
+            JOIN p25_site_snapshot site ON site.guid=context.guid
             WHERE context.guid=?
               AND context.kind_code=?
               AND context.protocol_code IN (?,?)
@@ -3193,7 +3319,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void replaceCurrentSiteFacts(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
+    private static void replaceCurrentSiteFacts(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,
                                                 Map<String,SiteChannelEvidence> channels)
         throws SQLException
     {
@@ -3399,7 +3525,7 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void confirmCurrentSiteFacts(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static void confirmCurrentSiteFacts(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot)
         throws SQLException
     {
         for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
@@ -3522,7 +3648,7 @@ public class P25ActivityLogSchema
     {
         TrunkedIdentitySchema.clearContext(connection, contextId);
 
-        for(String table: List.of("p25_activity_event", "trunked_signaling_activity_bucket"))
+        for(String table: List.of("receiver_activity_event", "trunked_signaling_activity_bucket"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "DELETE FROM " + table + " WHERE context_id = ?"))
@@ -3538,7 +3664,7 @@ public class P25ActivityLogSchema
         }
 
         clearP25SiteProjection(connection, guid);
-        deleteByGuid(connection, "p25_control_channel_quality", guid);
+        deleteByGuid(connection, "trunked_control_channel_quality", guid);
 
         for(String table: List.of("trunked_site_channel_summary", "trunked_site_neighbor_summary",
             "trunked_site_snapshot"))
@@ -3567,7 +3693,7 @@ public class P25ActivityLogSchema
     }
 
     private static ReceiverContextIdentity selectContextIdentity(
-        Connection connection, P25ActivityLogRecords.ConventionalCallOutput output)
+        Connection connection, ReceiverActivityRecords.ConventionalCallOutput output)
         throws SQLException
     {
         return selectContextIdentity(connection, output.contextKey());
@@ -3615,7 +3741,7 @@ public class P25ActivityLogSchema
     }
 
     private static boolean matchesEstablishedP25Generation(
-        ReceiverContextIdentity context, P25ActivityLogRecords.ActivityEvent activity)
+        ReceiverContextIdentity context, ReceiverActivityRecords.ActivityEvent activity)
     {
         if(context == null || context.systemKey() == null)
         {
@@ -3642,6 +3768,66 @@ public class P25ActivityLogSchema
         {
             statement.setLong(1, cutoffEpochMilliseconds);
             return statement.executeUpdate();
+        }
+    }
+
+    private static ForeignKeyDefinition foreignKey(String table, List<String> columns, String parentTable,
+                                                    List<String> parentColumns, String onDelete)
+    {
+        return new ForeignKeyDefinition(table, columns, parentTable, parentColumns, onDelete);
+    }
+
+    private static void validateRequiredForeignKeys(Connection connection) throws SQLException
+    {
+        for(ForeignKeyDefinition expected: REQUIRED_FOREIGN_KEYS)
+        {
+            List<ObservedForeignKey> observed = observedForeignKeys(connection, expected.table());
+
+            if(observed.stream().noneMatch(expected::matches))
+            {
+                throw new SQLException("SQLite schema is missing required foreign key for table [" +
+                    expected.table() + "]: " + expected.columns() + " -> " + expected.parentTable() +
+                    expected.parentColumns() + " ON DELETE " + expected.onDelete());
+            }
+        }
+    }
+
+    private static List<ObservedForeignKey> observedForeignKeys(Connection connection, String table)
+        throws SQLException
+    {
+        Map<Integer,ObservedForeignKeyBuilder> builders = new LinkedHashMap<>();
+        String escapedTable = table.replace("'", "''");
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT id, seq, "table", "from", "to", on_delete
+                FROM pragma_foreign_key_list('%s')
+                ORDER BY id, seq
+                """.formatted(escapedTable)))
+        {
+            while(resultSet.next())
+            {
+                int id = resultSet.getInt("id");
+                ObservedForeignKeyBuilder builder = builders.computeIfAbsent(id,
+                    ignored -> new ObservedForeignKeyBuilder(resultSetString(resultSet, "table"),
+                        resultSetString(resultSet, "on_delete")));
+                builder.add(resultSet.getInt("seq"), resultSetString(resultSet, "from"),
+                    resultSetString(resultSet, "to"));
+            }
+        }
+
+        return builders.values().stream().map(ObservedForeignKeyBuilder::build).toList();
+    }
+
+    private static String resultSetString(ResultSet resultSet, String column)
+    {
+        try
+        {
+            return resultSet.getString(column);
+        }
+        catch(SQLException e)
+        {
+            throw new IllegalStateException("Unable to inspect SQLite foreign key column " + column, e);
         }
     }
 
@@ -3685,6 +3871,63 @@ public class P25ActivityLogSchema
         throw new SQLException("SQLite schema metadata [" + key + "] is missing or not a positive timestamp");
     }
 
+    private record ForeignKeyDefinition(String table, List<String> columns, String parentTable,
+                                        List<String> parentColumns, String onDelete)
+    {
+        private ForeignKeyDefinition
+        {
+            columns = List.copyOf(columns);
+            parentColumns = List.copyOf(parentColumns);
+
+            if(columns.isEmpty() || columns.size() != parentColumns.size())
+            {
+                throw new IllegalArgumentException("Foreign-key columns must have matching non-empty shapes");
+            }
+        }
+
+        private boolean matches(ObservedForeignKey observed)
+        {
+            return parentTable.equals(observed.parentTable()) && onDelete.equals(observed.onDelete()) &&
+                columns.equals(observed.columns()) && parentColumns.equals(observed.parentColumns());
+        }
+    }
+
+    private record ObservedForeignKey(String parentTable, String onDelete, List<String> columns,
+                                      List<String> parentColumns)
+    {
+    }
+
+    private static final class ObservedForeignKeyBuilder
+    {
+        private final String mParentTable;
+        private final String mOnDelete;
+        private final List<String> mColumns = new ArrayList<>();
+        private final List<String> mParentColumns = new ArrayList<>();
+
+        private ObservedForeignKeyBuilder(String parentTable, String onDelete)
+        {
+            mParentTable = parentTable;
+            mOnDelete = onDelete;
+        }
+
+        private void add(int sequence, String column, String parentColumn)
+        {
+            if(sequence != mColumns.size())
+            {
+                throw new IllegalStateException("Unexpected SQLite foreign-key column sequence " + sequence);
+            }
+
+            mColumns.add(column);
+            mParentColumns.add(parentColumn);
+        }
+
+        private ObservedForeignKey build()
+        {
+            return new ObservedForeignKey(mParentTable, mOnDelete, List.copyOf(mColumns),
+                List.copyOf(mParentColumns));
+        }
+    }
+
     /**
      * Drains expired shared control-channel quality buckets in bounded, retention-indexed batches. The ordered
      * covering-index selection prevents a full table scan and the composite primary-key lookup keeps each delete
@@ -3696,10 +3939,10 @@ public class P25ActivityLogSchema
         int total = 0;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            DELETE FROM p25_control_channel_quality
+            DELETE FROM trunked_control_channel_quality
             WHERE (guid, frequency_hz, bucket_start_ms) IN (
                 SELECT guid, frequency_hz, bucket_start_ms
-                FROM p25_control_channel_quality INDEXED BY idx_p25_control_quality_retention
+                FROM trunked_control_channel_quality INDEXED BY idx_trunked_control_quality_retention
                 WHERE observed_at_ms < ?
                 ORDER BY observed_at_ms, guid, frequency_hz, bucket_start_ms
                 LIMIT ?
@@ -3811,13 +4054,13 @@ public class P25ActivityLogSchema
     }
 
     private static int setActionCounts(PreparedStatement statement, int index,
-                                       P25ActivityLogRecords.ActivityEvent activity) throws SQLException
+                                       ReceiverActivityRecords.ActivityEvent activity) throws SQLException
     {
-        for(P25ActivityLogRecords.Action action: ACTIONS)
+        for(ReceiverActivityRecords.Action action: ACTIONS)
         {
             boolean counted = activity.action() == action;
 
-            if(action == P25ActivityLogRecords.Action.CALL)
+            if(action == ReceiverActivityRecords.Action.CALL)
             {
                 counted = activity.countedCall();
             }
@@ -3828,12 +4071,12 @@ public class P25ActivityLogSchema
         return index;
     }
 
-    private static boolean isConventional(P25ActivityLogRecords.ContextKind contextKind)
+    private static boolean isConventional(ReceiverActivityRecords.ContextKind contextKind)
     {
-        return contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 ||
-            contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR ||
-            contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN ||
-            contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
+        return contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_P25 ||
+            contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_DMR ||
+            contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_NXDN ||
+            contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG;
     }
 
     private static boolean isTalkgroup(String targetKind)
@@ -3856,7 +4099,7 @@ public class P25ActivityLogSchema
         return radio != null && radio > 0 && radio < P25_FIRST_SPECIAL_RADIO;
     }
 
-    private static List<Integer> patchMemberTalkgroups(P25ActivityLogRecords.ActivityEvent activity)
+    private static List<Integer> patchMemberTalkgroups(ReceiverActivityRecords.ActivityEvent activity)
     {
         return "PATCH_GROUP".equals(activity.targetKind()) ? activity.patchMemberTalkgroupIds() : List.of();
     }
@@ -3876,9 +4119,9 @@ public class P25ActivityLogSchema
         return observedAtEpochMilliseconds - Math.floorMod(observedAtEpochMilliseconds, QUALITY_BUCKET_MILLISECONDS);
     }
 
-    private static int actionCode(P25ActivityLogRecords.Action action)
+    private static int actionCode(ReceiverActivityRecords.Action action)
     {
-        return action != null ? action.ordinal() + 1 : P25ActivityLogRecords.Action.UNKNOWN.ordinal() + 1;
+        return action != null ? action.code() : ReceiverActivityRecords.Action.UNKNOWN.code();
     }
 
     private static Integer eventTypeCode(String eventType)
@@ -3890,7 +4133,7 @@ public class P25ActivityLogSchema
 
         try
         {
-            return DecodeEventType.valueOf(eventType).ordinal() + 1;
+            return ReceiverActivityCodes.eventTypeCode(DecodeEventType.valueOf(eventType));
         }
         catch(IllegalArgumentException e)
         {
@@ -3898,24 +4141,24 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static int contextKindCode(P25ActivityLogRecords.ContextKind contextKind)
+    private static int contextKindCode(ReceiverActivityRecords.ContextKind contextKind)
     {
-        if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
+        if(contextKind == ReceiverActivityRecords.ContextKind.TRUNKED_SITE)
         {
             return CONTEXT_TRUNKED_SITE;
         }
 
-        if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG)
+        if(contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG)
         {
             return CONTEXT_CONVENTIONAL_ANALOG;
         }
 
-        if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR)
+        if(contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_DMR)
         {
             return CONTEXT_CONVENTIONAL_DMR;
         }
 
-        if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN)
+        if(contextKind == ReceiverActivityRecords.ContextKind.CONVENTIONAL_NXDN)
         {
             return CONTEXT_CONVENTIONAL_NXDN;
         }
@@ -4014,7 +4257,7 @@ public class P25ActivityLogSchema
         return null;
     }
 
-    private static Map<String,SiteChannelEvidence> mergeSiteChannels(P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static Map<String,SiteChannelEvidence> mergeSiteChannels(ReceiverActivityRecords.SiteSnapshot snapshot)
     {
         Map<String,SiteChannelEvidence> merged = new LinkedHashMap<>();
 
@@ -4161,7 +4404,7 @@ public class P25ActivityLogSchema
     }
 
     private static final org.slf4j.Logger mLog =
-        org.slf4j.LoggerFactory.getLogger(P25ActivityLogSchema.class);
+        org.slf4j.LoggerFactory.getLogger(ReceiverActivitySchema.class);
     private static final java.util.concurrent.ConcurrentMap<String,Long> mSiteChannelConflictWarnings =
         new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -4200,7 +4443,7 @@ public class P25ActivityLogSchema
     private static String createResolvedViewSql()
     {
         return """
-            CREATE VIEW IF NOT EXISTS p25_activity_event_resolved AS
+            CREATE VIEW IF NOT EXISTS receiver_activity_event_resolved AS
             SELECT
                 a.id,
                 rc.context_key,
@@ -4239,13 +4482,13 @@ public class P25ActivityLogSchema
                 rc.rfss AS resolved_rfss,
                 rc.site AS resolved_site,
                 rc.current_control_hz AS resolved_current_control_hz
-            FROM p25_activity_event a
+            FROM receiver_activity_event a
             LEFT JOIN receiver_context rc ON rc.id = a.context_id
             LEFT JOIN p25_system ps ON ps.system_key = rc.system_key
             LEFT JOIN p25_site_snapshot p25
               ON p25.guid = rc.guid AND rc.kind_code = 1 AND rc.protocol_code IN (1, 2)
             """.formatted(contextKindCase("rc.kind_code"), protocolCase("rc.protocol_code"),
-            enumCase("a.action_code", P25ActivityLogRecords.Action.values()), decodeEventTypeCase("a.event_type_code"),
+            actionCase("a.action_code"), decodeEventTypeCase("a.event_type_code"),
             targetKindCase("a.target_kind_code"));
     }
 
@@ -4271,11 +4514,11 @@ public class P25ActivityLogSchema
             TARGET_RADIO + " THEN 'RADIO' WHEN " + TARGET_PATCH_GROUP + " THEN 'PATCH_GROUP' ELSE NULL END";
     }
 
-    private static String enumCase(String expression, P25ActivityLogRecords.Action[] values)
+    private static String actionCase(String expression)
     {
         StringBuilder sb = new StringBuilder("CASE ").append(expression);
 
-        for(P25ActivityLogRecords.Action value: values)
+        for(ReceiverActivityRecords.Action value: ACTIONS)
         {
             sb.append(" WHEN ").append(actionCode(value)).append(" THEN '").append(value.name()).append("'");
         }
@@ -4287,9 +4530,9 @@ public class P25ActivityLogSchema
     {
         StringBuilder sb = new StringBuilder("CASE ").append(expression);
 
-        for(DecodeEventType value: DecodeEventType.values())
+        for(ReceiverActivityCodes.EventTypeCode value: ReceiverActivityCodes.eventTypeCodes())
         {
-            sb.append(" WHEN ").append(value.ordinal() + 1).append(" THEN '").append(value.name()).append("'");
+            sb.append(" WHEN ").append(value.code()).append(" THEN '").append(value.eventType().name()).append("'");
         }
 
         return sb.append(" ELSE NULL END").toString();

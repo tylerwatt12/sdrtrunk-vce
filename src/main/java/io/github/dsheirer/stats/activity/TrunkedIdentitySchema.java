@@ -19,7 +19,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -49,10 +48,9 @@ final class TrunkedIdentitySchema
     static final int MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SCOPE = 100_000;
     static final int MAX_RELATIONSHIPS_PER_SCOPE = 500_000;
 
-    private static final List<P25ActivityLogRecords.Action> ACTIONS =
-        Arrays.stream(P25ActivityLogRecords.Action.values())
-            .filter(action -> action != P25ActivityLogRecords.Action.CALL)
-            .toList();
+    private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes().stream()
+        .filter(action -> action != ReceiverActivityRecords.Action.CALL)
+        .toList();
     static final List<String> ACTION_COUNT_COLUMNS = ACTIONS.stream()
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
         .toList();
@@ -470,7 +468,7 @@ final class TrunkedIdentitySchema
             new IndexColumn(2, "radio_id", false)));
     }
 
-    static Scope recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity, int contextId)
+    static Scope recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity, int contextId)
         throws SQLException
     {
         Scope scope = ensureScope(connection, contextId, activity.observedAtEpochMilliseconds(),
@@ -484,7 +482,7 @@ final class TrunkedIdentitySchema
         }
 
         if(activity.action() == null ||
-            activity.action() == P25ActivityLogRecords.Action.UNKNOWN)
+            activity.action() == ReceiverActivityRecords.Action.UNKNOWN)
         {
             return scope;
         }
@@ -496,14 +494,14 @@ final class TrunkedIdentitySchema
         //its fully-qualified home identity.  The call-attribution update below owns that refinement because it also
         //carries the original call-start timestamp.  Treating the continuation as an independent identity witness
         //would make the ordinary start plus its later qualification look like two conflicting identities.
-        P25ActivityLogRecords.P25TargetIdentity observedTargetIdentity = activity.p25TargetIdentity();
-        P25ActivityLogRecords.P25TargetIdentity targetIdentity =
+        ReceiverActivityRecords.P25TargetIdentity observedTargetIdentity = activity.p25TargetIdentity();
+        ReceiverActivityRecords.P25TargetIdentity targetIdentity =
             scope.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                activity.action() == P25ActivityLogRecords.Action.CONTINUE ?
-                P25ActivityLogRecords.P25TargetIdentity.UNKNOWN : observedTargetIdentity;
-        List<P25ActivityLogRecords.P25PatchMemberIdentity> patchMemberIdentities =
+                activity.action() == ReceiverActivityRecords.Action.CONTINUE ?
+                ReceiverActivityRecords.P25TargetIdentity.UNKNOWN : observedTargetIdentity;
+        List<ReceiverActivityRecords.P25PatchMemberIdentity> patchMemberIdentities =
             scope.protocolCode() == TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                activity.action() == P25ActivityLogRecords.Action.CONTINUE ?
+                activity.action() == ReceiverActivityRecords.Action.CONTINUE ?
                 List.of() : activity.p25PatchMemberIdentities();
         List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
             activity.targetId(), activity.targetKind(), activity.patchMemberTalkgroupIds(), targetIdentity,
@@ -551,9 +549,9 @@ final class TrunkedIdentitySchema
     }
 
     private static void updateRadioPresence(Connection connection, Scope scope, int contextId,
-                                            P25ActivityLogRecords.ActivityEvent activity) throws SQLException
+                                            ReceiverActivityRecords.ActivityEvent activity) throws SQLException
     {
-        P25ActivityLogRecords.RadioPresenceUpdate update = activity.radioPresenceUpdate();
+        ReceiverActivityRecords.RadioPresenceUpdate update = activity.radioPresenceUpdate();
 
         if(update == null || !TrunkedIdentityPolicy.isDirectoryRadio(scope.protocolCode(), scope.identityDomain(),
             update.radioId()) || !identityExists(connection, scope.scopeId(),
@@ -675,7 +673,7 @@ final class TrunkedIdentitySchema
 
     /** Updates bounded lifetime identity and relationship summaries exactly once for a resolved logical call. */
     static void recordResolvedLogicalCall(Connection connection, Scope scope,
-                                          P25ActivityLogRecords.ResolvedLogicalCall call) throws SQLException
+                                          ReceiverActivityRecords.ResolvedLogicalCall call) throws SQLException
     {
         if(scope == null || call == null)
         {
@@ -724,7 +722,7 @@ final class TrunkedIdentitySchema
 
     /** Updates output counters for the already-counted resolved logical call without adding another call. */
     static void applyLogicalCallOutput(Connection connection, Scope scope,
-                                       P25ActivityLogRecords.LogicalCallOutput output, int recorded, int streamed)
+                                       ReceiverActivityRecords.LogicalCallOutput output, int recorded, int streamed)
         throws SQLException
     {
         if(scope == null || output == null)
@@ -732,7 +730,7 @@ final class TrunkedIdentitySchema
             return;
         }
 
-        P25ActivityLogRecords.ResolvedLogicalCall call = output.call();
+        ReceiverActivityRecords.ResolvedLogicalCall call = output.call();
         List<Identity> destinations = destinationIdentities(scope.protocolCode(), scope.identityDomain(),
             call.destinationId() > 0 ? Integer.toString(call.destinationId()) : null, call.destinationKind(),
             call.patchMemberTalkgroupIds(), call.p25TargetIdentity(), call.p25PatchMemberIdentities());
@@ -770,7 +768,7 @@ final class TrunkedIdentitySchema
     }
 
     static boolean applyAttribution(Connection connection, int contextId,
-                                    P25ActivityLogRecords.TrunkedCallAttribution attribution) throws SQLException
+                                    ReceiverActivityRecords.TrunkedCallAttribution attribution) throws SQLException
     {
         Scope scope = ensureScope(connection, contextId, attribution.callStartEpochMilliseconds(),
             attribution.identityDomain(), false);
@@ -807,7 +805,7 @@ final class TrunkedIdentitySchema
         {
             for(Identity destination: destinations)
             {
-                if(destination.p25TargetIdentity().state() != P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+                if(destination.p25TargetIdentity().state() != ReceiverActivityRecords.P25IdentityState.UNKNOWN)
                 {
                     p25TargetIdentityApplied |= upsertIdentity(connection, scope.scopeId(), destination,
                         attribution.callStartEpochMilliseconds(), null, false, false, false, 0, 0, 0,
@@ -913,7 +911,7 @@ final class TrunkedIdentitySchema
      * system scope exists. NXDN Type-C and Type-D generations, however, must never enrich one another.
      */
     static boolean isAttributionCompatible(Connection connection, int contextId,
-                                           P25ActivityLogRecords.TrunkedCallAttribution attribution)
+                                           ReceiverActivityRecords.TrunkedCallAttribution attribution)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -947,7 +945,7 @@ final class TrunkedIdentitySchema
     }
 
     static boolean updateTalkerAlias(Connection connection, int contextId, int radioId, String talkerAlias,
-                                     long observedAt, P25ActivityLogRecords.IdentityDomain identityDomain)
+                                     long observedAt, ReceiverActivityRecords.IdentityDomain identityDomain)
         throws SQLException
     {
         if(talkerAlias == null || talkerAlias.isBlank())
@@ -971,7 +969,7 @@ final class TrunkedIdentitySchema
     }
 
     static Scope ensureScope(Connection connection, int contextId, long observedAt,
-                             P25ActivityLogRecords.IdentityDomain observationDomain) throws SQLException
+                             ReceiverActivityRecords.IdentityDomain observationDomain) throws SQLException
     {
         return ensureScope(connection, contextId, observedAt, observationDomain, true);
     }
@@ -982,7 +980,7 @@ final class TrunkedIdentitySchema
      * observation and must never change the current generation themselves.
      */
     static Scope ensureScope(Connection connection, int contextId, long observedAt,
-                             P25ActivityLogRecords.IdentityDomain observationDomain,
+                             ReceiverActivityRecords.IdentityDomain observationDomain,
                              boolean allowIdentityDomainChange) throws SQLException
     {
         return ensureScope(connection, contextId, observedAt, observationDomain, allowIdentityDomainChange, false);
@@ -990,14 +988,14 @@ final class TrunkedIdentitySchema
 
     /** Resolves one completed receiver-local logical call, including fail-open P25 context scopes. */
     static Scope ensureContextLogicalCallScope(Connection connection, int contextId, long observedAt,
-                                                P25ActivityLogRecords.IdentityDomain observationDomain)
+                                                ReceiverActivityRecords.IdentityDomain observationDomain)
         throws SQLException
     {
         return ensureScope(connection, contextId, observedAt, observationDomain, false, true);
     }
 
     private static Scope ensureScope(Connection connection, int contextId, long observedAt,
-                                     P25ActivityLogRecords.IdentityDomain observationDomain,
+                                     ReceiverActivityRecords.IdentityDomain observationDomain,
                                      boolean allowIdentityDomainChange, boolean allowP25ContextFallback)
         throws SQLException
     {
@@ -1360,7 +1358,7 @@ final class TrunkedIdentitySchema
     private static void clearContextIdentityState(Connection connection, int contextId) throws SQLException
     {
         for(String table: List.of("trunked_radio_site_presence", "trunked_signaling_activity_bucket",
-            "p25_activity_event"))
+            "receiver_activity_event"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "DELETE FROM " + table + " WHERE context_id = ?"))
@@ -1420,8 +1418,8 @@ final class TrunkedIdentitySchema
     }
 
     private static boolean upsertZeroLocalFullyQualifiedTalkgroup(
-        Connection connection, int scopeId, P25ActivityLogRecords.P25TargetIdentity targetIdentity,
-        long observedAt, P25ActivityLogRecords.Action action, boolean countedCall, int encrypted, int recorded,
+        Connection connection, int scopeId, ReceiverActivityRecords.P25TargetIdentity targetIdentity,
+        long observedAt, ReceiverActivityRecords.Action action, boolean countedCall, int encrypted, int recorded,
         int streamed) throws SQLException
     {
         if(targetIdentity == null || !targetIdentity.isStableFullyQualified())
@@ -1476,7 +1474,7 @@ final class TrunkedIdentitySchema
     }
 
     private static boolean zeroLocalFullyQualifiedTalkgroupExists(
-        Connection connection, int scopeId, P25ActivityLogRecords.P25TargetIdentity targetIdentity)
+        Connection connection, int scopeId, ReceiverActivityRecords.P25TargetIdentity targetIdentity)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -1498,7 +1496,7 @@ final class TrunkedIdentitySchema
     }
 
     private static boolean upsertIdentity(Connection connection, int scopeId, Identity identity, long observedAt,
-                                          P25ActivityLogRecords.Action action, boolean countedCall,
+                                          ReceiverActivityRecords.Action action, boolean countedCall,
                                           boolean sourceCall, boolean targetCall, int encrypted, int recorded,
                                           int streamed, Identity counterpart, Integer encryptionAlgorithm,
                                           Integer encryptionKey, String talkerAlias, Long talkerAliasSeen)
@@ -1510,7 +1508,7 @@ final class TrunkedIdentitySchema
     }
 
     private static boolean upsertIdentity(Connection connection, int scopeId, Identity identity, long observedAt,
-                                          P25ActivityLogRecords.Action action, boolean countedCall,
+                                          ReceiverActivityRecords.Action action, boolean countedCall,
                                           boolean sourceCall, boolean targetCall, int encrypted, int recorded,
                                           int streamed, Identity counterpart, Integer encryptionAlgorithm,
                                           Integer encryptionKey, String talkerAlias, Long talkerAliasSeen,
@@ -1699,7 +1697,7 @@ final class TrunkedIdentitySchema
     }
 
     private static boolean upsertRelationship(Connection connection, int scopeId, int radioId, Identity destination,
-                                              long observedAt, P25ActivityLogRecords.Action action,
+                                              long observedAt, ReceiverActivityRecords.Action action,
                                               boolean countedCall, int encrypted, int recorded, int streamed,
                                               Integer encryptionAlgorithm, Integer encryptionKey) throws SQLException
     {
@@ -1831,11 +1829,11 @@ final class TrunkedIdentitySchema
     }
 
     private static List<Identity> destinationIdentities(int protocolCode,
-                                                        P25ActivityLogRecords.IdentityDomain identityDomain,
+                                                        ReceiverActivityRecords.IdentityDomain identityDomain,
                                                         String targetId, String targetKind,
                                                         List<Integer> patchMembers,
-                                                        P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity,
-                                                        List<P25ActivityLogRecords.P25PatchMemberIdentity>
+                                                        ReceiverActivityRecords.P25TargetIdentity p25TargetIdentity,
+                                                        List<ReceiverActivityRecords.P25PatchMemberIdentity>
                                                             p25PatchMemberIdentities)
     {
         Integer target = positive(targetId);
@@ -1845,9 +1843,9 @@ final class TrunkedIdentitySchema
         if(kind != null && target != null &&
             TrunkedIdentityPolicy.isDirectoryIdentity(protocolCode, identityDomain, kind, target))
         {
-            P25ActivityLogRecords.P25TargetIdentity projectedIdentity =
+            ReceiverActivityRecords.P25TargetIdentity projectedIdentity =
                 protocolCode == TrunkedIdentityPolicy.PROTOCOL_P25 && p25TargetIdentity != null ?
-                    p25TargetIdentity : P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+                    p25TargetIdentity : ReceiverActivityRecords.P25TargetIdentity.UNKNOWN;
             identities.add(new Identity(kind, target, projectedIdentity));
         }
 
@@ -1858,12 +1856,12 @@ final class TrunkedIdentitySchema
             {
                 if(TrunkedIdentityPolicy.isDirectoryTalkgroup(protocolCode, identityDomain, member))
                 {
-                    P25ActivityLogRecords.P25TargetIdentity memberIdentity = p25PatchMemberIdentities == null ?
-                        P25ActivityLogRecords.P25TargetIdentity.UNKNOWN : p25PatchMemberIdentities.stream()
+                    ReceiverActivityRecords.P25TargetIdentity memberIdentity = p25PatchMemberIdentities == null ?
+                        ReceiverActivityRecords.P25TargetIdentity.UNKNOWN : p25PatchMemberIdentities.stream()
                             .filter(candidate -> candidate.localTalkgroupId() == member)
-                            .map(P25ActivityLogRecords.P25PatchMemberIdentity::targetIdentity)
+                            .map(ReceiverActivityRecords.P25PatchMemberIdentity::targetIdentity)
                             .findFirst()
-                            .orElse(P25ActivityLogRecords.P25TargetIdentity.UNKNOWN);
+                            .orElse(ReceiverActivityRecords.P25TargetIdentity.UNKNOWN);
                     identities.add(new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP, member,
                         memberIdentity));
                 }
@@ -1875,7 +1873,7 @@ final class TrunkedIdentitySchema
 
     private static boolean isZeroLocalFullyQualifiedTalkgroup(
         int protocolCode, String targetId, String targetKind,
-        P25ActivityLogRecords.P25TargetIdentity targetIdentity)
+        ReceiverActivityRecords.P25TargetIdentity targetIdentity)
     {
         Integer parsedTarget = integer(targetId);
         return isZeroLocalFullyQualifiedTalkgroup(protocolCode,
@@ -1884,7 +1882,7 @@ final class TrunkedIdentitySchema
 
     private static boolean isZeroLocalFullyQualifiedTalkgroup(
         int protocolCode, int targetId, String targetKind,
-        P25ActivityLogRecords.P25TargetIdentity targetIdentity)
+        ReceiverActivityRecords.P25TargetIdentity targetIdentity)
     {
         return protocolCode == TrunkedIdentityPolicy.PROTOCOL_P25 && targetId == 0 &&
             Integer.valueOf(TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP).equals(
@@ -1927,7 +1925,7 @@ final class TrunkedIdentitySchema
         }
     }
 
-    private static int identityDomainCode(int protocolCode, P25ActivityLogRecords.IdentityDomain domain)
+    private static int identityDomainCode(int protocolCode, ReceiverActivityRecords.IdentityDomain domain)
     {
         if(protocolCode != TrunkedIdentityPolicy.PROTOCOL_NXDN || domain == null)
         {
@@ -1942,13 +1940,13 @@ final class TrunkedIdentitySchema
         };
     }
 
-    private static P25ActivityLogRecords.IdentityDomain identityDomain(int code)
+    private static ReceiverActivityRecords.IdentityDomain identityDomain(int code)
     {
         return switch(code)
         {
-            case IDENTITY_DOMAIN_NXDN_TYPE_C -> P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C;
-            case IDENTITY_DOMAIN_NXDN_TYPE_D -> P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D;
-            default -> P25ActivityLogRecords.IdentityDomain.STANDARD;
+            case IDENTITY_DOMAIN_NXDN_TYPE_C -> ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C;
+            case IDENTITY_DOMAIN_NXDN_TYPE_D -> ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D;
+            default -> ReceiverActivityRecords.IdentityDomain.STANDARD;
         };
     }
 
@@ -1960,19 +1958,19 @@ final class TrunkedIdentitySchema
     }
 
     private static int setActionCounts(PreparedStatement statement, int index,
-                                       P25ActivityLogRecords.Action activityAction, boolean countedCall)
+                                       ReceiverActivityRecords.Action activityAction, boolean countedCall)
         throws SQLException
     {
-        for(P25ActivityLogRecords.Action action: ACTIONS)
+        for(ReceiverActivityRecords.Action action: ACTIONS)
         {
             boolean counted = activityAction == action;
 
-            if(action == P25ActivityLogRecords.Action.CALL)
+            if(action == ReceiverActivityRecords.Action.CALL)
             {
                 counted = countedCall;
             }
 
-            if(action == P25ActivityLogRecords.Action.UNKNOWN)
+            if(action == ReceiverActivityRecords.Action.UNKNOWN)
             {
                 counted = false;
             }
@@ -2269,7 +2267,7 @@ final class TrunkedIdentitySchema
         }
     }
 
-    record Scope(int scopeId, int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    record Scope(int scopeId, int protocolCode, ReceiverActivityRecords.IdentityDomain identityDomain,
                  String scopeToken, long firstSeenEpochMilliseconds)
     {
     }
@@ -2284,17 +2282,17 @@ final class TrunkedIdentitySchema
     {
     }
 
-    private record Identity(int kindCode, int id, P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity)
+    private record Identity(int kindCode, int id, ReceiverActivityRecords.P25TargetIdentity p25TargetIdentity)
     {
         private Identity(int kindCode, int id)
         {
-            this(kindCode, id, P25ActivityLogRecords.P25TargetIdentity.UNKNOWN);
+            this(kindCode, id, ReceiverActivityRecords.P25TargetIdentity.UNKNOWN);
         }
 
         private Identity
         {
             p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity :
-                P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+                ReceiverActivityRecords.P25TargetIdentity.UNKNOWN;
         }
     }
 

@@ -2002,7 +2002,7 @@ class StatsWebDatabaseTest
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 0, "Quiet DMR", "Quiet Quality Site",
                 7, null, 2, null, List.of(), List.of()));
             statement.executeUpdate("""
-                INSERT INTO p25_control_channel_quality (
+                INSERT INTO trunked_control_channel_quality (
                     guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs,
                     average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct,
                     valid_frames, invalid_frames, corrected_bits, sync_loss_bits, dropped_bits,
@@ -2382,7 +2382,7 @@ class StatsWebDatabaseTest
             assertTrue(identityPlan.stream().anyMatch(detail -> detail.contains("PRIMARY KEY") ||
                     detail.contains("idx_trunked_identity_scope_kind_last_seen")),
                 () -> "Expected scope-leading identity lookup, plan was: " + identityPlan);
-            assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+            assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")));
 
             List<String> relationshipPlan = explain(connection, """
                 SELECT radio_id, talkgroup_id
@@ -2393,7 +2393,7 @@ class StatsWebDatabaseTest
                 """, 1, 250_001);
             assertTrue(relationshipPlan.stream().anyMatch(detail -> detail.contains("PRIMARY KEY")),
                 () -> "Expected scope-leading relationship lookup, plan was: " + relationshipPlan);
-            assertTrue(relationshipPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+            assertTrue(relationshipPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")));
         }
     }
 
@@ -2434,7 +2434,7 @@ class StatsWebDatabaseTest
                 () -> "Expected one-row affiliation lookup per present radio, plan was: " + sitePlan);
 
             assertTrue(java.util.stream.Stream.concat(talkgroupPlan.stream(), sitePlan.stream())
-                .noneMatch(detail -> detail.contains("p25_activity_event") ||
+                .noneMatch(detail -> detail.contains("receiver_activity_event") ||
                     detail.contains("conventional_call_identity_bucket")));
         }
     }
@@ -2600,7 +2600,7 @@ class StatsWebDatabaseTest
                     detail.startsWith("SCAN ownership") || detail.startsWith("SCAN bucket") ||
                     detail.startsWith("SCAN definition")),
                 () -> "High-cardinality discovery tables must use scoped lookups, plan was: " + plan);
-            assertTrue(plan.stream().noneMatch(detail -> detail.contains("p25_activity_event")),
+            assertTrue(plan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
                 () -> "Discovery must not read detailed P25 events, plan was: " + plan);
         }
     }
@@ -3058,7 +3058,7 @@ class StatsWebDatabaseTest
                 ) VALUES (1, %1$d, 1)
                 """.formatted(currentHour));
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code
                 ) VALUES (1, %d, 9, 1, 16570000, 65000, 1)
@@ -3124,7 +3124,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     id, context_id, observed_at_ms, action_code, event_type_code, source_radio_id,
                     target_id, target_kind_code, frequency_hz, encrypted
                 ) VALUES (500, 1, 2500, 0, 0, 1811332, 60000, 3, 855612500, 0)
@@ -3503,7 +3503,7 @@ class StatsWebDatabaseTest
                     (21, 'nxdn-encryption', 'nxdn-encryption-guid', 1, 4, 'NXDN Encryption', 'NXDN', 1000, 3000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code, encrypted,
                     encryption_algorithm_id, encryption_key_id
                 ) VALUES
@@ -3647,7 +3647,7 @@ class StatsWebDatabaseTest
                 VALUES (99, 118500000, -1, 1000, 2000, 3)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, frequency_hz)
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, frequency_hz)
                 VALUES (99, 2000, 3, 118500000)
                 """);
         }
@@ -3682,7 +3682,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, timeslot
                 ) VALUES (5, 7000, 2, 1, 123456, 91, 1, 451012500, 1)
@@ -3791,7 +3791,7 @@ class StatsWebDatabaseTest
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO logger_status(key, value, updated_at_ms) VALUES (?, ?, 3000)
+                INSERT INTO statistics_status(key, value, updated_at_ms) VALUES (?, ?, 3000)
                 """))
         {
             statement.setString(1, "last_successful_write_ms");
@@ -3819,7 +3819,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code)
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, event_type_code)
                 VALUES (1, 3000, 11, 0)
                 """);
         }
@@ -3838,7 +3838,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code)
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, event_type_code)
                 VALUES (1, 5000, 0, 0), (1, 4000, 0, 0), (1, 6000, 0, 0), (1, 4000, 0, 0)
                 """);
         }
@@ -3918,13 +3918,13 @@ class StatsWebDatabaseTest
                     UNION ALL
                     SELECT value + 1 FROM sequence WHERE value < 5101
                 )
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code, source_radio_id
                 )
                 SELECT 1, %d + value, 9, 1, 1811332 FROM sequence
                 """.formatted(eventHour));
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code
                 ) VALUES (1, %d, 9, 1, NULL, 1999999, 2)
@@ -3978,7 +3978,7 @@ class StatsWebDatabaseTest
                 ) VALUES (2, 154310000, -1, %d, 1)
                 """.formatted(eventHour));
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code, source_radio_id
                 ) VALUES (1, %1$d, 10, 1, 1811332),
                          (1, %2$d, 10, 1, 1811332),
@@ -4037,7 +4037,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code, source_radio_id
                 ) VALUES (2, %d, 10, 1, 1888000)
                 """.formatted(currentHour + 1_000));
@@ -4076,7 +4076,7 @@ class StatsWebDatabaseTest
                          (2, 154315000, 1, %1$d, 1)
                 """.formatted(currentHour));
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (
+                INSERT INTO receiver_activity_event (
                     context_id, observed_at_ms, action_code, event_type_code, source_radio_id
                 ) VALUES (2, %d, 20, 1, 1888001)
                 """.formatted(currentHour + 1_000));
@@ -4151,8 +4151,8 @@ class StatsWebDatabaseTest
                         event.source_radio_id AS radio_id, COUNT(*) AS observation_count,
                         MAX(event.observed_at_ms) AS last_seen_ms
                     FROM action_slices AS slice
-                    CROSS JOIN p25_activity_event AS event
-                        INDEXED BY idx_p25_activity_event_context_time
+                    CROSS JOIN receiver_activity_event AS event
+                        INDEXED BY idx_receiver_activity_event_context_time
                     LEFT JOIN trunked_identity_scope_context ownership
                         ON ownership.context_id = event.context_id
                     WHERE event.context_id = slice.context_id
@@ -4174,7 +4174,7 @@ class StatsWebDatabaseTest
                     detail.contains("idx_conventional_bucket_dashboard_time")),
                 () -> "Expected the conventional bucket time index, plan was: " + plan);
             assertTrue(plan.stream().anyMatch(detail ->
-                    detail.contains("idx_p25_activity_event_context_time") && detail.contains("context_id=?") &&
+                    detail.contains("idx_receiver_activity_event_context_time") && detail.contains("context_id=?") &&
                         detail.contains("observed_at_ms>?")),
                 () -> "Expected context/time-indexed retained-event slices, plan was: " + plan);
             assertTrue(plan.stream().anyMatch(detail -> detail.contains("MATERIALIZE grouped")),
@@ -4732,7 +4732,7 @@ class StatsWebDatabaseTest
                 assertTrue(plan.stream().anyMatch(
                         detail -> detail.contains("idx_conventional_bucket_dashboard_time")),
                     () -> "Expected indexed conventional bucket scan, plan was: " + plan);
-                assertTrue(plan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+                assertTrue(plan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")));
             }
 
             List<String> identityPlan = new ArrayList<>();
@@ -4761,7 +4761,7 @@ class StatsWebDatabaseTest
             assertTrue(identityPlan.stream().anyMatch(
                     detail -> detail.contains("idx_trunked_logical_identity_dashboard_time")),
                 () -> "Expected indexed trunked logical-identity scan, plan was: " + identityPlan);
-            assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+            assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")));
         }
     }
 
@@ -4777,7 +4777,7 @@ class StatsWebDatabaseTest
                     UNION ALL
                     SELECT value + 1 FROM sequence WHERE value < 50000
                 )
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code)
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, event_type_code)
                 SELECT 1, 10000 + value, 0, 0 FROM sequence
                 """);
 
@@ -4798,7 +4798,7 @@ class StatsWebDatabaseTest
                 }
             }
 
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_activity_event_context_time")),
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_receiver_activity_event_context_time")),
                 () -> "Expected context/time-indexed activity scan, plan was: " + plan);
             assertTrue(plan.stream().noneMatch(detail -> detail.contains("USE TEMP B-TREE")),
                 () -> "Expected index-ordered activity results, plan was: " + plan);
@@ -4821,13 +4821,13 @@ class StatsWebDatabaseTest
             List<String> plan = explain(connection, sql.toString(), parameters.toArray());
 
             assertTrue(plan.stream().anyMatch(
-                    detail -> detail.contains("idx_p25_activity_event_context_time")),
+                    detail -> detail.contains("idx_receiver_activity_event_context_time")),
                 () -> "Expected bounded context/time candidate scans, plan was: " + plan);
             assertTrue(plan.stream().anyMatch(
                     detail -> detail.contains("SEARCH a USING INTEGER PRIMARY KEY")),
                 () -> "Expected primary-key activity hydration, plan was: " + plan);
             assertTrue(plan.stream().noneMatch(
-                    detail -> detail.contains("SCAN a USING INDEX idx_p25_activity_event_context_time")),
+                    detail -> detail.contains("SCAN a USING INDEX idx_receiver_activity_event_context_time")),
                 () -> "Did not expect a full activity index scan, plan was: " + plan);
         }
     }
@@ -4867,7 +4867,7 @@ class StatsWebDatabaseTest
             PreparedStatement query = connection.prepareStatement("""
                 EXPLAIN QUERY PLAN
                 SELECT frequency_hz, observed_at_ms
-                FROM p25_control_channel_quality
+                FROM trunked_control_channel_quality
                 WHERE guid = ?
                 ORDER BY observed_at_ms DESC
                 LIMIT ?
@@ -4885,7 +4885,7 @@ class StatsWebDatabaseTest
                 }
             }
 
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_control_quality_guid_time")),
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_trunked_control_quality_guid_time")),
                 () -> "Expected GUID/time-indexed quality lookup, plan was: " + plan);
         }
     }
@@ -4898,7 +4898,7 @@ class StatsWebDatabaseTest
                 EXPLAIN QUERY PLAN
                 SELECT guid, (observed_at_ms / ?) * ? AS time_ms,
                     avg(average_signal_dbfs), avg(decode_health_pct)
-                FROM p25_control_channel_quality
+                FROM trunked_control_channel_quality
                 WHERE observed_at_ms >= ? AND observed_at_ms <= ? AND guid = ?
                 GROUP BY guid, time_ms
                 ORDER BY guid, time_ms
@@ -4919,7 +4919,7 @@ class StatsWebDatabaseTest
                 }
             }
 
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_control_quality_guid_time") &&
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_trunked_control_quality_guid_time") &&
                     detail.contains("guid=?") && detail.contains("observed_at_ms>?")),
                 () -> "Expected GUID/time-indexed quality history, plan was: " + plan);
         }
@@ -5258,7 +5258,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
+                INSERT INTO trunked_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
                     signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
                     dropped_bits, last_valid_decode_ms)
@@ -6420,7 +6420,22 @@ class StatsWebDatabaseTest
                                       double signal, double decode) throws Exception
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO p25_control_channel_quality (
+            INSERT INTO receiver_context(
+                context_key, guid, kind_code, protocol_code, first_seen_ms, last_seen_ms, current_control_hz
+            ) VALUES ('GUID:' || ?, ?, 1, 0, ?, ?, ?)
+            ON CONFLICT(guid) DO UPDATE SET last_seen_ms=max(receiver_context.last_seen_ms, excluded.last_seen_ms)
+            """))
+        {
+            statement.setString(1, guid);
+            statement.setString(2, guid);
+            statement.setLong(3, observedAt);
+            statement.setLong(4, observedAt);
+            statement.setLong(5, frequency);
+            statement.executeUpdate();
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO trunked_control_channel_quality (
                 guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs, average_signal_dbfs,
                 minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct, valid_frames, invalid_frames,
                 corrected_bits, sync_loss_bits, dropped_bits, last_valid_decode_ms
@@ -6491,7 +6506,7 @@ class StatsWebDatabaseTest
                     'Autonomous and by Request', 240, 1, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
+                INSERT INTO trunked_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
                     signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
                     dropped_bits, last_valid_decode_ms)
@@ -6616,13 +6631,13 @@ class StatsWebDatabaseTest
             statement.executeUpdate("INSERT INTO trunked_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
             statement.executeUpdate("INSERT INTO trunked_radio_site_presence VALUES (1, 1811332, 1, 2, 2000)");
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, lcn_band, lcn_number, timeslot,
                     encrypted, encryption_algorithm_id, encryption_key_id)
                 VALUES (1, 2000, 0, 0, 1811332, 56132, 1, 855612500, 0, 737, 1, 1, 132, 52)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, encrypted)
                 VALUES (1, 2001, 0, 0, NULL, 1811332, 2, 856137500, 0)
                 """);
@@ -6778,7 +6793,7 @@ class StatsWebDatabaseTest
                 ) VALUES (2, 1811332, 56132, 1, 1000, 3000, 100, 100, 0)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
+                INSERT INTO receiver_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, encrypted)
                 VALUES (3, 3000, 0, 0, 1811332, 56132, 1, 855612500, 0)
                 """);

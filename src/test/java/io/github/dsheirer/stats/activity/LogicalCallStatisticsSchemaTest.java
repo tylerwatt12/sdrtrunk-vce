@@ -43,10 +43,10 @@ class LogicalCallStatisticsSchemaTest
         try(Connection connection = open("logical-call.sqlite"))
         {
             long aliasListId = insertAliasList(connection);
-            P25ActivityLogRecords.ResolvedLogicalCall call = call(aliasListId,
+            ReceiverActivityRecords.ResolvedLogicalCall call = call(aliasListId,
                 List.of(site(1, 1), site(2, 2), site(1, 1)));
 
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection, call));
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, call));
             assertEquals(1, scalar(connection,
                 "SELECT logical_call_count FROM trunked_logical_call_bucket"));
             assertEquals(1, scalar(connection,
@@ -64,9 +64,9 @@ class LogicalCallStatisticsSchemaTest
                 WHERE identity_role_code=1 AND identity_kind_code=1 AND identity_id=1201
                 """));
 
-            P25ActivityLogRecords.LogicalCallOutput output = new P25ActivityLogRecords.LogicalCallOutput(call,
-                P25ActivityLogRecords.CallOutput.RECORDED);
-            assertTrue(P25ActivityLogSchema.applyLogicalCallOutput(connection, output));
+            ReceiverActivityRecords.LogicalCallOutput output = new ReceiverActivityRecords.LogicalCallOutput(call,
+                ReceiverActivityRecords.CallOutput.RECORDED);
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection, output));
             assertEquals(1, scalar(connection,
                 "SELECT recorded_output_count FROM trunked_logical_call_bucket"));
             assertEquals(1, scalar(connection, """
@@ -82,7 +82,7 @@ class LogicalCallStatisticsSchemaTest
         try(Connection connection = open("scope-guard.sqlite"))
         {
             long aliasListId = insertAliasList(connection);
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection,
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 call(0, List.of(site(1, 1)))));
             assertEquals(1, scalar(connection, """
                 SELECT COUNT(*) FROM trunked_identity_scope
@@ -96,7 +96,7 @@ class LogicalCallStatisticsSchemaTest
             }
 
             P25SiteIdentity otherSystem = new P25SiteIdentity(0x924, 0x650, 3, 3);
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection,
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 call(aliasListId, List.of(site(1, 1), otherSystem))));
             assertEquals(2, scalar(connection, "SELECT SUM(logical_call_count) FROM trunked_logical_call_bucket"));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
@@ -109,7 +109,7 @@ class LogicalCallStatisticsSchemaTest
         try(Connection connection = open("retention-plan.sqlite"))
         {
             long aliasListId = insertAliasList(connection);
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection,
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 call(aliasListId, List.of(site(1, 1), site(2, 2)))));
 
             assertTrue(queryPlan(connection, """
@@ -127,11 +127,11 @@ class LogicalCallStatisticsSchemaTest
                 """, CALL_START - 1, CALL_START + 3_600_000L)
                 .contains("idx_p25_site_call_bucket_time"));
 
-            assertTrue(P25ActivityLogSchema.deleteOlderThan(connection, CALL_START + 3_600_001L) > 0);
+            assertTrue(ReceiverActivitySchema.deleteOlderThan(connection, CALL_START + 3_600_001L) > 0);
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_learned_site"));
-            P25ActivityLogSchema.validate(connection);
+            ReceiverActivitySchema.validate(connection);
         }
     }
 
@@ -140,9 +140,9 @@ class LogicalCallStatisticsSchemaTest
     {
         try(Connection connection = open("uncertain-copies.sqlite"))
         {
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection,
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 uncertainCall(1, "uncertain-a")));
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection,
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 uncertainCall(2, "uncertain-b")));
 
             assertEquals(2, scalar(connection, "SELECT SUM(logical_call_count) FROM trunked_logical_call_bucket"));
@@ -160,7 +160,7 @@ class LogicalCallStatisticsSchemaTest
         try(Connection connection = open("clear-site.sqlite"))
         {
             long aliasListId = insertAliasList(connection);
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection,
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 call(aliasListId, List.of(site(1, 1), site(2, 2)))));
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO receiver_context(
@@ -176,7 +176,7 @@ class LogicalCallStatisticsSchemaTest
             }
 
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
-            assertTrue(P25ActivityLogSchema.clearSiteStats(connection, "clear-me") > 0);
+            assertTrue(ReceiverActivitySchema.clearSiteStats(connection, "clear-me") > 0);
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_learned_site"));
             assertEquals(1, scalar(connection,
@@ -210,7 +210,7 @@ class LogicalCallStatisticsSchemaTest
 
             assertTrue(hasColumn(connection, "trunked_logical_call_bucket", "logical_call_count"));
             assertTrue(hasColumn(connection, "p25_site_call_bucket", "observed_call_count"));
-            P25ActivityLogSchema.validate(connection);
+            ReceiverActivitySchema.validate(connection);
         }
     }
 
@@ -240,21 +240,21 @@ class LogicalCallStatisticsSchemaTest
         }
     }
 
-    private static P25ActivityLogRecords.ResolvedLogicalCall call(long aliasListId,
+    private static ReceiverActivityRecords.ResolvedLogicalCall call(long aliasListId,
                                                                    List<P25SiteIdentity> sites)
     {
-        return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(9, 1), CALL_START,
-            "GUID:winner", "winner", Protocol.APCO25.name(), P25ActivityLogRecords.IdentityDomain.STANDARD,
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(9, 1), CALL_START,
+            "GUID:winner", "winner", Protocol.APCO25.name(), ReceiverActivityRecords.IdentityDomain.STANDARD,
             0x924, 0x649, aliasListId, 1201, Form.TALKGROUP.name(), List.of(), 700001, true,
-            0x84, 1, P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(), sites);
+            0x84, 1, ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(), sites);
     }
 
-    private static P25ActivityLogRecords.ResolvedLogicalCall uncertainCall(long sequence, String guid)
+    private static ReceiverActivityRecords.ResolvedLogicalCall uncertainCall(long sequence, String guid)
     {
-        return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(19, sequence), CALL_START + sequence,
-            "GUID:" + guid, guid, Protocol.APCO25.name(), P25ActivityLogRecords.IdentityDomain.STANDARD,
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(19, sequence), CALL_START + sequence,
+            "GUID:" + guid, guid, Protocol.APCO25.name(), ReceiverActivityRecords.IdentityDomain.STANDARD,
             null, null, 0, 1201, Form.TALKGROUP.name(), List.of(), 700001, false,
-            null, null, P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(), List.of());
+            null, null, ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(), List.of());
     }
 
     private static P25SiteIdentity site(int rfss, int site)

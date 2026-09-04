@@ -27,7 +27,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.ByteArrayOutputStream;
@@ -67,7 +67,7 @@ class ApplicationDatabaseMigratorTest
         {
             assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
                 metadata(connection, "alias_schema_version"));
-            assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+            assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
                 metadata(connection, "p25_activity_schema_version"));
             assertEquals("2", metadata(connection, "trunked_site_schema_version"));
             assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
@@ -152,7 +152,7 @@ class ApplicationDatabaseMigratorTest
             SELECT alias_list_name || ':' || json_extract(config_json, '$.aliasListName')
             FROM configuration_channel WHERE id=1
             """));
-        assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+        assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
             metadata(database, "p25_activity_schema_version"));
     }
 
@@ -177,7 +177,7 @@ class ApplicationDatabaseMigratorTest
             FROM alias_list_unmatched_talkgroup_scan_list_membership
             WHERE alias_list_id=(SELECT id FROM alias_list WHERE name='Default P25')
             """));
-        assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+        assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
             metadata(database, "p25_activity_schema_version"));
     }
 
@@ -244,7 +244,7 @@ class ApplicationDatabaseMigratorTest
         {
             assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
                 metadata(connection, "alias_schema_version"));
-            assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+            assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
                 metadata(connection, "p25_activity_schema_version"));
             assertEquals("Default:1:1", scalar(connection, """
                 SELECT name || ':' || published || ':' || is_default
@@ -345,7 +345,7 @@ class ApplicationDatabaseMigratorTest
                 WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
                 """));
             assertFalse("1234".equals(metadata(connection,
-                P25ActivityLogSchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY)));
+                ReceiverActivitySchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY)));
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +

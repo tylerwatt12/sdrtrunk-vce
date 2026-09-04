@@ -22,11 +22,11 @@ import java.util.TreeSet;
 /**
  * Immutable records passed from decoder/UI threads to the SQLite writer.
  */
-final class P25ActivityLogRecords
+final class ReceiverActivityRecords
 {
     static final int MAXIMUM_PATCH_MEMBER_TALKGROUPS = 64;
 
-    private P25ActivityLogRecords()
+    private ReceiverActivityRecords()
     {
     }
 
@@ -41,29 +41,44 @@ final class P25ActivityLogRecords
 
     enum Action
     {
-        ACKNOWLEDGE,
-        ACTIVE,
-        BUSY,
-        CALL,
-        CHECK,
-        CHECK_ACK,
-        CONTINUE,
-        DATA,
-        DENIAL,
-        EMERGENCY,
-        GPS,
-        GRANT,
-        JOIN,
-        LOGOUT,
-        PAGE,
-        PATCH,
-        PATCH_CANCEL,
-        PATCH_CREATE,
-        QUEUED,
-        REGISTER,
-        REQUEST,
-        STATUS,
-        UNKNOWN
+        ACKNOWLEDGE(1),
+        ACTIVE(2),
+        BUSY(3),
+        CALL(4),
+        CHECK(5),
+        CHECK_ACK(6),
+        CONTINUE(7),
+        DATA(8),
+        DENIAL(9),
+        EMERGENCY(10),
+        GPS(11),
+        GRANT(12),
+        JOIN(13),
+        LOGOUT(14),
+        PAGE(15),
+        PATCH(16),
+        PATCH_CANCEL(17),
+        PATCH_CREATE(18),
+        QUEUED(19),
+        REGISTER(20),
+        REQUEST(21),
+        STATUS(22),
+        UNKNOWN(23);
+
+        private final int mCode;
+
+        Action(int code)
+        {
+            mCode = code;
+        }
+
+        /**
+         * Stable database code.  The value must never be derived from the enum's declaration order.
+         */
+        int code()
+        {
+            return mCode;
+        }
     }
 
     enum CallOutput
@@ -85,7 +100,7 @@ final class P25ActivityLogRecords
                                P25TargetIdentity p25TargetIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities,
                                List<P25SiteIdentity> learnedP25Sites)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         ResolvedLogicalCall
         {
@@ -117,7 +132,7 @@ final class P25ActivityLogRecords
      * One successful local output for a previously resolved logical call.  This queue message contains the resolved
      * projection so the database can update compact aggregates without persisting a per-call row or identifier.
      */
-    record LogicalCallOutput(ResolvedLogicalCall call, CallOutput output) implements P25ActivityLogRecord
+    record LogicalCallOutput(ResolvedLogicalCall call, CallOutput output) implements ReceiverActivityRecord
     {
         LogicalCallOutput
         {
@@ -300,7 +315,7 @@ final class P25ActivityLogRecords
                          P25TargetIdentity p25TargetIdentity,
                          List<P25PatchMemberIdentity> p25PatchMemberIdentities, String aliasListName,
                          boolean configuredMetadataObserved)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         ActivityEvent
         {
@@ -401,7 +416,7 @@ final class P25ActivityLogRecords
                                   boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
                                   IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity,
                                   List<P25PatchMemberIdentity> p25PatchMemberIdentities)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         TrunkedCallAttribution
         {
@@ -491,7 +506,7 @@ final class P25ActivityLogRecords
      */
     record ChannelFact(long observedAtEpochMilliseconds, String guid, String lcn, long frequencyHertz,
                        ChannelTag serviceTag, boolean tdma, int timeslots)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
     }
 
@@ -500,7 +515,7 @@ final class P25ActivityLogRecords
      */
     record TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
                              Integer systemId, int radioId, String talkerAlias, IdentityDomain identityDomain)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         TalkerAliasUpdate
         {
@@ -527,7 +542,7 @@ final class P25ActivityLogRecords
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                                IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         ConventionalCallOutput
         {
@@ -592,7 +607,7 @@ final class P25ActivityLogRecords
                                String guid, String channelName, String aliasListName, long frequencyHertz,
                                int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
                                Integer targetRadioId, boolean encrypted)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         @Override
         public long observedAtEpochMilliseconds()
@@ -616,7 +631,7 @@ final class P25ActivityLogRecords
                                 String guid, String channelName, String aliasListName, long frequencyHertz,
                                 NxdnTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
                                 Integer targetRadioId, boolean encrypted)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
         @Override
         public long observedAtEpochMilliseconds()
@@ -667,7 +682,7 @@ final class P25ActivityLogRecords
             if(identity != null && patchMemberTalkgroupIds.contains(identity.localTalkgroupId()))
             {
                 normalized.merge(identity.localTalkgroupId(), identity.targetIdentity(),
-                    P25ActivityLogRecords::mergeP25TargetIdentity);
+                    ReceiverActivityRecords::mergeP25TargetIdentity);
             }
         }
 
@@ -710,7 +725,7 @@ final class P25ActivityLogRecords
                         List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
                         List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
                         List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignSystemBands)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
     }
 
@@ -719,12 +734,23 @@ final class P25ActivityLogRecords
                                  Double maximumSignalDbfs, Double decodeHealthPercent, long validFrames,
                                  long invalidFrames, long correctedBits, long syncLossBits, long droppedBits,
                                  long lastValidDecodeMs)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
+        ControlChannelQuality
+        {
+            if(observedAtEpochMilliseconds <= 0 || guid == null || guid.isBlank() || frequencyHertz <= 0 ||
+                validFrames < 0 || invalidFrames < 0 || correctedBits < 0 || syncLossBits < 0 || droppedBits < 0 ||
+                lastValidDecodeMs < 0 || decodeHealthPercent != null &&
+                    (!Double.isFinite(decodeHealthPercent) || decodeHealthPercent < 0.0 ||
+                        decodeHealthPercent > 100.0))
+            {
+                throw new IllegalArgumentException("Invalid trunked control-channel quality observation");
+            }
+        }
     }
 
     record TrunkedSiteSnapshot(long observedAtEpochMilliseconds, TrunkedSiteSchema.Snapshot snapshot)
-        implements P25ActivityLogRecord
+        implements ReceiverActivityRecord
     {
     }
 }

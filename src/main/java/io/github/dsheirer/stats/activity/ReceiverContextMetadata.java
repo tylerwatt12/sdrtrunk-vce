@@ -17,15 +17,15 @@ import io.github.dsheirer.stats.site.TrunkedSiteSchema;
  * Common receiver identity and configured metadata shared by every supported trunked and conventional protocol.
  * Protocol-specific call and site facts remain on their existing records.
  */
-record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRecords.ContextKind contextKind,
+record ReceiverContextMetadata(String contextKey, String guid, ReceiverActivityRecords.ContextKind contextKind,
                                String protocol, String channelName, String aliasListName, String decoder,
                                boolean configuredMetadataObserved, long firstSeenEpochMilliseconds,
                                long lastSeenEpochMilliseconds, Integer systemKey, Integer nac, Integer rfss,
                                Integer site, Long primaryFrequencyHertz, Long currentControlHertz)
 {
-    static ReceiverContextMetadata from(P25ActivityLogRecords.ActivityEvent activity, Integer systemKey)
+    static ReceiverContextMetadata from(ReceiverActivityRecords.ActivityEvent activity, Integer systemKey)
     {
-        boolean conventional = activity.contextKind() != P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
+        boolean conventional = activity.contextKind() != ReceiverActivityRecords.ContextKind.TRUNKED_SITE;
         String channelName = conventional || activity.configuredMetadataObserved() ? activity.channelName() : null;
         return new ReceiverContextMetadata(activity.contextKey(), activity.guid(), activity.contextKind(),
             activity.protocol(), channelName, blankToNull(activity.aliasListName()), activity.decoder(),
@@ -36,7 +36,7 @@ record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRec
             conventional ? activity.frequencyHertz() : null, null);
     }
 
-    static ReceiverContextMetadata from(P25ActivityLogRecords.SiteSnapshot snapshot, Integer systemKey)
+    static ReceiverContextMetadata from(ReceiverActivityRecords.SiteSnapshot snapshot, Integer systemKey)
     {
         return new ReceiverContextMetadata(ReceiverContextKey.trunked(snapshot.guid()), snapshot.guid(),
             snapshot.contextKind(), snapshot.protocol(), snapshot.channelName(), blankToNull(snapshot.aliasListName()),
@@ -45,26 +45,26 @@ record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRec
             snapshot.currentControlHertz());
     }
 
-    static ReceiverContextMetadata from(P25ActivityLogRecords.DmrConventionalCall call)
+    static ReceiverContextMetadata from(ReceiverActivityRecords.DmrConventionalCall call)
     {
         return new ReceiverContextMetadata(call.contextKey(), call.guid(),
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, "DMR", call.channelName(),
+            ReceiverActivityRecords.ContextKind.CONVENTIONAL_DMR, "DMR", call.channelName(),
             blankToNull(call.aliasListName()), "DMR", true, call.callStartEpochMilliseconds(),
             call.callEndEpochMilliseconds(), null, null, null, null, call.frequencyHertz(), null);
     }
 
-    static ReceiverContextMetadata from(P25ActivityLogRecords.NxdnConventionalCall call)
+    static ReceiverContextMetadata from(ReceiverActivityRecords.NxdnConventionalCall call)
     {
         return new ReceiverContextMetadata(call.contextKey(), call.guid(),
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN, "NXDN", call.channelName(),
+            ReceiverActivityRecords.ContextKind.CONVENTIONAL_NXDN, "NXDN", call.channelName(),
             blankToNull(call.aliasListName()), "NXDN", true, call.callStartEpochMilliseconds(),
             call.callEndEpochMilliseconds(), null, null, null, null, call.frequencyHertz(), null);
     }
 
-    static ReceiverContextMetadata from(P25ActivityLogRecords.ResolvedLogicalCall call)
+    static ReceiverContextMetadata from(ReceiverActivityRecords.ResolvedLogicalCall call)
     {
         return new ReceiverContextMetadata(call.contextKey(), call.guid(),
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, call.protocol(), null, null, call.protocol(), false,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, call.protocol(), null, null, call.protocol(), false,
             call.callStartEpochMilliseconds(), call.callStartEpochMilliseconds(), null, null, null, null, null, null);
     }
 
@@ -73,7 +73,7 @@ record ReceiverContextMetadata(String contextKey, String guid, P25ActivityLogRec
         String protocol = snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_DMR ? "DMR" :
             snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN ? "NXDN" : null;
         return new ReceiverContextMetadata(ReceiverContextKey.trunked(snapshot.guid()), snapshot.guid(),
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, protocol, snapshot.channelName(),
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, protocol, snapshot.channelName(),
             blankToNull(snapshot.aliasListName()), snapshot.decoder(), true, snapshot.observedAtEpochMilliseconds(),
             snapshot.observedAtEpochMilliseconds(), null, null, null, null, snapshot.primaryFrequencyHertz(),
             snapshot.currentControlHertz());

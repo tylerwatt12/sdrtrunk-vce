@@ -37,7 +37,7 @@ import java.util.List;
  */
 class TrunkedCallActivityMapper
 {
-    P25ActivityLogRecords.ActivityEvent map(TrunkedCallStartEvent callStart)
+    ReceiverActivityRecords.ActivityEvent map(TrunkedCallStartEvent callStart)
     {
         if(callStart == null || callStart.channel() == null || callStart.event() == null)
         {
@@ -86,8 +86,8 @@ class TrunkedCallActivityMapper
         String targetId = value(target);
         String targetKind = target != null && target.getForm() != null ? target.getForm().name() : null;
 
-        return new P25ActivityLogRecords.ActivityEvent(event.getTimeStart(), contextKey, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, protocol.name(), P25ActivityLogRecords.Action.CALL,
+        return new ReceiverActivityRecords.ActivityEvent(event.getTimeStart(), contextKey, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, protocol.name(), ReceiverActivityRecords.Action.CALL,
             eventType.name(), sourceId, targetId, targetKind, List.of(), frequency,
             descriptor != null ? descriptor.toString() : null, timeslot, encrypted,
             encrypted && encryptionKey != null ? encryptionKey.getAlgorithm() : null,
@@ -96,11 +96,11 @@ class TrunkedCallActivityMapper
             TrunkedSiteMetadataMapper.configuredSiteName(channel),
             decoderType != null ? decoderType.name() : protocol.name(),
             value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
-            identityDomain(channel, identifiers), P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(),
+            identityDomain(channel, identifiers), ReceiverActivityRecords.P25TargetIdentity.UNKNOWN, List.of(),
             blankToNull(channel.getAliasListName()), true);
     }
 
-    P25ActivityLogRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
+    ReceiverActivityRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
     {
         if(attribution == null || attribution.channel() == null || attribution.protocol() == null ||
             attribution.callStartEpochMilliseconds() <= 0)
@@ -123,7 +123,7 @@ class TrunkedCallActivityMapper
         Integer destinationId = identityId(target);
         String destinationKind = target != null && target.getForm() != null ? target.getForm().name() : null;
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
-        P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
+        ReceiverActivityRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
         String guid = blankToNull(channel.getRadresGuid());
         String contextKey = ReceiverContextKey.trunked(guid);
         IChannelDescriptor descriptor = attribution.channelDescriptor();
@@ -142,7 +142,7 @@ class TrunkedCallActivityMapper
             return null;
         }
 
-        return new P25ActivityLogRecords.TrunkedCallAttribution(
+        return new ReceiverActivityRecords.TrunkedCallAttribution(
             attribution.callStartEpochMilliseconds(), contextKey, guid,
             frequency, attribution.timeslot(),
             destinationId != null ? destinationId : 0, destinationKind, patchMemberTalkgroups(target),
@@ -183,12 +183,12 @@ class TrunkedCallActivityMapper
             .toList();
     }
 
-    private static P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity(Identifier identifier,
+    private static ReceiverActivityRecords.P25TargetIdentity p25TargetIdentity(Identifier identifier,
                                                                               Protocol protocol)
     {
         if(protocol != Protocol.APCO25)
         {
-            return P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+            return ReceiverActivityRecords.P25TargetIdentity.UNKNOWN;
         }
 
         Identifier primary = identifier;
@@ -200,15 +200,15 @@ class TrunkedCallActivityMapper
 
         if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
         {
-            return P25ActivityLogRecords.P25TargetIdentity.fullyQualified(fullyQualified.getWacn(),
+            return ReceiverActivityRecords.P25TargetIdentity.fullyQualified(fullyQualified.getWacn(),
                 fullyQualified.getSystem(), fullyQualified.getTalkgroup());
         }
 
-        return primary instanceof TalkgroupIdentifier ? P25ActivityLogRecords.P25TargetIdentity.ORDINARY :
-            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+        return primary instanceof TalkgroupIdentifier ? ReceiverActivityRecords.P25TargetIdentity.ORDINARY :
+            ReceiverActivityRecords.P25TargetIdentity.UNKNOWN;
     }
 
-    private static List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(
+    private static List<ReceiverActivityRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(
         Identifier identifier, Protocol protocol)
     {
         if(protocol != Protocol.APCO25 || !(identifier instanceof PatchGroupIdentifier patch) ||
@@ -217,7 +217,7 @@ class TrunkedCallActivityMapper
             return List.of();
         }
 
-        List<P25ActivityLogRecords.P25PatchMemberIdentity> identities = new ArrayList<>();
+        List<ReceiverActivityRecords.P25PatchMemberIdentity> identities = new ArrayList<>();
         for(TalkgroupIdentifier member: patch.getValue().getPatchedTalkgroupIdentifiers())
         {
             if(member == null || member.getValue() == null || member.getValue() <= 0 ||
@@ -226,10 +226,10 @@ class TrunkedCallActivityMapper
                 continue;
             }
 
-            P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(member, protocol);
-            if(targetIdentity.state() != P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+            ReceiverActivityRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(member, protocol);
+            if(targetIdentity.state() != ReceiverActivityRecords.P25IdentityState.UNKNOWN)
             {
-                identities.add(new P25ActivityLogRecords.P25PatchMemberIdentity(member.getValue(), targetIdentity));
+                identities.add(new ReceiverActivityRecords.P25PatchMemberIdentity(member.getValue(), targetIdentity));
             }
         }
 
@@ -269,21 +269,21 @@ class TrunkedCallActivityMapper
         }
     }
 
-    private static P25ActivityLogRecords.IdentityDomain identityDomain(Channel channel,
+    private static ReceiverActivityRecords.IdentityDomain identityDomain(Channel channel,
                                                                        IdentifierCollection identifiers)
     {
         if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
         {
             if(config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD())
             {
-                return P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D;
+                return ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D;
             }
 
-            return hasTypeDIdentifier(identifiers) ? P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D :
-                P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C;
+            return hasTypeDIdentifier(identifiers) ? ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D :
+                ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C;
         }
 
-        return P25ActivityLogRecords.IdentityDomain.STANDARD;
+        return ReceiverActivityRecords.IdentityDomain.STANDARD;
     }
 
     private static boolean hasTypeDIdentifier(IdentifierCollection identifiers)

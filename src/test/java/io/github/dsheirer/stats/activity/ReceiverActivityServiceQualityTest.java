@@ -21,42 +21,42 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import org.junit.jupiter.api.Test;
 
-class P25ActivityLogServiceQualityTest
+class ReceiverActivityServiceQualityTest
 {
     @Test
     void acceptsQualityForEverySupportedTrunkedProtocol()
     {
-        assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
+        assertTrue(ReceiverActivityService.isTrunkedControlChannelQuality(
             quality(new DecodeConfigP25Phase1())));
-        assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
+        assertTrue(ReceiverActivityService.isTrunkedControlChannelQuality(
             quality(new DecodeConfigP25Phase2())));
-        assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
+        assertTrue(ReceiverActivityService.isTrunkedControlChannelQuality(
             quality(dmr(DMRChannelMode.TRUNKED))));
-        assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(
+        assertFalse(ReceiverActivityService.isTrunkedControlChannelQuality(
             quality(dmr(DMRChannelMode.CONVENTIONAL))));
-        assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
+        assertTrue(ReceiverActivityService.isTrunkedControlChannelQuality(
             quality(nxdn(NXDNChannelMode.TRUNKED))));
-        assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(
+        assertFalse(ReceiverActivityService.isTrunkedControlChannelQuality(
             quality(nxdn(NXDNChannelMode.CONVENTIONAL))));
-        assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(null));
+        assertFalse(ReceiverActivityService.isTrunkedControlChannelQuality(null));
 
-        assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertTrue(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(new DecodeConfigP25Phase1()), false));
-        assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertTrue(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(new DecodeConfigP25Phase2()), false));
-        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertFalse(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(dmr(DMRChannelMode.CONVENTIONAL)), false));
-        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertFalse(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(nxdn(NXDNChannelMode.TRUNKED)), false));
-        assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertTrue(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(dmr(DMRChannelMode.TRUNKED)), false));
-        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertFalse(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(dmr(DMRChannelMode.CONVENTIONAL)), true));
-        assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertTrue(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(nxdn(NXDNChannelMode.TRUNKED)), true));
-        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
+        assertFalse(ReceiverActivityService.shouldPersistControlChannelQuality(
             quality(nxdn(NXDNChannelMode.CONVENTIONAL)), true));
-        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(null, true));
+        assertFalse(ReceiverActivityService.shouldPersistControlChannelQuality(null, true));
     }
 
     @Test
@@ -65,27 +65,27 @@ class P25ActivityLogServiceQualityTest
         DecodeConfigDMR configuration = dmr(DMRChannelMode.TRUNKED);
         Channel trunked = channel(configuration);
         Channel sameGuidConventional = channel(dmr(DMRChannelMode.CONVENTIONAL));
-        P25ActivityLogService.TrunkedSiteEvidence evidence =
-            new P25ActivityLogService.TrunkedSiteEvidence(trunked, configuration, DecoderType.DMR);
+        ReceiverActivityService.TrunkedSiteEvidence evidence =
+            new ReceiverActivityService.TrunkedSiteEvidence(trunked, configuration, DecoderType.DMR);
 
-        assertTrue(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+        assertTrue(ReceiverActivityService.hasCurrentTrunkedSiteEvidence(
             quality(trunked), evidence));
-        assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+        assertFalse(ReceiverActivityService.hasCurrentTrunkedSiteEvidence(
             quality(sameGuidConventional), evidence));
 
         trunked.setDecodeConfiguration(dmr(DMRChannelMode.TRUNKED));
-        assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+        assertFalse(ReceiverActivityService.hasCurrentTrunkedSiteEvidence(
             quality(trunked), evidence));
 
         DecodeConfigNXDN nxdnConfiguration = nxdn(NXDNChannelMode.TRUNKED);
         Channel nxdnTrunked = channel(nxdnConfiguration);
-        P25ActivityLogService.TrunkedSiteEvidence nxdnEvidence =
-            new P25ActivityLogService.TrunkedSiteEvidence(
+        ReceiverActivityService.TrunkedSiteEvidence nxdnEvidence =
+            new ReceiverActivityService.TrunkedSiteEvidence(
                 nxdnTrunked, nxdnConfiguration, DecoderType.NXDN);
-        assertTrue(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+        assertTrue(ReceiverActivityService.hasCurrentTrunkedSiteEvidence(
             quality(nxdnTrunked), nxdnEvidence));
         nxdnTrunked.setDecodeConfiguration(nxdn(NXDNChannelMode.CONVENTIONAL));
-        assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+        assertFalse(ReceiverActivityService.hasCurrentTrunkedSiteEvidence(
             quality(nxdnTrunked), nxdnEvidence));
     }
 

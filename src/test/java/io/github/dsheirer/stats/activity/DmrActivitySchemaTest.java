@@ -37,17 +37,17 @@ class DmrActivitySchemaTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             DmrActivitySchema.validate(connection);
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "site-a", 461_125_000L, 1, 91, 101, false));
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(3_000, 4_000, "site-a", 461_125_000L, 1, 91, 101, false));
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(5_000, 6_000, "site-a", 461_125_000L, 1, 91, 102, true));
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(7_000, 8_000, "site-a", 461_125_000L, 2, 91, 101, false));
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 privateCall(9_000, 10_000, "site-a", 461_125_000L, 1, 101, 202, true));
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(11_000, 12_000, "site-b", 462_125_000L, 1, 91, 101, false));
 
             assertEquals(3, scalar(connection, """
@@ -91,7 +91,7 @@ class DmrActivitySchemaTest
                 WHERE context_id=(SELECT id FROM receiver_context WHERE context_key='%s')
                   AND frequency_hz=462125000 AND timeslot=1 AND talkgroup_id=91
                 """.formatted(configurationContextKey("site-b"))));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_activity_event"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals("County DMR", text(connection,
                 "SELECT alias_list_name FROM receiver_context WHERE context_key='" +
                     configurationContextKey("site-a") + "'"));
@@ -110,11 +110,11 @@ class DmrActivitySchemaTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            Long activityId = P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            Long activityId = ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "detailed", 461_125_000L, 1, 91, 101, true), true);
 
             assertEquals(Long.valueOf(1L), activityId);
-            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(1, scalar(connection,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1, scalar(connection,
@@ -127,7 +127,7 @@ class DmrActivitySchemaTest
             try(ResultSet resultSet = statement.executeQuery("""
                 SELECT channel_kind, protocol, action, event_type, source_radio_id, target_id, target_kind,
                        frequency_hz, timeslot, encrypted
-                FROM p25_activity_event_resolved
+                FROM receiver_activity_event_resolved
                 """))
             {
                 assertTrue(resultSet.next());
@@ -148,7 +148,7 @@ class DmrActivitySchemaTest
     @Test
     void configurationIdUsesCanonicalConventionalContextIdentity() throws Exception
     {
-        P25ActivityLogRecords.DmrConventionalCall call =
+        ReceiverActivityRecords.DmrConventionalCall call =
             groupCall(1_000, 2_000, "same-guid", 461_125_000L, 1, 91, 101, false);
         assertEquals(configurationContextKey("same-guid"), call.contextKey());
     }
@@ -170,7 +170,7 @@ class DmrActivitySchemaTest
                     1, 2, 3, 461125000)
                 """.formatted(radresGuid("mode-switch"), radresGuid("mode-switch")));
 
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "mode-switch", 461_125_000L, 1, 91, 101, false));
 
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_context"));
@@ -197,16 +197,16 @@ class DmrActivitySchemaTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogRecords.DmrConventionalCall invalid = new P25ActivityLogRecords.DmrConventionalCall(
+            ReceiverActivityRecords.DmrConventionalCall invalid = new ReceiverActivityRecords.DmrConventionalCall(
                 2_000, 1_000, configurationContextKey("invalid-call"), null, "Bad", null, 0, 3,
-                P25ActivityLogRecords.DmrTargetKind.GROUP, 1, 2, null, false);
+                ReceiverActivityRecords.DmrTargetKind.GROUP, 1, 2, null, false);
             assertThrows(SQLException.class,
-                () -> P25ActivityLogSchema.recordDmrConventionalCall(connection, invalid));
-            P25ActivityLogRecords.DmrConventionalCall invalidIdentity =
+                () -> ReceiverActivitySchema.recordDmrConventionalCall(connection, invalid));
+            ReceiverActivityRecords.DmrConventionalCall invalidIdentity =
                 groupCall(1_000, 2_000, "bad-id", 461_125_000L, 1,
                     DmrActivitySchema.MAXIMUM_DMR_ID + 1, 2, false);
             assertThrows(SQLException.class,
-                () -> P25ActivityLogSchema.recordDmrConventionalCall(connection, invalidIdentity));
+                () -> ReceiverActivitySchema.recordDmrConventionalCall(connection, invalidIdentity));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM conventional_activity_summary"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_context"));
@@ -223,9 +223,9 @@ class DmrActivitySchemaTest
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "old", 461_125_000L, 1, 91, 101, false));
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(9_000, 10_000, "keep", 462_125_000L, 2, 92, 102, false));
 
             DmrActivitySchema.CleanupResult cleanup = DmrActivitySchema.deleteOlderThan(connection, 5_000);
@@ -237,7 +237,7 @@ class DmrActivitySchemaTest
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_radio_summary"));
 
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 privateCall(11_000, 12_000, "reset", 463_125_000L, 1, 103, 203, false));
             assertEquals(4, DmrActivitySchema.resetStats(connection));
         }
@@ -252,9 +252,9 @@ class DmrActivitySchemaTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            P25ActivityLogRecords.DmrConventionalCall seed =
+            ReceiverActivityRecords.DmrConventionalCall seed =
                 groupCall(1_000, 2_000, "cap", 461_125_000L, 1, 1, 101, false);
-            P25ActivityLogSchema.recordDmrConventionalCall(connection, seed);
+            ReceiverActivitySchema.recordDmrConventionalCall(connection, seed);
             int context = scalar(connection,
                 "SELECT id FROM receiver_context WHERE context_key='" + configurationContextKey("cap") + "'");
             statement.executeUpdate("""
@@ -267,14 +267,14 @@ class DmrActivitySchemaTest
                 SELECT %d, 461125000, 1, value, 1000, 2000, 1 FROM identities
                 """.formatted(context));
 
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(3_000, 4_000, "cap", 461_125_000L, 1, 4_097, 102, false));
             assertEquals(DmrActivitySchema.MAXIMUM_TALKGROUPS_PER_CONTEXT, scalar(connection,
                 "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary WHERE context_id=" + context));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary WHERE talkgroup_id=4097"));
 
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(5_000, 6_000, "cap", 461_125_000L, 1, 1, 103, false));
             assertEquals(2, scalar(connection,
                 "SELECT call_count FROM dmr_conventional_talkgroup_summary WHERE talkgroup_id=1"));
@@ -293,7 +293,7 @@ class DmrActivitySchemaTest
                 WHERE context_id=%d AND frequency_hz=461125000 AND timeslot=1 AND radio_id=101
                 """.formatted(context));
 
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 privateCall(7_000, 8_000, "cap", 461_125_000L, 1, 101, 32_769, false));
             assertEquals(DmrActivitySchema.MAXIMUM_RADIOS_PER_CONTEXT, scalar(connection,
                 "SELECT COUNT(*) FROM dmr_conventional_radio_summary WHERE context_id=" + context));
@@ -315,7 +315,7 @@ class DmrActivitySchemaTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            P25ActivityLogSchema.recordDmrConventionalCall(connection,
+            ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "plans", 461_125_000L, 1, 1, 1, false));
             int context = scalar(connection,
                 "SELECT id FROM receiver_context WHERE context_key='" + configurationContextKey("plans") + "'");
@@ -366,21 +366,21 @@ class DmrActivitySchemaTest
         }
     }
 
-    private static P25ActivityLogRecords.DmrConventionalCall groupCall(long start, long end, String fixture,
+    private static ReceiverActivityRecords.DmrConventionalCall groupCall(long start, long end, String fixture,
                                                                         long frequency, int timeslot, int talkgroup,
                                                                         int source, boolean encrypted)
     {
-        return new P25ActivityLogRecords.DmrConventionalCall(start, end, configurationContextKey(fixture), null,
-            "Repeater " + fixture, "County DMR", frequency, timeslot, P25ActivityLogRecords.DmrTargetKind.GROUP,
+        return new ReceiverActivityRecords.DmrConventionalCall(start, end, configurationContextKey(fixture), null,
+            "Repeater " + fixture, "County DMR", frequency, timeslot, ReceiverActivityRecords.DmrTargetKind.GROUP,
             talkgroup, source, null, encrypted);
     }
 
-    private static P25ActivityLogRecords.DmrConventionalCall privateCall(long start, long end, String fixture,
+    private static ReceiverActivityRecords.DmrConventionalCall privateCall(long start, long end, String fixture,
                                                                           long frequency, int timeslot, int source,
                                                                           int target, boolean encrypted)
     {
-        return new P25ActivityLogRecords.DmrConventionalCall(start, end, configurationContextKey(fixture), null,
-            "Repeater " + fixture, "County DMR", frequency, timeslot, P25ActivityLogRecords.DmrTargetKind.PRIVATE,
+        return new ReceiverActivityRecords.DmrConventionalCall(start, end, configurationContextKey(fixture), null,
+            "Repeater " + fixture, "County DMR", frequency, timeslot, ReceiverActivityRecords.DmrTargetKind.PRIVATE,
             null, source, target, encrypted);
     }
 

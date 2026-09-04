@@ -280,9 +280,9 @@ class TrunkedSiteMetadataMapperTest
             List.of(), List.of());
         TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 1_000L));
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 250, 25);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.TrunkedSiteSnapshot(
+        writer.enqueue(new ReceiverActivityRecords.TrunkedSiteSnapshot(
             mapped.observedAtEpochMilliseconds(), mapped));
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
 

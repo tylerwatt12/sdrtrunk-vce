@@ -16,13 +16,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import org.junit.jupiter.api.Test;
 
-class DecodeEventTypePersistenceTest
+class ReceiverActivityCodePersistenceTest
 {
     @Test
-    void retainedActivityCodesRemainStableWhenDenialIsAdded()
+    void retainedActivityCodesUseExplicitMappings()
     {
-        assertEquals(28, DecodeEventType.DEREGISTER.ordinal() + 1);
-        assertEquals(56, DecodeEventType.UNKNOWN.ordinal() + 1);
-        assertEquals(57, DecodeEventType.DENIAL.ordinal() + 1);
+        assertEquals(28, ReceiverActivityCodes.eventTypeCode(DecodeEventType.DEREGISTER));
+        assertEquals(56, ReceiverActivityCodes.eventTypeCode(DecodeEventType.UNKNOWN));
+        assertEquals(57, ReceiverActivityCodes.eventTypeCode(DecodeEventType.DENIAL));
+        assertEquals(12, ReceiverActivityRecords.Action.GRANT.code());
+        assertEquals(23, ReceiverActivityRecords.Action.UNKNOWN.code());
     }
 }

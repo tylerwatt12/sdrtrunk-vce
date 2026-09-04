@@ -39,9 +39,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Single background SQLite writer for statistics observations and maintenance.
  */
-class P25ActivityLogWriter implements AutoCloseable
+class ReceiverActivityWriter implements AutoCloseable
 {
-    private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogWriter.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ReceiverActivityWriter.class);
     private static final int DEFAULT_QUEUE_CAPACITY = 10000;
     /* Queue entries are observations that may fan out to multiple SQL statements, not changed-row counts. */
     private static final int BATCH_SIZE = 1250;
@@ -80,28 +80,28 @@ class P25ActivityLogWriter implements AutoCloseable
     private volatile boolean mDetailedEventHistoryEnabled;
     private volatile long mLastRetentionCleanup;
     private volatile long mLastMaintenance;
-    private volatile P25ActivityLogStatus.State mState = P25ActivityLogStatus.State.STOPPED;
+    private volatile ReceiverActivityStatus.State mState = ReceiverActivityStatus.State.STOPPED;
     private volatile String mLastError;
 
-    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
+    ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
         this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY);
     }
 
-    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity)
+    ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity)
     {
         this(databasePath, retentionDays, detailedEventHistoryEnabled, queueCapacity, BATCH_SIZE,
             BATCH_COLLECTION_MILLISECONDS);
     }
 
-    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity,
+    ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity,
                          int batchSize, long batchCollectionMilliseconds)
     {
         this(databasePath, retentionDays, detailedEventHistoryEnabled, queueCapacity, batchSize,
             batchCollectionMilliseconds, DATABASE_BUSY_TIMEOUT_MILLISECONDS, GRACEFUL_DRAIN_MILLISECONDS);
     }
 
-    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity,
+    ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity,
                          int batchSize, long batchCollectionMilliseconds, int databaseBusyTimeoutMilliseconds,
                          long gracefulDrainMilliseconds)
     {
@@ -121,7 +121,7 @@ class P25ActivityLogWriter implements AutoCloseable
         {
             mShutdownDrainDeadlineNanos = Long.MIN_VALUE;
             mLastError = null;
-            mState = P25ActivityLogStatus.State.STARTING;
+            mState = ReceiverActivityStatus.State.STARTING;
             mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("statistics database writer"));
             mExecutorService.execute(this::run);
         }
@@ -144,7 +144,7 @@ class P25ActivityLogWriter implements AutoCloseable
         mDetailedEventHistoryEnabled = detailedEventHistoryEnabled;
     }
 
-    void enqueue(P25ActivityLogRecord record)
+    void enqueue(ReceiverActivityRecord record)
     {
         if(record == null)
         {
@@ -338,10 +338,10 @@ class P25ActivityLogWriter implements AutoCloseable
 
             if(mRunning.get())
             {
-                mState = P25ActivityLogStatus.State.RUNNING;
+                mState = ReceiverActivityStatus.State.RUNNING;
             }
 
-            List<P25ActivityLogRecord> batch = new ArrayList<>(mBatchSize);
+            List<ReceiverActivityRecord> batch = new ArrayList<>(mBatchSize);
             QueuedRecord pendingRecord = null;
 
             while(mRunning.get() || pendingRecord != null || !mQueue.isEmpty() || !mMaintenanceQueue.isEmpty())
@@ -465,9 +465,9 @@ class P25ActivityLogWriter implements AutoCloseable
             failPendingMaintenance(terminalFailure != null ? terminalFailure :
                 new IllegalStateException("Statistics database writer stopped"));
 
-            if(mState != P25ActivityLogStatus.State.FAILED)
+            if(mState != ReceiverActivityStatus.State.FAILED)
             {
-                mState = P25ActivityLogStatus.State.STOPPED;
+                mState = ReceiverActivityStatus.State.STOPPED;
             }
         }
     }
@@ -480,7 +480,7 @@ class P25ActivityLogWriter implements AutoCloseable
         {
             try
             {
-                P25ActivityLogMaintenance.Result result = executeMaintenanceWithRetry(connection, command);
+                ReceiverActivityMaintenance.Result result = executeMaintenanceWithRetry(connection, command);
                 command.request().result().complete(result);
             }
             catch(Exception e)
@@ -506,7 +506,7 @@ class P25ActivityLogWriter implements AutoCloseable
         }
     }
 
-    private P25ActivityLogMaintenance.Result executeMaintenanceWithRetry(Connection connection,
+    private ReceiverActivityMaintenance.Result executeMaintenanceWithRetry(Connection connection,
                                                                          MaintenanceCommand command)
         throws IOException, SQLException, InterruptedException
     {
@@ -515,25 +515,25 @@ class P25ActivityLogWriter implements AutoCloseable
             try
             {
                 StatsDatabaseMaintenanceRequest request = command.request();
-                P25ActivityLogMaintenance.Result result;
+                ReceiverActivityMaintenance.Result result;
 
-                if(request.operation() == P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS)
+                if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS)
                 {
-                    result = P25ActivityLogMaintenance.clearSiteStats(connection, mDatabasePath, request.siteGuid());
+                    result = ReceiverActivityMaintenance.clearSiteStats(connection, mDatabasePath, request.siteGuid());
                 }
                 else
                 {
-                    result = P25ActivityLogMaintenance.run(connection, mDatabasePath, mRetentionDays,
+                    result = ReceiverActivityMaintenance.run(connection, mDatabasePath, mRetentionDays,
                         request.operation());
                 }
 
-                if(request.operation() == P25ActivityLogMaintenance.Operation.MAINTAIN ||
-                    request.operation() == P25ActivityLogMaintenance.Operation.SHRINK)
+                if(request.operation() == ReceiverActivityMaintenance.Operation.MAINTAIN ||
+                    request.operation() == ReceiverActivityMaintenance.Operation.SHRINK)
                 {
                     mLastRetentionCleanup = System.currentTimeMillis();
                     mLastMaintenance = System.currentTimeMillis();
                 }
-                else if(request.operation() == P25ActivityLogMaintenance.Operation.RESET_STATS)
+                else if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS)
                 {
                     mResolvedLogicalCalls.clear();
                 }
@@ -601,13 +601,13 @@ class P25ActivityLogWriter implements AutoCloseable
 
     private void restoreStatus(Connection connection) throws SQLException
     {
-        mWrittenRecords.set(P25ActivityLogSchema.readStatusLong(connection, "records_written"));
-        mDroppedRecords.addAndGet(P25ActivityLogSchema.readStatusLong(connection, "records_dropped"));
-        long lastSuccessfulWriteMs = P25ActivityLogSchema.readStatusLong(connection, "last_successful_write_ms");
+        mWrittenRecords.set(ReceiverActivitySchema.readStatusLong(connection, "records_written"));
+        mDroppedRecords.addAndGet(ReceiverActivitySchema.readStatusLong(connection, "records_dropped"));
+        long lastSuccessfulWriteMs = ReceiverActivitySchema.readStatusLong(connection, "last_successful_write_ms");
         mLastSuccessfulWriteMs.updateAndGet(current -> Math.max(current, lastSuccessfulWriteMs));
     }
 
-    private void writeBatchWithRetry(Connection connection, List<P25ActivityLogRecord> batch)
+    private void writeBatchWithRetry(Connection connection, List<ReceiverActivityRecord> batch)
         throws SQLException, InterruptedException
     {
         while(true)
@@ -653,7 +653,7 @@ class P25ActivityLogWriter implements AutoCloseable
         {
             try
             {
-                P25ActivityLogSchema.updateStatus(connection, key, value);
+                ReceiverActivitySchema.updateStatus(connection, key, value);
                 return;
             }
             catch(SQLException e)
@@ -672,7 +672,7 @@ class P25ActivityLogWriter implements AutoCloseable
         {
             try
             {
-                P25ActivityLogMaintenance.runLightMaintenance(connection, mRetentionDays);
+                ReceiverActivityMaintenance.runLightMaintenance(connection, mRetentionDays);
                 mLastRetentionCleanup = System.currentTimeMillis();
                 mLastMaintenance = System.currentTimeMillis();
                 return;
@@ -713,7 +713,7 @@ class P25ActivityLogWriter implements AutoCloseable
         return deadlineNanos == Long.MIN_VALUE ? 0 : deadlineNanos - System.nanoTime();
     }
 
-    private void writeBatch(Connection connection, List<P25ActivityLogRecord> batch) throws SQLException
+    private void writeBatch(Connection connection, List<ReceiverActivityRecord> batch) throws SQLException
     {
         if(batch.isEmpty())
         {
@@ -729,86 +729,86 @@ class P25ActivityLogWriter implements AutoCloseable
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
             pruneResolvedLogicalCalls(System.currentTimeMillis());
 
-            for(P25ActivityLogRecord record: batch)
+            for(ReceiverActivityRecord record: batch)
             {
-                if(record instanceof P25ActivityLogRecords.ActivityEvent activityEvent)
+                if(record instanceof ReceiverActivityRecords.ActivityEvent activityEvent)
                 {
-                    P25ActivityLogSchema.recordActivity(connection, activityEvent, mDetailedEventHistoryEnabled);
+                    ReceiverActivitySchema.recordActivity(connection, activityEvent, mDetailedEventHistoryEnabled);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.SiteSnapshot siteSnapshot)
+                else if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
                 {
-                    P25ActivityLogSchema.insertSite(connection, siteSnapshot);
+                    ReceiverActivitySchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.ChannelFact channelFact)
+                else if(record instanceof ReceiverActivityRecords.ChannelFact channelFact)
                 {
-                    P25ActivityLogSchema.upsertGrantedChannelSummary(connection, channelFact);
+                    ReceiverActivitySchema.upsertGrantedChannelSummary(connection, channelFact);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.TalkerAliasUpdate talkerAliasUpdate)
+                else if(record instanceof ReceiverActivityRecords.TalkerAliasUpdate talkerAliasUpdate)
                 {
-                    P25ActivityLogSchema.updateTalkerAlias(connection, talkerAliasUpdate);
+                    ReceiverActivitySchema.updateTalkerAlias(connection, talkerAliasUpdate);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.ControlChannelQuality quality)
+                else if(record instanceof ReceiverActivityRecords.ControlChannelQuality quality)
                 {
-                    P25ActivityLogSchema.insertControlChannelQuality(connection, quality);
+                    ReceiverActivitySchema.insertControlChannelQuality(connection, quality);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.ConventionalCallOutput callOutput)
+                else if(record instanceof ReceiverActivityRecords.ConventionalCallOutput callOutput)
                 {
-                    if(P25ActivityLogSchema.applyConventionalCallOutput(connection, callOutput))
+                    if(ReceiverActivitySchema.applyConventionalCallOutput(connection, callOutput))
                     {
                         writtenRecords++;
                     }
                 }
-                else if(record instanceof P25ActivityLogRecords.ResolvedLogicalCall logicalCall)
+                else if(record instanceof ReceiverActivityRecords.ResolvedLogicalCall logicalCall)
                 {
                     LogicalCallId logicalCallId = logicalCall.logicalCallId();
                     if(!hasResolvedLogicalCall(logicalCallId, acceptedLogicalCalls) &&
-                        P25ActivityLogSchema.recordResolvedLogicalCall(connection, logicalCall))
+                        ReceiverActivitySchema.recordResolvedLogicalCall(connection, logicalCall))
                     {
                         acceptedLogicalCalls.add(logicalCallId);
                         writtenRecords++;
                     }
                 }
-                else if(record instanceof P25ActivityLogRecords.LogicalCallOutput logicalOutput)
+                else if(record instanceof ReceiverActivityRecords.LogicalCallOutput logicalOutput)
                 {
                     if(hasResolvedLogicalCall(logicalOutput.call().logicalCallId(), acceptedLogicalCalls) &&
-                        P25ActivityLogSchema.applyLogicalCallOutput(connection, logicalOutput))
+                        ReceiverActivitySchema.applyLogicalCallOutput(connection, logicalOutput))
                     {
                         writtenRecords++;
                     }
                 }
-                else if(record instanceof P25ActivityLogRecords.TrunkedCallAttribution attribution)
+                else if(record instanceof ReceiverActivityRecords.TrunkedCallAttribution attribution)
                 {
-                    if(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution))
+                    if(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, attribution))
                     {
                         writtenRecords++;
                     }
                 }
-                else if(record instanceof P25ActivityLogRecords.DmrConventionalCall dmrCall)
+                else if(record instanceof ReceiverActivityRecords.DmrConventionalCall dmrCall)
                 {
-                    P25ActivityLogSchema.recordDmrConventionalCall(connection, dmrCall,
+                    ReceiverActivitySchema.recordDmrConventionalCall(connection, dmrCall,
                         mDetailedEventHistoryEnabled);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.NxdnConventionalCall nxdnCall)
+                else if(record instanceof ReceiverActivityRecords.NxdnConventionalCall nxdnCall)
                 {
-                    P25ActivityLogSchema.recordNxdnConventionalCall(connection, nxdnCall,
+                    ReceiverActivitySchema.recordNxdnConventionalCall(connection, nxdnCall,
                         mDetailedEventHistoryEnabled);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
+                else if(record instanceof ReceiverActivityRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
                 {
                     long childRetentionCutoff = System.currentTimeMillis() -
                         TimeUnit.DAYS.toMillis(Math.max(1, mRetentionDays));
-                    if(P25ActivityLogSchema.isAuthoritativeTrunkedSiteSnapshot(
+                    if(ReceiverActivitySchema.isAuthoritativeTrunkedSiteSnapshot(
                         connection, trunkedSiteSnapshot.snapshot()) &&
                         TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot(), childRetentionCutoff))
                     {
-                        P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection,
+                        ReceiverActivitySchema.ensureTrunkedSiteIdentityScope(connection,
                             trunkedSiteSnapshot.snapshot());
                     }
                     writtenRecords++;
@@ -817,9 +817,9 @@ class P25ActivityLogWriter implements AutoCloseable
 
             long writtenTotal = mWrittenRecords.get() + writtenRecords;
             long successfulWrite = System.currentTimeMillis();
-            P25ActivityLogSchema.updateStatus(connection, "records_written", Long.toString(writtenTotal));
-            P25ActivityLogSchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
-            P25ActivityLogSchema.updateStatus(connection, "last_successful_write_ms",
+            ReceiverActivitySchema.updateStatus(connection, "records_written", Long.toString(writtenTotal));
+            ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
+            ReceiverActivitySchema.updateStatus(connection, "last_successful_write_ms",
                 Long.toString(successfulWrite));
 
             connection.commit();
@@ -842,7 +842,7 @@ class P25ActivityLogWriter implements AutoCloseable
             {
                 try
                 {
-                    P25ActivityLogSchema.updateStatus(connection, "last_write_error", e.getMessage());
+                    ReceiverActivitySchema.updateStatus(connection, "last_write_error", e.getMessage());
                 }
                 catch(SQLException statusException)
                 {
@@ -897,7 +897,7 @@ class P25ActivityLogWriter implements AutoCloseable
 
     private void cleanupRetention(Connection connection) throws SQLException
     {
-        P25ActivityLogMaintenance.cleanupRetention(connection, mRetentionDays);
+        ReceiverActivityMaintenance.cleanupRetention(connection, mRetentionDays);
         mLastRetentionCleanup = System.currentTimeMillis();
     }
 
@@ -926,15 +926,15 @@ class P25ActivityLogWriter implements AutoCloseable
         String error = exception.getClass().getSimpleName() +
             (message == null || message.isBlank() ? "" : ": " + message);
         mLastError = error.substring(0, Math.min(500, error.length()));
-        mState = P25ActivityLogStatus.State.FAILED;
+        mState = ReceiverActivityStatus.State.FAILED;
     }
 
-    record WriterStatus(P25ActivityLogStatus.State state, boolean detailedHistoryEnabled,
+    record WriterStatus(ReceiverActivityStatus.State state, boolean detailedHistoryEnabled,
                         long lastSuccessfulWriteMs, long recordsWritten, long recordsDropped, String lastError)
     {
     }
 
-    private record QueuedRecord(long sequence, P25ActivityLogRecord record)
+    private record QueuedRecord(long sequence, ReceiverActivityRecord record)
     {
     }
 

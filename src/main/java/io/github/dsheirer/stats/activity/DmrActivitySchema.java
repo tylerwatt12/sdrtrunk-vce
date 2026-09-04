@@ -222,12 +222,12 @@ public final class DmrActivitySchema
     }
 
     static void recordCompletedCall(Connection connection, int contextId,
-                                    P25ActivityLogRecords.DmrConventionalCall call) throws SQLException
+                                    ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
         requireValid(contextId, call);
         long timestamp = call.callEndEpochMilliseconds();
 
-        if(call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP && positive(call.talkgroupId()) != null)
+        if(call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP && positive(call.talkgroupId()) != null)
         {
             if(canAdmitTalkgroup(connection, contextId, call))
             {
@@ -236,7 +236,7 @@ public final class DmrActivitySchema
         }
 
         Integer sourceRadio = positive(call.sourceRadioId());
-        Integer targetRadio = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ?
+        Integer targetRadio = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE ?
             positive(call.targetRadioId()) : null;
 
         if(sourceRadio != null && sourceRadio.equals(targetRadio))
@@ -266,7 +266,7 @@ public final class DmrActivitySchema
         }
     }
 
-    static void validateCompletedCall(P25ActivityLogRecords.DmrConventionalCall call) throws SQLException
+    static void validateCompletedCall(ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
         if(call == null || !ReceiverContextKey.isConventional(call.contextKey()) || call.frequencyHertz() <= 0 ||
             (call.timeslot() != 1 && call.timeslot() != 2) || call.callStartEpochMilliseconds() <= 0 ||
@@ -338,7 +338,7 @@ public final class DmrActivitySchema
     }
 
     private static void upsertTalkgroup(Connection connection, int contextId,
-                                        P25ActivityLogRecords.DmrConventionalCall call, long timestamp)
+                                        ReceiverActivityRecords.DmrConventionalCall call, long timestamp)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -370,11 +370,11 @@ public final class DmrActivitySchema
     }
 
     private static void upsertRadio(Connection connection, int contextId,
-                                    P25ActivityLogRecords.DmrConventionalCall call, int radioId,
+                                    ReceiverActivityRecords.DmrConventionalCall call, int radioId,
                                     boolean source, boolean target, long timestamp) throws SQLException
     {
-        boolean group = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP;
-        boolean privateCall = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE;
+        boolean group = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP;
+        boolean privateCall = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE;
         Integer lastTalkgroup = group ? positive(call.talkgroupId()) : null;
         Integer lastPeer = privateCall ? (source ? positive(call.targetRadioId()) :
             positive(call.sourceRadioId())) : null;
@@ -424,7 +424,7 @@ public final class DmrActivitySchema
     }
 
     private static boolean canAdmitTalkgroup(Connection connection, int contextId,
-                                             P25ActivityLogRecords.DmrConventionalCall call) throws SQLException
+                                             ReceiverActivityRecords.DmrConventionalCall call) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1 FROM dmr_conventional_talkgroup_summary
@@ -449,7 +449,7 @@ public final class DmrActivitySchema
     }
 
     private static boolean canAdmitRadio(Connection connection, int contextId,
-                                         P25ActivityLogRecords.DmrConventionalCall call, int radioId)
+                                         ReceiverActivityRecords.DmrConventionalCall call, int radioId)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -489,7 +489,7 @@ public final class DmrActivitySchema
         }
     }
 
-    private static void requireValid(int contextId, P25ActivityLogRecords.DmrConventionalCall call)
+    private static void requireValid(int contextId, ReceiverActivityRecords.DmrConventionalCall call)
         throws SQLException
     {
         validateCompletedCall(call);

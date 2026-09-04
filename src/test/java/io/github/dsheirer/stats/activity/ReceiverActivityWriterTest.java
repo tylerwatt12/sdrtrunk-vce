@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
-class P25ActivityLogWriterTest
+class ReceiverActivityWriterTest
 {
     private static final long LOGICAL_CALL_START = 1_700_000_000_000L;
 
@@ -55,16 +55,16 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("signaling.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1, 0);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 1, 0);
         writer.start();
-        writer.enqueue(signaling(P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(signaling(ReceiverActivityRecords.Action.GRANT));
         writer.close();
 
-        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.STOPPED, writer.getStatus().state());
         assertEquals(1, writer.getWrittenRecords());
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertEquals(1L, scalarLong(connection, "SELECT COUNT(*) FROM p25_activity_event"));
+            assertEquals(1L, scalarLong(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(1L, scalarLong(connection,
                 "SELECT grant_count FROM trunked_signaling_activity_bucket"));
             assertEquals(0L, scalarLong(connection,
@@ -77,14 +77,14 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("resolved-output.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 3, 0);
-        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(1);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 3, 0);
+        ReceiverActivityRecords.ResolvedLogicalCall call = logicalCall(1);
         writer.start();
         writer.enqueue(call);
-        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.RECORDED));
-        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.STREAMED));
+        writer.enqueue(new ReceiverActivityRecords.LogicalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.RECORDED));
+        writer.enqueue(new ReceiverActivityRecords.LogicalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.STREAMED));
         writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -105,11 +105,11 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("output-order.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 2, 0);
-        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(2);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 2, 0);
+        ReceiverActivityRecords.ResolvedLogicalCall call = logicalCall(2);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(new ReceiverActivityRecords.LogicalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.RECORDED));
         writer.enqueue(call);
         writer.close();
 
@@ -127,8 +127,8 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("resolved-idempotency.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 2, 0);
-        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(3);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 2, 0);
+        ReceiverActivityRecords.ResolvedLogicalCall call = logicalCall(3);
         writer.start();
         writer.enqueue(call);
         writer.enqueue(call);
@@ -148,10 +148,10 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("close-drain-signaling.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 100,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 100,
             TimeUnit.SECONDS.toMillis(10));
         writer.start();
-        writer.enqueue(signaling(P25ActivityLogRecords.Action.DENIAL));
+        writer.enqueue(signaling(ReceiverActivityRecords.Action.DENIAL));
         writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -166,12 +166,12 @@ class P25ActivityLogWriterTest
     {
         List<Integer> members = new ArrayList<>();
 
-        for(int index = 0; index < P25ActivityLogRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS + 20; index++)
+        for(int index = 0; index < ReceiverActivityRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS + 20; index++)
         {
             members.add(60_000 + index);
         }
 
-        assertEquals(P25ActivityLogRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS,
+        assertEquals(ReceiverActivityRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS,
             patchActivity(1_000L, members).patchMemberTalkgroupIds().size());
     }
 
@@ -180,9 +180,9 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
         writer.start();
-        writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1000L, ReceiverActivityRecords.Action.GRANT));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
         while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
@@ -190,33 +190,33 @@ class P25ActivityLogWriterTest
             Thread.sleep(25);
         }
 
-        P25ActivityLogWriter.WriterStatus runningStatus = writer.getStatus();
-        assertEquals(P25ActivityLogStatus.State.RUNNING, runningStatus.state());
+        ReceiverActivityWriter.WriterStatus runningStatus = writer.getStatus();
+        assertEquals(ReceiverActivityStatus.State.RUNNING, runningStatus.state());
         assertTrue(runningStatus.detailedHistoryEnabled());
         assertTrue(runningStatus.lastSuccessfulWriteMs() > 0);
         assertEquals(1, runningStatus.recordsWritten());
         writer.close();
-        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.STOPPED, writer.getStatus().state());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM p25_activity_event"))
+            ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM receiver_activity_event"))
         {
             assertTrue(resultSet.next());
             assertEquals(1, resultSet.getInt(1));
         }
 
-        P25ActivityLogWriter restarted = new P25ActivityLogWriter(database, 30, false, 10);
+        ReceiverActivityWriter restarted = new ReceiverActivityWriter(database, 30, false, 10);
         restarted.start();
         deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(restarted.getStatus().state() != P25ActivityLogStatus.State.RUNNING &&
+        while(restarted.getStatus().state() != ReceiverActivityStatus.State.RUNNING &&
             System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
-        P25ActivityLogWriter.WriterStatus restoredStatus = restarted.getStatus();
-        assertEquals(P25ActivityLogStatus.State.RUNNING, restoredStatus.state());
+        ReceiverActivityWriter.WriterStatus restoredStatus = restarted.getStatus();
+        assertEquals(ReceiverActivityStatus.State.RUNNING, restoredStatus.state());
         assertEquals(1, restoredStatus.recordsWritten());
         assertTrue(restoredStatus.lastSuccessfulWriteMs() > 0);
         restarted.close();
@@ -227,9 +227,9 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("close-drains.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10);
         writer.start();
-        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1_000L, ReceiverActivityRecords.Action.GRANT));
         long closeStarted = System.nanoTime();
         writer.close();
 
@@ -238,7 +238,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
         }
     }
 
@@ -247,10 +247,10 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("close-locked-within-grace.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 1,
             TimeUnit.SECONDS.toMillis(10), 25, 750);
         writer.start();
-        waitForState(writer, P25ActivityLogStatus.State.RUNNING);
+        waitForState(writer, ReceiverActivityStatus.State.RUNNING);
         AtomicReference<Throwable> closeFailure = new AtomicReference<>();
         AtomicReference<Boolean> closeInterrupted = new AtomicReference<>();
 
@@ -258,7 +258,7 @@ class P25ActivityLogWriterTest
             Statement statement = blocker.createStatement())
         {
             statement.execute("BEGIN IMMEDIATE");
-            writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+            writer.enqueue(activity(1_000L, ReceiverActivityRecords.Action.GRANT));
             awaitWriterQueueEmpty(writer);
             Thread.sleep(75);
 
@@ -290,12 +290,12 @@ class P25ActivityLogWriterTest
         }
 
         assertEquals(1, writer.getWrittenRecords());
-        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.STOPPED, writer.getStatus().state());
         assertTrue(writer.isWorkerTerminated());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
         }
     }
 
@@ -304,16 +304,16 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("close-locked-past-grace.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 1,
             TimeUnit.SECONDS.toMillis(10), 25, 300);
         writer.start();
-        waitForState(writer, P25ActivityLogStatus.State.RUNNING);
+        waitForState(writer, ReceiverActivityStatus.State.RUNNING);
 
         try(Connection blocker = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = blocker.createStatement())
         {
             statement.execute("BEGIN IMMEDIATE");
-            writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+            writer.enqueue(activity(1_000L, ReceiverActivityRecords.Action.GRANT));
             awaitWriterQueueEmpty(writer);
             Thread.sleep(75);
             long closeStarted = System.nanoTime();
@@ -321,11 +321,11 @@ class P25ActivityLogWriterTest
             long closeElapsed = System.nanoTime() - closeStarted;
 
             assertTrue(closeElapsed < TimeUnit.SECONDS.toNanos(2));
-            assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
+            assertEquals(ReceiverActivityStatus.State.FAILED, writer.getStatus().state());
             assertTrue(writer.getStatus().lastError() != null && !writer.getStatus().lastError().isBlank());
             assertTrue(writer.isWorkerTerminated());
             assertEquals(0, writer.getWrittenRecords());
-            assertCount(blocker, "p25_activity_event", 0);
+            assertCount(blocker, "receiver_activity_event", 0);
             statement.execute("ROLLBACK");
         }
     }
@@ -335,24 +335,24 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("close-multiple-batches.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 2,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 2,
             TimeUnit.SECONDS.toMillis(10), 25, 1000);
         writer.start();
 
         for(int index = 0; index < 5; index++)
         {
-            writer.enqueue(activity(1_000L + index, P25ActivityLogRecords.Action.GRANT));
+            writer.enqueue(activity(1_000L + index, ReceiverActivityRecords.Action.GRANT));
         }
 
         writer.close();
 
         assertEquals(5, writer.getWrittenRecords());
-        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.STOPPED, writer.getStatus().state());
         assertTrue(writer.isWorkerTerminated());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 5);
+            assertCount(connection, "receiver_activity_event", 5);
         }
     }
 
@@ -361,9 +361,9 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("batch-deadline.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 10, 300);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 10, 300);
         writer.start();
-        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1_000L, ReceiverActivityRecords.Action.GRANT));
 
         Thread.sleep(100);
         assertEquals(0, writer.getWrittenRecords());
@@ -383,12 +383,12 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("batch-cap.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 3,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 3,
             TimeUnit.SECONDS.toMillis(10));
         writer.start();
-        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
-        writer.enqueue(activity(2_000L, P25ActivityLogRecords.Action.GRANT));
-        writer.enqueue(activity(3_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1_000L, ReceiverActivityRecords.Action.GRANT));
+        writer.enqueue(activity(2_000L, ReceiverActivityRecords.Action.GRANT));
+        writer.enqueue(activity(3_000L, ReceiverActivityRecords.Action.GRANT));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(3);
         while(writer.getWrittenRecords() < 3 && System.currentTimeMillis() < deadline)
@@ -405,22 +405,22 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("sparse-maintenance-batch.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1250,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 1250,
             TimeUnit.SECONDS.toMillis(10));
         writer.start();
-        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1_000L, ReceiverActivityRecords.Action.GRANT));
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(
-            P25ActivityLogMaintenance.Operation.CHECK);
+            ReceiverActivityMaintenance.Operation.CHECK);
         writer.submitMaintenance(request);
 
-        P25ActivityLogMaintenance.Result result = request.result().get(3, TimeUnit.SECONDS);
-        assertEquals(P25ActivityLogMaintenance.Operation.CHECK, result.operation());
+        ReceiverActivityMaintenance.Result result = request.result().get(3, TimeUnit.SECONDS);
+        assertEquals(ReceiverActivityMaintenance.Operation.CHECK, result.operation());
         assertEquals(1, writer.getWrittenRecords());
         writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
         }
     }
 
@@ -429,10 +429,10 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
-        P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 250, 25);
+        ReceiverActivityRecords.DmrConventionalCall call = new ReceiverActivityRecords.DmrConventionalCall(
             1_000L, 2_000L, configurationContextKey("dmr-writer"), null, "DMR Repeater",
-            "County DMR", 461_125_000L, 1, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false);
+            "County DMR", 461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 101, null, false);
         writer.start();
         writer.enqueue(call);
         writer.enqueue(call);
@@ -463,7 +463,7 @@ class P25ActivityLogWriterTest
                 assertEquals(2, resultSet.getInt(1));
             }
 
-            assertCount(connection, "p25_activity_event", 0);
+            assertCount(connection, "receiver_activity_event", 0);
         }
     }
 
@@ -472,11 +472,11 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional-detailed.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
+        writer.enqueue(new ReceiverActivityRecords.DmrConventionalCall(
             1_000L, 2_000L, configurationContextKey("dmr-detailed"), null, "DMR Repeater",
-            "County DMR", 461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
+            "County DMR", 461_125_000L, 2, ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 101, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
         while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
@@ -489,7 +489,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertEquals(3L, scalarLong(connection, """
                 SELECT kind_code FROM receiver_context WHERE context_key='%s'
                 """.formatted(configurationContextKey("dmr-detailed"))));
@@ -518,9 +518,9 @@ class P25ActivityLogWriterTest
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM dmr_conventional_talkgroup_summary"));
             assertEquals("CONVENTIONAL_DMR", scalarString(connection,
-                "SELECT channel_kind FROM p25_activity_event_resolved"));
+                "SELECT channel_kind FROM receiver_activity_event_resolved"));
             assertEquals("CALL", scalarString(connection,
-                "SELECT action FROM p25_activity_event_resolved"));
+                "SELECT action FROM receiver_activity_event_resolved"));
         }
     }
 
@@ -529,14 +529,14 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("nxdn-conventional-detailed.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
+        writer.enqueue(new ReceiverActivityRecords.NxdnConventionalCall(
             1_000L, 2_000L, configurationContextKey("nxdn-detailed"), null, "NXDN Repeater",
-            "County NXDN", 461_125_000L, P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, true));
-        writer.enqueue(new P25ActivityLogRecords.ConventionalCallOutput(
+            "County NXDN", 461_125_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, 91, 101, null, true));
+        writer.enqueue(new ReceiverActivityRecords.ConventionalCallOutput(
             1_000L, configurationContextKey("nxdn-detailed"), null, 461_125_000L, null, 91, "TALKGROUP",
-            List.of(), 101, P25ActivityLogRecords.CallOutput.RECORDED));
+            List.of(), 101, ReceiverActivityRecords.CallOutput.RECORDED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
         while(writer.getWrittenRecords() < 2 && System.currentTimeMillis() < deadline)
@@ -549,7 +549,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertEquals(4L, scalarLong(connection, """
                 SELECT kind_code FROM receiver_context WHERE context_key='%s'
                 """.formatted(configurationContextKey("nxdn-detailed"))));
@@ -582,11 +582,11 @@ class P25ActivityLogWriterTest
             assertEquals(2L, scalarLong(connection,
                 "SELECT SUM(recorded_count) FROM conventional_call_identity_bucket"));
             assertEquals("CONVENTIONAL_NXDN", scalarString(connection,
-                "SELECT channel_kind FROM p25_activity_event_resolved"));
+                "SELECT channel_kind FROM receiver_activity_event_resolved"));
             assertEquals("NXDN", scalarString(connection,
-                "SELECT protocol FROM p25_activity_event_resolved"));
+                "SELECT protocol FROM receiver_activity_event_resolved"));
             assertEquals("CALL", scalarString(connection,
-                "SELECT action FROM p25_activity_event_resolved"));
+                "SELECT action FROM receiver_activity_event_resolved"));
         }
     }
 
@@ -599,24 +599,24 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
+            ReceiverActivityRecords.DmrConventionalCall call = new ReceiverActivityRecords.DmrConventionalCall(
                 3_599_900L, 3_600_100L, contextKey, null, "DMR Private", "County DMR",
-                461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.PRIVATE, null, 101, 202, true);
-            P25ActivityLogSchema.recordDmrConventionalCall(connection, call);
-            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
-                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, null,
+                461_125_000L, 2, ReceiverActivityRecords.DmrTargetKind.PRIVATE, null, 101, 202, true);
+            ReceiverActivitySchema.recordDmrConventionalCall(connection, call);
+            assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection,
+                new ReceiverActivityRecords.ConventionalCallOutput(3_599_900L, contextKey, null,
                     461_125_000L, 2, 202, "RADIO", List.of(), 101,
-                    P25ActivityLogRecords.CallOutput.RECORDED)));
-            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
-                new P25ActivityLogRecords.ConventionalCallOutput(3_599_900L, contextKey, null,
+                    ReceiverActivityRecords.CallOutput.RECORDED)));
+            assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection,
+                new ReceiverActivityRecords.ConventionalCallOutput(3_599_900L, contextKey, null,
                     461_125_000L, 2, 202, "RADIO", List.of(), 101,
-                    P25ActivityLogRecords.CallOutput.STREAMED)));
+                    ReceiverActivityRecords.CallOutput.STREAMED)));
 
             assertEquals(2, count(connection, "conventional_call_identity_bucket"));
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
-                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 202, 1, 1, 1, 1);
-            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
-                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 101, 1, 1, 1, 1);
+            assertIdentityBucket(connection, 0L, ReceiverActivitySchema.IDENTITY_ROLE_DESTINATION,
+                ReceiverActivitySchema.IDENTITY_KIND_RADIO, 202, 1, 1, 1, 1);
+            assertIdentityBucket(connection, 0L, ReceiverActivitySchema.IDENTITY_ROLE_SOURCE,
+                ReceiverActivitySchema.IDENTITY_KIND_RADIO, 101, 1, 1, 1, 1);
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM conventional_activity_bucket WHERE bucket_start_ms=0"));
             assertEquals(0L, scalarLong(connection,
@@ -629,23 +629,23 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("invalid-dmr.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 250, 25);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
+        writer.enqueue(new ReceiverActivityRecords.DmrConventionalCall(
             1_000L, 2_000L, configurationContextKey("valid-dmr"), null, "Valid DMR", null, 461_125_000L, 1,
-            P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
-        writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
+            ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 101, null, false));
+        writer.enqueue(new ReceiverActivityRecords.DmrConventionalCall(
             3_000L, 4_000L, configurationContextKey("invalid-dmr"), null, "Invalid DMR", null, 461_125_000L, 1,
-            P25ActivityLogRecords.DmrTargetKind.GROUP, DmrActivitySchema.MAXIMUM_DMR_ID + 1, 102, null, false));
+            ReceiverActivityRecords.DmrTargetKind.GROUP, DmrActivitySchema.MAXIMUM_DMR_ID + 1, 102, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+        while(writer.getStatus().state() != ReceiverActivityStatus.State.FAILED &&
             System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
-        assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.FAILED, writer.getStatus().state());
         assertEquals(0, writer.getWrittenRecords());
         writer.close();
 
@@ -662,23 +662,23 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("invalid-nxdn.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 250, 25);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
+        writer.enqueue(new ReceiverActivityRecords.NxdnConventionalCall(
             1_000L, 2_000L, configurationContextKey("valid-nxdn"), null, "Valid NXDN", null, 461_125_000L,
-            P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, false));
-        writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
+            ReceiverActivityRecords.NxdnTargetKind.GROUP, 91, 101, null, false));
+        writer.enqueue(new ReceiverActivityRecords.NxdnConventionalCall(
             3_000L, 4_000L, configurationContextKey("invalid-nxdn"), null, "Invalid NXDN", null, 461_125_000L,
-            P25ActivityLogRecords.NxdnTargetKind.GROUP, 0x1_0000, 102, null, false));
+            ReceiverActivityRecords.NxdnTargetKind.GROUP, 0x1_0000, 102, null, false));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+        while(writer.getStatus().state() != ReceiverActivityStatus.State.FAILED &&
             System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
-        assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.FAILED, writer.getStatus().state());
         assertEquals(0, writer.getWrittenRecords());
         writer.close();
 
@@ -693,18 +693,18 @@ class P25ActivityLogWriterTest
     void reportsWriterFailure() throws Exception
     {
         Path missingDatabase = mTemporaryFolder.resolve("missing.sqlite");
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(missingDatabase, 30, false, 10);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(missingDatabase, 30, false, 10);
         writer.start();
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+        while(writer.getStatus().state() != ReceiverActivityStatus.State.FAILED &&
             System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
 
-        P25ActivityLogWriter.WriterStatus status = writer.getStatus();
-        assertEquals(P25ActivityLogStatus.State.FAILED, status.state());
+        ReceiverActivityWriter.WriterStatus status = writer.getStatus();
+        assertEquals(ReceiverActivityStatus.State.FAILED, status.state());
         assertFalse(status.detailedHistoryEnabled());
         assertEquals(0, status.lastSuccessfulWriteMs());
         assertTrue(status.lastError().contains("IOException"));
@@ -719,7 +719,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            recordConfirmedActivity(connection, activity(1000L, P25ActivityLogRecords.Action.GRANT), true);
+            recordConfirmedActivity(connection, activity(1000L, ReceiverActivityRecords.Action.GRANT), true);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -772,7 +772,7 @@ class P25ActivityLogWriterTest
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
                     SELECT event_type, encrypted
-                    FROM p25_activity_event_resolved
+                    FROM receiver_activity_event_resolved
                     WHERE observed_at_ms = 3000
                     """))
             {
@@ -788,9 +788,9 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("committed.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
         writer.start();
-        writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1000L, ReceiverActivityRecords.Action.GRANT));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
         while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
@@ -803,7 +803,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM p25_activity_event WHERE id = 1"))
+            ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM receiver_activity_event WHERE id = 1"))
         {
             assertTrue(resultSet.next());
             assertEquals(1, resultSet.getInt(1));
@@ -818,19 +818,19 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
-            P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.CALL), true);
-            recordConfirmedActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT), true);
-            assertCount(connection, "p25_activity_event", 2);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1000L));
+            ReceiverActivitySchema.recordActivity(connection, activity(1000L, ReceiverActivityRecords.Action.CALL), true);
+            recordConfirmedActivity(connection, activity(100000L, ReceiverActivityRecords.Action.GRANT), true);
+            assertCount(connection, "receiver_activity_event", 2);
             assertCount(connection, "trunked_signaling_activity_bucket", 1);
             assertCount(connection, "trunked_logical_call_bucket", 0);
-            P25ActivityLogSchema.deleteOlderThan(connection, 50000L);
+            ReceiverActivitySchema.deleteOlderThan(connection, 50000L);
 
             try(Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery("SELECT action FROM p25_activity_event_resolved"))
+                ResultSet resultSet = statement.executeQuery("SELECT action FROM receiver_activity_event_resolved"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(P25ActivityLogRecords.Action.GRANT.name(), resultSet.getString(1));
+                assertEquals(ReceiverActivityRecords.Action.GRANT.name(), resultSet.getString(1));
             }
 
             assertCount(connection, "p25_site_channel_tag", 0);
@@ -855,14 +855,14 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(1_000L, -25.0));
-            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(2_000L, -20.0));
-            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(100_000L, -15.0));
+            ReceiverActivitySchema.insertControlChannelQuality(connection, quality(1_000L, -25.0));
+            ReceiverActivitySchema.insertControlChannelQuality(connection, quality(2_000L, -20.0));
+            ReceiverActivitySchema.insertControlChannelQuality(connection, quality(100_000L, -15.0));
 
-            assertEquals(2, count(connection, "p25_control_channel_quality"));
+            assertEquals(2, count(connection, "trunked_control_channel_quality"));
 
             try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
-                SELECT observed_at_ms, signal_dbfs FROM p25_control_channel_quality
+                SELECT observed_at_ms, signal_dbfs FROM trunked_control_channel_quality
                 WHERE bucket_start_ms = 0
                 """))
             {
@@ -871,8 +871,8 @@ class P25ActivityLogWriterTest
                 assertEquals(-20.0, resultSet.getDouble("signal_dbfs"));
             }
 
-            P25ActivityLogSchema.deleteOlderThan(connection, 50_000L);
-            assertEquals(1, count(connection, "p25_control_channel_quality"));
+            ReceiverActivitySchema.deleteOlderThan(connection, 50_000L);
+            assertEquals(1, count(connection, "trunked_control_channel_quality"));
         }
     }
 
@@ -889,22 +889,22 @@ class P25ActivityLogWriterTest
                 WITH RECURSIVE buckets(value) AS (
                     VALUES(0) UNION ALL SELECT value + 1 FROM buckets WHERE value < 1000
                 )
-                INSERT INTO p25_control_channel_quality (
+                INSERT INTO trunked_control_channel_quality (
                     guid, frequency_hz, bucket_start_ms, observed_at_ms
                 )
                 SELECT 'dmr-site', 451000000, value * 10000, value * 10000 FROM buckets
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_control_channel_quality (
+                INSERT INTO trunked_control_channel_quality (
                     guid, frequency_hz, bucket_start_ms, observed_at_ms
                 ) VALUES ('dmr-site', 451000000, 20000000, 20000000)
                 """);
 
-            assertEquals(1_002, count(connection, "p25_control_channel_quality"));
-            assertEquals(1_001, P25ActivityLogSchema.deleteOlderThan(connection, 11_000_000L));
-            assertEquals(1, count(connection, "p25_control_channel_quality"));
+            assertEquals(1_002, count(connection, "trunked_control_channel_quality"));
+            assertEquals(1_001, ReceiverActivitySchema.deleteOlderThan(connection, 11_000_000L));
+            assertEquals(1, count(connection, "trunked_control_channel_quality"));
             assertEquals(20_000_000L, scalarLong(connection,
-                "SELECT observed_at_ms FROM p25_control_channel_quality"));
+                "SELECT observed_at_ms FROM trunked_control_channel_quality"));
         }
     }
 
@@ -925,7 +925,7 @@ class P25ActivityLogWriterTest
                     buckets(value) AS (
                         VALUES(0) UNION ALL SELECT value + 1 FROM buckets WHERE value < 1023
                     )
-                INSERT INTO p25_control_channel_quality (
+                INSERT INTO trunked_control_channel_quality (
                     guid, frequency_hz, bucket_start_ms, observed_at_ms
                 )
                 SELECT printf('site-%03d', sites.value), 450000000 + sites.value,
@@ -933,14 +933,14 @@ class P25ActivityLogWriterTest
                 FROM sites CROSS JOIN buckets
                 """);
 
-            assertEquals(102_400, count(connection, "p25_control_channel_quality"));
+            assertEquals(102_400, count(connection, "trunked_control_channel_quality"));
 
             StringBuilder plan = new StringBuilder();
 
             try(ResultSet resultSet = statement.executeQuery("""
                 EXPLAIN QUERY PLAN
                 SELECT guid, frequency_hz, bucket_start_ms
-                FROM p25_control_channel_quality INDEXED BY idx_p25_control_quality_retention
+                FROM trunked_control_channel_quality INDEXED BY idx_trunked_control_quality_retention
                 WHERE observed_at_ms < 5120000
                 ORDER BY observed_at_ms, guid, frequency_hz, bucket_start_ms
                 LIMIT 1000
@@ -953,8 +953,8 @@ class P25ActivityLogWriterTest
             }
 
             assertTrue(plan.toString().contains(
-                "USING COVERING INDEX idx_p25_control_quality_retention (observed_at_ms<?)"), plan.toString());
-            assertFalse(plan.toString().contains("SCAN p25_control_channel_quality"), plan.toString());
+                "USING COVERING INDEX idx_trunked_control_quality_retention (observed_at_ms<?)"), plan.toString());
+            assertFalse(plan.toString().contains("SCAN trunked_control_channel_quality"), plan.toString());
         }
     }
 
@@ -1023,12 +1023,12 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection, activity(now - TimeUnit.DAYS.toMillis(2),
-                P25ActivityLogRecords.Action.CALL), true);
-            P25ActivityLogSchema.recordActivity(connection, activity(now, P25ActivityLogRecords.Action.GRANT), true);
-            P25ActivityLogSchema.insertControlChannelQuality(connection,
+            ReceiverActivitySchema.recordActivity(connection, activity(now - TimeUnit.DAYS.toMillis(2),
+                ReceiverActivityRecords.Action.CALL), true);
+            ReceiverActivitySchema.recordActivity(connection, activity(now, ReceiverActivityRecords.Action.GRANT), true);
+            ReceiverActivitySchema.insertControlChannelQuality(connection,
                 quality(now - TimeUnit.DAYS.toMillis(2), -25.0));
-            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(now, -20.0));
+            ReceiverActivitySchema.insertControlChannelQuality(connection, quality(now, -20.0));
 
             try(var statement = connection.prepareStatement("""
                 INSERT INTO trunked_site_snapshot (
@@ -1046,16 +1046,16 @@ class P25ActivityLogWriterTest
             }
         }
 
-        P25ActivityLogMaintenance.Result result =
-            P25ActivityLogMaintenance.run(database, 1, P25ActivityLogMaintenance.Operation.MAINTAIN);
+        ReceiverActivityMaintenance.Result result =
+            ReceiverActivityMaintenance.run(database, 1, ReceiverActivityMaintenance.Operation.MAINTAIN);
 
-        assertEquals(P25ActivityLogMaintenance.Operation.MAINTAIN, result.operation());
+        assertEquals(ReceiverActivityMaintenance.Operation.MAINTAIN, result.operation());
         assertTrue(result.rowsDeleted() > 0);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
-            assertCount(connection, "p25_control_channel_quality", 1);
+            assertCount(connection, "receiver_activity_event", 1);
+            assertCount(connection, "trunked_control_channel_quality", 1);
             assertCount(connection, "conventional_call_identity_bucket", 0);
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
@@ -1075,8 +1075,8 @@ class P25ActivityLogWriterTest
         Path database = mTemporaryFolder.resolve("check.sqlite");
         createTestDatabase(database);
 
-        P25ActivityLogMaintenance.Result result =
-            P25ActivityLogMaintenance.run(database, 30, P25ActivityLogMaintenance.Operation.CHECK);
+        ReceiverActivityMaintenance.Result result =
+            ReceiverActivityMaintenance.run(database, 30, ReceiverActivityMaintenance.Operation.CHECK);
 
         assertTrue(result.checkOk());
         assertEquals("ok", result.checkResult());
@@ -1097,24 +1097,24 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L, clearedGuid));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_100L, retainedGuid));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1_000L, clearedGuid));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1_100L, retainedGuid));
             recordConfirmedActivity(connection,
-                activity(2_000L, P25ActivityLogRecords.Action.GRANT, clearedGuid), true);
+                activity(2_000L, ReceiverActivityRecords.Action.GRANT, clearedGuid), true);
             recordConfirmedActivity(connection,
-                activity(3_000L, P25ActivityLogRecords.Action.GRANT, retainedGuid), true);
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(2_100L, P25ActivityLogRecords.Action.CALL, clearedGuid), false);
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(3_100L, P25ActivityLogRecords.Action.CALL, retainedGuid), false);
-            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(4_000L, -20.0, clearedGuid));
-            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(5_000L, -21.0, retainedGuid));
+                activity(3_000L, ReceiverActivityRecords.Action.GRANT, retainedGuid), true);
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(2_100L, ReceiverActivityRecords.Action.CALL, clearedGuid), false);
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(3_100L, ReceiverActivityRecords.Action.CALL, retainedGuid), false);
+            ReceiverActivitySchema.insertControlChannelQuality(connection, quality(4_000L, -20.0, clearedGuid));
+            ReceiverActivitySchema.insertControlChannelQuality(connection, quality(5_000L, -21.0, retainedGuid));
         }
 
-        P25ActivityLogMaintenance.Result result =
-            P25ActivityLogMaintenance.clearSiteStats(database, clearedGuid);
+        ReceiverActivityMaintenance.Result result =
+            ReceiverActivityMaintenance.clearSiteStats(database, clearedGuid);
 
-        assertEquals(P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS, result.operation());
+        assertEquals(ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS, result.operation());
         assertTrue(result.rowsDeleted() > 0);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -1124,11 +1124,11 @@ class P25ActivityLogWriterTest
             assertGuidCount(connection, "p25_site_snapshot", clearedGuid, 0);
             assertGuidCount(connection, "p25_site_channel_summary", clearedGuid, 0);
             assertGuidCount(connection, "p25_site_channel_tag_summary", clearedGuid, 0);
-            assertGuidCount(connection, "p25_control_channel_quality", clearedGuid, 0);
+            assertGuidCount(connection, "trunked_control_channel_quality", clearedGuid, 0);
             assertGuidCount(connection, "p25_site_channel_summary", retainedGuid, 2);
             assertGuidCount(connection, "p25_site_channel_tag_summary", retainedGuid, 2);
-            assertGuidCount(connection, "p25_control_channel_quality", retainedGuid, 1);
-            assertCount(connection, "p25_activity_event", 1);
+            assertGuidCount(connection, "trunked_control_channel_quality", retainedGuid, 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertCount(connection, "trunked_signaling_activity_bucket", 1);
             assertCount(connection, "p25_site_call_bucket", 0);
             assertCount(connection, "p25_site_call_identity_bucket", 0);
@@ -1156,7 +1156,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION), resultSet.getString(1));
+                assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION), resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -1179,16 +1179,16 @@ class P25ActivityLogWriterTest
 
             assertColumnAbsent(connection, "trunked_identity_summary", "last_frequency_hz");
             assertColumnAbsent(connection, "trunked_identity_summary", "last_lcn");
-            assertColumnAbsent(connection, "p25_activity_event", "service");
-            assertColumnAbsent(connection, "p25_activity_event", "details");
+            assertColumnAbsent(connection, "receiver_activity_event", "service");
+            assertColumnAbsent(connection, "receiver_activity_event", "details");
             assertColumnAbsent(connection, "trunked_identity_summary", "hits");
-            assertColumnAbsent(connection, "p25_activity_event", "wacn");
-            assertColumnAbsent(connection, "p25_activity_event", "system_id");
-            assertColumnAbsent(connection, "p25_activity_event", "nac");
-            assertColumnAbsent(connection, "p25_activity_event", "rfss");
-            assertColumnAbsent(connection, "p25_activity_event", "site");
-            assertColumnAbsent(connection, "p25_activity_event", "channel_name");
-            assertColumnAbsent(connection, "p25_activity_event", "decoder");
+            assertColumnAbsent(connection, "receiver_activity_event", "wacn");
+            assertColumnAbsent(connection, "receiver_activity_event", "system_id");
+            assertColumnAbsent(connection, "receiver_activity_event", "nac");
+            assertColumnAbsent(connection, "receiver_activity_event", "rfss");
+            assertColumnAbsent(connection, "receiver_activity_event", "site");
+            assertColumnAbsent(connection, "receiver_activity_event", "channel_name");
+            assertColumnAbsent(connection, "receiver_activity_event", "decoder");
             assertColumnAbsent(connection, "radio_context", "last_snapshot_hash");
             assertColumnAbsent(connection, "p25_site_neighbor", "nac");
             assertColumnAbsent(connection, "p25_site_channel", "observation_count");
@@ -1210,8 +1210,8 @@ class P25ActivityLogWriterTest
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            P25ActivityLogSchema.recordActivity(connection,
-                conventionalActivity(1_000L, P25ActivityLogRecords.Action.CALL), false);
+            ReceiverActivitySchema.recordActivity(connection,
+                conventionalActivity(1_000L, ReceiverActivityRecords.Action.CALL), false);
 
             List<String> primaryKey = new ArrayList<>();
 
@@ -1289,9 +1289,9 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
-            statement.executeUpdate("CREATE VIEW p25_activity_event_resolved AS SELECT 1 AS id");
-            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+            statement.executeUpdate("CREATE VIEW receiver_activity_event_resolved AS SELECT 1 AS id");
+            assertThrows(Exception.class, () -> ReceiverActivitySchema.validate(connection));
         }
     }
 
@@ -1303,18 +1303,18 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, affiliation(1000L, 1811524, 56133), true);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, affiliation(1000L, 1811524, 56133), true);
             assertAffiliation(connection, 1811524, 56133, 1000L);
             assertPresence(connection, 1811524, "123e4567-e89b-12d3-a456-426614174000",
-                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 1000L);
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, 1000L);
 
-            P25ActivityLogSchema.recordActivity(connection, affiliation(2000L, 1811524, 56538), true);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(2000L, 1811524, 56538), true);
             assertEquals(1, count(connection, "trunked_radio_affiliation"));
             assertEquals(1, count(connection, "trunked_radio_site_presence"));
             assertAffiliation(connection, 1811524, 56538, 2000L);
 
-            P25ActivityLogSchema.recordActivity(connection, affiliation(3000L, 1811524, null), true);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(3000L, 1811524, null), true);
             assertEquals(0, count(connection, "trunked_radio_affiliation"));
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
@@ -1330,17 +1330,17 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(2_000L, siteB, 1_811_524, 56_538,
-                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
-            P25ActivityLogSchema.recordActivity(connection,
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), false);
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(1_000L, siteA, 1_811_524, 56_133,
-                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), false);
             assertAffiliation(connection, 1811524, 56538, 2000L);
             assertPresence(connection, 1811524, siteB,
-                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2000L);
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, 2000L);
         }
     }
 
@@ -1354,18 +1354,18 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(1_000L, siteA, 1_811_524, 56_133,
-                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
-            P25ActivityLogSchema.recordActivity(connection,
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), false);
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(2_000L, siteB, 1_811_524, null,
-                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+                    ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION), false);
 
             assertAffiliation(connection, 1_811_524, 56_133, 1_000L);
             assertPresence(connection, 1_811_524, siteB,
-                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
+                ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
         }
     }
 
@@ -1379,28 +1379,28 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(2_000L, siteB, 1_811_524, null,
-                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
-            P25ActivityLogSchema.recordActivity(connection,
+                    ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION), false);
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(2_000L, siteA, 1_811_524, null,
-                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+                    ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION), false);
             assertPresence(connection, 1_811_524, siteA,
-                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
+                ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
 
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(2_000L, siteB, 1_811_524, 56_538,
-                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), false);
             assertPresence(connection, 1_811_524, siteB,
-                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
 
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(2_000L, siteA, 1_811_524, 56_133,
-                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), false);
             assertPresence(connection, 1_811_524, siteA,
-                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
             assertAffiliation(connection, 1_811_524, 56_133, 2_000L);
         }
     }
@@ -1413,13 +1413,13 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(1_000L, 1_811_524, null), false);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(1_000L, 1_811_524, null), false);
             assertAffiliation(connection, 1_811_524, 56_538, 2_000L);
             assertEquals(1, count(connection, "trunked_radio_site_presence"));
 
-            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
             assertEquals(0, count(connection, "trunked_radio_affiliation"));
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
@@ -1433,9 +1433,9 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
 
             assertEquals(0, count(connection, "trunked_radio_affiliation"));
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
@@ -1443,9 +1443,9 @@ class P25ActivityLogWriterTest
                 SELECT cleared_at_ms FROM trunked_radio_presence_lifecycle WHERE radio_id=1811524
                 """));
 
-            P25ActivityLogSchema.recordActivity(connection, affiliation(1_000L, 1_811_524, 56_133), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, 56_133), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(2_500L, 1_811_524, null), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(1_000L, 1_811_524, 56_133), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(3_000L, 1_811_524, 56_133), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(2_500L, 1_811_524, null), false);
 
             assertEquals(0, count(connection, "trunked_radio_affiliation"));
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
@@ -1453,13 +1453,13 @@ class P25ActivityLogWriterTest
                 SELECT cleared_at_ms FROM trunked_radio_presence_lifecycle WHERE radio_id=1811524
                 """));
 
-            P25ActivityLogSchema.recordActivity(connection, affiliation(3_001L, 1_811_524, 56_133), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(3_001L, 1_811_524, 56_133), false);
             assertAffiliation(connection, 1_811_524, 56_133, 3_001L);
             assertPresence(connection, 1_811_524, "123e4567-e89b-12d3-a456-426614174000",
-                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 3_001L);
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, 3_001L);
 
-            P25ActivityLogSchema.recordActivity(connection, affiliation(4_000L, 1_811_525, 56_133), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(4_000L, 1_811_525, null), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(4_000L, 1_811_525, 56_133), false);
+            ReceiverActivitySchema.recordActivity(connection, affiliation(4_000L, 1_811_525, null), false);
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_radio_affiliation WHERE radio_id=1811525
                 """));
@@ -1481,13 +1481,13 @@ class P25ActivityLogWriterTest
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, clearedSite, 2, 1));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, retainedSite, 2, 2));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L, clearedSite, 2, 1));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(600L, retainedSite, 2, 2));
+            ReceiverActivitySchema.recordActivity(connection,
                 presence(1_000L, clearedSite, 1_811_524, 56_133,
-                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), false);
 
-            P25ActivityLogSchema.clearSiteStats(connection, clearedSite);
+            ReceiverActivitySchema.clearSiteStats(connection, clearedSite);
 
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
             assertAffiliation(connection, 1_811_524, 56_133, 1_000L);
@@ -1502,9 +1502,9 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1_000L, P25ActivityLogRecords.Action.CALL), true);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(1_000L, ReceiverActivityRecords.Action.CALL), true);
 
             assertEquals(0, count(connection, "trunked_radio_affiliation"));
             assertEquals(0, count(connection, "trunked_radio_site_presence"));
@@ -1524,29 +1524,29 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
 
             for(int talkgroup: invalidTalkgroups)
             {
-                P25ActivityLogSchema.recordActivity(connection,
+                ReceiverActivitySchema.recordActivity(connection,
                     identityActivity(timestamp++, validRadio, talkgroup, null), true);
             }
 
             for(int radio: invalidRadios)
             {
-                P25ActivityLogSchema.recordActivity(connection,
+                ReceiverActivitySchema.recordActivity(connection,
                     identityActivity(timestamp++, radio, validTalkgroup, null), true);
             }
 
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 affiliation(timestamp++, 0xFFFFFC, validTalkgroup), true);
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 affiliation(timestamp, validRadio, 0xFFFF), true);
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 countedIdentityActivity(++timestamp, 0xFFFFFC, 0), true);
 
             assertEquals(invalidTalkgroups.length + invalidRadios.length + 3,
-                count(connection, "p25_activity_event"));
+                count(connection, "receiver_activity_event"));
             assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_identity_summary
                 WHERE identity_kind_code=1 AND identity_id > 0 AND identity_id < 65535
@@ -1585,10 +1585,10 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.GRANT), true);
-            P25ActivityLogSchema.recordActivity(connection, activity(2000L, P25ActivityLogRecords.Action.CONTINUE), true);
-            P25ActivityLogSchema.recordActivity(connection, activity(3000L, P25ActivityLogRecords.Action.CALL), true);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, activity(1000L, ReceiverActivityRecords.Action.GRANT), true);
+            ReceiverActivitySchema.recordActivity(connection, activity(2000L, ReceiverActivityRecords.Action.CONTINUE), true);
+            ReceiverActivitySchema.recordActivity(connection, activity(3000L, ReceiverActivityRecords.Action.CALL), true);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
@@ -1631,7 +1631,7 @@ class P25ActivityLogWriterTest
             assertActionCount(connection, "trunked_radio_talkgroup_summary", "logical_call_count", 0);
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
-            assertCount(connection, "p25_activity_event", 2);
+            assertCount(connection, "receiver_activity_event", 2);
         }
     }
 
@@ -1643,14 +1643,14 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
             assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 0);
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1000L, P25ActivityLogRecords.Action.CALL), true);
-            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(1000L, ReceiverActivityRecords.Action.CALL), true);
+            ReceiverActivitySchema.updateTalkerAlias(connection, new ReceiverActivityRecords.TalkerAliasUpdate(
                 2000L, "GUID:123e4567-e89b-12d3-a456-426614174000",
                 "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "CAR 201"));
-            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+            ReceiverActivitySchema.updateTalkerAlias(connection, new ReceiverActivityRecords.TalkerAliasUpdate(
                 1500L, "GUID:123e4567-e89b-12d3-a456-426614174000",
                 "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "OLDER"));
 
@@ -1680,8 +1680,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection,
                 activityWithTalkerAlias(1_000L, "WRONG FIRST"), true);
 
             try(Statement statement = connection.createStatement();
@@ -1692,10 +1692,10 @@ class P25ActivityLogWriterTest
                 assertNull(resultSet.getString("last_talker_alias"));
             }
 
-            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+            ReceiverActivitySchema.updateTalkerAlias(connection, new ReceiverActivityRecords.TalkerAliasUpdate(
                 2_000L, "GUID:123e4567-e89b-12d3-a456-426614174000",
                 "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "CAR 201"));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 activityWithTalkerAlias(3_000L, "WRONG LATE"), true);
 
             try(Statement statement = connection.createStatement();
@@ -1719,16 +1719,16 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1_000L, P25ActivityLogRecords.Action.CALL), true);
-            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(1_000L, ReceiverActivityRecords.Action.CALL), true);
+            ReceiverActivitySchema.updateTalkerAlias(connection, new ReceiverActivityRecords.TalkerAliasUpdate(
                 2_000L, "GUID:123e4567-e89b-12d3-a456-426614174000",
                 "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "CAR 201"));
 
             assertCount(connection, "p25_system", 0);
             assertGroupIdentityCount(connection, 0);
             assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 0);
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertCount(connection, "trunked_signaling_activity_bucket", 0);
             assertCount(connection, "trunked_logical_call_bucket", 0);
 
@@ -1753,10 +1753,10 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L));
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1_000L));
+            ReceiverActivitySchema.recordActivity(connection,
                 activityWithNetworkIdentity(2_000L, 0xAAAAA, 0x111, 9, 9), false);
-            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+            ReceiverActivitySchema.updateTalkerAlias(connection, new ReceiverActivityRecords.TalkerAliasUpdate(
                 3_000L, "GUID:123e4567-e89b-12d3-a456-426614174000",
                 "123e4567-e89b-12d3-a456-426614174000", 0xAAAAA, 0x111, 1811524, "CAR 201"));
 
@@ -1789,17 +1789,17 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
-                conventionalActivity(1000L, P25ActivityLogRecords.Action.GRANT), false);
-            P25ActivityLogSchema.recordActivity(connection,
-                conventionalActivity(2000L, P25ActivityLogRecords.Action.CALL), false);
-            P25ActivityLogSchema.recordActivity(connection,
-                conventionalActivity(3000L, P25ActivityLogRecords.Action.CALL), true);
+            ReceiverActivitySchema.recordActivity(connection,
+                conventionalActivity(1000L, ReceiverActivityRecords.Action.GRANT), false);
+            ReceiverActivitySchema.recordActivity(connection,
+                conventionalActivity(2000L, ReceiverActivityRecords.Action.CALL), false);
+            ReceiverActivitySchema.recordActivity(connection,
+                conventionalActivity(3000L, ReceiverActivityRecords.Action.CALL), true);
 
             assertActionCount(connection, "conventional_activity_summary", "call_count", 2);
             assertActionCount(connection, "conventional_activity_bucket", "call_count", 2);
             assertActionCount(connection, "conventional_activity_summary", "grant_count", 1);
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
         }
     }
 
@@ -1811,10 +1811,10 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 frequencylessConventionalActivity(1_000L), true);
 
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertCount(connection, "conventional_activity_summary", 0);
             assertCount(connection, "conventional_activity_bucket", 1);
             assertEquals(0L, scalarLong(connection,
@@ -1831,7 +1831,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection, activityWithChannelName(1000L, "0-825"), true);
+            ReceiverActivitySchema.recordActivity(connection, activityWithChannelName(1000L, "0-825"), true);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("SELECT channel_name FROM receiver_context"))
@@ -1840,7 +1840,7 @@ class P25ActivityLogWriterTest
                 assertEquals(null, resultSet.getString("channel_name"));
             }
 
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(2000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(2000L));
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("SELECT channel_name FROM receiver_context"))
@@ -1859,8 +1859,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(2000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(2000L));
 
             assertCount(connection, "p25_site_snapshot", 1);
             assertCount(connection, "p25_site_channel", 1);
@@ -1935,14 +1935,14 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("site-current-identity.sqlite");
         createTestDatabase(database);
-        P25ActivityLogRecords.SiteSnapshot baseline = siteSnapshot(1_000L);
-        P25ActivityLogRecords.SiteSnapshot currentSiteOnly = new P25ActivityLogRecords.SiteSnapshot(
+        ReceiverActivityRecords.SiteSnapshot baseline = siteSnapshot(1_000L);
+        ReceiverActivityRecords.SiteSnapshot currentSiteOnly = new ReceiverActivityRecords.SiteSnapshot(
             baseline.observedAtEpochMilliseconds(), baseline.guid(), baseline.contextKind(), baseline.snapshotHash(),
             baseline.protocol(), baseline.channelName(), baseline.aliasListName(), baseline.decoder(), null, 0x321,
             0x456, 7, 9, 2, false, baseline.tdma(), baseline.siteStatus(), baseline.primaryFrequencyHertz(),
             baseline.currentControlHertz(), baseline.channels(), baseline.neighborSites(), baseline.frequencyBands(),
             baseline.patchGroups(), baseline.foreignSystemBands());
-        P25ActivityLogRecords.SiteSnapshot partial = new P25ActivityLogRecords.SiteSnapshot(2_000L,
+        ReceiverActivityRecords.SiteSnapshot partial = new ReceiverActivityRecords.SiteSnapshot(2_000L,
             baseline.guid(), baseline.contextKind(), "partial", baseline.protocol(), baseline.channelName(),
             baseline.aliasListName(), baseline.decoder(), null, null, 0x456, 7, 9, 2, null, baseline.tdma(),
             baseline.siteStatus(), baseline.primaryFrequencyHertz(), baseline.currentControlHertz(),
@@ -1951,8 +1951,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, currentSiteOnly);
-            P25ActivityLogSchema.insertSite(connection, partial);
+            ReceiverActivitySchema.insertSite(connection, currentSiteOnly);
+            ReceiverActivitySchema.insertSite(connection, partial);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -1982,15 +1982,15 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("site-system-completion.sqlite");
         createTestDatabase(database);
-        P25ActivityLogRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
+        ReceiverActivityRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
             null, 0x321, "current-site-only");
-        P25ActivityLogRecords.SiteSnapshot completed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
+        ReceiverActivityRecords.SiteSnapshot completed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
             0xABCDE, 0x321, "network-complete");
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, first);
-            P25ActivityLogSchema.insertSite(connection, completed);
+            ReceiverActivitySchema.insertSite(connection, first);
+            ReceiverActivitySchema.insertSite(connection, completed);
 
             assertEquals(1_000L, scalarLong(connection,
                 "SELECT first_seen_ms FROM p25_site_snapshot"));
@@ -2018,15 +2018,15 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("site-system-change.sqlite");
         createTestDatabase(database);
-        P25ActivityLogRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
+        ReceiverActivityRecords.SiteSnapshot first = withSystemIdentity(siteSnapshot(1_000L), 1_000L,
             null, 0x321, "system-a");
-        P25ActivityLogRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
+        ReceiverActivityRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
             null, 0x654, "system-b");
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, first);
-            P25ActivityLogSchema.insertSite(connection, changed);
+            ReceiverActivitySchema.insertSite(connection, first);
+            ReceiverActivitySchema.insertSite(connection, changed);
 
             assertEquals(2_000L, scalarLong(connection,
                 "SELECT first_seen_ms FROM p25_site_snapshot"));
@@ -2050,23 +2050,23 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("site-resolved-to-current-only-change.sqlite");
         createTestDatabase(database);
-        P25ActivityLogRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
+        ReceiverActivityRecords.SiteSnapshot changed = withSystemIdentity(siteSnapshot(2_000L), 2_000L,
             null, 0x654, "system-b");
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L));
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1_500L, P25ActivityLogRecords.Action.CALL), true);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1_000L));
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(1_500L, ReceiverActivityRecords.Action.CALL), true);
             assertCount(connection, "trunked_identity_scope_context", 1);
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
 
-            P25ActivityLogSchema.insertSite(connection, changed);
+            ReceiverActivitySchema.insertSite(connection, changed);
 
             assertCount(connection, "trunked_identity_scope_context", 0);
-            assertCount(connection, "p25_activity_event", 0);
+            assertCount(connection, "receiver_activity_event", 0);
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
             assertEquals(2_000L, scalarLong(connection, """
@@ -2101,14 +2101,14 @@ class P25ActivityLogWriterTest
                 null, false, 1),
             new P25NetworkConfigurationSnapshot.Channel("secondary_control", "2-1724", 772_781_250L,
                 null, false, 1));
-        P25ActivityLogRecords.SiteSnapshot snapshot = new P25ActivityLogRecords.SiteSnapshot(1_000L, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "new-system-site", "APCO25", "New Site",
+        ReceiverActivityRecords.SiteSnapshot snapshot = new ReceiverActivityRecords.SiteSnapshot(1_000L, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "new-system-site", "APCO25", "New Site",
             "New System", "P25-1", 0x00001, 0x047, 0x123, 50, 50, null, null, false, null,
             770_306_250L, 770_306_250L, channels, List.of(), List.of(), List.of(), List.of());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, snapshot);
+            ReceiverActivitySchema.insertSite(connection, snapshot);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -2156,7 +2156,7 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("duplicate-site-channels.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
         writer.start();
         writer.enqueue(siteSnapshotWithDuplicateChannels(1000L));
 
@@ -2166,8 +2166,8 @@ class P25ActivityLogWriterTest
             Thread.sleep(25);
         }
 
-        P25ActivityLogWriter.WriterStatus status = writer.getStatus();
-        assertEquals(P25ActivityLogStatus.State.RUNNING, status.state());
+        ReceiverActivityWriter.WriterStatus status = writer.getStatus();
+        assertEquals(ReceiverActivityStatus.State.RUNNING, status.state());
         assertEquals(1, status.recordsWritten());
         assertEquals(null, status.lastError());
         writer.close();
@@ -2243,15 +2243,15 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("site-channel-conflicts.sqlite");
         createTestDatabase(database);
-        Logger logger = (Logger)LoggerFactory.getLogger(P25ActivityLogSchema.class);
+        Logger logger = (Logger)LoggerFactory.getLogger(ReceiverActivitySchema.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithDuplicateChannels(1_000L));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithConflictingChannels(2_000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshotWithDuplicateChannels(1_000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshotWithConflictingChannels(2_000L));
         }
         finally
         {
@@ -2278,12 +2278,12 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
-            P25ActivityLogRecords.SiteSnapshot empty = new P25ActivityLogRecords.SiteSnapshot(2000L,
-                "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1000L));
+            ReceiverActivityRecords.SiteSnapshot empty = new ReceiverActivityRecords.SiteSnapshot(2000L,
+                "123e4567-e89b-12d3-a456-426614174000", ReceiverActivityRecords.ContextKind.TRUNKED_SITE,
                 "changed", "APCO25", "Example Site", "Example System", "P25-1", 0xBEE00, 0x348, 0x348, 2, 1,
                 null, null, null, null, 856137500L, null, List.of(), List.of(), List.of(), List.of(), List.of());
-            P25ActivityLogSchema.insertSite(connection, empty);
+            ReceiverActivitySchema.insertSite(connection, empty);
 
             assertCount(connection, "p25_site_channel", 0);
             assertCount(connection, "p25_site_neighbor", 0);
@@ -2312,8 +2312,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(1_000L, 1_784_000_000_000L));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(2_000L, 1_784_000_001_000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshotWithTiming(1_000L, 1_784_000_000_000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshotWithTiming(2_000L, 1_784_000_001_000L));
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -2357,8 +2357,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(1_000L, 1_784_000_000_000L));
-            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(2_000L, null, 222));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshotWithTiming(1_000L, 1_784_000_000_000L));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshotWithTiming(2_000L, null, 222));
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -2381,8 +2381,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(2_000L));
-            P25ActivityLogSchema.insertSite(connection,
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(2_000L));
+            ReceiverActivitySchema.insertSite(connection,
                 withSnapshotHash(siteSnapshot(1_000L), "older-structural-state"));
 
             assertEquals("hash", scalarString(connection,
@@ -2423,15 +2423,15 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection,
+            ReceiverActivitySchema.insertSite(connection,
                 siteSnapshot(500L, "123e4567-e89b-12d3-a456-426614174000"));
-            P25ActivityLogSchema.insertSite(connection,
+            ReceiverActivitySchema.insertSite(connection,
                 siteSnapshot(600L, "223e4567-e89b-12d3-a456-426614174000"));
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1000L, P25ActivityLogRecords.Action.GRANT,
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(1000L, ReceiverActivityRecords.Action.GRANT,
                     "123e4567-e89b-12d3-a456-426614174000"), false);
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(2000L, P25ActivityLogRecords.Action.GRANT,
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(2000L, ReceiverActivityRecords.Action.GRANT,
                     "223e4567-e89b-12d3-a456-426614174000"), false);
 
             assertCount(connection, "p25_system", 1);
@@ -2462,8 +2462,8 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
-            P25ActivityLogSchema.recordActivity(connection, activityWithoutSystemIdentity(2000L), false);
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(1000L));
+            ReceiverActivitySchema.recordActivity(connection, activityWithoutSystemIdentity(2000L), false);
 
             assertCount(connection, "p25_system", 1);
             assertGroupIdentityCount(connection, 1);
@@ -2477,14 +2477,14 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("all-stats.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
-        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(10);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityRecords.ResolvedLogicalCall call = logicalCall(10);
         writer.start();
-        writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(1000L, ReceiverActivityRecords.Action.GRANT));
         writer.enqueue(siteSnapshot(2000L));
         writer.enqueue(call);
-        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(new ReceiverActivityRecords.LogicalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.RECORDED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
         while(writer.getWrittenRecords() < 4 && System.currentTimeMillis() < deadline)
@@ -2496,7 +2496,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertCount(connection, "p25_site_snapshot", 1);
             assertEquals(1L, scalarLong(connection,
                 "SELECT logical_call_count FROM trunked_logical_call_bucket"));
@@ -2504,7 +2504,7 @@ class P25ActivityLogWriterTest
                 "SELECT recorded_output_count FROM trunked_logical_call_bucket"));
             assertEquals(2L, scalarLong(connection,
                 "SELECT SUM(observed_call_count) FROM p25_site_call_bucket"));
-            assertTrue(count(connection, "logger_status") > 0);
+            assertTrue(count(connection, "statistics_status") > 0);
             assertTrue(Long.parseLong(status(connection, "last_successful_write_ms")) > 0);
         }
     }
@@ -2514,15 +2514,15 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("patch-logical-call.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 250, 25);
-        P25ActivityLogRecords.ResolvedLogicalCall call = patchLogicalCall(20);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 250, 25);
+        ReceiverActivityRecords.ResolvedLogicalCall call = patchLogicalCall(20);
         writer.start();
         writer.enqueue(patchActivity(1_000L));
         writer.enqueue(call);
-        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.RECORDED));
-        writer.enqueue(new P25ActivityLogRecords.LogicalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.STREAMED));
+        writer.enqueue(new ReceiverActivityRecords.LogicalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.RECORDED));
+        writer.enqueue(new ReceiverActivityRecords.LogicalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.STREAMED));
         writer.close();
 
         assertEquals(4, writer.getWrittenRecords());
@@ -2534,13 +2534,13 @@ class P25ActivityLogWriterTest
                 statement.execute("PRAGMA foreign_keys=ON");
             }
 
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertEquals(56182L, scalarLong(connection,
-                "SELECT target_id FROM p25_activity_event"));
+                "SELECT target_id FROM receiver_activity_event"));
             assertEquals(3L, scalarLong(connection,
-                "SELECT target_kind_code FROM p25_activity_event"));
+                "SELECT target_kind_code FROM receiver_activity_event"));
             assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted FROM p25_activity_event"));
+                "SELECT encrypted FROM receiver_activity_event"));
             assertCount(connection, "activity_event_talkgroup_member", 2);
             assertEquals(112361L, scalarLong(connection,
                 "SELECT SUM(talkgroup_id) FROM activity_event_talkgroup_member"));
@@ -2605,15 +2605,15 @@ class P25ActivityLogWriterTest
             assertEquals(3L, scalarLong(connection,
                 "SELECT SUM(streamed_output_count) FROM trunked_radio_talkgroup_summary"));
 
-            P25ActivityLogSchema.deleteOlderThan(connection, LOGICAL_CALL_START + 100);
-            assertCount(connection, "p25_activity_event", 0);
+            ReceiverActivitySchema.deleteOlderThan(connection, LOGICAL_CALL_START + 100);
+            assertCount(connection, "receiver_activity_event", 0);
             assertCount(connection, "activity_event_talkgroup_member", 0);
             assertCount(connection, "trunked_logical_call_bucket", 1);
             assertCount(connection, "p25_site_call_bucket", 2);
 
             long nextHour = LOGICAL_CALL_START -
                 Math.floorMod(LOGICAL_CALL_START, TimeUnit.HOURS.toMillis(1)) + TimeUnit.HOURS.toMillis(1);
-            P25ActivityLogSchema.deleteOlderThan(connection, nextHour);
+            ReceiverActivitySchema.deleteOlderThan(connection, nextHour);
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
         }
@@ -2625,31 +2625,31 @@ class P25ActivityLogWriterTest
         Path database = mTemporaryFolder.resolve("p25-late-attribution.sqlite");
         createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
-            1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
-            P25ActivityLogRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
+        ReceiverActivityRecords.ActivityEvent unidentified = new ReceiverActivityRecords.ActivityEvent(
+            1_000L, "GUID:" + guid, guid, ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            ReceiverActivityRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
             854_187_500L, "00-0509", 1, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", "P25_PHASE1", null, true, null, null);
-        P25ActivityLogRecords.TrunkedCallAttribution attribution =
-            new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+        ReceiverActivityRecords.TrunkedCallAttribution attribution =
+            new ReceiverActivityRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
                 854_187_500L, 1, 56138, "TALKGROUP", List.of(), 1811524,
                 true, true, true, false);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, unidentified, true);
-            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, unidentified, true);
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, attribution));
 
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertEquals(1811524L, scalarLong(connection,
-                "SELECT source_radio_id FROM p25_activity_event"));
+                "SELECT source_radio_id FROM receiver_activity_event"));
             assertEquals(56138L, scalarLong(connection,
-                "SELECT target_id FROM p25_activity_event"));
+                "SELECT target_id FROM receiver_activity_event"));
             assertEquals(1L, scalarLong(connection,
-                "SELECT target_kind_code FROM p25_activity_event"));
+                "SELECT target_kind_code FROM receiver_activity_event"));
             assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted FROM p25_activity_event"));
+                "SELECT encrypted FROM receiver_activity_event"));
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "trunked_logical_call_identity_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
@@ -2679,26 +2679,26 @@ class P25ActivityLogWriterTest
         Path database = mTemporaryFolder.resolve("p25-late-encryption-details.sqlite");
         createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        P25ActivityLogRecords.ActivityEvent encryptedCall = new P25ActivityLogRecords.ActivityEvent(
-            1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
-            P25ActivityLogRecords.Action.CALL, "CALL_GROUP_ENCRYPTED", "1811524", "56138", "TALKGROUP",
+        ReceiverActivityRecords.ActivityEvent encryptedCall = new ReceiverActivityRecords.ActivityEvent(
+            1_000L, "GUID:" + guid, guid, ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            ReceiverActivityRecords.Action.CALL, "CALL_GROUP_ENCRYPTED", "1811524", "56138", "TALKGROUP",
             List.of(), 854_187_500L, "00-0509", 1, true, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", "P25_PHASE1", null, true, null, null);
-        P25ActivityLogRecords.TrunkedCallAttribution details =
-            new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+        ReceiverActivityRecords.TrunkedCallAttribution details =
+            new ReceiverActivityRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
                 854_187_500L, 1, 56138, "TALKGROUP", List.of(), 1811524, 0x84, 101,
-                false, false, false, true, P25ActivityLogRecords.IdentityDomain.STANDARD);
+                false, false, false, true, ReceiverActivityRecords.IdentityDomain.STANDARD);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, encryptedCall, true);
-            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, details));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, encryptedCall, true);
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, details));
 
             assertEquals(0x84L, scalarLong(connection,
-                "SELECT encryption_algorithm_id FROM p25_activity_event"));
+                "SELECT encryption_algorithm_id FROM receiver_activity_event"));
             assertEquals(101L, scalarLong(connection,
-                "SELECT encryption_key_id FROM p25_activity_event"));
+                "SELECT encryption_key_id FROM receiver_activity_event"));
             assertEquals(2L, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_identity_summary WHERE last_encryption_algorithm_id = 132"));
             assertEquals(2L, scalarLong(connection,
@@ -2729,28 +2729,28 @@ class P25ActivityLogWriterTest
         Path database = mTemporaryFolder.resolve("p25-late-patch-attribution.sqlite");
         createTestDatabase(database);
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
-            1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
-            P25ActivityLogRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
+        ReceiverActivityRecords.ActivityEvent unidentified = new ReceiverActivityRecords.ActivityEvent(
+            1_000L, "GUID:" + guid, guid, ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            ReceiverActivityRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
             854_187_500L, "00-0509", 1, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", "P25_PHASE1", null, true, null, null);
-        P25ActivityLogRecords.TrunkedCallAttribution attribution =
-            new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+        ReceiverActivityRecords.TrunkedCallAttribution attribution =
+            new ReceiverActivityRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
                 854_187_500L, 1, 56182, "PATCH_GROUP",
                 List.of(56180, 56181, 0xFFFF, 56182, 56180), null,
                 true, false, false, false);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, unidentified, true);
-            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+            ReceiverActivitySchema.insertSite(connection, siteSnapshot(500L));
+            ReceiverActivitySchema.recordActivity(connection, unidentified, true);
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, attribution));
 
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
             assertEquals(56182L, scalarLong(connection,
-                "SELECT target_id FROM p25_activity_event"));
-            assertEquals(P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP, scalarLong(connection,
-                "SELECT target_kind_code FROM p25_activity_event"));
+                "SELECT target_id FROM receiver_activity_event"));
+            assertEquals(ReceiverActivitySchema.IDENTITY_KIND_PATCH_GROUP, scalarLong(connection,
+                "SELECT target_kind_code FROM receiver_activity_event"));
             assertCount(connection, "activity_event_talkgroup_member", 2);
             assertEquals(112361L, scalarLong(connection,
                 "SELECT SUM(talkgroup_id) FROM activity_event_talkgroup_member"));
@@ -2771,23 +2771,23 @@ class P25ActivityLogWriterTest
         {
             for(int timeslot: List.of(1, 2))
             {
-                P25ActivityLogSchema.recordActivity(connection, new P25ActivityLogRecords.ActivityEvent(
-                    1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "DMR",
-                    P25ActivityLogRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
+                ReceiverActivitySchema.recordActivity(connection, new ReceiverActivityRecords.ActivityEvent(
+                    1_000L, "GUID:" + guid, guid, ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "DMR",
+                    ReceiverActivityRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
                     461_125_000L, "12", timeslot, false, null, null, null, 7, null, null, 1,
                     "Example DMR", "DMR", null, true, null, null), true);
             }
 
-            P25ActivityLogRecords.TrunkedCallAttribution attribution =
-                new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+            ReceiverActivityRecords.TrunkedCallAttribution attribution =
+                new ReceiverActivityRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
                     461_125_000L, 1, 91, "TALKGROUP", List.of(), 101,
                     true, true, false, false);
-            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, attribution));
 
             assertEquals(91L, scalarLong(connection,
-                "SELECT target_id FROM p25_activity_event WHERE timeslot = 1"));
+                "SELECT target_id FROM receiver_activity_event WHERE timeslot = 1"));
             assertEquals(-1L, scalarLong(connection,
-                "SELECT coalesce(target_id, -1) FROM p25_activity_event WHERE timeslot = 2"));
+                "SELECT coalesce(target_id, -1) FROM receiver_activity_event WHERE timeslot = 2"));
             assertCount(connection, "trunked_logical_call_bucket", 0);
             assertCount(connection, "p25_site_call_bucket", 0);
         }
@@ -2798,15 +2798,15 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("logical-call-outputs.sqlite");
         createTestDatabase(database);
-        P25ActivityLogRecords.ResolvedLogicalCall call = logicalCall(30);
+        ReceiverActivityRecords.ResolvedLogicalCall call = logicalCall(30);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertTrue(P25ActivityLogSchema.recordResolvedLogicalCall(connection, call));
-            assertTrue(P25ActivityLogSchema.applyLogicalCallOutput(connection,
-                new P25ActivityLogRecords.LogicalCallOutput(call, P25ActivityLogRecords.CallOutput.RECORDED)));
-            assertTrue(P25ActivityLogSchema.applyLogicalCallOutput(connection,
-                new P25ActivityLogRecords.LogicalCallOutput(call, P25ActivityLogRecords.CallOutput.STREAMED)));
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, call));
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
+                new ReceiverActivityRecords.LogicalCallOutput(call, ReceiverActivityRecords.CallOutput.RECORDED)));
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
+                new ReceiverActivityRecords.LogicalCallOutput(call, ReceiverActivityRecords.CallOutput.STREAMED)));
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -2857,17 +2857,17 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
-                conventionalActivity(3_600_123L, P25ActivityLogRecords.Action.CALL), false);
+            ReceiverActivitySchema.recordActivity(connection,
+                conventionalActivity(3_600_123L, ReceiverActivityRecords.Action.CALL), false);
             String contextKey = configurationContextKey("conventional-activity");
-            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
-                new P25ActivityLogRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
+            assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection,
+                new ReceiverActivityRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
                     154_310_000L, null, 0, null, List.of(),
-                    P25ActivityLogRecords.CallOutput.RECORDED)));
-            assertTrue(P25ActivityLogSchema.applyConventionalCallOutput(connection,
-                new P25ActivityLogRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
+                    ReceiverActivityRecords.CallOutput.RECORDED)));
+            assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection,
+                new ReceiverActivityRecords.ConventionalCallOutput(3_600_123L, contextKey, null,
                     154_310_000L, null, 0, null, List.of(),
-                    P25ActivityLogRecords.CallOutput.STREAMED)));
+                    ReceiverActivityRecords.CallOutput.STREAMED)));
 
             for(String table: List.of("conventional_activity_summary", "conventional_activity_bucket"))
             {
@@ -2883,8 +2883,8 @@ class P25ActivityLogWriterTest
             }
 
             assertCount(connection, "conventional_call_identity_bucket", 1);
-            assertIdentityBucket(connection, 3_600_000L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
-                P25ActivityLogSchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN, 0, 1, 0, 1, 1);
+            assertIdentityBucket(connection, 3_600_000L, ReceiverActivitySchema.IDENTITY_ROLE_DESTINATION,
+                ReceiverActivitySchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN, 0, 1, 0, 1, 1);
         }
     }
 
@@ -2893,12 +2893,12 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("overflow.sqlite");
         createTestDatabase(database);
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 1, 250, 25);
         writer.start();
 
         for(int x = 0; x < 1000; x++)
         {
-            writer.enqueue(activity(1000L + x, P25ActivityLogRecords.Action.GRANT));
+            writer.enqueue(activity(1000L + x, ReceiverActivityRecords.Action.GRANT));
         }
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -2920,20 +2920,20 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogRecords.SiteSnapshot p25 = siteSnapshot(1_000L, guid);
-            P25ActivityLogSchema.insertSite(connection, p25);
+            ReceiverActivityRecords.SiteSnapshot p25 = siteSnapshot(1_000L, guid);
+            ReceiverActivitySchema.insertSite(connection, p25);
             assertEquals("Example System", scalarString(connection, """
                 SELECT alias_list_name FROM receiver_context WHERE guid='%s'
                 """.formatted(guid)));
 
             //An older-style activity record has no configured-metadata observation and must not erase the alias.
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1_500L, P25ActivityLogRecords.Action.GRANT, guid), false);
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(1_500L, ReceiverActivityRecords.Action.GRANT, guid), false);
             assertEquals("Example System", scalarString(connection, """
                 SELECT alias_list_name FROM receiver_context WHERE guid='%s'
                 """.formatted(guid)));
 
-            P25ActivityLogSchema.insertSite(connection, withAliasList(p25, 2_000L, "without-alias", null));
+            ReceiverActivitySchema.insertSite(connection, withAliasList(p25, 2_000L, "without-alias", null));
             assertNull(scalarString(connection, """
                 SELECT alias_list_name FROM receiver_context WHERE guid='%s'
                 """.formatted(guid)));
@@ -2944,7 +2944,7 @@ class P25ActivityLogWriterTest
             TrunkedSiteSchema.Snapshot dmr =
                 trunkedSite(3_000L, guid, TrunkedSiteSchema.PROTOCOL_DMR, "dmr-transition").snapshot();
             TrunkedSiteSchema.upsert(connection, dmr);
-            P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, dmr);
+            ReceiverActivitySchema.ensureTrunkedSiteIdentityScope(connection, dmr);
 
             assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, scalarLong(connection, """
                 SELECT protocol_code FROM receiver_context WHERE guid='%s'
@@ -2968,9 +2968,9 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             String p25ConfigurationId = "123e4567-e89b-12d3-a456-426614174090";
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 configuredConventionalActivity(1_000L, p25ConfigurationId,
-                P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", "Elyria PD",
+                ReceiverActivityRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", "Elyria PD",
                 "P25-1", 155_730_000L, 0x348), false);
 
             assertEquals(2L, scalarLong(connection, """
@@ -2995,18 +2995,18 @@ class P25ActivityLogWriterTest
                 SELECT nac FROM receiver_context WHERE context_key='CONFIGURATION:%s'
                 """.formatted(p25ConfigurationId)));
 
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 configuredConventionalActivity(2_000L, p25ConfigurationId,
-                    P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", null,
+                    ReceiverActivityRecords.ContextKind.CONVENTIONAL_P25, "APCO25", "ELYRIA PDISP", null,
                     "P25-1", 155_730_000L, 0x348), false);
             assertNull(scalarString(connection, """
                 SELECT alias_list_name FROM receiver_context WHERE context_key='CONFIGURATION:%s'
                 """.formatted(p25ConfigurationId)));
 
             String nbfmConfigurationId = "123e4567-e89b-12d3-a456-426614174091";
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 configuredConventionalActivity(3_000L, nbfmConfigurationId,
-                P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", "County Fire",
+                ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", "County Fire",
                 "Conventional Lorain Cnty", "NBFM", 154_310_000L, null), false);
 
             assertEquals(10L, scalarLong(connection, """
@@ -3031,9 +3031,9 @@ class P25ActivityLogWriterTest
                 """.formatted(nbfmConfigurationId)));
 
             String amConfigurationId = "123e4567-e89b-12d3-a456-426614174099";
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 configuredConventionalActivity(4_000L, amConfigurationId,
-                P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", "Airport Ground",
+                ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", "Airport Ground",
                 "County Airport", "AM", 121_900_000L, null), true);
 
             assertEquals(10L, scalarLong(connection, """
@@ -3058,12 +3058,12 @@ class P25ActivityLogWriterTest
             TrunkedSiteSchema.Snapshot dmr = trunkedSite(1_000L, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR,
                 "dmr-metadata", "Metro DMR Aliases").snapshot();
             TrunkedSiteSchema.upsert(connection, dmr);
-            P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, dmr);
+            ReceiverActivitySchema.ensureTrunkedSiteIdentityScope(connection, dmr);
 
             TrunkedSiteSchema.Snapshot nxdn = trunkedSite(2_000L, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN,
                 "nxdn-metadata", "Metro NXDN Aliases").snapshot();
             TrunkedSiteSchema.upsert(connection, nxdn);
-            P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, nxdn);
+            ReceiverActivitySchema.ensureTrunkedSiteIdentityScope(connection, nxdn);
 
             assertEquals("Downtown", scalarString(connection, """
                 SELECT channel_name FROM receiver_context WHERE context_key='GUID:%s'
@@ -3118,33 +3118,33 @@ class P25ActivityLogWriterTest
             insertAdministratorData(connection);
         }
 
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1024);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 1024);
         writer.start();
 
         //Fill a startup backlog so the clear request has earlier observations to cross as a queue barrier.
         for(int x = 0; x < 400; x++)
         {
-            writer.enqueue(activity(now - 1_000L + x, P25ActivityLogRecords.Action.GRANT, guid));
+            writer.enqueue(activity(now - 1_000L + x, ReceiverActivityRecords.Action.GRANT, guid));
         }
 
         writer.enqueue(trunkedSite(now - 500L, guid, TrunkedSiteSchema.PROTOCOL_DMR, "pre-clear"));
         writer.enqueue(trunkedSite(now - 500L, retainedGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "retained"));
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearSite(guid);
         writer.submitMaintenance(request);
-        writer.enqueue(activity(now, P25ActivityLogRecords.Action.GRANT, guid));
+        writer.enqueue(activity(now, ReceiverActivityRecords.Action.GRANT, guid));
         writer.enqueue(trunkedSite(now, guid, TrunkedSiteSchema.PROTOCOL_DMR, "post-clear"));
 
-        P25ActivityLogMaintenance.Result result = request.result().get(10, TimeUnit.SECONDS);
-        assertEquals(P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS, result.operation());
+        ReceiverActivityMaintenance.Result result = request.result().get(10, TimeUnit.SECONDS);
+        assertEquals(ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS, result.operation());
         writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             //The clear removed every pre-request row and the post-request observation was written afterward.
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
 
             try(Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery("SELECT observed_at_ms FROM p25_activity_event"))
+                ResultSet resultSet = statement.executeQuery("SELECT observed_at_ms FROM receiver_activity_event"))
             {
                 assertTrue(resultSet.next());
                 assertEquals(now, resultSet.getLong(1));
@@ -3177,34 +3177,34 @@ class P25ActivityLogWriterTest
             insertAdministratorData(connection);
         }
 
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1024);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 1024);
         writer.start();
 
         for(int x = 0; x < 400; x++)
         {
-            writer.enqueue(activity(now - 1_000L + x, P25ActivityLogRecords.Action.GRANT));
+            writer.enqueue(activity(now - 1_000L + x, ReceiverActivityRecords.Action.GRANT));
         }
 
-        writer.enqueue(activity(now - 2_000L, P25ActivityLogRecords.Action.CALL));
+        writer.enqueue(activity(now - 2_000L, ReceiverActivityRecords.Action.CALL));
         writer.enqueue(trunkedSite(now - 500L, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR, "pre-reset-dmr"));
         writer.enqueue(trunkedSite(now - 500L, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "pre-reset-nxdn"));
         StatsDatabaseMaintenanceRequest request =
-            StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.RESET_STATS);
+            StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
         writer.submitMaintenance(request);
-        writer.enqueue(activity(now, P25ActivityLogRecords.Action.CALL));
+        writer.enqueue(activity(now, ReceiverActivityRecords.Action.CALL));
         writer.enqueue(trunkedSite(now, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR, "post-reset-dmr"));
         writer.enqueue(trunkedSite(now, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "post-reset-nxdn"));
 
-        P25ActivityLogMaintenance.Result result = request.result().get(10, TimeUnit.SECONDS);
-        assertEquals(P25ActivityLogMaintenance.Operation.RESET_STATS, result.operation());
+        ReceiverActivityMaintenance.Result result = request.result().get(10, TimeUnit.SECONDS);
+        assertEquals(ReceiverActivityMaintenance.Operation.RESET_STATS, result.operation());
         writer.close();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
 
             try(Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery("SELECT observed_at_ms FROM p25_activity_event"))
+                ResultSet resultSet = statement.executeQuery("SELECT observed_at_ms FROM receiver_activity_event"))
             {
                 assertTrue(resultSet.next());
                 assertEquals(now, resultSet.getLong(1));
@@ -3239,21 +3239,21 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(now - TimeUnit.DAYS.toMillis(2), P25ActivityLogRecords.Action.GRANT), true);
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(now - TimeUnit.DAYS.toMillis(2), ReceiverActivityRecords.Action.GRANT), true);
         }
 
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10, 1250,
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 10, 1250,
             TimeUnit.SECONDS.toMillis(10), 25, 1000);
         writer.start();
-        waitForState(writer, P25ActivityLogStatus.State.RUNNING);
+        waitForState(writer, ReceiverActivityStatus.State.RUNNING);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "receiver_activity_event", 1);
         }
 
-        writer.enqueue(activity(now, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(now, ReceiverActivityRecords.Action.GRANT));
         awaitWriterQueueEmpty(writer);
         Thread.sleep(100);
         assertEquals(0, writer.getWrittenRecords());
@@ -3269,7 +3269,7 @@ class P25ActivityLogWriterTest
             try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
             {
                 remainingExpired = (int)scalarLong(connection, """
-                    SELECT COUNT(*) FROM p25_activity_event WHERE observed_at_ms < %d
+                    SELECT COUNT(*) FROM receiver_activity_event WHERE observed_at_ms < %d
                     """.formatted(now - TimeUnit.DAYS.toMillis(1)));
             }
 
@@ -3288,53 +3288,53 @@ class P25ActivityLogWriterTest
     @Test
     void rejectsMaintenanceWhenWriterIsNotRunning()
     {
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(mTemporaryFolder.resolve("not-running.sqlite"),
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(mTemporaryFolder.resolve("not-running.sqlite"),
             30, false, 1);
         StatsDatabaseMaintenanceRequest request =
-            StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.RESET_STATS);
+            StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
 
         writer.submitMaintenance(request);
 
         assertTrue(request.result().isCompletedExceptionally());
     }
 
-    private static P25ActivityLogRecords.ResolvedLogicalCall logicalCall(long sequence)
+    private static ReceiverActivityRecords.ResolvedLogicalCall logicalCall(long sequence)
     {
         String guid = radresGuid("logical-call-winner");
-        return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(77, sequence),
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(77, sequence),
             LOGICAL_CALL_START + sequence, "GUID:" + guid, guid, Protocol.APCO25.name(),
-            P25ActivityLogRecords.IdentityDomain.STANDARD, 0x924, 0x649, 17, 1201,
+            ReceiverActivityRecords.IdentityDomain.STANDARD, 0x924, 0x649, 17, 1201,
             Form.TALKGROUP.name(), List.of(), 700001, true, 0x84, 1,
-            P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(),
+            ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
             List.of(new P25SiteIdentity(0x924, 0x649, 1, 1),
                 new P25SiteIdentity(0x924, 0x649, 2, 2)));
     }
 
-    private static P25ActivityLogRecords.ResolvedLogicalCall patchLogicalCall(long sequence)
+    private static ReceiverActivityRecords.ResolvedLogicalCall patchLogicalCall(long sequence)
     {
-        return new P25ActivityLogRecords.ResolvedLogicalCall(new LogicalCallId(78, sequence),
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(78, sequence),
             LOGICAL_CALL_START + sequence, "GUID:123e4567-e89b-12d3-a456-426614174000",
             "123e4567-e89b-12d3-a456-426614174000", Protocol.APCO25.name(),
-            P25ActivityLogRecords.IdentityDomain.STANDARD, 0xBEE00, 0x348, 18, 56182,
+            ReceiverActivityRecords.IdentityDomain.STANDARD, 0xBEE00, 0x348, 18, 56182,
             "PATCH_GROUP", List.of(56181, 56180, 56180, 56182), 1811524, true, 0x84, 101,
-            P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(),
+            ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
             List.of(new P25SiteIdentity(0xBEE00, 0x348, 2, 1),
                 new P25SiteIdentity(0xBEE00, 0x348, 3, 2)));
     }
 
-    private static P25ActivityLogRecords.ActivityEvent signaling(P25ActivityLogRecords.Action action)
+    private static ReceiverActivityRecords.ActivityEvent signaling(ReceiverActivityRecords.Action action)
     {
         String guid = radresGuid("signaling");
-        return new P25ActivityLogRecords.ActivityEvent(LOGICAL_CALL_START, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, Protocol.DMR.name(), action,
-            action == P25ActivityLogRecords.Action.DENIAL ? "DENIAL" : "CALL_GROUP",
+        return new ReceiverActivityRecords.ActivityEvent(LOGICAL_CALL_START, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, Protocol.DMR.name(), action,
+            action == ReceiverActivityRecords.Action.DENIAL ? "DENIAL" : "CALL_GROUP",
             "101", "91", Form.TALKGROUP.name(), List.of(), 451_012_500L, "12", 1, false,
             null, null, null, null, null, null, null, "DMR Site", "DMR", null, false,
-            null, null, P25ActivityLogRecords.IdentityDomain.STANDARD,
-            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(), "DMR", true);
+            null, null, ReceiverActivityRecords.IdentityDomain.STANDARD,
+            ReceiverActivityRecords.P25TargetIdentity.UNKNOWN, List.of(), "DMR", true);
     }
 
-    private static void waitForState(P25ActivityLogWriter writer, P25ActivityLogStatus.State expected)
+    private static void waitForState(ReceiverActivityWriter writer, ReceiverActivityStatus.State expected)
         throws InterruptedException
     {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -3347,7 +3347,7 @@ class P25ActivityLogWriterTest
         assertEquals(expected, writer.getStatus().state());
     }
 
-    private static void awaitWriterQueueEmpty(P25ActivityLogWriter writer) throws InterruptedException
+    private static void awaitWriterQueueEmpty(ReceiverActivityWriter writer) throws InterruptedException
     {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(2);
 
@@ -3370,13 +3370,13 @@ class P25ActivityLogWriterTest
         statement.executeUpdate();
     }
 
-    private static P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
+    private static ReceiverActivityRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
                                                                          int protocol, String hash)
     {
         return trunkedSite(observedAt, guid, protocol, hash, null);
     }
 
-    private static P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
+    private static ReceiverActivityRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
                                                                          int protocol, String hash,
                                                                          String aliasListName)
     {
@@ -3397,7 +3397,7 @@ class P25ActivityLogWriterTest
             dmr ? "DMR" : "NXDN", dmr ? 10 : 7, dmr ? null : 8, dmr ? 20 : 9,
             dmr ? null : 12, null, null, null, null, null, null, null, 0, null,
             channel.frequencyHertz(), channel.frequencyHertz(), List.of(channel), List.of(neighbor));
-        return new P25ActivityLogRecords.TrunkedSiteSnapshot(observedAt, snapshot);
+        return new ReceiverActivityRecords.TrunkedSiteSnapshot(observedAt, snapshot);
     }
 
     private static void insertAdministratorData(Connection connection) throws Exception
@@ -3496,7 +3496,7 @@ class P25ActivityLogWriterTest
     {
         try(java.sql.PreparedStatement statement = connection.prepareStatement("""
             SELECT COUNT(DISTINCT event.id)
-            FROM p25_activity_event event
+            FROM receiver_activity_event event
             JOIN activity_event_talkgroup_member member ON member.event_id=event.id
             WHERE member.talkgroup_id=?
             """))
@@ -3536,7 +3536,7 @@ class P25ActivityLogWriterTest
     {
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery(
-                "SELECT value FROM logger_status WHERE key='" + key + "'"))
+                "SELECT value FROM statistics_status WHERE key='" + key + "'"))
         {
             assertTrue(resultSet.next());
             return resultSet.getString(1);
@@ -3604,7 +3604,7 @@ class P25ActivityLogWriterTest
     }
 
     private static void assertPresence(Connection connection, int radioId, String guid,
-                                       P25ActivityLogRecords.RadioPresenceEvidence evidence, long confirmedAt)
+                                       ReceiverActivityRecords.RadioPresenceEvidence evidence, long confirmedAt)
         throws Exception
     {
         try(Statement statement = connection.createStatement();
@@ -3635,156 +3635,156 @@ class P25ActivityLogWriterTest
         }
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activity(long timestamp, P25ActivityLogRecords.Action action)
+    private static ReceiverActivityRecords.ActivityEvent activity(long timestamp, ReceiverActivityRecords.Action action)
     {
         return activity(timestamp, action, "123e4567-e89b-12d3-a456-426614174000");
     }
 
     private static void recordConfirmedActivity(Connection connection,
-                                                P25ActivityLogRecords.ActivityEvent activity,
+                                                ReceiverActivityRecords.ActivityEvent activity,
                                                 boolean detailedHistory) throws Exception
     {
-        P25ActivityLogSchema.recordActivity(connection, activity, detailedHistory);
+        ReceiverActivitySchema.recordActivity(connection, activity, detailedHistory);
         ChannelTag tag = activity.eventType() != null && activity.eventType().contains("DATA") ?
             ChannelTag.DATA : ChannelTag.VOICE;
         boolean tdma = "APCO25_PHASE2".equals(activity.protocol()) ||
             (activity.decoder() != null && activity.decoder().contains("PHASE2")) ||
             (activity.lcn() != null && activity.lcn().contains("TS"));
-        P25ActivityLogSchema.upsertGrantedChannelSummary(connection,
-            new P25ActivityLogRecords.ChannelFact(activity.observedAtEpochMilliseconds(), activity.guid(),
+        ReceiverActivitySchema.upsertGrantedChannelSummary(connection,
+            new ReceiverActivityRecords.ChannelFact(activity.observedAtEpochMilliseconds(), activity.guid(),
                 activity.lcn(), activity.frequencyHertz(), tag, tdma, tdma ? 2 : 1));
     }
 
-    private static P25ActivityLogRecords.ControlChannelQuality quality(long timestamp, double signalDbfs)
+    private static ReceiverActivityRecords.ControlChannelQuality quality(long timestamp, double signalDbfs)
     {
         return quality(timestamp, signalDbfs, "123e4567-e89b-12d3-a456-426614174000");
     }
 
-    private static P25ActivityLogRecords.ControlChannelQuality quality(long timestamp, double signalDbfs, String guid)
+    private static ReceiverActivityRecords.ControlChannelQuality quality(long timestamp, double signalDbfs, String guid)
     {
-        return new P25ActivityLogRecords.ControlChannelQuality(timestamp, guid, 856_137_500L, signalDbfs, signalDbfs,
+        return new ReceiverActivityRecords.ControlChannelQuality(timestamp, guid, 856_137_500L, signalDbfs, signalDbfs,
             signalDbfs - 1.0, signalDbfs + 1.0, 98.5, 10, 1, 3, 0, 0, timestamp);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activity(long timestamp, P25ActivityLogRecords.Action action,
+    private static ReceiverActivityRecords.ActivityEvent activity(long timestamp, ReceiverActivityRecords.Action action,
                                                                 String guid)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid,
-            guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid,
+            guid, ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25",
             action, "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L, "00-0509", 1,
-            action == P25ActivityLogRecords.Action.GRANT,
-            action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
-            action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
-            "Example Site", null, null, action == P25ActivityLogRecords.Action.CALL, null, null);
+            action == ReceiverActivityRecords.Action.GRANT,
+            action == ReceiverActivityRecords.Action.GRANT ? 0x84 : null,
+            action == ReceiverActivityRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", null, null, action == ReceiverActivityRecords.Action.CALL, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent identityActivity(long timestamp, int sourceRadio,
+    private static ReceiverActivityRecords.ActivityEvent identityActivity(long timestamp, int sourceRadio,
                                                                          int talkgroup,
-                                                                         P25ActivityLogRecords.RadioPresenceUpdate
+                                                                         ReceiverActivityRecords.RadioPresenceUpdate
                                                                              radioPresenceUpdate)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.JOIN,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.JOIN,
             "AFFILIATE", Integer.toString(sourceRadio), Integer.toString(talkgroup), "TALKGROUP",
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", null, null, false, null, radioPresenceUpdate);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent countedIdentityActivity(long timestamp, int sourceRadio,
+    private static ReceiverActivityRecords.ActivityEvent countedIdentityActivity(long timestamp, int sourceRadio,
                                                                                 int talkgroup)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.CALL,
             "CALL_GROUP", Integer.toString(sourceRadio), Integer.toString(talkgroup), "TALKGROUP",
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", null, null, true, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp)
+    private static ReceiverActivityRecords.ActivityEvent patchActivity(long timestamp)
     {
         return patchActivity(timestamp, List.of(56181, 56180, 56180, 56182, -1));
     }
 
-    private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp, List<Integer> members)
+    private static ReceiverActivityRecords.ActivityEvent patchActivity(long timestamp, List<Integer> members)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.CALL,
             "CALL_PATCH_GROUP_ENCRYPTED", "1811524", "56182", "PATCH_GROUP",
             members, 854187500L, "00-0509", 1, true, 0x84, 101,
             0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25_PHASE1", null, true, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activityWithTalkerAlias(long timestamp, String talkerAlias)
+    private static ReceiverActivityRecords.ActivityEvent activityWithTalkerAlias(long timestamp, String talkerAlias)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.CALL,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854187500L, "00-0509", 1, false,
             null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, talkerAlias, true, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent serviceActivity(long timestamp, String eventType,
+    private static ReceiverActivityRecords.ActivityEvent serviceActivity(long timestamp, String eventType,
                                                                         boolean encrypted, long frequency,
                                                                         String lcn)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             eventType, "1811524", "56138", "TALKGROUP", frequency, lcn, 1, encrypted,
             encrypted ? 0x84 : null, encrypted ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", "P25-1", null, false, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activityWithChannelName(long timestamp, String channelName)
+    private static ReceiverActivityRecords.ActivityEvent activityWithChannelName(long timestamp, String channelName)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:123e4567-e89b-12d3-a456-426614174000",
-            "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
-            P25ActivityLogRecords.Action.GRANT, "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:123e4567-e89b-12d3-a456-426614174000",
+            "123e4567-e89b-12d3-a456-426614174000", ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            ReceiverActivityRecords.Action.GRANT, "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L,
             "00-0509", 1, true, 0x84, 101, 0xBEE00, 0x348, 0x348, 2, 1, channelName, null, null,
             false, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activityWithNetworkIdentity(long timestamp, int wacn,
+    private static ReceiverActivityRecords.ActivityEvent activityWithNetworkIdentity(long timestamp, int wacn,
                                                                                     int system, int rfss, int site)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp,
             "GUID:123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000",
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.CALL,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L, "00-0509", 1, false,
             null, null, wacn, system, 0x999, rfss, site, "Wrong Site", null, null, true, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent conventionalActivity(long timestamp,
-                                                                             P25ActivityLogRecords.Action action)
+    private static ReceiverActivityRecords.ActivityEvent conventionalActivity(long timestamp,
+                                                                             ReceiverActivityRecords.Action action)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, configurationContextKey("conventional-activity"),
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationContextKey("conventional-activity"),
             null,
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", action, "CALL", null, null, null,
+            ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", action, "CALL", null, null, null,
             154310000L, null, null, false, null, null, null, null, null, null, null, "County Fire", "NBFM",
-            null, action == P25ActivityLogRecords.Action.CALL, null, null);
+            null, action == ReceiverActivityRecords.Action.CALL, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent frequencylessConventionalActivity(long timestamp)
+    private static ReceiverActivityRecords.ActivityEvent frequencylessConventionalActivity(long timestamp)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp,
             configurationContextKey("frequencyless-conventional-activity"), null,
-            P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM",
-            P25ActivityLogRecords.Action.EMERGENCY, "EMERGENCY", "1888000", null, null, (Long)null, null, null,
+            ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM",
+            ReceiverActivityRecords.Action.EMERGENCY, "EMERGENCY", "1888000", null, null, (Long)null, null, null,
             false, null, null, null, null, null, null, null, "County Fire", "NBFM", null, false, null, null);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent configuredConventionalActivity(long timestamp,
-        String configurationId, P25ActivityLogRecords.ContextKind contextKind, String protocol, String channelName,
+    private static ReceiverActivityRecords.ActivityEvent configuredConventionalActivity(long timestamp,
+        String configurationId, ReceiverActivityRecords.ContextKind contextKind, String protocol, String channelName,
         String aliasListName, String decoder, long frequencyHertz, Integer nac)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONFIGURATION:" + configurationId, null,
-            contextKind, protocol, P25ActivityLogRecords.Action.CALL, "CALL", null, null, null, List.of(),
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "CONFIGURATION:" + configurationId, null,
+            contextKind, protocol, ReceiverActivityRecords.Action.CALL, "CALL", null, null, null, List.of(),
             frequencyHertz, null, null, false, null, null, null, null, nac, null, null, channelName, decoder, null,
-            true, null, null, P25ActivityLogRecords.IdentityDomain.STANDARD,
-            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(), aliasListName, true);
+            true, null, null, ReceiverActivityRecords.IdentityDomain.STANDARD,
+            ReceiverActivityRecords.P25TargetIdentity.UNKNOWN, List.of(), aliasListName, true);
     }
 
     private static String configurationContextKey(String fixture)
@@ -3807,60 +3807,60 @@ class P25ActivityLogWriterTest
         return UUID.nameUUIDFromBytes(fixture.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
-    private static P25ActivityLogRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)
+    private static ReceiverActivityRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         return talkgroupId != null ?
             presence(timestamp, guid, radioId, talkgroupId,
-                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION) :
+                ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION) :
             clearedPresence(timestamp, guid, radioId);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent presence(long timestamp, String guid, int radioId,
+    private static ReceiverActivityRecords.ActivityEvent presence(long timestamp, String guid, int radioId,
                                                                  Integer talkgroupId,
-        P25ActivityLogRecords.RadioPresenceEvidence evidence)
+        ReceiverActivityRecords.RadioPresenceEvidence evidence)
     {
-        P25ActivityLogRecords.Action action = evidence == P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION ?
-            P25ActivityLogRecords.Action.REGISTER : P25ActivityLogRecords.Action.JOIN;
-        return new P25ActivityLogRecords.ActivityEvent(timestamp,
+        ReceiverActivityRecords.Action action = evidence == ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION ?
+            ReceiverActivityRecords.Action.REGISTER : ReceiverActivityRecords.Action.JOIN;
+        return new ReceiverActivityRecords.ActivityEvent(timestamp,
             "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", action,
-            evidence == P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION ? "REGISTER" : "AFFILIATE",
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", action,
+            evidence == ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION ? "REGISTER" : "AFFILIATE",
             Integer.toString(radioId),
             talkgroupId != null ? talkgroupId.toString() : null, talkgroupId != null ? "TALKGROUP" : null,
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null,
-            false, null, P25ActivityLogRecords.RadioPresenceUpdate.confirmed(radioId, talkgroupId, evidence));
+            false, null, ReceiverActivityRecords.RadioPresenceUpdate.confirmed(radioId, talkgroupId, evidence));
     }
 
-    private static P25ActivityLogRecords.ActivityEvent clearedPresence(long timestamp, String guid, int radioId)
+    private static ReceiverActivityRecords.ActivityEvent clearedPresence(long timestamp, String guid, int radioId)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.LOGOUT,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.LOGOUT,
             "DEREGISTER", Integer.toString(radioId), null, null, null, null, null, false, null, null,
             0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null, false, null,
-            P25ActivityLogRecords.RadioPresenceUpdate.cleared(radioId));
+            ReceiverActivityRecords.RadioPresenceUpdate.cleared(radioId));
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activityWithoutSystemIdentity(long timestamp)
+    private static ReceiverActivityRecords.ActivityEvent activityWithoutSystemIdentity(long timestamp)
     {
-        return new P25ActivityLogRecords.ActivityEvent(timestamp,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp,
             "GUID:123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000",
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L, "00-0509", 1, false,
             null, null, null, null, null, null, null, "Example Site", null, null, false, null, null);
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp)
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshot(long timestamp)
     {
         return siteSnapshot(timestamp, "123e4567-e89b-12d3-a456-426614174000");
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp, String guid)
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshot(long timestamp, String guid)
     {
         return siteSnapshot(timestamp, guid, 2, 1);
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp, String guid, int rfss, int site)
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshot(long timestamp, String guid, int rfss, int site)
     {
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L, null, false, 1,
@@ -3881,29 +3881,29 @@ class P25ActivityLogWriterTest
             new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x954, 0, 1,
                 851_006_250L, 6_250L, -45_000_000L));
 
-        return new P25ActivityLogRecords.SiteSnapshot(timestamp, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
+        return new ReceiverActivityRecords.SiteSnapshot(timestamp, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
             0xBEE00, 0x348, 0x348, rfss, site, 0, true, true,
             new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
                 "Autonomous and by Request", 240, true, 0x90, true),
             856137500L, 856137500L, channels, neighbors, bands, patches, foreignBands);
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, long broadcastClock)
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, long broadcastClock)
     {
         return siteSnapshotWithTiming(timestamp, broadcastClock, 110);
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, Long broadcastClock,
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, Long broadcastClock,
                                                                               int microSlots)
     {
-        P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
+        ReceiverActivityRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
         P25NetworkConfigurationSnapshot.SiteStatus status = snapshot.siteStatus();
         P25NetworkConfigurationSnapshot.SiteStatus updatedStatus = new P25NetworkConfigurationSnapshot.SiteStatus(
             broadcastClock, microSlots, status.dataService(), status.dataAccess(),
             status.wuidLeaseMinutes(), status.registrationService(), status.mfid(), status.voiceService());
 
-        return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
+        return new ReceiverActivityRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
             snapshot.snapshotHash(), snapshot.protocol(), snapshot.channelName(), snapshot.aliasListName(),
             snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(), snapshot.rfss(), snapshot.site(),
             snapshot.lra(), snapshot.activeRfssNetworkConnection(), snapshot.tdma(), updatedStatus,
@@ -3912,11 +3912,11 @@ class P25ActivityLogWriterTest
             snapshot.patchGroups(), snapshot.foreignSystemBands());
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot withSystemIdentity(
-        P25ActivityLogRecords.SiteSnapshot snapshot, long timestamp, Integer wacn, Integer systemId,
+    private static ReceiverActivityRecords.SiteSnapshot withSystemIdentity(
+        ReceiverActivityRecords.SiteSnapshot snapshot, long timestamp, Integer wacn, Integer systemId,
         String snapshotHash)
     {
-        return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
+        return new ReceiverActivityRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
             snapshotHash, snapshot.protocol(), snapshot.channelName(), snapshot.aliasListName(), snapshot.decoder(),
             wacn, systemId, snapshot.nac(), snapshot.rfss(), snapshot.site(), snapshot.lra(),
             snapshot.activeRfssNetworkConnection(), snapshot.tdma(), snapshot.siteStatus(),
@@ -3925,10 +3925,10 @@ class P25ActivityLogWriterTest
             snapshot.foreignSystemBands());
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot withSnapshotHash(
-        P25ActivityLogRecords.SiteSnapshot snapshot, String snapshotHash)
+    private static ReceiverActivityRecords.SiteSnapshot withSnapshotHash(
+        ReceiverActivityRecords.SiteSnapshot snapshot, String snapshotHash)
     {
-        return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
+        return new ReceiverActivityRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), snapshotHash, snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
             snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.activeRfssNetworkConnection(),
@@ -3938,10 +3938,10 @@ class P25ActivityLogWriterTest
             snapshot.foreignSystemBands());
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot withAliasList(
-        P25ActivityLogRecords.SiteSnapshot snapshot, long timestamp, String snapshotHash, String aliasListName)
+    private static ReceiverActivityRecords.SiteSnapshot withAliasList(
+        ReceiverActivityRecords.SiteSnapshot snapshot, long timestamp, String snapshotHash, String aliasListName)
     {
-        return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
+        return new ReceiverActivityRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
             snapshotHash, snapshot.protocol(), snapshot.channelName(), aliasListName, snapshot.decoder(),
             snapshot.wacn(), snapshot.systemId(), snapshot.nac(), snapshot.rfss(), snapshot.site(), snapshot.lra(),
             snapshot.activeRfssNetworkConnection(), snapshot.tdma(), snapshot.siteStatus(),
@@ -3950,9 +3950,9 @@ class P25ActivityLogWriterTest
             snapshot.foreignSystemBands());
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)
     {
-        P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
+        ReceiverActivityRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("secondary_control", "0-821", 856137500L,
                 811137500L, false, 1),
@@ -3963,7 +3963,7 @@ class P25ActivityLogWriterTest
             new P25NetworkConfigurationSnapshot.Channel("base_station", "0-821", 856137500L,
                 null, false, 1, "WPFF205"));
 
-        return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
+        return new ReceiverActivityRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), "duplicate-channel-hash", snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
             snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.activeRfssNetworkConnection(), snapshot.tdma(),
@@ -3972,9 +3972,9 @@ class P25ActivityLogWriterTest
             snapshot.foreignSystemBands());
     }
 
-    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithConflictingChannels(long timestamp)
+    private static ReceiverActivityRecords.SiteSnapshot siteSnapshotWithConflictingChannels(long timestamp)
     {
-        P25ActivityLogRecords.SiteSnapshot snapshot =
+        ReceiverActivityRecords.SiteSnapshot snapshot =
             siteSnapshot(timestamp, "423e4567-e89b-12d3-a456-426614174000");
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("base_station", "0-821", 856137500L,
@@ -3982,7 +3982,7 @@ class P25ActivityLogWriterTest
             new P25NetworkConfigurationSnapshot.Channel("base_station", "00-0821", 857137500L,
                 812137500L, true, 2, "WXYZ999"));
 
-        return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
+        return new ReceiverActivityRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), "conflicting-channel-hash", snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
             snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.activeRfssNetworkConnection(), snapshot.tdma(),

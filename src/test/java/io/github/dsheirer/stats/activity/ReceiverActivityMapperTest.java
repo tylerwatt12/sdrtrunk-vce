@@ -85,7 +85,7 @@ import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-class P25ActivityLogMapperTest
+class ReceiverActivityMapperTest
 {
     private static final String GUID = "123e4567-e89b-12d3-a456-426614174000";
     private static final String CONFIGURATION_ID = "223e4567-e89b-12d3-a456-426614174000";
@@ -98,19 +98,19 @@ class P25ActivityLogMapperTest
             GUID, "County Repeater", "County DMR", 461_125_000L, 2,
             DMRConventionalCallEvent.TargetKind.PRIVATE, null, 101, 202, true);
 
-        P25ActivityLogRecords.DmrConventionalCall record = new P25ActivityLogMapper().map(event);
+        ReceiverActivityRecords.DmrConventionalCall record = new ReceiverActivityMapper().map(event);
 
         assertNotNull(record);
         assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
         assertEquals("County DMR", record.aliasListName());
         assertEquals(461_125_000L, record.frequencyHertz());
         assertEquals(2, record.timeslot());
-        assertEquals(P25ActivityLogRecords.DmrTargetKind.PRIVATE, record.targetKind());
+        assertEquals(ReceiverActivityRecords.DmrTargetKind.PRIVATE, record.targetKind());
         assertEquals(101, record.sourceRadioId());
         assertEquals(202, record.targetRadioId());
         assertTrue(record.encrypted());
 
-        P25ActivityLogRecords.DmrConventionalCall missingIdentity = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.DmrConventionalCall missingIdentity = new ReceiverActivityMapper().map(
             new DMRConventionalCallEvent(1_000L, 2_000L, null, null, "County Repeater", null,
                 461_125_000L, 2, DMRConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false));
         assertNull(missingIdentity);
@@ -123,19 +123,19 @@ class P25ActivityLogMapperTest
             GUID, "County Repeater", "County NXDN", 461_125_000L,
             NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, true);
 
-        P25ActivityLogRecords.NxdnConventionalCall record = new P25ActivityLogMapper().map(event);
+        ReceiverActivityRecords.NxdnConventionalCall record = new ReceiverActivityMapper().map(event);
 
         assertNotNull(record);
         assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
         assertEquals("County NXDN", record.aliasListName());
         assertEquals(461_125_000L, record.frequencyHertz());
-        assertEquals(P25ActivityLogRecords.NxdnTargetKind.GROUP, record.targetKind());
+        assertEquals(ReceiverActivityRecords.NxdnTargetKind.GROUP, record.targetKind());
         assertEquals(91, record.talkgroupId());
         assertEquals(101, record.sourceRadioId());
         assertNull(record.targetRadioId());
         assertTrue(record.encrypted());
 
-        P25ActivityLogRecords.NxdnConventionalCall missingIdentity = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.NxdnConventionalCall missingIdentity = new ReceiverActivityMapper().map(
             new NXDNConventionalCallEvent(1_000L, 2_000L, null, null, "County Repeater", null,
                 461_125_000L, NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false));
         assertNull(missingIdentity);
@@ -174,27 +174,27 @@ class P25ActivityLogMapperTest
             .protocol(Protocol.NXDN)
             .details("unclassified decoder output")
             .build();
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
-        P25ActivityLogRecords.ActivityEvent dmrRecord = mapper.map(dmr, registration);
-        P25ActivityLogRecords.ActivityEvent nxdnRecord = mapper.map(nxdn, page);
-        P25ActivityLogRecords.ActivityEvent locationRecord = mapper.map(dmr, location);
-        P25ActivityLogRecords.ActivityEvent shortDataRecord = mapper.map(dmr, shortData);
+        ReceiverActivityRecords.ActivityEvent dmrRecord = mapper.map(dmr, registration);
+        ReceiverActivityRecords.ActivityEvent nxdnRecord = mapper.map(nxdn, page);
+        ReceiverActivityRecords.ActivityEvent locationRecord = mapper.map(dmr, location);
+        ReceiverActivityRecords.ActivityEvent shortDataRecord = mapper.map(dmr, shortData);
 
         assertNotNull(dmrRecord);
-        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, dmrRecord.contextKind());
+        assertEquals(ReceiverActivityRecords.ContextKind.CONVENTIONAL_DMR, dmrRecord.contextKind());
         assertEquals(CONFIGURATION_CONTEXT_KEY, dmrRecord.contextKey());
-        assertEquals(P25ActivityLogRecords.Action.REGISTER, dmrRecord.action());
+        assertEquals(ReceiverActivityRecords.Action.REGISTER, dmrRecord.action());
         assertNotNull(nxdnRecord);
-        assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, nxdnRecord.contextKind());
-        assertEquals(P25ActivityLogRecords.Action.PAGE, nxdnRecord.action());
+        assertEquals(ReceiverActivityRecords.ContextKind.TRUNKED_SITE, nxdnRecord.contextKind());
+        assertEquals(ReceiverActivityRecords.Action.PAGE, nxdnRecord.action());
         assertNull(nxdnRecord.timeslot());
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C, nxdnRecord.identityDomain());
+        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C, nxdnRecord.identityDomain());
         assertNotNull(locationRecord);
         assertEquals("DMR", locationRecord.protocol());
-        assertEquals(P25ActivityLogRecords.Action.GPS, locationRecord.action());
+        assertEquals(ReceiverActivityRecords.Action.GPS, locationRecord.action());
         assertNotNull(shortDataRecord);
-        assertEquals(P25ActivityLogRecords.Action.DATA, shortDataRecord.action());
+        assertEquals(ReceiverActivityRecords.Action.DATA, shortDataRecord.action());
         assertNull(mapper.map(nxdn, noise));
     }
 
@@ -206,29 +206,29 @@ class P25ActivityLogMapperTest
         Channel channel = new Channel("DMR Site", ChannelType.STANDARD);
         channel.setDecodeConfiguration(config);
         channel.setRadresGuid(GUID);
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
-        P25ActivityLogRecords.ActivityEvent register = mapper.map(channel,
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        ReceiverActivityRecords.ActivityEvent register = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 451_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent repeated = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent repeated = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, " register ", 101, 201, 451_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent differentSubtype = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent differentSubtype = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "CANCEL CALL", 101, 201, 451_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent differentType = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent differentType = mapper.map(channel,
             dmrSignaling(DecodeEventType.REQUEST, "REGISTER", 101, 201, 451_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent differentSource = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent differentSource = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 102, 201, 451_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent differentTarget = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent differentTarget = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 202, 451_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent differentChannel = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent differentChannel = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 452_000_000L, 1));
-        P25ActivityLogRecords.ActivityEvent differentSlot = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent differentSlot = mapper.map(channel,
             dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 451_000_000L, 2));
-        P25ActivityLogRecords.ActivityEvent denied = mapper.map(channel,
+        ReceiverActivityRecords.ActivityEvent denied = mapper.map(channel,
             dmrSignaling(DecodeEventType.DENIAL, "REGISTRATION DENIED", 101, 201, 451_000_000L, 1));
 
         assertNotNull(register);
-        assertEquals(P25ActivityLogRecords.Action.REGISTER, register.action());
-        assertTrue(register.dedupeKey().startsWith(P25ActivityLogMapper.PROTOCOL_SIGNAL_DEDUPE_PREFIX));
+        assertEquals(ReceiverActivityRecords.Action.REGISTER, register.action());
+        assertTrue(register.dedupeKey().startsWith(ReceiverActivityMapper.PROTOCOL_SIGNAL_DEDUPE_PREFIX));
         assertEquals(register.dedupeKey(), repeated.dedupeKey());
         assertNotEquals(register.dedupeKey(), differentSubtype.dedupeKey());
         assertNotEquals(register.dedupeKey(), differentType.dedupeKey());
@@ -236,9 +236,9 @@ class P25ActivityLogMapperTest
         assertNotEquals(register.dedupeKey(), differentTarget.dedupeKey());
         assertNotEquals(register.dedupeKey(), differentChannel.dedupeKey());
         assertNotEquals(register.dedupeKey(), differentSlot.dedupeKey());
-        assertEquals(P25ActivityLogRecords.Action.DENIAL, denied.action());
-        assertTrue(P25ActivityLogService.isWithinDedupeWindow(register.dedupeKey(), 1_000L, 1_500L));
-        assertFalse(P25ActivityLogService.isWithinDedupeWindow(register.dedupeKey(), 1_000L, 1_501L));
+        assertEquals(ReceiverActivityRecords.Action.DENIAL, denied.action());
+        assertTrue(ReceiverActivityService.isWithinDedupeWindow(register.dedupeKey(), 1_000L, 1_500L));
+        assertFalse(ReceiverActivityService.isWithinDedupeWindow(register.dedupeKey(), 1_000L, 1_501L));
     }
 
     @Test
@@ -256,10 +256,10 @@ class P25ActivityLogMapperTest
         DecodeEvent nxdnVoice = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
             .protocol(Protocol.NXDN)
             .build();
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
-        assertTrue(P25ActivityLogMapper.isTypedCallOwnedObservation(dmr, dmrVoice));
-        assertTrue(P25ActivityLogMapper.isTypedCallOwnedObservation(nxdn, nxdnVoice));
+        assertTrue(ReceiverActivityMapper.isTypedCallOwnedObservation(dmr, dmrVoice));
+        assertTrue(ReceiverActivityMapper.isTypedCallOwnedObservation(nxdn, nxdnVoice));
         assertNull(mapper.map(dmr, dmrVoice));
         assertNull(mapper.map(nxdn, nxdnVoice));
     }
@@ -291,11 +291,11 @@ class P25ActivityLogMapperTest
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1000L);
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1360L);
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1),
             event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.ACTIVE, record.action());
+        assertEquals(ReceiverActivityRecords.Action.ACTIVE, record.action());
         assertEquals("1811524", record.sourceRadioId());
         assertEquals("56138", record.targetId());
         assertEquals("TALKGROUP", record.targetKind());
@@ -313,17 +313,17 @@ class P25ActivityLogMapperTest
         assertFalse(record.countedCall());
         assertEquals("CAR 201", record.talkerAlias());
 
-        P25ActivityLogRecords.ActivityEvent callStart = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.ActivityEvent callStart = new ReceiverActivityMapper().map(
             new P25CallStartEvent(channel(DecoderType.P25_PHASE1), event));
         assertNotNull(callStart);
-        assertEquals(P25ActivityLogRecords.Action.CALL, callStart.action());
+        assertEquals(ReceiverActivityRecords.Action.CALL, callStart.action());
         assertTrue(callStart.countedCall());
         assertNull(callStart.dedupeKey());
 
-        P25ActivityLogRecords.ActivityEvent grant = new P25ActivityLogMapper().map(new P25GrantObservationEvent(
+        ReceiverActivityRecords.ActivityEvent grant = new ReceiverActivityMapper().map(new P25GrantObservationEvent(
             channel(DecoderType.P25_PHASE1), null, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1000L, false));
         assertNotNull(grant);
-        assertEquals(P25ActivityLogRecords.Action.GRANT, grant.action());
+        assertEquals(ReceiverActivityRecords.Action.GRANT, grant.action());
         assertFalse(grant.countedCall());
         assertNull(grant.dedupeKey());
         assertFalse(grant.encrypted());
@@ -344,10 +344,10 @@ class P25ActivityLogMapperTest
         Channel channel = channel(DecoderType.NBFM);
         channel.setAliasListName("Conventional Lorain Cnty");
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel, event);
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
+        assertEquals(ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
         assertEquals("NBFM", record.protocol());
         assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
         assertEquals("Test Channel", record.channelName());
@@ -357,14 +357,14 @@ class P25ActivityLogMapperTest
         assertNotNull(record.dedupeKey());
 
         event.update(1_500L);
-        P25ActivityLogRecords.ActivityEvent continuation =
-            new P25ActivityLogMapper().map(channel, event);
+        ReceiverActivityRecords.ActivityEvent continuation =
+            new ReceiverActivityMapper().map(channel, event);
         DecodeEvent nextCall = DecodeEvent.builder(DecodeEventType.CALL, 2_000L)
             .duration(1_000L)
             .identifiers(identifiers)
             .build();
-        P25ActivityLogRecords.ActivityEvent next =
-            new P25ActivityLogMapper().map(channel, nextCall);
+        ReceiverActivityRecords.ActivityEvent next =
+            new ReceiverActivityMapper().map(channel, nextCall);
 
         assertEquals(record.dedupeKey(), continuation.dedupeKey());
         assertNotEquals(record.dedupeKey(), next.dedupeKey());
@@ -380,10 +380,10 @@ class P25ActivityLogMapperTest
             .identifiers(identifiers)
             .build();
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.AM), event);
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel(DecoderType.AM), event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
+        assertEquals(ReceiverActivityRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
         assertEquals("AM", record.protocol());
         assertEquals(CONFIGURATION_CONTEXT_KEY, record.contextKey());
     }
@@ -400,15 +400,15 @@ class P25ActivityLogMapperTest
             .identifiers(identifiers)
             .build();
         Channel channel = channel(DecoderType.P25_CONVENTIONAL);
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
         assertNull(mapper.map(channel, trackerEvent));
 
-        P25ActivityLogRecords.ActivityEvent callStart =
+        ReceiverActivityRecords.ActivityEvent callStart =
             mapper.map(new P25CallStartEvent(channel, trackerEvent));
 
         assertNotNull(callStart);
-        assertEquals(P25ActivityLogRecords.Action.CALL, callStart.action());
+        assertEquals(ReceiverActivityRecords.Action.CALL, callStart.action());
         assertTrue(callStart.countedCall());
         assertNull(callStart.dedupeKey());
     }
@@ -435,11 +435,11 @@ class P25ActivityLogMapperTest
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1_000L);
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1_360L);
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(
             new P25CallStartEvent(channel(DecoderType.P25_PHASE1), event));
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.CALL, record.action());
+        assertEquals(ReceiverActivityRecords.Action.CALL, record.action());
         assertEquals("56182", record.targetId());
         assertEquals("PATCH_GROUP", record.targetKind());
         assertEquals(List.of(56180, 56181), record.patchMemberTalkgroupIds());
@@ -452,12 +452,12 @@ class P25ActivityLogMapperTest
     @Test
     void patchDedupeKeyIgnoresMemberOrderAndDuplicatesButTracksMembershipChanges()
     {
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
-        P25ActivityLogRecords.ActivityEvent original = mapper.map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        ReceiverActivityRecords.ActivityEvent original = mapper.map(channel(DecoderType.P25_PHASE1),
             patchEvent(56181, 56180, 56180));
-        P25ActivityLogRecords.ActivityEvent reordered = mapper.map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent reordered = mapper.map(channel(DecoderType.P25_PHASE1),
             patchEvent(56180, 56181));
-        P25ActivityLogRecords.ActivityEvent changed = mapper.map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent changed = mapper.map(channel(DecoderType.P25_PHASE1),
             patchEvent(56180, 56181, 56183));
 
         assertNotNull(original);
@@ -484,8 +484,8 @@ class P25ActivityLogMapperTest
             .build();
 
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1000L);
-        P25ActivityLogRecords.ActivityEvent record =
-            new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1), event);
+        ReceiverActivityRecords.ActivityEvent record =
+            new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1), event);
 
         assertNotNull(record);
         assertFalse(record.encrypted());
@@ -511,8 +511,8 @@ class P25ActivityLogMapperTest
 
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1000L);
         P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1360L);
-        P25ActivityLogRecords.ActivityEvent record =
-            new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1), event);
+        ReceiverActivityRecords.ActivityEvent record =
+            new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1), event);
 
         assertNotNull(record);
         assertFalse(record.encrypted());
@@ -532,7 +532,7 @@ class P25ActivityLogMapperTest
             APCO25RadioIdentifier.createFrom(1811524), P25TalkerAliasIdentifier.create(" CAR 201 "),
             identifiers, TrunkedIdentityDomain.STANDARD, 2000L);
 
-        P25ActivityLogRecords.TalkerAliasUpdate update = new P25ActivityLogMapper().map(event);
+        ReceiverActivityRecords.TalkerAliasUpdate update = new ReceiverActivityMapper().map(event);
 
         assertNotNull(update);
         assertEquals(2000L, update.observedAtEpochMilliseconds());
@@ -552,7 +552,7 @@ class P25ActivityLogMapperTest
         dmrConfig.setChannelMode(DMRChannelMode.TRUNKED);
         dmr.setDecodeConfiguration(dmrConfig);
         dmr.setRadresGuid("323e4567-e89b-12d3-a456-426614174000");
-        P25ActivityLogRecords.TalkerAliasUpdate dmrUpdate = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.TalkerAliasUpdate dmrUpdate = new ReceiverActivityMapper().map(
             new TrunkedTalkerAliasEvent(dmr, Protocol.DMR, DMRRadio.createFrom(101),
                 DmrTalkerAliasIdentifier.create("ENGINE 4"), new MutableIdentifierCollection(),
                 TrunkedIdentityDomain.STANDARD, 2_000L));
@@ -562,34 +562,34 @@ class P25ActivityLogMapperTest
         nxdnConfig.setTransmissionMode(TransmissionMode.TYPE_D);
         nxdn.setDecodeConfiguration(nxdnConfig);
         nxdn.setRadresGuid("423e4567-e89b-12d3-a456-426614174000");
-        P25ActivityLogRecords.TalkerAliasUpdate nxdnUpdate = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.TalkerAliasUpdate nxdnUpdate = new ReceiverActivityMapper().map(
             new TrunkedTalkerAliasEvent(nxdn, Protocol.NXDN,
                 NXDNRadioIdentifier.createTypeDFrom(0x1234), new NXDNTalkerAliasIdentifier("UNIT 12"),
                 new MutableIdentifierCollection(), TrunkedIdentityDomain.NXDN_TYPE_D, 3_000L));
 
         assertNotNull(dmrUpdate);
-        assertEquals(P25ActivityLogRecords.IdentityDomain.STANDARD, dmrUpdate.identityDomain());
+        assertEquals(ReceiverActivityRecords.IdentityDomain.STANDARD, dmrUpdate.identityDomain());
         assertNotNull(nxdnUpdate);
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, nxdnUpdate.identityDomain());
+        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D, nxdnUpdate.identityDomain());
     }
 
     @Test
     void mapsUserAndResponseActivity()
     {
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
-        assertEquals(P25ActivityLogRecords.Action.JOIN, map(mapper, event(DecodeEventType.AFFILIATE, null)).action());
-        assertEquals(P25ActivityLogRecords.Action.REGISTER, map(mapper, event(DecodeEventType.REGISTER, null)).action());
-        assertEquals(P25ActivityLogRecords.Action.LOGOUT, map(mapper, event(DecodeEventType.DEREGISTER, null)).action());
-        assertEquals(P25ActivityLogRecords.Action.DENIAL,
+        assertEquals(ReceiverActivityRecords.Action.JOIN, map(mapper, event(DecodeEventType.AFFILIATE, null)).action());
+        assertEquals(ReceiverActivityRecords.Action.REGISTER, map(mapper, event(DecodeEventType.REGISTER, null)).action());
+        assertEquals(ReceiverActivityRecords.Action.LOGOUT, map(mapper, event(DecodeEventType.DEREGISTER, null)).action());
+        assertEquals(ReceiverActivityRecords.Action.DENIAL,
             map(mapper, event(DecodeEventType.RESPONSE, "DENIED BY SYSTEM")).action());
-        assertEquals(P25ActivityLogRecords.Action.BUSY,
+        assertEquals(ReceiverActivityRecords.Action.BUSY,
             map(mapper, event(DecodeEventType.RESPONSE, "SYSTEM BUSY")).action());
-        assertEquals(P25ActivityLogRecords.Action.QUEUED,
+        assertEquals(ReceiverActivityRecords.Action.QUEUED,
             map(mapper, event(DecodeEventType.RESPONSE, "QUEUED")).action());
-        assertEquals(P25ActivityLogRecords.Action.PATCH_CREATE,
+        assertEquals(ReceiverActivityRecords.Action.PATCH_CREATE,
             map(mapper, event(DecodeEventType.DYNAMIC_REGROUP, "ACTIVATE 56182")).action());
-        assertEquals(P25ActivityLogRecords.Action.GPS,
+        assertEquals(ReceiverActivityRecords.Action.GPS,
             map(mapper, event(DecodeEventType.GPS, "LOCATION")).action());
     }
 
@@ -609,18 +609,18 @@ class P25ActivityLogMapperTest
         event.setIdentifierCollection(identifiers);
         event.setDetails("ACCEPTED GROUP AFFILIATION");
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1),
             event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.JOIN, record.action());
+        assertEquals(ReceiverActivityRecords.Action.JOIN, record.action());
         assertEquals("1811524", record.sourceRadioId());
         assertEquals("56133", record.targetId());
         assertEquals("TALKGROUP", record.targetKind());
         assertNotNull(record.radioPresenceUpdate());
         assertEquals(1811524, record.radioPresenceUpdate().radioId());
         assertEquals(56133, record.radioPresenceUpdate().talkgroupId());
-        assertEquals(P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION,
+        assertEquals(ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION,
             record.radioPresenceUpdate().evidence());
         assertFalse(record.radioPresenceUpdate().cleared());
     }
@@ -639,15 +639,15 @@ class P25ActivityLogMapperTest
         event.setIdentifierCollection(identifiers);
         event.setDetails("ACCEPTED UNIT REGISTRATION");
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1),
             event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.REGISTER, record.action());
+        assertEquals(ReceiverActivityRecords.Action.REGISTER, record.action());
         assertNotNull(record.radioPresenceUpdate());
         assertEquals(1811524, record.radioPresenceUpdate().radioId());
         assertNull(record.radioPresenceUpdate().talkgroupId());
-        assertEquals(P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION,
+        assertEquals(ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION,
             record.radioPresenceUpdate().evidence());
         assertFalse(record.radioPresenceUpdate().cleared());
     }
@@ -666,7 +666,7 @@ class P25ActivityLogMapperTest
             APCO25FullyQualifiedTalkgroupIdentifier.createAny(56_133, 0xABCDE, 0x321, 1_200));
         event.setIdentifierCollection(identifiers);
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(
             channel(DecoderType.P25_PHASE1), event);
 
         assertNotNull(record);
@@ -687,11 +687,11 @@ class P25ActivityLogMapperTest
             APCO25Talkgroup.createAny(56133));
         event.setIdentifierCollection(identifiers);
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1),
             event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.DENIAL, record.action());
+        assertEquals(ReceiverActivityRecords.Action.DENIAL, record.action());
         assertNull(record.radioPresenceUpdate());
     }
 
@@ -700,15 +700,15 @@ class P25ActivityLogMapperTest
     {
         DecodeEvent event = event(DecodeEventType.CALL_GROUP, "VOICE");
 
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel(DecoderType.P25_PHASE1),
             event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.CALL, record.action());
+        assertEquals(ReceiverActivityRecords.Action.CALL, record.action());
         assertEquals("1811524", record.sourceRadioId());
         assertEquals("56138", record.targetId());
         assertEquals(854187500L, record.frequencyHertz());
-        assertEquals(P25ActivityLogRecords.P25IdentityState.ORDINARY, record.p25TargetIdentity().state());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY, record.p25TargetIdentity().state());
         assertTrue(record.dedupeKey() != null && !record.dedupeKey().isBlank());
         assertFalse(record.countedCall());
         assertNull(record.radioPresenceUpdate());
@@ -727,10 +727,10 @@ class P25ActivityLogMapperTest
             .duration(1_000L)
             .identifiers(identifiers)
             .build();
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
-        P25ActivityLogRecords.ActivityEvent activity = mapper.map(channel(DecoderType.P25_PHASE1), event);
-        P25ActivityLogRecords.ResolvedLogicalCall output = mapper.mapResolvedLogicalCall(
+        ReceiverActivityRecords.ActivityEvent activity = mapper.map(channel(DecoderType.P25_PHASE1), event);
+        ReceiverActivityRecords.ResolvedLogicalCall output = mapper.mapResolvedLogicalCall(
             trafficCompletedCall(1, identifiers, DecoderType.P25_PHASE1, 17,
                 new P25SiteIdentity(0x924, 0x649, 1, 1), 1_000L, 2_000L));
 
@@ -752,9 +752,9 @@ class P25ActivityLogMapperTest
             .duration(1_000L)
             .identifiers(zeroLocalIdentifiers)
             .build();
-        P25ActivityLogRecords.ActivityEvent zeroLocalActivity = mapper.map(
+        ReceiverActivityRecords.ActivityEvent zeroLocalActivity = mapper.map(
             channel(DecoderType.P25_PHASE1), zeroLocalEvent);
-        P25ActivityLogRecords.ResolvedLogicalCall zeroLocalOutput = mapper.mapResolvedLogicalCall(
+        ReceiverActivityRecords.ResolvedLogicalCall zeroLocalOutput = mapper.mapResolvedLogicalCall(
             trafficCompletedCall(2, zeroLocalIdentifiers, DecoderType.P25_PHASE1, 17,
                 new P25SiteIdentity(0x924, 0x649, 1, 1), 2_000L, 3_000L));
 
@@ -782,7 +782,7 @@ class P25ActivityLogMapperTest
             .identifiers(identifiers)
             .build();
 
-        P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.ActivityEvent activity = new ReceiverActivityMapper().map(
             channel(DecoderType.P25_PHASE1), event);
 
         assertNotNull(activity);
@@ -790,7 +790,7 @@ class P25ActivityLogMapperTest
         assertEquals(Form.PATCH_GROUP.name(), activity.targetKind());
         assertFullyQualified(activity.p25TargetIdentity(), 0xABCDE, 0x321, 1_201);
         assertEquals(List.of(56_180, 56_181), activity.patchMemberTalkgroupIds());
-        assertEquals(P25ActivityLogRecords.P25IdentityState.ORDINARY,
+        assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY,
             activity.p25PatchMemberIdentities().get(0).targetIdentity().state());
         assertFullyQualified(activity.p25PatchMemberIdentities().get(1).targetIdentity(),
             0xABCDE, 0x321, 1_202);
@@ -812,10 +812,10 @@ class P25ActivityLogMapperTest
         nxdnIdentifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
         CompletedAudioCall nxdn = trafficCompletedCall(11, nxdnIdentifiers, DecoderType.NXDN, 0, null,
             6_000L, 7_000L);
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
-        P25ActivityLogRecords.ResolvedLogicalCall dmrResolved = mapper.mapResolvedLogicalCall(dmr);
-        P25ActivityLogRecords.ResolvedLogicalCall nxdnResolved = mapper.mapResolvedLogicalCall(nxdn);
+        ReceiverActivityRecords.ResolvedLogicalCall dmrResolved = mapper.mapResolvedLogicalCall(dmr);
+        ReceiverActivityRecords.ResolvedLogicalCall nxdnResolved = mapper.mapResolvedLogicalCall(nxdn);
         assertNotNull(dmrResolved);
         assertEquals(Protocol.DMR.name(), dmrResolved.protocol());
         assertEquals(91, dmrResolved.destinationId());
@@ -823,9 +823,9 @@ class P25ActivityLogMapperTest
         assertTrue(dmrResolved.learnedP25Sites().isEmpty());
         assertNotNull(nxdnResolved);
         assertEquals(Protocol.NXDN.name(), nxdnResolved.protocol());
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, nxdnResolved.identityDomain());
-        assertNull(mapper.mapConventionalCallOutput(dmr, P25ActivityLogRecords.CallOutput.RECORDED));
-        assertNull(mapper.mapConventionalCallOutput(nxdn, P25ActivityLogRecords.CallOutput.STREAMED));
+        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D, nxdnResolved.identityDomain());
+        assertNull(mapper.mapConventionalCallOutput(dmr, ReceiverActivityRecords.CallOutput.RECORDED));
+        assertNull(mapper.mapConventionalCallOutput(nxdn, ReceiverActivityRecords.CallOutput.STREAMED));
     }
 
     @Test
@@ -846,15 +846,15 @@ class P25ActivityLogMapperTest
             VoiceCallQuality.EMPTY, CallLegId.from(callId), source, null);
         CompletedAudioCall call = new CompletedAudioCall(snapshot, List.of(new float[800]));
 
-        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(call,
-            P25ActivityLogRecords.CallOutput.RECORDED);
+        ReceiverActivityRecords.ConventionalCallOutput metric = new ReceiverActivityMapper().mapConventionalCallOutput(call,
+            ReceiverActivityRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
         assertEquals(3_600_123L, metric.callStartEpochMilliseconds());
         assertEquals(GUID, metric.guid());
         assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
         assertEquals(56138, metric.talkgroupId());
-        assertEquals(P25ActivityLogRecords.CallOutput.RECORDED, metric.output());
+        assertEquals(ReceiverActivityRecords.CallOutput.RECORDED, metric.output());
     }
 
     @Test
@@ -870,16 +870,16 @@ class P25ActivityLogMapperTest
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
+        ReceiverActivityRecords.ConventionalCallOutput metric = new ReceiverActivityMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.STREAMED);
+            ReceiverActivityRecords.CallOutput.STREAMED);
 
         assertNotNull(metric);
         assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
         assertNull(metric.guid());
         assertEquals(154_310_000L, metric.frequencyHertz());
         assertEquals(0, metric.talkgroupId());
-        assertEquals(P25ActivityLogRecords.CallOutput.STREAMED, metric.output());
+        assertEquals(ReceiverActivityRecords.CallOutput.STREAMED, metric.output());
     }
 
     @Test
@@ -895,14 +895,14 @@ class P25ActivityLogMapperTest
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
+        ReceiverActivityRecords.ConventionalCallOutput metric = new ReceiverActivityMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.RECORDED);
+            ReceiverActivityRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
         assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
         assertEquals(461_125_000L, metric.frequencyHertz());
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C, metric.identityDomain());
+        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C, metric.identityDomain());
     }
 
     @Test
@@ -924,21 +924,21 @@ class P25ActivityLogMapperTest
             .identifiers(identifiers)
             .build();
 
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
-        P25ActivityLogRecords.ActivityEvent activity = mapper.map(channel, signaling);
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        ReceiverActivityRecords.ActivityEvent activity = mapper.map(channel, signaling);
         AudioCallId callId = new AudioCallId(9L, 10L, 0);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), null, null);
-        P25ActivityLogRecords.ConventionalCallOutput output = mapper.mapConventionalCallOutput(
+        ReceiverActivityRecords.ConventionalCallOutput output = mapper.mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.RECORDED);
+            ReceiverActivityRecords.CallOutput.RECORDED);
 
         assertNotNull(activity);
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, activity.identityDomain());
+        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D, activity.identityDomain());
         assertNotNull(output);
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, output.identityDomain());
+        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D, output.identityDomain());
     }
 
     @Test
@@ -955,9 +955,9 @@ class P25ActivityLogMapperTest
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
+        ReceiverActivityRecords.ConventionalCallOutput metric = new ReceiverActivityMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.RECORDED);
+            ReceiverActivityRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
         assertEquals(1_822_001, metric.talkgroupId());
@@ -978,9 +978,9 @@ class P25ActivityLogMapperTest
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
+        ReceiverActivityRecords.ConventionalCallOutput metric = new ReceiverActivityMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.RECORDED);
+            ReceiverActivityRecords.CallOutput.RECORDED);
 
         assertNotNull(metric);
         assertEquals(CONFIGURATION_CONTEXT_KEY, metric.contextKey());
@@ -999,36 +999,36 @@ class P25ActivityLogMapperTest
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), null, null);
 
-        P25ActivityLogRecords.ConventionalCallOutput metric = new P25ActivityLogMapper().mapConventionalCallOutput(
+        ReceiverActivityRecords.ConventionalCallOutput metric = new ReceiverActivityMapper().mapConventionalCallOutput(
             new CompletedAudioCall(snapshot, List.of(new float[800])),
-            P25ActivityLogRecords.CallOutput.STREAMED);
+            ReceiverActivityRecords.CallOutput.STREAMED);
 
         assertNotNull(metric);
         assertEquals(56182, metric.talkgroupId());
         assertEquals("PATCH_GROUP", metric.targetKind());
         assertEquals(List.of(56180, 56181), metric.patchMemberTalkgroupIds());
-        assertEquals(P25ActivityLogRecords.CallOutput.STREAMED, metric.output());
+        assertEquals(ReceiverActivityRecords.CallOutput.STREAMED, metric.output());
     }
 
     @Test
     void mapsContextKindFromDecoderType()
     {
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
         Channel conventionalChannel = channel(DecoderType.P25_CONVENTIONAL);
         conventionalChannel.setAliasListName("Elyria PD");
         Channel trunkedChannel = channel(DecoderType.P25_PHASE1);
         trunkedChannel.setSite("Lorain");
         trunkedChannel.setAliasListName("MARCS-IP");
 
-        P25ActivityLogRecords.ActivityEvent conventional = mapper.map(conventionalChannel,
+        ReceiverActivityRecords.ActivityEvent conventional = mapper.map(conventionalChannel,
             event(DecodeEventType.CALL_GROUP, "VOICE", DecoderType.P25_PHASE1));
-        P25ActivityLogRecords.ActivityEvent trunked = mapper.map(trunkedChannel,
+        ReceiverActivityRecords.ActivityEvent trunked = mapper.map(trunkedChannel,
             event(DecodeEventType.CALL_GROUP, "VOICE", DecoderType.P25_CONVENTIONAL));
 
         assertNotNull(conventional);
         assertNotNull(trunked);
-        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, conventional.contextKind());
-        assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, trunked.contextKind());
+        assertEquals(ReceiverActivityRecords.ContextKind.CONVENTIONAL_P25, conventional.contextKind());
+        assertEquals(ReceiverActivityRecords.ContextKind.TRUNKED_SITE, trunked.contextKind());
         assertEquals("Test Channel", conventional.channelName());
         assertEquals("Elyria PD", conventional.aliasListName());
         assertTrue(conventional.configuredMetadataObserved());
@@ -1051,7 +1051,7 @@ class P25ActivityLogMapperTest
 
         Channel channel = channel(DecoderType.P25_PHASE1);
         channel.setRadresGuid(null);
-        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel, event);
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
         assertNull(record);
     }
 
@@ -1078,8 +1078,8 @@ class P25ActivityLogMapperTest
             List.of(new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 4, 1,
                 935_012_500L, 12_500L, -39_000_000L)));
 
-        P25ActivityLogRecords.SiteSnapshot record =
-            new P25ActivityLogMapper().map(new SiteMetadataEvent(channel, snapshot, 5000L));
+        ReceiverActivityRecords.SiteSnapshot record =
+            new ReceiverActivityMapper().map(new SiteMetadataEvent(channel, snapshot, 5000L));
 
         assertNotNull(record);
         assertEquals(GUID, record.guid());
@@ -1109,8 +1109,8 @@ class P25ActivityLogMapperTest
             new P25NetworkConfigurationSnapshot.CurrentSite(0x321, 0x456, 7, 9, 2, false),
             List.of(), List.of(), List.of(), List.of(), List.of());
 
-        P25ActivityLogRecords.SiteSnapshot record =
-            new P25ActivityLogMapper().map(new SiteMetadataEvent(channel, snapshot, 5_000L));
+        ReceiverActivityRecords.SiteSnapshot record =
+            new ReceiverActivityMapper().map(new SiteMetadataEvent(channel, snapshot, 5_000L));
 
         assertNotNull(record);
         assertEquals(0x321, record.systemId());
@@ -1128,7 +1128,7 @@ class P25ActivityLogMapperTest
         channel.setSite(" ");
         channel.setRadresGuid(GUID);
 
-        P25ActivityLogRecords.SiteSnapshot record = new P25ActivityLogMapper().map(
+        ReceiverActivityRecords.SiteSnapshot record = new ReceiverActivityMapper().map(
             new SiteMetadataEvent(channel, siteMetadataSnapshot(1_000L, true), 1_000L));
 
         assertNotNull(record);
@@ -1140,13 +1140,13 @@ class P25ActivityLogMapperTest
     {
         Channel channel = new Channel("Example Site", ChannelType.STANDARD);
         channel.setRadresGuid(GUID);
-        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
 
-        P25ActivityLogRecords.SiteSnapshot first =
+        ReceiverActivityRecords.SiteSnapshot first =
             mapper.map(new SiteMetadataEvent(channel, siteMetadataSnapshot(1_000L, true), 1_000L));
-        P25ActivityLogRecords.SiteSnapshot clockUpdate =
+        ReceiverActivityRecords.SiteSnapshot clockUpdate =
             mapper.map(new SiteMetadataEvent(channel, siteMetadataSnapshot(2_000L, true), 2_000L));
-        P25ActivityLogRecords.SiteSnapshot serviceUpdate =
+        ReceiverActivityRecords.SiteSnapshot serviceUpdate =
             mapper.map(new SiteMetadataEvent(channel, siteMetadataSnapshot(2_000L, false), 2_001L));
 
         assertEquals(first.snapshotHash(), clockUpdate.snapshotHash());
@@ -1206,7 +1206,7 @@ class P25ActivityLogMapperTest
             .build();
     }
 
-    private static P25ActivityLogRecords.ActivityEvent map(P25ActivityLogMapper mapper, DecodeEvent event)
+    private static ReceiverActivityRecords.ActivityEvent map(ReceiverActivityMapper mapper, DecodeEvent event)
     {
         return mapper.map(channel(DecoderType.P25_PHASE1), event);
     }
@@ -1278,10 +1278,10 @@ class P25ActivityLogMapperTest
             .build();
     }
 
-    private static void assertFullyQualified(P25ActivityLogRecords.P25TargetIdentity identity, int wacn,
+    private static void assertFullyQualified(ReceiverActivityRecords.P25TargetIdentity identity, int wacn,
                                              int system, int talkgroup)
     {
-        assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED, identity.state());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.STABLE_FULLY_QUALIFIED, identity.state());
         assertEquals(wacn, identity.homeWacn());
         assertEquals(system, identity.homeSystemId());
         assertEquals(talkgroup, identity.homeTalkgroupId());

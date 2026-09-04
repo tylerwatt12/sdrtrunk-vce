@@ -36,11 +36,11 @@ class P25GrantFactConfirmationTrackerTest
             confirmedBand);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activity(long timestamp)
+    private static ReceiverActivityRecords.ActivityEvent activity(long timestamp)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854_187_500L, "0-509", 0, false,
             null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25-1", null,
             false, null, null);

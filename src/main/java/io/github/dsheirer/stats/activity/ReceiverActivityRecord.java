@@ -12,9 +12,9 @@
 package io.github.dsheirer.stats.activity;
 
 /**
- * Marker for records written by the P25 activity logger.
+ * Marker for protocol-neutral records written by the receiver activity logger.
  */
-interface P25ActivityLogRecord
+interface ReceiverActivityRecord
 {
     long observedAtEpochMilliseconds();
 }

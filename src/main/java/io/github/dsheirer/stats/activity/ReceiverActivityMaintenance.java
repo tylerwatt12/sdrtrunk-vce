@@ -26,9 +26,9 @@ import org.apache.commons.io.FileUtils;
 /**
  * SQLite maintenance actions for the sdrtrunk-vce stats database.
  */
-public final class P25ActivityLogMaintenance
+public final class ReceiverActivityMaintenance
 {
-    private P25ActivityLogMaintenance()
+    private ReceiverActivityMaintenance()
     {
     }
 
@@ -120,9 +120,9 @@ public final class P25ActivityLogMaintenance
             case CHECK ->
             {
                 checkResult = quickCheck(connection);
-                P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_ms",
+                ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_ms",
                     Long.toString(System.currentTimeMillis()));
-                P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_result", checkResult);
+                ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_result", checkResult);
             }
             case RESET_STATS ->
             {
@@ -176,29 +176,29 @@ public final class P25ActivityLogMaintenance
         checkpoint(connection);
         optimize(connection);
         updateStatus(connection, "last_maintenance_ms");
-        P25ActivityLogSchema.updateStatus(connection, "last_maintenance_deleted_rows", Integer.toString(deleted));
+        ReceiverActivitySchema.updateStatus(connection, "last_maintenance_deleted_rows", Integer.toString(deleted));
         return deleted;
     }
 
     static int cleanupRetention(Connection connection, int retentionDays) throws SQLException
     {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
-        int deleted = P25ActivityLogSchema.deleteOlderThan(connection, cutoff) +
+        int deleted = ReceiverActivitySchema.deleteOlderThan(connection, cutoff) +
             TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total() +
             DmrActivitySchema.deleteOlderThan(connection, cutoff).total();
-        deleted += P25ActivityLogSchema.pruneInactiveTrunkedContexts(connection);
+        deleted += ReceiverActivitySchema.pruneInactiveTrunkedContexts(connection);
 
-        P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
-        P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
+        ReceiverActivitySchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
+        ReceiverActivitySchema.updateStatus(connection, "last_retention_cleanup_ms",
             Long.toString(System.currentTimeMillis()));
-        P25ActivityLogSchema.updateStatus(connection, "last_retention_deleted_rows", Integer.toString(deleted));
+        ReceiverActivitySchema.updateStatus(connection, "last_retention_deleted_rows", Integer.toString(deleted));
         return deleted;
     }
 
     private static int resetStats(Connection connection) throws SQLException
     {
         return inTransaction(connection, () -> {
-            int deleted = DmrActivitySchema.resetStats(connection) + P25ActivityLogSchema.resetStats(connection) +
+            int deleted = DmrActivitySchema.resetStats(connection) + ReceiverActivitySchema.resetStats(connection) +
                 TrunkedSiteSchema.resetStats(connection);
             updateStatus(connection, "last_stats_reset_ms");
             return deleted;
@@ -209,9 +209,9 @@ public final class P25ActivityLogMaintenance
     {
         return inTransaction(connection, () -> {
             int deleted = DmrActivitySchema.clearSiteStats(connection, guid) +
-                P25ActivityLogSchema.clearSiteStats(connection, guid) +
+                ReceiverActivitySchema.clearSiteStats(connection, guid) +
                 TrunkedSiteSchema.clearSiteStats(connection, guid);
-            P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
+            ReceiverActivitySchema.updateStatus(connection, "last_site_stats_clear_ms",
                 Long.toString(System.currentTimeMillis()));
             return deleted;
         });
@@ -294,7 +294,7 @@ public final class P25ActivityLogMaintenance
 
     private static void updateStatus(Connection connection, String key) throws SQLException
     {
-        P25ActivityLogSchema.updateStatus(connection, key, Long.toString(System.currentTimeMillis()));
+        ReceiverActivitySchema.updateStatus(connection, key, Long.toString(System.currentTimeMillis()));
     }
 
     private static long size(Path path) throws IOException

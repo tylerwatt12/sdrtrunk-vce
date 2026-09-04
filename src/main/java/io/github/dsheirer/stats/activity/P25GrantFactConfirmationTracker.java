@@ -36,8 +36,8 @@ class P25GrantFactConfirmationTracker
         new FactConfirmationPolicy(2, 1L, CANDIDATE_TTL_MILLISECONDS, false);
     private final Map<FactIdentity,StableFactTracker<Candidate,FactValue>> mTrackers = new HashMap<>();
 
-    synchronized P25ActivityLogRecords.ChannelFact observe(P25GrantObservationEvent event,
-                                                           P25ActivityLogRecords.ActivityEvent activity)
+    synchronized ReceiverActivityRecords.ChannelFact observe(P25GrantObservationEvent event,
+                                                           ReceiverActivityRecords.ActivityEvent activity)
     {
         Candidate candidate = candidate(event, activity);
 
@@ -64,9 +64,9 @@ class P25GrantFactConfirmationTracker
         return null;
     }
 
-    synchronized List<P25ActivityLogRecords.ChannelFact> confirm(P25TrafficChannelConfirmationEvent event)
+    synchronized List<ReceiverActivityRecords.ChannelFact> confirm(P25TrafficChannelConfirmationEvent event)
     {
-        List<P25ActivityLogRecords.ChannelFact> confirmed = new ArrayList<>();
+        List<ReceiverActivityRecords.ChannelFact> confirmed = new ArrayList<>();
 
         if(event == null || event.channel() == null || event.frequencyHertz() <= 0)
         {
@@ -85,7 +85,7 @@ class P25GrantFactConfirmationTracker
                 candidate.timeslot() == event.timeslot() &&
                 tracker.confirmCandidate(event.timestamp(), ignored -> true) == StableFactTracker.Result.PROMOTED)
             {
-                confirmed.add(new P25ActivityLogRecords.ChannelFact(event.timestamp(), candidate.fact().guid(),
+                confirmed.add(new ReceiverActivityRecords.ChannelFact(event.timestamp(), candidate.fact().guid(),
                     candidate.fact().lcn(), candidate.fact().frequencyHertz(), candidate.fact().serviceTag(),
                     candidate.fact().tdma(), candidate.fact().timeslots()));
             }
@@ -116,7 +116,7 @@ class P25GrantFactConfirmationTracker
     }
 
     private static Candidate candidate(P25GrantObservationEvent event,
-                                       P25ActivityLogRecords.ActivityEvent activity)
+                                       ReceiverActivityRecords.ActivityEvent activity)
     {
         ChannelTag serviceTag = serviceTag(activity);
 
@@ -132,13 +132,13 @@ class P25GrantFactConfirmationTracker
             activity.lcn().contains("TS");
         int timeslots = tdma ? 2 : 1;
         int timeslot = activity.timeslot() != null ? activity.timeslot() : 0;
-        P25ActivityLogRecords.ChannelFact fact = new P25ActivityLogRecords.ChannelFact(
+        ReceiverActivityRecords.ChannelFact fact = new ReceiverActivityRecords.ChannelFact(
             activity.observedAtEpochMilliseconds(), activity.guid(), activity.lcn(), activity.frequencyHertz(),
             serviceTag, tdma, timeslots);
         return new Candidate(fact, timeslot);
     }
 
-    private static ChannelTag serviceTag(P25ActivityLogRecords.ActivityEvent activity)
+    private static ChannelTag serviceTag(ReceiverActivityRecords.ActivityEvent activity)
     {
         if(activity == null || activity.eventType() == null)
         {
@@ -163,7 +163,7 @@ class P25GrantFactConfirmationTracker
     {
     }
 
-    private record Candidate(P25ActivityLogRecords.ChannelFact fact, int timeslot)
+    private record Candidate(ReceiverActivityRecords.ChannelFact fact, int timeslot)
     {
         private FactValue value()
         {

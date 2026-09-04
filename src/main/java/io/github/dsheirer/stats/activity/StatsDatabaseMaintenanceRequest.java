@@ -19,37 +19,37 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class StatsDatabaseMaintenanceRequest
 {
-    private final P25ActivityLogMaintenance.Operation mOperation;
+    private final ReceiverActivityMaintenance.Operation mOperation;
     private final String mSiteGuid;
-    private final CompletableFuture<P25ActivityLogMaintenance.Result> mResult = new CompletableFuture<>();
+    private final CompletableFuture<ReceiverActivityMaintenance.Result> mResult = new CompletableFuture<>();
 
-    private StatsDatabaseMaintenanceRequest(P25ActivityLogMaintenance.Operation operation, String siteGuid)
+    private StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation operation, String siteGuid)
     {
         mOperation = Objects.requireNonNull(operation, "Maintenance operation is required");
         mSiteGuid = siteGuid;
 
-        if(operation == P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS &&
+        if(operation == ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS &&
             (siteGuid == null || siteGuid.isBlank()))
         {
             throw new IllegalArgumentException("Site GUID is required");
         }
-        else if(operation != P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS && siteGuid != null)
+        else if(operation != ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS && siteGuid != null)
         {
             throw new IllegalArgumentException("Site GUID is only valid for CLEAR_SITE_STATS");
         }
     }
 
-    public static StatsDatabaseMaintenanceRequest forOperation(P25ActivityLogMaintenance.Operation operation)
+    public static StatsDatabaseMaintenanceRequest forOperation(ReceiverActivityMaintenance.Operation operation)
     {
         return new StatsDatabaseMaintenanceRequest(operation, null);
     }
 
     public static StatsDatabaseMaintenanceRequest clearSite(String guid)
     {
-        return new StatsDatabaseMaintenanceRequest(P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS, guid);
+        return new StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS, guid);
     }
 
-    public P25ActivityLogMaintenance.Operation operation()
+    public ReceiverActivityMaintenance.Operation operation()
     {
         return mOperation;
     }
@@ -59,7 +59,7 @@ public final class StatsDatabaseMaintenanceRequest
         return mSiteGuid;
     }
 
-    public CompletableFuture<P25ActivityLogMaintenance.Result> result()
+    public CompletableFuture<ReceiverActivityMaintenance.Result> result()
     {
         return mResult;
     }

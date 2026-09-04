@@ -14,7 +14,7 @@ package io.github.dsheirer.database;
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -54,7 +54,7 @@ public final class SdrTrunkDatabaseStartup
             configure(connection);
             SdrTrunkDatabaseSchema.create(connection);
             SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            P25ActivityLogSchema.create(connection);
+            ReceiverActivitySchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
             InitialAdminSetup.markRequired(connection);
@@ -65,7 +65,7 @@ public final class SdrTrunkDatabaseStartup
             DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);
             requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
-            P25ActivityLogSchema.validate(connection);
+            ReceiverActivitySchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
             DatabaseFormatCatalog.requireCurrent(connection);
@@ -80,7 +80,7 @@ public final class SdrTrunkDatabaseStartup
         {
             requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
-            P25ActivityLogSchema.validate(connection);
+            ReceiverActivitySchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
             DatabaseFormatCatalog.requireCurrent(connection);

@@ -331,7 +331,7 @@ class LogicalCallMonitorUiContractTest
         int coordinatorStop = application.indexOf("mAudioCallCoordinator.disposeAndAwait(");
         int streamingStop = application.indexOf("mAudioStreamingManager.stop();");
         int recordingStop = application.indexOf("mAudioRecordingManager.stop();");
-        int statisticsStop = application.indexOf("mP25ActivityLogService.disposeAndAwait(");
+        int statisticsStop = application.indexOf("mReceiverActivityService.disposeAndAwait(");
         int serviceClose = application.indexOf("mLogicalCallDiagnosticService.close();");
 
         assertTrue(serviceCreation >= 0 && serviceCreation < coordinatorCreation);

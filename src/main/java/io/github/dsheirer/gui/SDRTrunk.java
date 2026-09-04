@@ -69,7 +69,7 @@ import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
-import io.github.dsheirer.stats.activity.P25ActivityLogService;
+import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -150,7 +150,7 @@ public class SDRTrunk
     private boolean mResourceStatusVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
     private LogicalCallDiagnosticService mLogicalCallDiagnosticService;
-    private P25ActivityLogService mP25ActivityLogService;
+    private ReceiverActivityService mReceiverActivityService;
     private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
     private AudioRecordingManager mAudioRecordingManager;
@@ -240,7 +240,7 @@ public class SDRTrunk
 
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
-        mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
+        mReceiverActivityService = new ReceiverActivityService(mUserPreferences);
 
         mLogicalCallDiagnosticService = new LogicalCallDiagnosticService(
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
@@ -257,7 +257,7 @@ public class SDRTrunk
             mDecodeEventViewService.getDecodeEventListener());
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
+            mConfigurationManager.getChannelProcessingManager(), mReceiverActivityService,
             mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
             mConfigurationManager.getScanListModel());
 
@@ -281,7 +281,7 @@ public class SDRTrunk
         }
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
-            mStatsWebServerService::receive, mP25ActivityLogService::receiveResolvedCall,
+            mStatsWebServerService::receive, mReceiverActivityService::receiveResolvedCall,
             mLogicalCallDiagnosticService);
 
         if(mJavaFxWindowManager != null)
@@ -295,13 +295,13 @@ public class SDRTrunk
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
         mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
-            mP25ActivityLogService.getDecodeEventListener());
+            mReceiverActivityService.getDecodeEventListener());
         mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
-            mP25ActivityLogService.getControlChannelQualityListener());
+            mReceiverActivityService.getControlChannelQualityListener());
         mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
             mControlChannelQualityRegistry);
-        mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mP25ActivityLogService);
-        mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mP25ActivityLogService);
+        mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mReceiverActivityService);
+        mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mReceiverActivityService);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(new SiteControlChannelLearner(mConfigurationManager));
 
@@ -788,7 +788,7 @@ public class SDRTrunk
     {
         try
         {
-            mP25ActivityLogService.receiveRecordedCall(completedAudioCall);
+            mReceiverActivityService.receiveRecordedCall(completedAudioCall);
         }
         finally
         {
@@ -801,7 +801,7 @@ public class SDRTrunk
     {
         try
         {
-            mP25ActivityLogService.receiveStreamedCall(completedAudioCall);
+            mReceiverActivityService.receiveStreamedCall(completedAudioCall);
         }
         finally
         {
@@ -988,14 +988,14 @@ public class SDRTrunk
                 mLog.warn("Logical-call resolver did not fully stop before shutdown");
             }
         }
-        if(mP25ActivityLogService != null)
+        if(mReceiverActivityService != null)
         {
             channelProcessingManager.removeChannelDecodeEventListener(
-                mP25ActivityLogService.getDecodeEventListener());
+                mReceiverActivityService.getDecodeEventListener());
             channelProcessingManager.removeControlChannelQualityListener(
-                mP25ActivityLogService.getControlChannelQualityListener());
-            channelProcessingManager.removeSiteMetadataListener(mP25ActivityLogService);
-            channelProcessingManager.removeProtocolSiteMetadataListener(mP25ActivityLogService);
+                mReceiverActivityService.getControlChannelQualityListener());
+            channelProcessingManager.removeSiteMetadataListener(mReceiverActivityService);
+            channelProcessingManager.removeProtocolSiteMetadataListener(mReceiverActivityService);
         }
         if(mDecodeEventViewService != null)
         {
@@ -1010,14 +1010,14 @@ public class SDRTrunk
         }
         mAudioRecordingManager.stop();
 
-        if(mP25ActivityLogService != null)
+        if(mReceiverActivityService != null)
         {
             //Resolved calls can still be completing their recording and streaming work during the final drains.
             //Keep the statistics writer alive until those local output confirmations have crossed the observer
             //barrier. Disposing the service then drains the already-mapped database records.
-            boolean statisticsDrained = mP25ActivityLogService.awaitObservationDrain(
+            boolean statisticsDrained = mReceiverActivityService.awaitObservationDrain(
                 STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
-            boolean statisticsStopped = mP25ActivityLogService.disposeAndAwait(
+            boolean statisticsStopped = mReceiverActivityService.disposeAndAwait(
                 STATISTICS_SHUTDOWN_STOP_MILLISECONDS, TimeUnit.MILLISECONDS);
             databaseBoundarySafe &= statisticsDrained && statisticsStopped;
 

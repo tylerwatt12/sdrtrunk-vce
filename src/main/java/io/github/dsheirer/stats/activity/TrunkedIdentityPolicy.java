@@ -96,7 +96,7 @@ final class TrunkedIdentityPolicy
         return null;
     }
 
-    static boolean isDirectoryIdentity(int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    static boolean isDirectoryIdentity(int protocolCode, ReceiverActivityRecords.IdentityDomain identityDomain,
                                        int identityKindCode, Integer identifier)
     {
         return switch(identityKindCode)
@@ -109,14 +109,14 @@ final class TrunkedIdentityPolicy
         };
     }
 
-    static boolean isDirectoryTalkgroup(int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    static boolean isDirectoryTalkgroup(int protocolCode, ReceiverActivityRecords.IdentityDomain identityDomain,
                                         Integer talkgroup)
     {
         return TrunkedIdentityEligibility.isEligible(protocol(protocolCode), domain(identityDomain),
             Form.TALKGROUP, talkgroup);
     }
 
-    static boolean isDirectoryRadio(int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    static boolean isDirectoryRadio(int protocolCode, ReceiverActivityRecords.IdentityDomain identityDomain,
                                     Integer radio)
     {
         return TrunkedIdentityEligibility.isEligible(protocol(protocolCode), domain(identityDomain),
@@ -134,9 +134,9 @@ final class TrunkedIdentityPolicy
         };
     }
 
-    private static TrunkedIdentityDomain domain(P25ActivityLogRecords.IdentityDomain identityDomain)
+    private static TrunkedIdentityDomain domain(ReceiverActivityRecords.IdentityDomain identityDomain)
     {
-        return switch(identityDomain != null ? identityDomain : P25ActivityLogRecords.IdentityDomain.STANDARD)
+        return switch(identityDomain != null ? identityDomain : ReceiverActivityRecords.IdentityDomain.STANDARD)
         {
             case STANDARD -> TrunkedIdentityDomain.STANDARD;
             case NXDN_TYPE_C -> TrunkedIdentityDomain.NXDN_TYPE_C;
