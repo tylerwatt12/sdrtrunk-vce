@@ -12,6 +12,7 @@
 package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -37,7 +38,7 @@ import java.util.Map;
  * a synthetic conventional talkgroup or the same numeric talkgroup on another system from crossing a Hold or Avoid
  * boundary.</p>
  */
-public record CallPlaybackTarget(String key, Kind kind, String systemKey, Integer timeslot)
+public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, Integer timeslot)
 {
     public CallPlaybackTarget
     {
@@ -47,7 +48,7 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
         }
 
         key = key.strip();
-        systemKey = text(systemKey);
+        radioSystemKey = text(radioSystemKey);
 
         if(kind == Kind.CHANNEL_TIMESLOT && (timeslot == null || timeslot < 1 || timeslot > 2))
         {
@@ -72,12 +73,8 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
 
         CallLegSource source = snapshot.callLegSource();
         IdentifierCollection identifiers = snapshot.identifierCollection();
-        String configurationId = source != null ? text(source.channelConfigurationId()) : null;
-
-        if(configurationId == null)
-        {
-            configurationId = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY);
-        }
+        String configurationId = source != null ?
+            ChannelConfigurationKey.canonical(source.channelConfigurationId()) : null;
 
         if(configurationId == null)
         {
@@ -117,24 +114,25 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
             return null;
         }
 
-        String systemKey = systemKey(source, identifiers, protocol, configurationId);
+        String radioSystemKey = radioSystemKey(source, identifiers, protocol, configurationId);
 
-        if(systemKey == null)
+        if(radioSystemKey == null)
         {
             return null;
         }
 
-        String prefix = "system:" + systemKey + ':';
+        String prefix = "system:" + radioSystemKey + ':';
 
         if(target instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
         {
             return new CallPlaybackTarget(prefix + "talkgroup:home:" + fullyQualified.getWacn() + ':' +
-                fullyQualified.getSystem() + ':' + fullyQualified.getTalkgroup(), Kind.TALKGROUP, systemKey, null);
+                fullyQualified.getSystem() + ':' + fullyQualified.getTalkgroup(), Kind.TALKGROUP, radioSystemKey,
+                null);
         }
         else if(target instanceof NXDNFullyQualifiedTalkgroupIdentifier fullyQualified)
         {
             return new CallPlaybackTarget(prefix + "talkgroup:home:" + fullyQualified.getSystem() + ':' +
-                fullyQualified.getValue(), Kind.TALKGROUP, systemKey, null);
+                fullyQualified.getValue(), Kind.TALKGROUP, radioSystemKey, null);
         }
         else if(target instanceof PatchGroupIdentifier patchIdentifier)
         {
@@ -143,13 +141,13 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
             if(patch != null && patch.getPatchGroup() != null)
             {
                 return new CallPlaybackTarget(prefix + "patch-group:" + patch.getPatchGroup().getValue(),
-                    Kind.PATCH_GROUP, systemKey, null);
+                    Kind.PATCH_GROUP, radioSystemKey, null);
             }
         }
         else if(target instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
             return new CallPlaybackTarget(prefix + "radio:home:" + fullyQualified.getWacn() + ':' +
-                fullyQualified.getSystem() + ':' + fullyQualified.getRadio(), Kind.RADIO, systemKey, null);
+                fullyQualified.getSystem() + ':' + fullyQualified.getRadio(), Kind.RADIO, radioSystemKey, null);
         }
         else if(target != null && target.getValue() instanceof Number number)
         {
@@ -162,12 +160,12 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
 
             if(kind != null)
             {
-                return new CallPlaybackTarget(prefix + kind.keyPart() + ':' + number.intValue(), kind, systemKey,
-                    null);
+                return new CallPlaybackTarget(prefix + kind.keyPart() + ':' + number.intValue(), kind,
+                    radioSystemKey, null);
             }
         }
 
-        return new CallPlaybackTarget(prefix + "channel:" + configurationId, Kind.CHANNEL, systemKey, null);
+        return new CallPlaybackTarget(prefix + "channel:" + configurationId, Kind.CHANNEL, radioSystemKey, null);
     }
 
     public Map<String,Object> toMap(String label)
@@ -176,9 +174,9 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
         value.put("key", key);
         value.put("kind", kind.wireName());
 
-        if(systemKey != null)
+        if(radioSystemKey != null)
         {
-            value.put("system_key", systemKey);
+            value.put("radio_system_key", radioSystemKey);
         }
         if(timeslot != null)
         {
@@ -192,8 +190,8 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
         return Map.copyOf(value);
     }
 
-    private static String systemKey(CallLegSource source, IdentifierCollection identifiers, Protocol protocol,
-                                    String configurationId)
+    private static String radioSystemKey(CallLegSource source, IdentifierCollection identifiers, Protocol protocol,
+                                         String configurationId)
     {
         if(protocol == Protocol.APCO25)
         {
@@ -233,13 +231,6 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
             case AM, NBFM, P25_CONVENTIONAL -> ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL;
             default -> null;
         };
-    }
-
-    private static String identifierText(IdentifierCollection identifiers, IdentifierClass identifierClass,
-                                         Form form, Role role)
-    {
-        Identifier<?> identifier = identifiers != null ? identifiers.getIdentifier(identifierClass, form, role) : null;
-        return identifier != null && identifier.getValue() != null ? text(identifier.getValue().toString()) : null;
     }
 
     private static Protocol canonicalProtocol(Protocol protocol)

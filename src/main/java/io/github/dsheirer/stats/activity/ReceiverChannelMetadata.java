@@ -18,43 +18,42 @@ import io.github.dsheirer.stats.site.TrunkedSiteSchema;
  * Protocol-specific call and site facts remain on their existing records.
  */
 record ReceiverChannelMetadata(String configurationId, long firstSeenEpochMilliseconds,
-                               long lastSeenEpochMilliseconds, Integer nac, Integer rfss, Integer site,
-                               Long currentControlHertz)
+                               long lastSeenEpochMilliseconds)
 {
     static ReceiverChannelMetadata from(ReceiverActivityRecords.ActivityEvent activity)
     {
-        return new ReceiverChannelMetadata(activity.configurationId(), activity.observedAtEpochMilliseconds(),
-            activity.observedAtEpochMilliseconds(), activity.nac(), activity.rfss(), activity.site(), null);
+        return observed(activity.configurationId(), activity.observedAtEpochMilliseconds());
     }
 
     static ReceiverChannelMetadata from(ReceiverActivityRecords.SiteSnapshot snapshot)
     {
-        return new ReceiverChannelMetadata(snapshot.configurationId(), snapshot.observedAtEpochMilliseconds(),
-            snapshot.observedAtEpochMilliseconds(), snapshot.nac(), snapshot.rfss(), snapshot.site(),
-            snapshot.currentControlHertz());
+        return observed(snapshot.configurationId(), snapshot.observedAtEpochMilliseconds());
     }
 
     static ReceiverChannelMetadata from(ReceiverActivityRecords.DmrConventionalCall call)
     {
         return new ReceiverChannelMetadata(call.configurationId(), call.callStartEpochMilliseconds(),
-            call.callEndEpochMilliseconds(), null, null, null, null);
+            call.callEndEpochMilliseconds());
     }
 
     static ReceiverChannelMetadata from(ReceiverActivityRecords.NxdnConventionalCall call)
     {
         return new ReceiverChannelMetadata(call.configurationId(), call.callStartEpochMilliseconds(),
-            call.callEndEpochMilliseconds(), null, null, null, null);
+            call.callEndEpochMilliseconds());
     }
 
     static ReceiverChannelMetadata from(ReceiverActivityRecords.ResolvedLogicalCall call)
     {
-        return new ReceiverChannelMetadata(call.configurationId(), call.callStartEpochMilliseconds(),
-            call.callStartEpochMilliseconds(), null, null, null, null);
+        return observed(call.configurationId(), call.callStartEpochMilliseconds());
     }
 
     static ReceiverChannelMetadata from(TrunkedSiteSchema.Snapshot snapshot)
     {
-        return new ReceiverChannelMetadata(snapshot.configurationId(), snapshot.observedAtEpochMilliseconds(),
-            snapshot.observedAtEpochMilliseconds(), null, null, null, snapshot.currentControlHertz());
+        return observed(snapshot.configurationId(), snapshot.observedAtEpochMilliseconds());
+    }
+
+    private static ReceiverChannelMetadata observed(String configurationId, long observedAt)
+    {
+        return new ReceiverChannelMetadata(configurationId, observedAt, observedAt);
     }
 }

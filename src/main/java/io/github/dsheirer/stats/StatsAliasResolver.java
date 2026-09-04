@@ -23,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -65,7 +66,7 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<Integer,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
+        Map<String,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
         List<Rule> rules = loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source(identifierColumn, ignored -> true)));
@@ -81,7 +82,7 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<Integer,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
+        Map<String,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
         List<Rule> rules = loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source(identifierColumn, ignored -> true)));
@@ -96,7 +97,7 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<Integer,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
+        Map<String,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
         Snapshot snapshot = activitySnapshot(connection, rows, aliasLists);
 
         for(Map<String,Object> row: rows)
@@ -118,10 +119,10 @@ class StatsAliasResolver
     /**
      * Activity spans several protocols and ownership models. P25 trunked identities resolve against the alias lists
      * assigned to their system, while conventional P25 and all DMR/NXDN identities resolve only against the alias
-     * list assigned to the exact receiver context.
+     * list assigned to the exact saved channel.
      */
     private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot,
-                                        Map<Integer,Set<String>> aliasLists, boolean radio,
+                                        Map<String,Set<String>> aliasLists, boolean radio,
                                         String identifierColumn, String prefix)
     {
         String protocol = string(row.get("protocol"));
@@ -162,7 +163,7 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<Integer,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
+        Map<String,Set<String>> aliasLists = loadAliasLists(connection, systemKeys(rows));
         enrich(rows, loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source("radio_id", ignored -> true))), aliasLists,
@@ -191,7 +192,7 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<Integer,Set<String>> systemAliasLists = loadAliasLists(connection, systemKeys(rows));
+        Map<String,Set<String>> systemAliasLists = loadAliasLists(connection, systemKeys(rows));
         Snapshot snapshot = evidenceSnapshot(connection, rows, systemAliasLists);
         RuleIndex p25Talkgroups = snapshot.talkgroups();
         RuleIndex p25Radios = snapshot.radios();
@@ -230,7 +231,7 @@ class StatsAliasResolver
 
             if(trunkedP25)
             {
-                Integer systemKey = integer(row.get("system_key"));
+                String systemKey = string(row.get("radio_system_key"));
                 Set<String> aliasLists = systemKey != null ?
                     systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
                 best = rules.best(identifier, aliasLists);
@@ -316,7 +317,7 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves conventional DMR aliases only from the exact alias list assigned to each receiver context.
+     * Resolves conventional DMR aliases only from the exact alias list assigned to each saved channel.
      */
     void enrichDmrTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                              String prefix) throws SQLException
@@ -326,7 +327,7 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves conventional DMR aliases only from the exact alias list assigned to each receiver context.
+     * Resolves conventional DMR aliases only from the exact alias list assigned to each saved channel.
      */
     void enrichDmrRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                          String prefix) throws SQLException
@@ -336,7 +337,7 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves NXDN aliases only from the exact alias list assigned to each receiver context.
+     * Resolves NXDN aliases only from the exact alias list assigned to each saved channel.
      */
     void enrichNxdnTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                               String prefix) throws SQLException
@@ -346,7 +347,7 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves NXDN aliases only from the exact alias list assigned to each receiver context.
+     * Resolves NXDN aliases only from the exact alias list assigned to each saved channel.
      */
     void enrichNxdnRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                           String prefix) throws SQLException
@@ -391,7 +392,7 @@ class StatsAliasResolver
         enrichByAssignedAliasList(rows, rules, identifierColumn, prefix);
     }
 
-    private void enrich(List<Map<String,Object>> rows, List<Rule> rules, Map<Integer,Set<String>> aliasLists,
+    private void enrich(List<Map<String,Object>> rows, List<Rule> rules, Map<String,Set<String>> aliasLists,
                         String identifierColumn, String prefix)
     {
         RuleIndex index = index(rules);
@@ -406,11 +407,11 @@ class StatsAliasResolver
      * Bulk table exports can contain tens of thousands of identities.  Index exact rules once so each row only
      * evaluates rules for its identifier plus the comparatively small set of ranged rules.
      */
-    private void enrich(Map<String,Object> row, RuleIndex index, Map<Integer,Set<String>> aliasListsBySystem,
+    private void enrich(Map<String,Object> row, RuleIndex index, Map<String,Set<String>> aliasListsBySystem,
                         String identifierColumn, String prefix)
     {
         Integer identifier = integer(row.get(identifierColumn));
-        Integer systemKey = integer(row.get("system_key"));
+        String systemKey = string(row.get("radio_system_key"));
 
         if(identifier == null)
         {
@@ -478,7 +479,7 @@ class StatsAliasResolver
     }
 
     private Snapshot activitySnapshot(Connection connection, List<Map<String,Object>> rows,
-                                      Map<Integer,Set<String>> systemAliasLists) throws SQLException
+                                      Map<String,Set<String>> systemAliasLists) throws SQLException
     {
         Predicate<Map<String,Object>> talkgroupTarget = row -> {
             Integer kind = integer(row.get("target_kind_code"));
@@ -512,7 +513,7 @@ class StatsAliasResolver
     }
 
     private Snapshot evidenceSnapshot(Connection connection, List<Map<String,Object>> rows,
-                                      Map<Integer,Set<String>> systemAliasLists) throws SQLException
+                                      Map<String,Set<String>> systemAliasLists) throws SQLException
     {
         Predicate<Map<String,Object>> talkgroup = row -> !Integer.valueOf(2)
             .equals(integer(row.get("identity_kind_code")));
@@ -557,7 +558,7 @@ class StatsAliasResolver
             RuleIndex.empty());
     }
 
-    private Map<Integer,Set<String>> loadAliasLists(Connection connection, Set<Integer> systemKeys)
+    private Map<String,Set<String>> loadAliasLists(Connection connection, Set<String> systemKeys)
         throws SQLException
     {
         if(systemKeys.isEmpty())
@@ -565,27 +566,24 @@ class StatsAliasResolver
             return Map.of();
         }
 
-        Map<Integer,Set<String>> aliasLists = new HashMap<>();
+        Map<String,Set<String>> aliasLists = new HashMap<>();
         Set<String> loadedListNames = new HashSet<>();
         AliasListPairBudget pairBudget = new AliasListPairBudget(MAX_SYSTEM_ALIAS_LIST_PAIRS);
-        List<Integer> keys = List.copyOf(systemKeys);
+        List<String> keys = List.copyOf(systemKeys);
 
         for(int offset = 0; offset < keys.size(); offset += QUERY_VALUE_CHUNK)
         {
-            List<Integer> chunk = keys.subList(offset, Math.min(keys.size(), offset + QUERY_VALUE_CHUNK));
+            List<String> chunk = keys.subList(offset, Math.min(keys.size(), offset + QUERY_VALUE_CHUNK));
             String sql = """
                 WITH requested(system_key) AS (VALUES %s)
-                SELECT DISTINCT scope.p25_system_key AS system_key, list.name AS alias_list_name
+                SELECT DISTINCT system.system_key, list.name AS alias_list_name
                 FROM requested
-                JOIN radio_system scope ON scope.p25_system_key = requested.system_key
-                JOIN radio_system_context ownership INDEXED BY idx_radio_system_context_scope
-                  ON ownership.radio_system_id = scope.radio_system_id
-                JOIN receiver_channel context ON context.id = ownership.channel_id
-                JOIN p25_site_snapshot site INDEXED BY idx_p25_site_snapshot_identity
-                  ON site.guid = context.guid AND site.system_key = scope.p25_system_key
-                JOIN alias_list list ON list.name = site.alias_list_name COLLATE NOCASE
-                WHERE scope.protocol_code = 1
-                  AND trim(site.alias_list_name) <> ''
+                JOIN radio_system system ON system.system_key = requested.system_key
+                JOIN receiver_channel channel ON channel.radio_system_id = system.id
+                JOIN configuration_channel configuration
+                  ON configuration.configuration_id = channel.configuration_id
+                JOIN alias_list list ON list.id = configuration.alias_list_id
+                WHERE system.protocol_code = 1
                 LIMIT ?
                 """.formatted(valuesPlaceholders(chunk.size()));
 
@@ -598,7 +596,7 @@ class StatsAliasResolver
                 {
                     while(resultSet.next())
                     {
-                        int systemKey = resultSet.getInt("system_key");
+                        String systemKey = resultSet.getString("system_key");
                         String aliasListName = resultSet.getString("alias_list_name");
                         pairBudget.add(systemKey, aliasListName);
                         loadedListNames.add(aliasListName);
@@ -611,7 +609,7 @@ class StatsAliasResolver
             }
         }
 
-        Map<Integer,Set<String>> immutable = new HashMap<>();
+        Map<String,Set<String>> immutable = new HashMap<>();
         aliasLists.forEach((key, value) -> immutable.put(key, Set.copyOf(value)));
         return Map.copyOf(immutable);
     }
@@ -700,13 +698,13 @@ class StatsAliasResolver
         }
     }
 
-    private static Set<Integer> systemKeys(List<Map<String,Object>> rows)
+    private static Set<String> systemKeys(List<Map<String,Object>> rows)
     {
-        Set<Integer> keys = new LinkedHashSet<>();
+        Set<String> keys = new LinkedHashSet<>();
 
         for(Map<String,Object> row: rows)
         {
-            Integer key = integer(row.get("system_key"));
+            String key = string(row.get("radio_system_key"));
 
             if(key != null)
             {
@@ -754,14 +752,14 @@ class StatsAliasResolver
     }
 
     private static Set<String> systemAliasLists(Map<String,Object> row,
-                                                Map<Integer,Set<String>> aliasListsBySystem)
+                                                Map<String,Set<String>> aliasListsBySystem)
     {
-        Integer systemKey = integer(row.get("system_key"));
+        String systemKey = string(row.get("radio_system_key"));
         return systemKey != null ? aliasListsBySystem.getOrDefault(systemKey, Set.of()) : Set.of();
     }
 
     private static Set<String> p25AliasLists(Map<String,Object> row,
-                                             Map<Integer,Set<String>> aliasListsBySystem)
+                                             Map<String,Set<String>> aliasListsBySystem)
     {
         Set<String> system = systemAliasLists(row, aliasListsBySystem);
         return !system.isEmpty() ? system : assignedAliasList(row);
@@ -866,7 +864,7 @@ class StatsAliasResolver
         return value.toLowerCase(Locale.ROOT);
     }
 
-    private record SystemAliasListPair(int systemKey, String aliasListName) {}
+    private record SystemAliasListPair(String systemKey, String aliasListName) {}
 
     private record IdentifierSource(String column, Predicate<Map<String,Object>> include) {}
 
@@ -929,7 +927,7 @@ class StatsAliasResolver
             return mMaximum - mPairs.size() + 1;
         }
 
-        void add(int systemKey, String aliasListName)
+        void add(String systemKey, String aliasListName)
         {
             if(mPairs.add(new SystemAliasListPair(systemKey, aliasListName)) && mPairs.size() > mMaximum)
             {
@@ -999,13 +997,26 @@ class StatsAliasResolver
 
         private Rule best(int identifier, Set<String> aliasLists)
         {
+            if(aliasLists.isEmpty())
+            {
+                return null;
+            }
+
             Rule best = null;
 
             for(String aliasList: aliasLists)
             {
                 Rule candidate = best(identifier, aliasList);
 
-                if(candidate != null && (best == null || candidate.isPreferredAssignedListTo(best)))
+                //A shared P25 system can be received by channels assigned to different Alias Lists.  A system-level
+                //label is safe only when every applicable list resolves to the same effective alias.  Missing or
+                //conflicting definitions deliberately leave the label blank rather than depending on set order.
+                if(candidate == null || best != null && !candidate.hasSamePresentationAs(best))
+                {
+                    return null;
+                }
+
+                if(best == null || candidate.aliasId() < best.aliasId())
                 {
                     best = candidate;
                 }
@@ -1065,6 +1076,13 @@ class StatsAliasResolver
     private record Rule(Integer value, Integer minimum, Integer maximum, boolean ranged, String name,
                         String description, String group, int color, String aliasList, long aliasId)
     {
+        private boolean hasSamePresentationAs(Rule other)
+        {
+            return other != null && Objects.equals(name, other.name) &&
+                Objects.equals(description, other.description) && Objects.equals(group, other.group) &&
+                color == other.color;
+        }
+
         boolean isPreferredAssignedListTo(Rule other)
         {
             int specificity = ranged ? 0 : 1;

@@ -206,7 +206,7 @@ class StatsLiveServiceTest
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, null, null, "NBFM", null, null, "CONVENTIONAL");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
-            "", "", "Conventional", null, null, false, true, List.of(), List.of(row));
+            "", "", "Conventional", null, false, true, List.of(), List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

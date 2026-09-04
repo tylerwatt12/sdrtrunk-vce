@@ -6409,11 +6409,12 @@ class StatsWebDatabaseTest
                                                                  List<TrunkedSiteSchema.Channel> channels,
                                                                  List<TrunkedSiteSchema.Neighbor> neighbors)
     {
-        return new TrunkedSiteSchema.Snapshot(observedAt, guid, "hash-" + guid, protocol, variant,
-            domain, configuredSystem, channelName, "County", protocol == TrunkedSiteSchema.PROTOCOL_DMR ?
-            "DMR" : "NXDN", network, system, site, ran, null, null, null, null, 1, 1, null, 0, null,
-            channels.isEmpty() ? null : channels.getFirst().frequencyHertz(),
-            channels.isEmpty() ? null : channels.getFirst().frequencyHertz(), channels, neighbors);
+        boolean dmr = protocol == TrunkedSiteSchema.PROTOCOL_DMR;
+        Long frequency = channels.isEmpty() ? null : channels.getFirst().frequencyHertz();
+        return new TrunkedSiteSchema.Snapshot(observedAt, guid, "a".repeat(64), protocol, variant,
+            dmr ? 0 : domain, network, dmr ? null : system, site, dmr ? null : ran,
+            dmr ? 1 : null, dmr ? 1 : null, 1, dmr ? 1 : null, null, null, null,
+            0, null, frequency, frequency, channels, neighbors);
     }
 
     private static void insertQuality(Connection connection, String guid, long frequency, long observedAt,

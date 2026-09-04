@@ -40,13 +40,13 @@ import org.junit.jupiter.api.Test;
 
 class ControlChannelQualityMonitorTest
 {
-    private static final String GUID = "123e4567-e89b-12d3-a456-426614174000";
+    private static final String CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
 
     @Test
     void publishesRollingSignalAndDecodeHealthAndClearsOnRotation()
     {
         Channel channel = new Channel("Test Site", ChannelType.STANDARD);
-        channel.setRadioResolveId(GUID);
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
         List<ControlChannelQualitySnapshot> snapshots = new CopyOnWriteArrayList<>();
         ControlChannelQualityMonitor monitor =
@@ -62,7 +62,7 @@ class ControlChannelQualityMonitorTest
 
         ControlChannelQualitySnapshot snapshot = snapshots.getLast();
         assertTrue(snapshot.active());
-        assertEquals(GUID, snapshot.guid());
+        assertEquals(CONFIGURATION_ID, snapshot.configurationId());
         assertEquals(856_137_500L, snapshot.frequencyHz());
         assertEquals(-20.0, snapshot.signalDbfs());
         assertEquals(-12.596, snapshot.averageSignalDbfs(), 0.001);
@@ -795,7 +795,7 @@ class ControlChannelQualityMonitorTest
     private static Channel channel(io.github.dsheirer.module.decode.config.DecodeConfiguration config)
     {
         Channel channel = new Channel("Test Site", ChannelType.STANDARD);
-        channel.setRadioResolveId(GUID);
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setDecodeConfiguration(config);
         return channel;
     }

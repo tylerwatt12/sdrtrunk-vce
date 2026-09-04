@@ -72,7 +72,7 @@ class StatsLiveServiceBoundsTest
             List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch")),
             new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)), "TRAFFIC");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", null, null, true, true,
+            "Primary", null, true, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
                 new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")), List.of(row));
 
@@ -209,7 +209,7 @@ class StatsLiveServiceBoundsTest
             List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row));
 
         try
         {
@@ -243,7 +243,7 @@ class StatsLiveServiceBoundsTest
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("CONTROL"), null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row));
 
         try
         {
@@ -326,7 +326,7 @@ class StatsLiveServiceBoundsTest
             try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
             {
                 ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("blocked", "Live", "System", "Site",
-                    "Control", null, null, true, true, List.of(),
+                    "Control", null, true, true, List.of(),
                     List.of(activityRow("blocked", null, blockingTags, null)));
                 service.receiveChannelActivity(
                     new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, blocked, 1));
@@ -402,7 +402,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
-            "Control", null, null, true, true, List.of(), rows);
+            "Control", null, true, true, List.of(), rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

@@ -67,10 +67,10 @@ class ApplicationDatabaseMigratorTest
         {
             assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
                 metadata(connection, "alias_schema_version"));
-            assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
+            assertEquals("30",
                 metadata(connection, "p25_activity_schema_version"));
             assertEquals("2", metadata(connection, "trunked_site_schema_version"));
-            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            assertEquals("1", metadata(connection, "dmr_activity_schema_version"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
         }
     }
@@ -152,7 +152,7 @@ class ApplicationDatabaseMigratorTest
             SELECT alias_list_name || ':' || json_extract(config_json, '$.aliasListName')
             FROM configuration_channel WHERE id=1
             """));
-        assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
+        assertEquals("30",
             metadata(database, "p25_activity_schema_version"));
     }
 
@@ -177,7 +177,7 @@ class ApplicationDatabaseMigratorTest
             FROM alias_list_unmatched_talkgroup_scan_list_membership
             WHERE alias_list_id=(SELECT id FROM alias_list WHERE name='Default P25')
             """));
-        assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
+        assertEquals("30",
             metadata(database, "p25_activity_schema_version"));
     }
 
@@ -244,7 +244,7 @@ class ApplicationDatabaseMigratorTest
         {
             assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
                 metadata(connection, "alias_schema_version"));
-            assertEquals(Integer.toString(ReceiverActivitySchema.SCHEMA_VERSION),
+            assertEquals("30",
                 metadata(connection, "p25_activity_schema_version"));
             assertEquals("Default:1:1", scalar(connection, """
                 SELECT name || ':' || published || ':' || is_default
@@ -345,7 +345,7 @@ class ApplicationDatabaseMigratorTest
                 WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
                 """));
             assertFalse("1234".equals(metadata(connection,
-                ReceiverActivitySchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY)));
+                ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY)));
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
@@ -635,7 +635,7 @@ class ApplicationDatabaseMigratorTest
                 settings.path("directories").path("directory.streaming").asText());
             assertEquals(source.resolve("private/leave-alone.txt").toString(),
                 settings.path("directories").path("unrecognized.absolute.path").asText());
-            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            assertEquals("1", metadata(connection, "dmr_activity_schema_version"));
         }
     }
 
@@ -653,7 +653,7 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database))
         {
-            assertEquals(null, metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            assertEquals(null, metadata(connection, "dmr_activity_schema_version"));
         }
     }
 
@@ -668,7 +668,7 @@ class ApplicationDatabaseMigratorTest
             statement.executeUpdate("UPDATE database_metadata SET value='3' WHERE key='alias_schema_version'");
             statement.executeUpdate("UPDATE database_metadata SET value='21' WHERE key='p25_activity_schema_version'");
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
+                "dmr_activity_schema_version'");
         }
 
         CommandResult result = run(database);
@@ -679,7 +679,7 @@ class ApplicationDatabaseMigratorTest
         {
             assertEquals("3", metadata(connection, "alias_schema_version"));
             assertEquals("21", metadata(connection, "p25_activity_schema_version"));
-            assertEquals(null, metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            assertEquals(null, metadata(connection, "dmr_activity_schema_version"));
         }
     }
 
@@ -752,7 +752,7 @@ class ApplicationDatabaseMigratorTest
             assertEquals("{invalid", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
-            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            assertEquals("1", metadata(connection, "dmr_activity_schema_version"));
         }
     }
 
@@ -955,7 +955,7 @@ class ApplicationDatabaseMigratorTest
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
+                "dmr_activity_schema_version'");
         }
     }
 

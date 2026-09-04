@@ -126,7 +126,7 @@ class DMRDecoderStateConventionalCallTest
         assertEquals(1_234_567, event.sourceRadioId());
         assertNull(event.targetRadioId());
         assertTrue(event.encrypted());
-        assertEquals("County DMR", event.aliasListName());
+        assertEquals(channel.getConfigurationId(), event.channelConfigurationId());
     }
 
     @Test

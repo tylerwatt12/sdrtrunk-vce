@@ -63,8 +63,7 @@ class NXDNDecoderStateConventionalCallTest
         assertEquals(101, event.sourceRadioId());
         assertNull(event.targetRadioId());
         assertTrue(event.encrypted());
-        assertEquals("County NXDN", event.aliasListName());
-        assertEquals("123e4567-e89b-12d3-a456-426614174000", event.guid());
+        assertEquals(channel.getConfigurationId(), event.channelConfigurationId());
     }
 
     @Test

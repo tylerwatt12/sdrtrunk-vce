@@ -36,7 +36,7 @@ class SdrTrunkDatabaseStartupTest
     Path mTemporaryFolder;
 
     @Test
-    void createsAndValidatesCurrentDmrSchema() throws Exception
+    void createsAndValidatesCurrentDmrSchemaWithoutASecondVersionMarker() throws Exception
     {
         Path database = mTemporaryFolder.resolve("new-global.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -49,8 +49,7 @@ class SdrTrunkDatabaseStartupTest
                 SELECT value FROM database_metadata WHERE key = 'dmr_activity_schema_version'
                 """))
         {
-            assertTrue(resultSet.next());
-            assertEquals(Integer.toString(DmrActivitySchema.SCHEMA_VERSION), resultSet.getString(1));
+            assertFalse(resultSet.next());
             DmrActivitySchema.validate(connection);
         }
     }
@@ -186,12 +185,10 @@ class SdrTrunkDatabaseStartupTest
         {
             statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RETENTION_INDEX);
             statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RETENTION_INDEX);
-            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_CONTEXT_INDEX);
-            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_CONTEXT_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RECEIVER_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RECEIVER_INDEX);
             statement.executeUpdate("DROP TABLE " + DmrActivitySchema.TALKGROUP_TABLE);
             statement.executeUpdate("DROP TABLE " + DmrActivitySchema.RADIO_TABLE);
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
         }
 
         assertThrows(java.sql.SQLException.class,

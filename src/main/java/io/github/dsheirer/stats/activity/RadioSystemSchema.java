@@ -56,7 +56,8 @@ final class RadioSystemSchema
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
         .toList();
     private static final String ACTION_COUNT_DEFINITIONS = ACTION_COUNT_COLUMNS.stream()
-        .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(" + column + " >= 0)")
+        .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
+            ") = 'integer' AND " + column + " >= 0)")
         .collect(Collectors.joining(",\n                    "));
     private static final String ACTION_INSERT_COLUMNS = String.join(", ", ACTION_COUNT_COLUMNS);
     private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
@@ -154,15 +155,20 @@ final class RadioSystemSchema
             CREATE TABLE IF NOT EXISTS radio_system (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 system_key TEXT NOT NULL UNIQUE CHECK(length(trim(system_key)) > 0),
-                protocol_code INTEGER NOT NULL CHECK(protocol_code IN (1, 3, 4)),
-                identity_domain_code INTEGER NOT NULL DEFAULT 0 CHECK(identity_domain_code IN (0, 1, 2)),
-                p25_wacn INTEGER CHECK(p25_wacn IS NULL OR p25_wacn BETWEEN 0 AND 1048575),
-                p25_system_id INTEGER CHECK(p25_system_id IS NULL OR p25_system_id BETWEEN 0 AND 4095),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                protocol_code INTEGER NOT NULL
+                    CHECK(typeof(protocol_code) = 'integer' AND protocol_code IN (1, 3, 4)),
+                address_domain_code INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(address_domain_code) = 'integer' AND address_domain_code IN (0, 1, 2)),
+                p25_wacn INTEGER CHECK(p25_wacn IS NULL OR
+                    (typeof(p25_wacn) = 'integer' AND p25_wacn BETWEEN 0 AND 1048575)),
+                p25_system_id INTEGER CHECK(p25_system_id IS NULL OR
+                    (typeof(p25_system_id) = 'integer' AND p25_system_id BETWEEN 0 AND 4095)),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL
+                    CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 UNIQUE(p25_wacn, p25_system_id),
                 CHECK(
-                    (protocol_code = 1 AND identity_domain_code = 0 AND (
+                    (protocol_code = 1 AND address_domain_code = 0 AND (
                         (p25_wacn IS NOT NULL AND p25_system_id IS NOT NULL
                             AND system_key = printf('p25:%05x:%03x', p25_wacn, p25_system_id))
                         OR
@@ -178,7 +184,7 @@ final class RadioSystemSchema
                             AND replace(substr(system_key, 13), '-', '') NOT GLOB '*[^0-9a-f]*')
                     ))
                     OR
-                    (protocol_code = 3 AND identity_domain_code = 0
+                    (protocol_code = 3 AND address_domain_code = 0
                         AND p25_wacn IS NULL AND p25_system_id IS NULL
                         AND length(system_key) = 48
                         AND substr(system_key, 1, 12) = 'dmr:channel:'
@@ -210,34 +216,52 @@ final class RadioSystemSchema
         return """
             CREATE TABLE IF NOT EXISTS radio_system_identity_summary (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (1, 2, 3)),
-                identity_id INTEGER NOT NULL CHECK(identity_id > 0),
+                identity_kind_code INTEGER NOT NULL
+                    CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (1, 2, 3)),
+                identity_id INTEGER NOT NULL CHECK(typeof(identity_id) = 'integer' AND identity_id > 0),
                 p25_identity_state_code INTEGER NOT NULL DEFAULT 0
-                    CHECK(p25_identity_state_code IN (0, 1, 2, 3)),
-                p25_home_wacn INTEGER,
-                p25_home_system_id INTEGER,
-                p25_home_talkgroup_id INTEGER,
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
+                    CHECK(typeof(p25_identity_state_code) = 'integer' AND p25_identity_state_code IN (0, 1, 2, 3)),
+                p25_home_wacn INTEGER CHECK(p25_home_wacn IS NULL OR typeof(p25_home_wacn) = 'integer'),
+                p25_home_system_id INTEGER
+                    CHECK(p25_home_system_id IS NULL OR typeof(p25_home_system_id) = 'integer'),
+                p25_home_talkgroup_id INTEGER
+                    CHECK(p25_home_talkgroup_id IS NULL OR typeof(p25_home_talkgroup_id) = 'integer'),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL
+                    CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 %s,
-                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
-                source_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(source_logical_call_count >= 0),
-                target_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(target_logical_call_count >= 0),
-                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
-                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
-                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
-                last_counterpart_kind_code INTEGER CHECK(last_counterpart_kind_code IN (1, 2, 3)),
-                last_counterpart_id INTEGER CHECK(last_counterpart_id > 0),
-                last_encryption_algorithm_id INTEGER,
-                last_encryption_key_id INTEGER,
+                logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(logical_call_count) = 'integer' AND logical_call_count >= 0),
+                source_logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(source_logical_call_count) = 'integer' AND source_logical_call_count >= 0),
+                target_logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(target_logical_call_count) = 'integer' AND target_logical_call_count >= 0),
+                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(recorded_output_count) = 'integer' AND recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(streamed_output_count) = 'integer' AND streamed_output_count >= 0),
+                last_counterpart_kind_code INTEGER CHECK(last_counterpart_kind_code IS NULL OR
+                    (typeof(last_counterpart_kind_code) = 'integer' AND last_counterpart_kind_code IN (1, 2, 3))),
+                last_counterpart_id INTEGER CHECK(last_counterpart_id IS NULL OR
+                    (typeof(last_counterpart_id) = 'integer' AND last_counterpart_id > 0)),
+                last_encryption_algorithm_id INTEGER CHECK(last_encryption_algorithm_id IS NULL OR
+                    (typeof(last_encryption_algorithm_id) = 'integer' AND last_encryption_algorithm_id >= 0)),
+                last_encryption_key_id INTEGER CHECK(last_encryption_key_id IS NULL OR
+                    (typeof(last_encryption_key_id) = 'integer' AND last_encryption_key_id >= 0)),
                 last_talker_alias TEXT,
-                last_talker_alias_seen_ms INTEGER,
+                last_talker_alias_seen_ms INTEGER CHECK(last_talker_alias_seen_ms IS NULL OR
+                    (typeof(last_talker_alias_seen_ms) = 'integer' AND last_talker_alias_seen_ms > 0)),
                 PRIMARY KEY(radio_system_id, identity_kind_code, identity_id),
                 CHECK(
                     (last_counterpart_kind_code IS NULL AND last_counterpart_id IS NULL)
                     OR
                     (last_counterpart_kind_code IS NOT NULL AND last_counterpart_id IS NOT NULL)
                 ),
+                CHECK((last_talker_alias IS NULL AND last_talker_alias_seen_ms IS NULL) OR
+                    (last_talker_alias IS NOT NULL AND length(trim(last_talker_alias)) > 0
+                        AND last_talker_alias_seen_ms IS NOT NULL)),
                 CHECK(
                     (p25_identity_state_code = 2
                         AND p25_home_wacn BETWEEN 0 AND 1048575
@@ -263,16 +287,24 @@ final class RadioSystemSchema
         return """
             CREATE TABLE IF NOT EXISTS p25_zero_local_fq_talkgroup_summary (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                home_wacn INTEGER NOT NULL CHECK(home_wacn BETWEEN 0 AND 1048575),
-                home_system_id INTEGER NOT NULL CHECK(home_system_id BETWEEN 0 AND 4095),
-                home_talkgroup_id INTEGER NOT NULL CHECK(home_talkgroup_id BETWEEN 1 AND 65534),
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
+                home_wacn INTEGER NOT NULL
+                    CHECK(typeof(home_wacn) = 'integer' AND home_wacn BETWEEN 0 AND 1048575),
+                home_system_id INTEGER NOT NULL
+                    CHECK(typeof(home_system_id) = 'integer' AND home_system_id BETWEEN 0 AND 4095),
+                home_talkgroup_id INTEGER NOT NULL
+                    CHECK(typeof(home_talkgroup_id) = 'integer' AND home_talkgroup_id BETWEEN 1 AND 65534),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL
+                    CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 %s,
-                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
-                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
-                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
-                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
+                logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(logical_call_count) = 'integer' AND logical_call_count >= 0),
+                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(recorded_output_count) = 'integer' AND recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(streamed_output_count) = 'integer' AND streamed_output_count >= 0),
                 PRIMARY KEY(radio_system_id, home_wacn, home_system_id, home_talkgroup_id)
             ) WITHOUT ROWID
             """.formatted(ACTION_COUNT_DEFINITIONS);
@@ -283,18 +315,26 @@ final class RadioSystemSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_talkgroup_summary (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
-                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
-                target_kind_code INTEGER NOT NULL CHECK(target_kind_code IN (1, 3)),
-                first_seen_ms INTEGER NOT NULL,
-                last_seen_ms INTEGER NOT NULL,
+                radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
+                talkgroup_id INTEGER NOT NULL CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id > 0),
+                target_kind_code INTEGER NOT NULL
+                    CHECK(typeof(target_kind_code) = 'integer' AND target_kind_code IN (1, 3)),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL
+                    CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 %s,
-                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
-                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_logical_call_count >= 0),
-                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
-                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
-                last_encryption_algorithm_id INTEGER,
-                last_encryption_key_id INTEGER,
+                logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(logical_call_count) = 'integer' AND logical_call_count >= 0),
+                encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(recorded_output_count) = 'integer' AND recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(streamed_output_count) = 'integer' AND streamed_output_count >= 0),
+                last_encryption_algorithm_id INTEGER CHECK(last_encryption_algorithm_id IS NULL OR
+                    (typeof(last_encryption_algorithm_id) = 'integer' AND last_encryption_algorithm_id >= 0)),
+                last_encryption_key_id INTEGER CHECK(last_encryption_key_id IS NULL OR
+                    (typeof(last_encryption_key_id) = 'integer' AND last_encryption_key_id >= 0)),
                 PRIMARY KEY(radio_system_id, radio_id, talkgroup_id, target_kind_code)
             ) WITHOUT ROWID
             """.formatted(ACTION_COUNT_DEFINITIONS);
@@ -305,9 +345,10 @@ final class RadioSystemSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_affiliation (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
-                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
-                confirmed_at_ms INTEGER NOT NULL,
+                radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
+                talkgroup_id INTEGER NOT NULL CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id > 0),
+                confirmed_at_ms INTEGER NOT NULL
+                    CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(radio_system_id, radio_id)
             ) WITHOUT ROWID
             """;
@@ -318,10 +359,12 @@ final class RadioSystemSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_site_presence (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
+                radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
                 channel_id INTEGER NOT NULL,
-                evidence_code INTEGER NOT NULL CHECK(evidence_code IN (1, 2)),
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                evidence_code INTEGER NOT NULL
+                    CHECK(typeof(evidence_code) = 'integer' AND evidence_code IN (1, 2)),
+                confirmed_at_ms INTEGER NOT NULL
+                    CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(radio_system_id, radio_id),
                 FOREIGN KEY(channel_id, radio_system_id)
                     REFERENCES receiver_channel(id, radio_system_id) ON DELETE CASCADE
@@ -334,8 +377,8 @@ final class RadioSystemSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_presence_lifecycle (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
-                cleared_at_ms INTEGER NOT NULL,
+                radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
+                cleared_at_ms INTEGER NOT NULL CHECK(typeof(cleared_at_ms) = 'integer' AND cleared_at_ms > 0),
                 PRIMARY KEY(radio_system_id, radio_id)
             ) WITHOUT ROWID
             """;
@@ -410,7 +453,7 @@ final class RadioSystemSchema
 
         return List.of(
             new SqliteSchemaValidator.Table("radio_system", "id", "system_key", "protocol_code",
-                "identity_domain_code", "p25_wacn", "p25_system_id", "first_seen_ms", "last_seen_ms"),
+                "address_domain_code", "p25_wacn", "p25_system_id", "first_seen_ms", "last_seen_ms"),
             new SqliteSchemaValidator.Table("radio_system_identity_summary", identityColumns),
             new SqliteSchemaValidator.Table("p25_zero_local_fq_talkgroup_summary",
                 zeroLocalFullyQualifiedColumns),
@@ -965,7 +1008,7 @@ final class RadioSystemSchema
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT system.protocol_code, system.identity_domain_code, system.first_seen_ms
+            SELECT system.protocol_code, system.address_domain_code, system.first_seen_ms
             FROM receiver_channel channel
             LEFT JOIN radio_system system ON system.id = channel.radio_system_id
             WHERE channel.id = ?
@@ -986,10 +1029,10 @@ final class RadioSystemSchema
                     return false;
                 }
 
-                int observedDomain = identityDomainCode(TrunkedIdentityPolicy.PROTOCOL_NXDN,
+                int observedDomain = addressDomainCode(TrunkedIdentityPolicy.PROTOCOL_NXDN,
                     attribution.identityDomain());
                 return observedDomain == IDENTITY_DOMAIN_STANDARD ||
-                    observedDomain == resultSet.getInt("identity_domain_code");
+                    observedDomain == resultSet.getInt("address_domain_code");
             }
         }
     }
@@ -1101,12 +1144,12 @@ final class RadioSystemSchema
             return null;
         }
 
-        int identityDomainCode = identityDomainCode(protocol, observationDomain);
+        int addressDomainCode = addressDomainCode(protocol, observationDomain);
         ExistingRadioSystem existing = existingRadioSystem(connection, systemKey);
         boolean nxdnIdentityDomainChanged = existing != null &&
             protocol == TrunkedIdentityPolicy.PROTOCOL_NXDN &&
-            identityDomainCode != IDENTITY_DOMAIN_STANDARD &&
-            existing.identityDomainCode() != identityDomainCode;
+            addressDomainCode != IDENTITY_DOMAIN_STANDARD &&
+            existing.addressDomainCode() != addressDomainCode;
 
         if(nxdnIdentityDomainChanged && !allowIdentityDomainChange)
         {
@@ -1125,29 +1168,29 @@ final class RadioSystemSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO radio_system (
-                system_key, protocol_code, identity_domain_code, p25_wacn, p25_system_id,
+                system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
                 first_seen_ms, last_seen_ms
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(system_key) DO UPDATE SET
                 first_seen_ms = CASE
-                    WHEN excluded.identity_domain_code != 0
-                     AND excluded.identity_domain_code != radio_system.identity_domain_code
+                    WHEN excluded.address_domain_code != 0
+                     AND excluded.address_domain_code != radio_system.address_domain_code
                      AND excluded.last_seen_ms >= radio_system.last_seen_ms
                     THEN excluded.first_seen_ms
                     ELSE radio_system.first_seen_ms
                 END,
                 last_seen_ms = max(radio_system.last_seen_ms, excluded.last_seen_ms),
-                identity_domain_code = CASE
-                    WHEN excluded.identity_domain_code != 0
+                address_domain_code = CASE
+                    WHEN excluded.address_domain_code != 0
                      AND excluded.last_seen_ms >= radio_system.last_seen_ms
-                    THEN excluded.identity_domain_code
-                    ELSE radio_system.identity_domain_code
+                    THEN excluded.address_domain_code
+                    ELSE radio_system.address_domain_code
                 END
             """))
         {
             statement.setString(1, systemKey);
             statement.setInt(2, protocol);
-            statement.setInt(3, identityDomainCode);
+            statement.setInt(3, addressDomainCode);
             setInteger(statement, 4, p25Wacn);
             setInteger(statement, 5, p25SystemId);
             statement.setLong(6, observedAt);
@@ -1158,7 +1201,7 @@ final class RadioSystemSchema
         RadioSystem radioSystem;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, protocol_code, identity_domain_code, first_seen_ms
+            SELECT id, protocol_code, address_domain_code, first_seen_ms
             FROM radio_system
             WHERE system_key = ?
             """))
@@ -1173,7 +1216,7 @@ final class RadioSystemSchema
                 }
 
                 radioSystem = new RadioSystem(resultSet.getInt("id"), resultSet.getInt("protocol_code"),
-                    identityDomain(resultSet.getInt("identity_domain_code")), systemKey,
+                    identityDomain(resultSet.getInt("address_domain_code")), systemKey,
                     resultSet.getLong("first_seen_ms"));
             }
         }
@@ -1209,7 +1252,7 @@ final class RadioSystemSchema
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO radio_system(system_key, protocol_code, identity_domain_code, p25_wacn,
+            INSERT INTO radio_system(system_key, protocol_code, address_domain_code, p25_wacn,
                 p25_system_id, first_seen_ms, last_seen_ms)
             VALUES (?, 1, 0, ?, ?, ?, ?)
             ON CONFLICT(system_key) DO UPDATE SET
@@ -1231,7 +1274,7 @@ final class RadioSystemSchema
     private static RadioSystem selectRadioSystem(Connection connection, String systemKey) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, protocol_code, identity_domain_code, first_seen_ms
+            SELECT id, protocol_code, address_domain_code, first_seen_ms
             FROM radio_system WHERE system_key = ?
             """))
         {
@@ -1239,7 +1282,7 @@ final class RadioSystemSchema
             try(ResultSet resultSet = statement.executeQuery())
             {
                 return resultSet.next() ? new RadioSystem(resultSet.getInt("id"),
-                    resultSet.getInt("protocol_code"), identityDomain(resultSet.getInt("identity_domain_code")),
+                    resultSet.getInt("protocol_code"), identityDomain(resultSet.getInt("address_domain_code")),
                     systemKey, resultSet.getLong("first_seen_ms")) : null;
             }
         }
@@ -1248,7 +1291,7 @@ final class RadioSystemSchema
     private static ExistingRadioSystem existingRadioSystem(Connection connection, String systemKey) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, identity_domain_code, last_seen_ms
+            SELECT id, address_domain_code, last_seen_ms
             FROM radio_system
             WHERE system_key = ?
             """))
@@ -1260,7 +1303,7 @@ final class RadioSystemSchema
                 if(resultSet.next())
                 {
                     return new ExistingRadioSystem(resultSet.getInt("id"),
-                        resultSet.getInt("identity_domain_code"), resultSet.getLong("last_seen_ms"));
+                        resultSet.getInt("address_domain_code"), resultSet.getLong("last_seen_ms"));
                 }
             }
         }
@@ -1347,8 +1390,8 @@ final class RadioSystemSchema
      */
     private static void clearReceiverChannelIdentityState(Connection connection, int channelId) throws SQLException
     {
-        for(String table: List.of("trunked_radio_site_presence", "trunked_signaling_activity_bucket",
-            "receiver_activity_event"))
+        for(String table: List.of("p25_site_snapshot", "trunked_control_channel_quality",
+            "trunked_radio_site_presence", "trunked_signaling_activity_bucket", "receiver_activity_event"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "DELETE FROM " + table + " WHERE channel_id = ?"))
@@ -1983,7 +2026,7 @@ final class RadioSystemSchema
         }
     }
 
-    private static int identityDomainCode(int protocolCode, ReceiverActivityRecords.IdentityDomain domain)
+    private static int addressDomainCode(int protocolCode, ReceiverActivityRecords.IdentityDomain domain)
     {
         if(protocolCode != TrunkedIdentityPolicy.PROTOCOL_NXDN || domain == null)
         {
@@ -2401,7 +2444,7 @@ final class RadioSystemSchema
     {
     }
 
-    private record ExistingRadioSystem(int id, int identityDomainCode, long lastSeenEpochMilliseconds)
+    private record ExistingRadioSystem(int id, int addressDomainCode, long lastSeenEpochMilliseconds)
     {
     }
 

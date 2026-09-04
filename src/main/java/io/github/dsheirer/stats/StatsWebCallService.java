@@ -595,7 +595,7 @@ final class StatsWebCallService implements AutoCloseable
         value.put("duration_ms", call.getDuration());
         putText(value, "system", recordingMetadata != null ? recordingMetadata.systemName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
-        putText(value, "radio_system_key", playbackTarget != null ? playbackTarget.systemKey() : null);
+        putText(value, "radio_system_key", playbackTarget != null ? playbackTarget.radioSystemKey() : null);
         putText(value, "site", recordingMetadata != null ? recordingMetadata.siteName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY));
         putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.radioResolveId() : null);

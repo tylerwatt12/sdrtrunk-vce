@@ -305,8 +305,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("ranged", "ranged"),
                 text("broadcast_channels", row -> row.get("broadcast_channels") instanceof List<?> values ?
                     String.join("; ", values.stream().map(String::valueOf).toList()) : ""),
-                text("metrics_state", "metrics_state"), number("coverage_scopes", "coverage_scope_count"),
-                number("observed_scopes", "observed_scope_count"),
+                text("metrics_state", "metrics_state"), number("coverage_sources", "coverage_source_count"),
+                number("observed_sources", "observed_source_count"),
                 number("logical_calls", "logical_call_count"),
                 number("recorded_logical_calls", "recorded_logical_call_count"),
                 number("stream_submitted_logical_calls", "stream_submitted_logical_call_count"),

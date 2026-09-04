@@ -1108,12 +1108,12 @@ class ApplicationMigrationServiceTest
         {
             statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RETENTION_INDEX);
             statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RETENTION_INDEX);
-            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_CONTEXT_INDEX);
-            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_CONTEXT_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RECEIVER_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RECEIVER_INDEX);
             statement.executeUpdate("DROP TABLE " + DmrActivitySchema.TALKGROUP_TABLE);
             statement.executeUpdate("DROP TABLE " + DmrActivitySchema.RADIO_TABLE);
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
+                "dmr_activity_schema_version'");
         }
     }
 

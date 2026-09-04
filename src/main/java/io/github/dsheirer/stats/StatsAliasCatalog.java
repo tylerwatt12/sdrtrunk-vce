@@ -143,7 +143,7 @@ final class StatsAliasCatalog
             SELECT list.id AS alias_list_id, list.name, list.family,
                 count(DISTINCT alias.id) AS alias_count,
                 (SELECT count(*) FROM configuration_channel channel
-                 WHERE channel.alias_list_name = list.name COLLATE NOCASE) AS assigned_channel_count
+                 WHERE channel.alias_list_id = list.id) AS assigned_channel_count
             FROM alias_list list
             LEFT JOIN alias ON alias.alias_list_id = list.id
             GROUP BY list.id, list.name, list.family
@@ -544,11 +544,15 @@ final class StatsAliasCatalog
         {
             List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
             List<Map<String,Object>> counts = queryRows(connection, """
-                SELECT alias_id, count(*) AS route_count, max(length(channel_name)) AS maximum_name_length
-                FROM alias_broadcast_channel
-                WHERE alias_id IN (%s)
-                GROUP BY alias_id
-                ORDER BY alias_id
+                SELECT route.alias_id, count(*) AS route_count,
+                    max(length(coalesce(nullif(trim(json_extract(stream.config_json, '$.name')), ''),
+                        route.broadcast_configuration_id))) AS maximum_name_length
+                FROM alias_broadcast_channel route
+                JOIN configuration_broadcast_stream stream
+                  ON stream.configuration_id = route.broadcast_configuration_id
+                WHERE route.alias_id IN (%s)
+                GROUP BY route.alias_id
+                ORDER BY route.alias_id
                 """.formatted(placeholders(chunk.size())), chunk.toArray());
 
             for(Map<String,Object> count: counts)
@@ -581,10 +585,14 @@ final class StatsAliasCatalog
         {
             List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
             List<Map<String,Object>> routes = queryRows(connection, """
-                SELECT alias_id, channel_name
-                FROM alias_broadcast_channel
-                WHERE alias_id IN (%s)
-                ORDER BY alias_id, lower(channel_name), channel_name
+                SELECT route.alias_id,
+                    coalesce(nullif(trim(json_extract(stream.config_json, '$.name')), ''),
+                        route.broadcast_configuration_id) AS channel_name
+                FROM alias_broadcast_channel route
+                JOIN configuration_broadcast_stream stream
+                  ON stream.configuration_id = route.broadcast_configuration_id
+                WHERE route.alias_id IN (%s)
+                ORDER BY route.alias_id, lower(channel_name), channel_name
                 """.formatted(placeholders(chunk.size())), chunk.toArray());
 
             for(Map<String,Object> route: routes)
@@ -1075,11 +1083,11 @@ final class StatsAliasCatalog
             long aliasId = number(alias.get("alias_id"));
             Map<String,MetricAccumulator> aliasMetrics = metrics.getOrDefault(aliasId, Map.of());
             boolean supported = isSupportedIdentity(alias);
-            int observedScopes = (int)aliasMetrics.values().stream().filter(MetricAccumulator::observed).count();
-            alias.put("coverage_scope_count", aliasMetrics.size());
-            alias.put("observed_scope_count", observedScopes);
+            int observedSources = (int)aliasMetrics.values().stream().filter(MetricAccumulator::observed).count();
+            alias.put("coverage_source_count", aliasMetrics.size());
+            alias.put("observed_source_count", observedSources);
             alias.put("metrics_state", !supported ? "unsupported" : aliasMetrics.isEmpty() ? "not_collected" :
-                observedScopes > 0 ? "observed" : "covered_no_evidence");
+                observedSources > 0 ? "observed" : "covered_no_evidence");
             aggregate(alias, aliasMetrics.values());
             List<Map<String,Object>> detailRows = aliasMetrics.values().stream()
                 .sorted(Comparator.comparing(MetricAccumulator::sortKey))
@@ -1109,8 +1117,8 @@ final class StatsAliasCatalog
         for(Map<String,Object> alias: aliases)
         {
             long aliasId = number(alias.get("alias_id"));
-            alias.put("coverage_scope_count", 0);
-            alias.put("observed_scope_count", 0);
+            alias.put("coverage_source_count", 0);
+            alias.put("observed_source_count", 0);
             alias.put("metrics_state", isSupportedIdentity(alias) ? "not_collected" : "unsupported");
             aggregate(alias, List.of());
 
@@ -1127,29 +1135,23 @@ final class StatsAliasCatalog
         throws SQLException
     {
         StringBuilder trunkedSql = new StringBuilder("""
-            SELECT scope.radio_system_id, scope.system_key, scope.protocol_code, scope.p25_system_key AS system_key,
-                system.wacn, system.system_id, context.id AS channel_id, context.configuration_id, context.guid,
-                coalesce(context.channel_name, p25.channel_name, trunked.channel_name) AS site_name,
-                coalesce((SELECT config.system_name FROM configuration_channel config
-                          WHERE config.radres_guid = context.guid ORDER BY config.sort_order LIMIT 1),
-                         trunked.configured_system) AS system_name,
-                CASE WHEN scope.protocol_code = 1 THEN coalesce(p25.alias_list_name, context.alias_list_name)
-                     ELSE coalesce(context.alias_list_name, trunked.alias_list_name) END AS alias_list_name
+            SELECT scope.id AS radio_system_id, scope.system_key AS radio_system_key, scope.protocol_code,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id,
+                channel.id AS channel_id, channel.configuration_id,
+                coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
+                nullif(trim(config.system_name), '') AS system_name,
+                list.name AS alias_list_name
             FROM radio_system scope
-            JOIN radio_system_context ownership ON ownership.radio_system_id = scope.radio_system_id
-            JOIN receiver_channel context ON context.id = ownership.channel_id
-            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
-            LEFT JOIN p25_site_snapshot p25
-              ON p25.guid = context.guid AND p25.system_key = scope.p25_system_key
-            LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
-            WHERE
+            JOIN receiver_channel channel ON channel.radio_system_id = scope.id
+            JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+            JOIN alias_list list ON list.id = config.alias_list_id
+            WHERE config.channel_kind = 'TRUNKED' AND
             """);
         List<Object> trunkedParameters = new ArrayList<>();
         targets.appendCoveragePredicate(trunkedSql, trunkedParameters, "scope.protocol_code",
-            "CASE WHEN scope.protocol_code = 1 THEN coalesce(p25.alias_list_name, context.alias_list_name) " +
-                "ELSE coalesce(context.alias_list_name, trunked.alias_list_name) END");
+            "list.name");
         trunkedSql.append("""
-            ORDER BY scope.radio_system_id, context.id
+            ORDER BY scope.id, channel.id
             LIMIT ?
             """);
         trunkedParameters.add(MAX_COVERAGE_ROWS + 1);
@@ -1162,21 +1164,19 @@ final class StatsAliasCatalog
         }
 
         StringBuilder conventionalSql = new StringBuilder("""
-            SELECT context.id AS channel_id, context.configuration_id, context.guid, context.channel_name AS site_name,
-                context.alias_list_name, nullif(trim(config.system_name), '') AS system_name
-            FROM receiver_channel context
-            JOIN configuration_channel config
-              ON config.channel_kind = 'CONVENTIONAL'
-             AND context.configuration_id = 'CONFIGURATION:' || config.configuration_id
-            WHERE context.kind_code <> 1 AND context.protocol_code = 3
-              AND context.alias_list_name IS NOT NULL AND trim(context.alias_list_name) <> ''
-              AND
+            SELECT channel.id AS channel_id, channel.configuration_id,
+                coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
+                list.name AS alias_list_name, nullif(trim(config.system_name), '') AS system_name
+            FROM receiver_channel channel
+            JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+            JOIN alias_list list ON list.id = config.alias_list_id
+            WHERE config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR' AND
             """);
         List<Object> conventionalParameters = new ArrayList<>();
         targets.appendAliasListPredicate(conventionalSql, conventionalParameters, 3,
-            "context.alias_list_name");
+            "list.name");
         conventionalSql.append("""
-            ORDER BY context.id
+            ORDER BY channel.id
             LIMIT ?
             """);
         conventionalParameters.add(MAX_COVERAGE_ROWS - trunked.size() + 1);
@@ -1205,8 +1205,8 @@ final class StatsAliasCatalog
             }
             else
             {
-                //DMR/NXDN ownership is list-specific.  Keep an explicit projection per list so one context cannot
-                //silently become the canonical resolver context for every other receiver sharing this scope.
+                //DMR/NXDN ownership is list-specific. Keep an explicit projection per list so one saved channel
+                //cannot silently become the canonical alias source for every other channel on this radio system.
                 String projectionKey = radioSystemId + "\u0000" + aliasList;
                 scope = trunkedByProjection.computeIfAbsent(projectionKey,
                     ignored -> CoverageScope.trunked(row));
@@ -1270,11 +1270,10 @@ final class StatsAliasCatalog
                 summary.data_count AS data_observation_count,
                 %s AS other_signaling_observation_count,
                 %s AS signaling_observation_count,
-                scope.protocol_code, scope.p25_system_key AS system_key,
-                system.wacn, system.system_id
+                scope.protocol_code, scope.system_key AS radio_system_key,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id
             FROM radio_system_identity_summary summary
-            JOIN radio_system scope ON scope.radio_system_id = summary.radio_system_id
-            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            JOIN radio_system scope ON scope.id = summary.radio_system_id
             WHERE summary.radio_system_id IN (%s)
               AND
             """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
@@ -1301,11 +1300,10 @@ final class StatsAliasCatalog
                 summary.data_count AS data_observation_count,
                 %s AS other_signaling_observation_count,
                 %s AS signaling_observation_count,
-                scope.protocol_code, scope.p25_system_key AS system_key,
-                system.wacn, system.system_id
+                scope.protocol_code, scope.system_key AS radio_system_key,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id
             FROM p25_zero_local_fq_talkgroup_summary summary
-            JOIN radio_system scope ON scope.radio_system_id = summary.radio_system_id
-            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            JOIN radio_system scope ON scope.id = summary.radio_system_id
             WHERE summary.radio_system_id IN (%s)
               AND
             """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
@@ -1399,7 +1397,7 @@ final class StatsAliasCatalog
         for(Map<String,Object> row: evidence)
         {
             Long aliasId = nullableNumber(row.get("resolved_alias_id"));
-            String scopeKey = text(row.get("scope_key"));
+            String scopeKey = text(row.get("coverage_key"));
 
             if(aliasId == null || scopeKey == null)
             {
@@ -1448,8 +1446,10 @@ final class StatsAliasCatalog
                 NULL AS signaling_observation_count,
                 3 AS protocol_code
             FROM conventional_call_identity_bucket bucket
-            JOIN receiver_channel context ON context.id = bucket.channel_id
-            WHERE bucket.channel_id IN (%s) AND context.kind_code <> 1 AND context.protocol_code = 3
+            JOIN receiver_channel channel ON channel.id = bucket.channel_id
+            JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+            WHERE bucket.channel_id IN (%s) AND config.channel_kind = 'CONVENTIONAL'
+              AND config.decoder_type = 'DMR'
               AND bucket.identity_kind_code IN (1, 2)
               AND
             """.formatted(placeholders(channelIds.size())));
@@ -1488,12 +1488,12 @@ final class StatsAliasCatalog
                 max(relationship.last_seen_ms) AS last_seen_ms,
                 count(*) AS relationship_count,
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
-                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
+                scope.protocol_code, scope.system_key AS radio_system_key,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id,
                 NULL AS p25_identity_state_code, NULL AS p25_home_wacn,
                 NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
             FROM trunked_radio_talkgroup_summary relationship
-            JOIN radio_system scope ON scope.radio_system_id = relationship.radio_system_id
-            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            JOIN radio_system scope ON scope.id = relationship.radio_system_id
             WHERE relationship.radio_system_id IN (%s)
               AND
             """.formatted(placeholders(radioSystemIds.size())));
@@ -1501,7 +1501,7 @@ final class StatsAliasCatalog
         targets.appendPredicate(sql, "relationship.radio_system_id", "2", "relationship.radio_id");
         sql.append("""
             GROUP BY relationship.radio_system_id, relationship.radio_id, scope.protocol_code,
-                scope.p25_system_key, system.wacn, system.system_id
+                scope.system_key, scope.p25_wacn, scope.p25_system_id
 
             UNION ALL
 
@@ -1511,12 +1511,12 @@ final class StatsAliasCatalog
                 max(relationship.last_seen_ms) AS last_seen_ms,
                 count(*) AS relationship_count,
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
-                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
+                scope.protocol_code, scope.system_key AS radio_system_key,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM trunked_radio_talkgroup_summary relationship
-            JOIN radio_system scope ON scope.radio_system_id = relationship.radio_system_id
-            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            JOIN radio_system scope ON scope.id = relationship.radio_system_id
             LEFT JOIN radio_system_identity_summary target
               ON target.radio_system_id = relationship.radio_system_id
              AND target.identity_kind_code = relationship.target_kind_code
@@ -1529,7 +1529,7 @@ final class StatsAliasCatalog
             "relationship.talkgroup_id");
         sql.append("""
             GROUP BY relationship.radio_system_id, relationship.target_kind_code, relationship.talkgroup_id,
-                scope.protocol_code, scope.p25_system_key, system.wacn, system.system_id,
+                scope.protocol_code, scope.system_key, scope.p25_wacn, scope.p25_system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
             ORDER BY 1, 2, 3
@@ -1581,47 +1581,45 @@ final class StatsAliasCatalog
         StringBuilder sql = new StringBuilder();
         targets.appendCte(sql, parameters, true);
         sql.append("""
-            SELECT scope.radio_system_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
+            SELECT scope.id AS radio_system_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
                 max(affiliation.confirmed_at_ms) AS updated_at_ms,
                 count(*) AS current_affiliation_count, scope.protocol_code,
-                scope.p25_system_key AS system_key,
-                system.wacn, system.system_id, NULL AS p25_identity_state_code,
+                scope.system_key AS radio_system_key,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id, NULL AS p25_identity_state_code,
                 NULL AS p25_home_wacn, NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
             FROM radio_system scope
-            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = scope.radio_system_id
-            JOIN p25_system system ON system.system_key = scope.p25_system_key
-            WHERE scope.radio_system_id IN (%s)
+            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = scope.id
+            WHERE scope.id IN (%s)
               AND
             """.formatted(placeholders(p25Scopes.size())));
         parameters.addAll(p25Scopes);
-        targets.appendPredicate(sql, "scope.radio_system_id", "2", "affiliation.radio_id");
+        targets.appendPredicate(sql, "scope.id", "2", "affiliation.radio_id");
         sql.append("""
-            GROUP BY scope.radio_system_id, affiliation.radio_id, scope.protocol_code,
-                scope.p25_system_key, system.wacn, system.system_id
+            GROUP BY scope.id, affiliation.radio_id, scope.protocol_code,
+                scope.system_key, scope.p25_wacn, scope.p25_system_id
 
             UNION ALL
 
-            SELECT scope.radio_system_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
+            SELECT scope.id AS radio_system_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
                 max(affiliation.confirmed_at_ms) AS updated_at_ms,
                 count(*) AS current_affiliation_count, scope.protocol_code,
-                scope.p25_system_key AS system_key,
-                system.wacn, system.system_id, target.p25_identity_state_code,
+                scope.system_key AS radio_system_key,
+                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id, target.p25_identity_state_code,
                 target.p25_home_wacn, target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM radio_system scope
-            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = scope.radio_system_id
-            JOIN p25_system system ON system.system_key = scope.p25_system_key
+            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = scope.id
             LEFT JOIN radio_system_identity_summary target
-              ON target.radio_system_id = scope.radio_system_id
+              ON target.radio_system_id = scope.id
              AND target.identity_kind_code = 1
              AND target.identity_id = affiliation.talkgroup_id
-            WHERE scope.radio_system_id IN (%s)
+            WHERE scope.id IN (%s)
               AND
             """.formatted(placeholders(p25Scopes.size())));
         parameters.addAll(p25Scopes);
-        targets.appendPredicate(sql, "scope.radio_system_id", "1", "affiliation.talkgroup_id");
+        targets.appendPredicate(sql, "scope.id", "1", "affiliation.talkgroup_id");
         sql.append("""
-            GROUP BY scope.radio_system_id, affiliation.talkgroup_id, scope.protocol_code,
-                scope.p25_system_key, system.wacn, system.system_id,
+            GROUP BY scope.id, affiliation.talkgroup_id, scope.protocol_code,
+                scope.system_key, scope.p25_wacn, scope.p25_system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
             ORDER BY 1, 2, 3
@@ -1686,7 +1684,7 @@ final class StatsAliasCatalog
                                                   Map<String,Object> row)
     {
         Long aliasId = nullableNumber(row.get("resolved_alias_id"));
-        String scopeKey = text(row.get("scope_key"));
+        String scopeKey = text(row.get("coverage_key"));
         return aliasId != null && scopeKey != null ?
             metrics.getOrDefault(aliasId, Map.of()).get(scopeKey) : null;
     }
@@ -2257,12 +2255,13 @@ final class StatsAliasCatalog
     {
         private final String key;
         private final long numericId;
+        private final Long radioSystemId;
+        private final Long channelId;
         private final boolean trunked;
         private final int protocolCode;
         private final String protocol;
         private final String systemKey;
         private final String configurationId;
-        private final String guid;
         private final String systemName;
         private final String siteName;
         private final Long wacn;
@@ -2270,18 +2269,20 @@ final class StatsAliasCatalog
         private final Set<String> aliasLists = new HashSet<>();
         private String canonicalAliasList;
 
-        private CoverageScope(String key, long numericId, boolean trunked, int protocolCode, String protocol,
-                              String systemKey, String configurationId, String guid, String systemName, String siteName,
+        private CoverageScope(String key, long numericId, Long radioSystemId, Long channelId, boolean trunked,
+                              int protocolCode, String protocol,
+                              String systemKey, String configurationId, String systemName, String siteName,
                               Long wacn, Long systemId)
         {
             this.key = key;
             this.numericId = numericId;
+            this.radioSystemId = radioSystemId;
+            this.channelId = channelId;
             this.trunked = trunked;
             this.protocolCode = protocolCode;
             this.protocol = protocol;
             this.systemKey = systemKey;
             this.configurationId = configurationId;
-            this.guid = guid;
             this.systemName = systemName;
             this.siteName = siteName;
             this.wacn = wacn;
@@ -2293,19 +2294,19 @@ final class StatsAliasCatalog
             long id = number(row.get("radio_system_id"));
             int protocolCode = (int)number(row.get("protocol_code"));
             boolean linkedP25 = protocolCode == 1;
-            return new CoverageScope("scope:" + id, id, true, protocolCode,
+            return new CoverageScope("radio-system:" + id, id, id,
+                linkedP25 ? null : nullableNumber(row.get("channel_id")), true, protocolCode,
                 switch(protocolCode) { case 1 -> "P25"; case 3 -> "DMR"; case 4 -> "NXDN"; default -> "Unknown"; },
-                text(row.get("system_key")), linkedP25 ? null : text(row.get("configuration_id")),
-                linkedP25 ? null : text(row.get("guid")), text(row.get("system_name")),
-                linkedP25 ? null : text(row.get("site_name")), nullableNumber(row.get("wacn")),
+                text(row.get("radio_system_key")), linkedP25 ? null : text(row.get("configuration_id")),
+                text(row.get("system_name")), linkedP25 ? null : text(row.get("site_name")), nullableNumber(row.get("wacn")),
                 nullableNumber(row.get("system_id")));
         }
 
         private static CoverageScope conventionalDmr(Map<String,Object> row)
         {
             long id = number(row.get("channel_id"));
-            return new CoverageScope("context:" + id, id, false, 3, "DMR", null,
-                text(row.get("configuration_id")), text(row.get("guid")), text(row.get("system_name")),
+            return new CoverageScope("channel:" + id, id, null, id, false, 3, "DMR", null,
+                text(row.get("configuration_id")), text(row.get("system_name")),
                 text(row.get("site_name")), null, null);
         }
 
@@ -2324,11 +2325,11 @@ final class StatsAliasCatalog
 
         private void decorateEvidence(Map<String,Object> row)
         {
-            row.put("scope_key", key);
+            row.put("coverage_key", key);
             row.put("topology", trunked ? "TRUNKED" : "CONVENTIONAL");
             row.put("protocol_code", protocolCode);
             row.put("alias_list_name", canonicalAliasList);
-            row.put("system_key", systemKey);
+            row.put("radio_system_key", systemKey);
             row.put("wacn", wacn);
             row.put("system_id", systemId);
         }
@@ -2464,14 +2465,15 @@ final class StatsAliasCatalog
         private Map<String,Object> toMap()
         {
             Map<String,Object> row = new LinkedHashMap<>();
-            row.put("scope_label", scopeLabel());
+            row.put("source_label", scopeLabel());
             row.put("topology", scope.trunked ? "TRUNKED" : "CONVENTIONAL");
             row.put("protocol", scope.protocol);
+            row.put("radio_system_id", scope.radioSystemId);
+            row.put("channel_id", scope.channelId);
             row.put("system_name", scope.systemName);
             row.put("site_name", scope.siteName);
-            row.put("system_key", scope.systemKey);
+            row.put("radio_system_key", scope.systemKey);
             row.put("configuration_id", scope.configurationId);
-            row.put("guid", scope.guid);
             row.put("alias_list_name", scope.canonicalAliasList);
             row.put("metrics_state", observed() ? "observed" : "covered_no_evidence");
 

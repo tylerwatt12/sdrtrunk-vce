@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
@@ -33,6 +33,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -63,11 +64,9 @@ class TrunkedCallActivityMapperTest
         ReceiverActivityRecords.ActivityEvent record = new TrunkedCallActivityMapper().map(start);
 
         assertNotNull(record);
-        assertEquals(ReceiverActivityRecords.ContextKind.TRUNKED_SITE, record.contextKind());
+        assertEquals(ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, record.receiverKind());
         assertEquals("DMR", record.protocol());
-        assertEquals("GUID:" + DMR_GUID, record.contextKey());
-        assertEquals("Downtown", record.channelName());
-        assertEquals("Metro DMR", record.aliasListName());
+        assertEquals(parent.getConfigurationId().toString(), record.configurationId());
         assertEquals(451_012_500L, record.frequencyHertz());
         assertEquals(2, record.timeslot());
         assertEquals("101", record.sourceRadioId());
@@ -96,7 +95,7 @@ class TrunkedCallActivityMapperTest
 
         assertNotNull(record);
         assertEquals("NXDN", record.protocol());
-        assertEquals("GUID:" + NXDN_GUID, record.contextKey());
+        assertEquals(parent.getConfigurationId().toString(), record.configurationId());
         assertNull(record.timeslot());
         assertEquals(Integer.toString(0x1134), record.sourceRadioId());
         assertEquals(Integer.toString(0x2223), record.targetId());
@@ -123,19 +122,19 @@ class TrunkedCallActivityMapperTest
         ReceiverActivityRecords.ActivityEvent start = mapper.map(initial.callStart());
         ReceiverActivityRecords.TrunkedCallAttribution attribution = mapper.map(enriched.attribution());
         Path database = mTemporaryFolder.resolve("dmr-attribution.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database, parent);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             ReceiverActivitySchema.recordActivity(connection, start, true);
             assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, attribution));
-            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM trunked_identity_summary"));
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary"));
             assertEquals(0, scalar(connection,
-                "SELECT SUM(logical_call_count) FROM trunked_identity_summary"));
+                "SELECT SUM(logical_call_count) FROM radio_system_identity_summary"));
             assertEquals(0, scalar(connection,
-                "SELECT SUM(encrypted_logical_call_count) FROM trunked_identity_summary"));
+                "SELECT SUM(encrypted_logical_call_count) FROM radio_system_identity_summary"));
             assertEquals(0x84, scalar(connection,
-                "SELECT last_encryption_algorithm_id FROM trunked_identity_summary WHERE identity_id=91"));
+                "SELECT last_encryption_algorithm_id FROM radio_system_identity_summary WHERE identity_id=91"));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
         }
@@ -179,6 +178,26 @@ class TrunkedCallActivityMapperTest
         {
             @Override public boolean isEncrypted() { return true; }
         };
+    }
+
+    private static void createDatabase(Path database, Channel channel) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverActivitySchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%s', 'TRUNKED', 0, 'Metro', 'Downtown', 'DMR Site',
+                    '%s', 0, 'DMR', 451012500, '{}')
+                """.formatted(channel.getConfigurationId(), DMR_GUID));
+        }
     }
 
     private static long scalar(Connection connection, String sql) throws Exception

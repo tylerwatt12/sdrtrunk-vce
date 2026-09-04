@@ -35,10 +35,9 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v30 semantics use canonical saved-channel identities. Trunked P25, DMR and NXDN share one protocol-neutral
- * identity projection while
- * saved receiver channels own site observations. Detailed event rows are optional, while compact identity and hourly
- * summaries are always updated when stats logging is enabled.
+ * Canonical saved-channel identities own receiver observations. Trunked P25, DMR and NXDN share one
+ * protocol-neutral radio-system projection. Detailed event rows are optional, while compact identity and hourly
+ * summaries are always updated when statistics logging is enabled.
  */
 public class ReceiverActivitySchema
 {
@@ -92,7 +91,8 @@ public class ReceiverActivitySchema
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
         .toList();
     private static final String ACTION_COUNT_DEFINITIONS = ACTION_COUNT_COLUMNS.stream()
-        .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(" + column + " >= 0)")
+        .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
+            ") = 'integer' AND " + column + " >= 0)")
         .collect(Collectors.joining(",\n                    "));
     private static final String ACTION_INSERT_COLUMNS = String.join(", ", ACTION_COUNT_COLUMNS);
     private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
@@ -103,7 +103,8 @@ public class ReceiverActivitySchema
         .toList();
     private static final String TRUNKED_SIGNALING_ACTION_COUNT_DEFINITIONS =
         TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS.stream()
-            .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(" + column + " >= 0)")
+            .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
+                ") = 'integer' AND " + column + " >= 0)")
             .collect(Collectors.joining(",\n                    "));
     private static final String TRUNKED_SIGNALING_ACTION_INSERT_COLUMNS =
         String.join(", ", TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS);
@@ -123,19 +124,32 @@ public class ReceiverActivitySchema
                 CREATE TABLE IF NOT EXISTS receiver_activity_event (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                    observed_at_ms INTEGER NOT NULL CHECK(observed_at_ms > 0),
-                    action_code INTEGER NOT NULL CHECK(action_code IN (%s)),
-                    event_type_code INTEGER CHECK(event_type_code IS NULL OR event_type_code IN (%s)),
-                    source_radio_id INTEGER CHECK(source_radio_id IS NULL OR source_radio_id >= 0),
-                    target_id INTEGER CHECK(target_id IS NULL OR target_id >= 0),
-                    target_kind_code INTEGER CHECK(target_kind_code IS NULL OR target_kind_code IN (1, 2, 3)),
-                    frequency_hz INTEGER CHECK(frequency_hz IS NULL OR frequency_hz > 0),
-                    lcn_band INTEGER CHECK(lcn_band IS NULL OR lcn_band >= 0),
-                    lcn_number INTEGER CHECK(lcn_number IS NULL OR lcn_number >= 0),
-                    timeslot INTEGER CHECK(timeslot IS NULL OR timeslot >= 0),
-                    encrypted INTEGER NOT NULL DEFAULT 0 CHECK(encrypted IN (0, 1)),
-                    encryption_algorithm_id INTEGER,
-                    encryption_key_id INTEGER,
+                    observed_at_ms INTEGER NOT NULL
+                        CHECK(typeof(observed_at_ms) = 'integer' AND observed_at_ms > 0),
+                    action_code INTEGER NOT NULL
+                        CHECK(typeof(action_code) = 'integer' AND action_code IN (%s)),
+                    event_type_code INTEGER CHECK(event_type_code IS NULL OR
+                        (typeof(event_type_code) = 'integer' AND event_type_code IN (%s))),
+                    source_radio_id INTEGER CHECK(source_radio_id IS NULL OR
+                        (typeof(source_radio_id) = 'integer' AND source_radio_id >= 0)),
+                    target_id INTEGER CHECK(target_id IS NULL OR
+                        (typeof(target_id) = 'integer' AND target_id >= 0)),
+                    target_kind_code INTEGER CHECK(target_kind_code IS NULL OR
+                        (typeof(target_kind_code) = 'integer' AND target_kind_code IN (1, 2, 3))),
+                    frequency_hz INTEGER CHECK(frequency_hz IS NULL OR
+                        (typeof(frequency_hz) = 'integer' AND frequency_hz > 0)),
+                    lcn_band INTEGER CHECK(lcn_band IS NULL OR
+                        (typeof(lcn_band) = 'integer' AND lcn_band >= 0)),
+                    lcn_number INTEGER CHECK(lcn_number IS NULL OR
+                        (typeof(lcn_number) = 'integer' AND lcn_number >= 0)),
+                    timeslot INTEGER CHECK(timeslot IS NULL OR
+                        (typeof(timeslot) = 'integer' AND timeslot IN (1, 2))),
+                    encrypted INTEGER NOT NULL DEFAULT 0
+                        CHECK(typeof(encrypted) = 'integer' AND encrypted IN (0, 1)),
+                    encryption_algorithm_id INTEGER CHECK(encryption_algorithm_id IS NULL OR
+                        (typeof(encryption_algorithm_id) = 'integer' AND encryption_algorithm_id >= 0)),
+                    encryption_key_id INTEGER CHECK(encryption_key_id IS NULL OR
+                        (typeof(encryption_key_id) = 'integer' AND encryption_key_id >= 0)),
                     CHECK((lcn_band IS NULL) = (lcn_number IS NULL)),
                     CHECK(target_id IS NOT NULL OR target_kind_code IS NULL)
                 )
@@ -151,7 +165,7 @@ public class ReceiverActivitySchema
                 CREATE TABLE IF NOT EXISTS statistics_status (
                     key TEXT PRIMARY KEY CHECK(length(trim(key)) > 0),
                     value TEXT,
-                    updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms > 0)
+                    updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
                 )
                 """);
             createIndexesAndViews(statement);
@@ -282,13 +296,10 @@ public class ReceiverActivitySchema
                         AND length(replace(configuration_id, '-', '')) = 32
                         AND replace(configuration_id, '-', '') NOT GLOB '*[^0-9a-f]*'
                     ),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                radio_system_id INTEGER REFERENCES radio_system(id) ON DELETE SET NULL,
-                nac INTEGER CHECK(nac IS NULL OR nac BETWEEN 0 AND 4095),
-                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
-                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
-                current_control_hz INTEGER CHECK(current_control_hz IS NULL OR current_control_hz > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                radio_system_id INTEGER REFERENCES radio_system(id) ON DELETE SET NULL
+                    CHECK(radio_system_id IS NULL OR typeof(radio_system_id) = 'integer'),
                 UNIQUE(id, radio_system_id)
             )
             """;
@@ -1031,7 +1042,7 @@ public class ReceiverActivitySchema
 
         ReceiverActivityRecords.IdentityDomain identityDomain =
             snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN &&
-                (snapshot.variantCode() == 2 || snapshot.identityDomainCode() == 4) ?
+                (snapshot.variantCode() == 2 || snapshot.locationCategoryCode() == 4) ?
                 ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D :
                 snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN ?
                     ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C :
@@ -1095,21 +1106,16 @@ public class ReceiverActivitySchema
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_channel(
-                configuration_id, first_seen_ms, last_seen_ms, current_control_hz
-            )
-            VALUES (?, ?, ?, ?)
+            INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
+            VALUES (?, ?, ?)
             ON CONFLICT(configuration_id) DO UPDATE SET
                 first_seen_ms = min(receiver_channel.first_seen_ms, excluded.first_seen_ms),
-                current_control_hz = CASE WHEN excluded.last_seen_ms >= receiver_channel.last_seen_ms
-                    THEN excluded.current_control_hz ELSE receiver_channel.current_control_hz END,
                 last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms)
             """))
         {
             statement.setString(1, quality.configurationId());
             statement.setLong(2, quality.observedAtEpochMilliseconds());
             statement.setLong(3, quality.observedAtEpochMilliseconds());
-            statement.setLong(4, quality.frequencyHertz());
             statement.executeUpdate();
         }
         return selectReceiverChannelId(connection, quality.configurationId());
@@ -1284,12 +1290,12 @@ public class ReceiverActivitySchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_learned_site (
-                learned_site_id INTEGER PRIMARY KEY CHECK(learned_site_id > 0),
+                learned_site_id INTEGER PRIMARY KEY CHECK(typeof(learned_site_id) = 'integer' AND learned_site_id > 0),
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                rfss INTEGER NOT NULL CHECK(rfss BETWEEN 0 AND 255),
-                site INTEGER NOT NULL CHECK(site BETWEEN 0 AND 255),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                rfss INTEGER NOT NULL CHECK(typeof(rfss) = 'integer' AND rfss BETWEEN 0 AND 255),
+                site INTEGER NOT NULL CHECK(typeof(site) = 'integer' AND site BETWEEN 0 AND 255),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 UNIQUE(radio_system_id, rfss, site),
                 UNIQUE(learned_site_id, radio_system_id)
             )
@@ -1301,7 +1307,7 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS trunked_signaling_activity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 %s,
                 PRIMARY KEY(channel_id, bucket_start_ms)
             ) WITHOUT ROWID
@@ -1313,12 +1319,12 @@ public class ReceiverActivitySchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_logical_call_bucket (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
-                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
+                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(logical_call_count) = 'integer' AND logical_call_count >= 0),
                 encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(encrypted_logical_call_count >= 0),
-                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
-                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
+                    CHECK(typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_output_count) = 'integer' AND recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_output_count) = 'integer' AND streamed_output_count >= 0),
                 PRIMARY KEY(radio_system_id, bucket_start_ms)
             ) WITHOUT ROWID
             """;
@@ -1329,15 +1335,15 @@ public class ReceiverActivitySchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_logical_call_identity_bucket (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
-                identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
-                identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
-                identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
-                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(logical_call_count >= 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
+                identity_role_code INTEGER NOT NULL CHECK(typeof(identity_role_code) = 'integer' AND identity_role_code IN (1, 2)),
+                identity_kind_code INTEGER NOT NULL CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (0, 1, 2, 3)),
+                identity_id INTEGER NOT NULL CHECK(typeof(identity_id) = 'integer' AND identity_id >= 0),
+                logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(logical_call_count) = 'integer' AND logical_call_count >= 0),
                 encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(encrypted_logical_call_count >= 0),
-                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_output_count >= 0),
-                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_output_count >= 0),
+                    CHECK(typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0),
+                recorded_output_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_output_count) = 'integer' AND recorded_output_count >= 0),
+                streamed_output_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_output_count) = 'integer' AND streamed_output_count >= 0),
                 PRIMARY KEY(
                     radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
                 ),
@@ -1359,10 +1365,10 @@ public class ReceiverActivitySchema
             CREATE TABLE IF NOT EXISTS p25_site_call_bucket (
                 radio_system_id INTEGER NOT NULL,
                 learned_site_id INTEGER NOT NULL,
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
-                observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(observed_call_count >= 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
+                observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(observed_call_count) = 'integer' AND observed_call_count >= 0),
                 encrypted_observed_call_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(encrypted_observed_call_count >= 0),
+                    CHECK(typeof(encrypted_observed_call_count) = 'integer' AND encrypted_observed_call_count >= 0),
                 PRIMARY KEY(radio_system_id, learned_site_id, bucket_start_ms),
                 FOREIGN KEY(learned_site_id, radio_system_id)
                     REFERENCES p25_learned_site(learned_site_id, radio_system_id) ON DELETE CASCADE
@@ -1376,13 +1382,13 @@ public class ReceiverActivitySchema
             CREATE TABLE IF NOT EXISTS p25_site_call_identity_bucket (
                 radio_system_id INTEGER NOT NULL,
                 learned_site_id INTEGER NOT NULL,
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
-                identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
-                identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
-                identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
-                observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(observed_call_count >= 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
+                identity_role_code INTEGER NOT NULL CHECK(typeof(identity_role_code) = 'integer' AND identity_role_code IN (1, 2)),
+                identity_kind_code INTEGER NOT NULL CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (0, 1, 2, 3)),
+                identity_id INTEGER NOT NULL CHECK(typeof(identity_id) = 'integer' AND identity_id >= 0),
+                observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(observed_call_count) = 'integer' AND observed_call_count >= 0),
                 encrypted_observed_call_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(encrypted_observed_call_count >= 0),
+                    CHECK(typeof(encrypted_observed_call_count) = 'integer' AND encrypted_observed_call_count >= 0),
                 PRIMARY KEY(
                     radio_system_id, learned_site_id, bucket_start_ms,
                     identity_role_code, identity_kind_code, identity_id
@@ -1406,28 +1412,31 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS conventional_activity_summary (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                frequency_hz INTEGER NOT NULL CHECK(frequency_hz > 0),
-                timeslot INTEGER NOT NULL DEFAULT -1 CHECK(timeslot >= -1),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
+                frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz > 0),
+                timeslot INTEGER NOT NULL DEFAULT -1
+                    CHECK(typeof(timeslot) = 'integer' AND timeslot IN (-1, 1, 2)),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 %s,
-                last_event_type_code INTEGER CHECK(last_event_type_code IS NULL OR last_event_type_code IN (%s)),
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                last_event_type_code INTEGER CHECK(last_event_type_code IS NULL OR
+                    (typeof(last_event_type_code) = 'integer' AND last_event_type_code IN (%s))),
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_count) = 'integer' AND recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
                 PRIMARY KEY(channel_id, frequency_hz, timeslot)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS, EVENT_TYPE_CODES));
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS conventional_activity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                frequency_hz INTEGER NOT NULL CHECK(frequency_hz >= 0),
-                timeslot INTEGER NOT NULL DEFAULT -1 CHECK(timeslot >= -1),
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
+                frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz >= 0),
+                timeslot INTEGER NOT NULL DEFAULT -1
+                    CHECK(typeof(timeslot) = 'integer' AND timeslot IN (-1, 1, 2)),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 %s,
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_count) = 'integer' AND recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
                 PRIMARY KEY(channel_id, frequency_hz, timeslot, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
@@ -1457,7 +1466,7 @@ public class ReceiverActivitySchema
         return """
             CREATE TABLE IF NOT EXISTS activity_event_talkgroup_member (
                 event_id INTEGER NOT NULL REFERENCES receiver_activity_event(id) ON DELETE CASCADE,
-                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
+                talkgroup_id INTEGER NOT NULL CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id > 0),
                 PRIMARY KEY(event_id, talkgroup_id)
             ) WITHOUT ROWID
             """;
@@ -1468,14 +1477,14 @@ public class ReceiverActivitySchema
         return """
             CREATE TABLE IF NOT EXISTS conventional_call_identity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
-                identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
-                identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
-                identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
-                call_count INTEGER NOT NULL DEFAULT 0 CHECK(call_count >= 0),
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
+                identity_role_code INTEGER NOT NULL CHECK(typeof(identity_role_code) = 'integer' AND identity_role_code IN (1, 2)),
+                identity_kind_code INTEGER NOT NULL CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (0, 1, 2, 3)),
+                identity_id INTEGER NOT NULL CHECK(typeof(identity_id) = 'integer' AND identity_id >= 0),
+                call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(call_count) = 'integer' AND call_count >= 0),
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_count) = 'integer' AND recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
                 PRIMARY KEY (
                     channel_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
                 ),
@@ -1496,28 +1505,51 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_snapshot (
                 channel_id INTEGER PRIMARY KEY REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                snapshot_hash TEXT,
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
-                protocol TEXT CHECK(protocol IS NULL OR protocol IN ('APCO25', 'APCO25_PHASE2')),
-                nac INTEGER CHECK(nac IS NULL OR nac BETWEEN 0 AND 4095),
-                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
-                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
-                lra INTEGER CHECK(lra IS NULL OR lra BETWEEN 0 AND 255),
-                mfid INTEGER CHECK(mfid IS NULL OR mfid BETWEEN 0 AND 255),
-                broadcast_clock_ms INTEGER CHECK(broadcast_clock_ms IS NULL OR broadcast_clock_ms >= 0),
-                micro_slots INTEGER CHECK(micro_slots IS NULL OR micro_slots >= 0),
-                data_service INTEGER CHECK(data_service IS NULL OR data_service IN (0, 1)),
-                data_access TEXT,
-                wuid_lease_minutes INTEGER CHECK(wuid_lease_minutes IS NULL OR wuid_lease_minutes >= 0),
-                registration_service INTEGER CHECK(registration_service IS NULL OR registration_service IN (0, 1)),
-                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
-                voice_service INTEGER CHECK(voice_service IS NULL OR voice_service IN (0, 1)),
-                primary_frequency_hz INTEGER CHECK(primary_frequency_hz IS NULL OR primary_frequency_hz > 0),
-                current_control_hz INTEGER CHECK(current_control_hz IS NULL OR current_control_hz > 0),
+                snapshot_hash TEXT CHECK(snapshot_hash IS NULL OR (
+                    length(snapshot_hash) = 64 AND snapshot_hash = lower(snapshot_hash)
+                    AND snapshot_hash NOT GLOB '*[^0-9a-f]*'
+                )),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
+                protocol TEXT CHECK(protocol IS NULL OR
+                    (typeof(protocol) = 'text' AND protocol = 'APCO25')),
+                nac INTEGER CHECK(nac IS NULL OR
+                    (typeof(nac) = 'integer' AND nac BETWEEN 0 AND 4095)),
+                rfss INTEGER CHECK(rfss IS NULL OR
+                    (typeof(rfss) = 'integer' AND rfss BETWEEN 0 AND 255)),
+                site INTEGER CHECK(site IS NULL OR
+                    (typeof(site) = 'integer' AND site BETWEEN 0 AND 255)),
+                lra INTEGER CHECK(lra IS NULL OR
+                    (typeof(lra) = 'integer' AND lra BETWEEN 0 AND 255)),
+                mfid INTEGER CHECK(mfid IS NULL OR
+                    (typeof(mfid) = 'integer' AND mfid BETWEEN 0 AND 255)),
+                broadcast_clock_ms INTEGER CHECK(broadcast_clock_ms IS NULL OR
+                    (typeof(broadcast_clock_ms) = 'integer' AND broadcast_clock_ms >= 0)),
+                micro_slots INTEGER CHECK(micro_slots IS NULL OR
+                    (typeof(micro_slots) = 'integer' AND micro_slots BETWEEN 0 AND 7999)),
+                data_service INTEGER CHECK(data_service IS NULL OR
+                    (typeof(data_service) = 'integer' AND data_service IN (0, 1))),
+                data_access TEXT CHECK(data_access IS NULL OR
+                    (typeof(data_access) = 'text' AND data_access IN
+                        ('Autonomous', 'Request Only', 'Autonomous and by Request'))),
+                wuid_lease_minutes INTEGER CHECK(wuid_lease_minutes IS NULL OR
+                    (typeof(wuid_lease_minutes) = 'integer'
+                        AND wuid_lease_minutes BETWEEN 270 AND 7890
+                        AND wuid_lease_minutes % 30 = 0)),
+                registration_service INTEGER CHECK(registration_service IS NULL OR
+                    (typeof(registration_service) = 'integer' AND registration_service IN (0, 1))),
+                tdma INTEGER CHECK(tdma IS NULL OR (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
+                voice_service INTEGER CHECK(voice_service IS NULL OR
+                    (typeof(voice_service) = 'integer' AND voice_service IN (0, 1))),
+                primary_frequency_hz INTEGER CHECK(primary_frequency_hz IS NULL OR
+                    (typeof(primary_frequency_hz) = 'integer' AND primary_frequency_hz > 0)),
+                current_control_hz INTEGER CHECK(current_control_hz IS NULL OR
+                    (typeof(current_control_hz) = 'integer' AND current_control_hz > 0)),
                 active_rfss_network_connection INTEGER
-                    CHECK(active_rfss_network_connection IS NULL OR active_rfss_network_connection IN (0, 1))
+                    CHECK(active_rfss_network_connection IS NULL OR
+                        (typeof(active_rfss_network_connection) = 'integer'
+                            AND active_rfss_network_connection IN (0, 1)))
             )
             """);
         statement.executeUpdate("""
@@ -1525,12 +1557,16 @@ public class ReceiverActivitySchema
                 channel_id INTEGER NOT NULL,
                 channel_key TEXT NOT NULL CHECK(length(trim(channel_key)) > 0),
                 descriptor TEXT,
-                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
-                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
-                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
-                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
+                    (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
+                    (typeof(uplink_hz) = 'integer' AND uplink_hz > 0)),
+                tdma INTEGER CHECK(tdma IS NULL OR
+                    (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
+                timeslots INTEGER CHECK(timeslots IS NULL OR
+                    (typeof(timeslots) = 'integer' AND timeslots IN (1, 2, 4))),
                 callsign TEXT,
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, channel_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1540,13 +1576,17 @@ public class ReceiverActivitySchema
                 channel_id INTEGER NOT NULL,
                 channel_key TEXT NOT NULL CHECK(length(trim(channel_key)) > 0),
                 descriptor TEXT,
-                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
-                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
-                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
-                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
+                    (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
+                    (typeof(uplink_hz) = 'integer' AND uplink_hz > 0)),
+                tdma INTEGER CHECK(tdma IS NULL OR
+                    (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
+                timeslots INTEGER CHECK(timeslots IS NULL OR
+                    (typeof(timeslots) = 'integer' AND timeslots IN (1, 2, 4))),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 callsign TEXT,
                 PRIMARY KEY(channel_id, channel_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
@@ -1557,7 +1597,7 @@ public class ReceiverActivitySchema
                 channel_id INTEGER NOT NULL,
                 channel_key TEXT NOT NULL,
                 tag TEXT NOT NULL CHECK(length(trim(tag)) > 0),
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, channel_key, tag),
                 FOREIGN KEY(channel_id, channel_key) REFERENCES p25_site_channel(channel_id, channel_key) ON DELETE CASCADE
             )
@@ -1567,9 +1607,9 @@ public class ReceiverActivitySchema
                 channel_id INTEGER NOT NULL,
                 channel_key TEXT NOT NULL,
                 tag TEXT NOT NULL CHECK(length(trim(tag)) > 0),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, channel_key, tag),
                 FOREIGN KEY(channel_id, channel_key) REFERENCES p25_site_channel_summary(channel_id, channel_key)
                     ON DELETE CASCADE
@@ -1578,14 +1618,20 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_band (
                 channel_id INTEGER NOT NULL,
-                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
-                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
-                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
-                bandwidth INTEGER CHECK(bandwidth IS NULL OR bandwidth > 0),
-                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
-                transmit_offset_hz INTEGER,
-                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
+                tdma INTEGER CHECK(tdma IS NULL OR
+                    (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
+                base_hz INTEGER CHECK(base_hz IS NULL OR
+                    (typeof(base_hz) = 'integer' AND base_hz > 0)),
+                bandwidth INTEGER CHECK(bandwidth IS NULL OR
+                    (typeof(bandwidth) = 'integer' AND bandwidth > 0)),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR
+                    (typeof(spacing_hz) = 'integer' AND spacing_hz > 0)),
+                transmit_offset_hz INTEGER CHECK(transmit_offset_hz IS NULL OR
+                    typeof(transmit_offset_hz) = 'integer'),
+                timeslots INTEGER CHECK(timeslots IS NULL OR
+                    (typeof(timeslots) = 'integer' AND timeslots IN (1, 2, 4))),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, band),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1593,16 +1639,22 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_band_summary (
                 channel_id INTEGER NOT NULL,
-                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
-                tdma INTEGER CHECK(tdma IS NULL OR tdma IN (0, 1)),
-                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
-                bandwidth INTEGER CHECK(bandwidth IS NULL OR bandwidth > 0),
-                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
-                transmit_offset_hz INTEGER,
-                timeslots INTEGER CHECK(timeslots IS NULL OR timeslots > 0),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
+                tdma INTEGER CHECK(tdma IS NULL OR
+                    (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
+                base_hz INTEGER CHECK(base_hz IS NULL OR
+                    (typeof(base_hz) = 'integer' AND base_hz > 0)),
+                bandwidth INTEGER CHECK(bandwidth IS NULL OR
+                    (typeof(bandwidth) = 'integer' AND bandwidth > 0)),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR
+                    (typeof(spacing_hz) = 'integer' AND spacing_hz > 0)),
+                transmit_offset_hz INTEGER CHECK(transmit_offset_hz IS NULL OR
+                    typeof(transmit_offset_hz) = 'integer'),
+                timeslots INTEGER CHECK(timeslots IS NULL OR
+                    (typeof(timeslots) = 'integer' AND timeslots IN (1, 2, 4))),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, band),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1612,15 +1664,21 @@ public class ReceiverActivitySchema
             CREATE TABLE IF NOT EXISTS p25_site_neighbor (
                 channel_id INTEGER NOT NULL,
                 neighbor_key TEXT NOT NULL CHECK(length(trim(neighbor_key)) > 0),
-                system_id INTEGER CHECK(system_id IS NULL OR system_id BETWEEN 0 AND 4095),
-                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
-                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
-                lra INTEGER CHECK(lra IS NULL OR lra BETWEEN 0 AND 255),
+                system_id INTEGER CHECK(system_id IS NULL OR
+                    (typeof(system_id) = 'integer' AND system_id BETWEEN 0 AND 4095)),
+                rfss INTEGER CHECK(rfss IS NULL OR
+                    (typeof(rfss) = 'integer' AND rfss BETWEEN 0 AND 255)),
+                site INTEGER CHECK(site IS NULL OR
+                    (typeof(site) = 'integer' AND site BETWEEN 0 AND 255)),
+                lra INTEGER CHECK(lra IS NULL OR
+                    (typeof(lra) = 'integer' AND lra BETWEEN 0 AND 255)),
                 channel_descriptor TEXT,
-                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
-                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
+                    (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
+                    (typeof(uplink_hz) = 'integer' AND uplink_hz > 0)),
                 status TEXT,
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, neighbor_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1629,17 +1687,23 @@ public class ReceiverActivitySchema
             CREATE TABLE IF NOT EXISTS p25_site_neighbor_summary (
                 channel_id INTEGER NOT NULL,
                 neighbor_key TEXT NOT NULL CHECK(length(trim(neighbor_key)) > 0),
-                system_id INTEGER CHECK(system_id IS NULL OR system_id BETWEEN 0 AND 4095),
-                rfss INTEGER CHECK(rfss IS NULL OR rfss BETWEEN 0 AND 255),
-                site INTEGER CHECK(site IS NULL OR site BETWEEN 0 AND 255),
-                lra INTEGER CHECK(lra IS NULL OR lra BETWEEN 0 AND 255),
+                system_id INTEGER CHECK(system_id IS NULL OR
+                    (typeof(system_id) = 'integer' AND system_id BETWEEN 0 AND 4095)),
+                rfss INTEGER CHECK(rfss IS NULL OR
+                    (typeof(rfss) = 'integer' AND rfss BETWEEN 0 AND 255)),
+                site INTEGER CHECK(site IS NULL OR
+                    (typeof(site) = 'integer' AND site BETWEEN 0 AND 255)),
+                lra INTEGER CHECK(lra IS NULL OR
+                    (typeof(lra) = 'integer' AND lra BETWEEN 0 AND 255)),
                 channel_descriptor TEXT,
-                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR downlink_hz > 0),
-                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR uplink_hz > 0),
+                downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
+                    (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
+                uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
+                    (typeof(uplink_hz) = 'integer' AND uplink_hz > 0)),
                 status TEXT,
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, neighbor_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1647,9 +1711,11 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group (
                 channel_id INTEGER NOT NULL,
-                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
-                version INTEGER CHECK(version IS NULL OR version >= 0),
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                patch_group INTEGER NOT NULL
+                    CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
+                version INTEGER CHECK(version IS NULL OR
+                    (typeof(version) = 'integer' AND version BETWEEN 0 AND 31)),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, patch_group),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1657,11 +1723,13 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_summary (
                 channel_id INTEGER NOT NULL,
-                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
-                version INTEGER CHECK(version IS NULL OR version >= 0),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                patch_group INTEGER NOT NULL
+                    CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
+                version INTEGER CHECK(version IS NULL OR
+                    (typeof(version) = 'integer' AND version BETWEEN 0 AND 31)),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, patch_group),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
@@ -1669,9 +1737,11 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup (
                 channel_id INTEGER NOT NULL,
-                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
-                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                patch_group INTEGER NOT NULL
+                    CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
+                talkgroup_id INTEGER NOT NULL
+                    CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id BETWEEN 1 AND 65534),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, patch_group, talkgroup_id),
                 FOREIGN KEY(channel_id, patch_group) REFERENCES p25_site_patch_group(channel_id, patch_group)
                     ON DELETE CASCADE
@@ -1680,11 +1750,13 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup_summary (
                 channel_id INTEGER NOT NULL,
-                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
-                talkgroup_id INTEGER NOT NULL CHECK(talkgroup_id > 0),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                patch_group INTEGER NOT NULL
+                    CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
+                talkgroup_id INTEGER NOT NULL
+                    CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id BETWEEN 1 AND 65534),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, patch_group, talkgroup_id),
                 FOREIGN KEY(channel_id, patch_group)
                     REFERENCES p25_site_patch_group_summary(channel_id, patch_group) ON DELETE CASCADE
@@ -1693,9 +1765,11 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_radio (
                 channel_id INTEGER NOT NULL,
-                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
-                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                patch_group INTEGER NOT NULL
+                    CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
+                radio_id INTEGER NOT NULL
+                    CHECK(typeof(radio_id) = 'integer' AND radio_id BETWEEN 1 AND 16777215),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, patch_group, radio_id),
                 FOREIGN KEY(channel_id, patch_group) REFERENCES p25_site_patch_group(channel_id, patch_group)
                     ON DELETE CASCADE
@@ -1704,11 +1778,13 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_radio_summary (
                 channel_id INTEGER NOT NULL,
-                patch_group INTEGER NOT NULL CHECK(patch_group > 0),
-                radio_id INTEGER NOT NULL CHECK(radio_id > 0),
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                patch_group INTEGER NOT NULL
+                    CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
+                radio_id INTEGER NOT NULL
+                    CHECK(typeof(radio_id) = 'integer' AND radio_id BETWEEN 1 AND 16777215),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, patch_group, radio_id),
                 FOREIGN KEY(channel_id, patch_group)
                     REFERENCES p25_site_patch_group_summary(channel_id, patch_group) ON DELETE CASCADE
@@ -1721,24 +1797,33 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS trunked_control_channel_quality (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                frequency_hz INTEGER NOT NULL CHECK(frequency_hz > 0),
-                bucket_start_ms INTEGER NOT NULL CHECK(bucket_start_ms >= 0),
+                frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz > 0),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 observed_at_ms INTEGER NOT NULL CHECK(
+                    typeof(observed_at_ms) = 'integer' AND
                     observed_at_ms >= bucket_start_ms AND observed_at_ms < bucket_start_ms + 10000
                 ),
-                signal_dbfs REAL,
-                average_signal_dbfs REAL,
-                minimum_signal_dbfs REAL,
-                maximum_signal_dbfs REAL,
+                signal_dbfs REAL CHECK(signal_dbfs IS NULL OR typeof(signal_dbfs) IN ('real', 'integer')),
+                average_signal_dbfs REAL CHECK(average_signal_dbfs IS NULL OR
+                    typeof(average_signal_dbfs) IN ('real', 'integer')),
+                minimum_signal_dbfs REAL CHECK(minimum_signal_dbfs IS NULL OR
+                    typeof(minimum_signal_dbfs) IN ('real', 'integer')),
+                maximum_signal_dbfs REAL CHECK(maximum_signal_dbfs IS NULL OR
+                    typeof(maximum_signal_dbfs) IN ('real', 'integer')),
                 decode_health_pct REAL CHECK(
-                    decode_health_pct IS NULL OR decode_health_pct BETWEEN 0.0 AND 100.0
+                    decode_health_pct IS NULL OR
+                    (typeof(decode_health_pct) IN ('real', 'integer')
+                        AND decode_health_pct BETWEEN 0.0 AND 100.0)
                 ),
-                valid_frames INTEGER NOT NULL DEFAULT 0 CHECK(valid_frames >= 0),
-                invalid_frames INTEGER NOT NULL DEFAULT 0 CHECK(invalid_frames >= 0),
-                corrected_bits INTEGER NOT NULL DEFAULT 0 CHECK(corrected_bits >= 0),
-                sync_loss_bits INTEGER NOT NULL DEFAULT 0 CHECK(sync_loss_bits >= 0),
-                dropped_bits INTEGER NOT NULL DEFAULT 0 CHECK(dropped_bits >= 0),
-                last_valid_decode_ms INTEGER NOT NULL DEFAULT 0 CHECK(last_valid_decode_ms >= 0),
+                valid_frames INTEGER NOT NULL DEFAULT 0 CHECK(typeof(valid_frames) = 'integer' AND valid_frames >= 0),
+                invalid_frames INTEGER NOT NULL DEFAULT 0 CHECK(typeof(invalid_frames) = 'integer' AND invalid_frames >= 0),
+                corrected_bits INTEGER NOT NULL DEFAULT 0 CHECK(typeof(corrected_bits) = 'integer' AND corrected_bits >= 0),
+                sync_loss_bits INTEGER NOT NULL DEFAULT 0 CHECK(typeof(sync_loss_bits) = 'integer' AND sync_loss_bits >= 0),
+                dropped_bits INTEGER NOT NULL DEFAULT 0 CHECK(typeof(dropped_bits) = 'integer' AND dropped_bits >= 0),
+                last_valid_decode_ms INTEGER NOT NULL DEFAULT 0 CHECK(
+                    typeof(last_valid_decode_ms) = 'integer' AND last_valid_decode_ms >= 0
+                    AND last_valid_decode_ms <= observed_at_ms
+                ),
                 PRIMARY KEY(channel_id, frequency_hz, bucket_start_ms)
             ) WITHOUT ROWID
             """);
@@ -1750,14 +1835,18 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band (
                 channel_id INTEGER NOT NULL,
-                foreign_wacn INTEGER NOT NULL CHECK(foreign_wacn BETWEEN 0 AND 1048575),
-                foreign_system_id INTEGER NOT NULL CHECK(foreign_system_id BETWEEN 0 AND 4095),
-                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
-                channel_type INTEGER NOT NULL CHECK(channel_type >= 0),
-                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
-                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
-                transmit_offset_hz INTEGER,
-                confirmed_at_ms INTEGER NOT NULL CHECK(confirmed_at_ms > 0),
+                foreign_wacn INTEGER NOT NULL CHECK(typeof(foreign_wacn) = 'integer' AND foreign_wacn BETWEEN 0 AND 1048575),
+                foreign_system_id INTEGER NOT NULL CHECK(typeof(foreign_system_id) = 'integer' AND foreign_system_id BETWEEN 0 AND 4095),
+                band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
+                channel_type INTEGER NOT NULL
+                    CHECK(typeof(channel_type) = 'integer' AND channel_type BETWEEN 0 AND 5),
+                base_hz INTEGER CHECK(base_hz IS NULL OR
+                    (typeof(base_hz) = 'integer' AND base_hz > 0)),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR
+                    (typeof(spacing_hz) = 'integer' AND spacing_hz > 0)),
+                transmit_offset_hz INTEGER CHECK(transmit_offset_hz IS NULL OR
+                    typeof(transmit_offset_hz) = 'integer'),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, foreign_wacn, foreign_system_id, band),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             ) WITHOUT ROWID
@@ -1765,16 +1854,20 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band_summary (
                 channel_id INTEGER NOT NULL,
-                foreign_wacn INTEGER NOT NULL CHECK(foreign_wacn BETWEEN 0 AND 1048575),
-                foreign_system_id INTEGER NOT NULL CHECK(foreign_system_id BETWEEN 0 AND 4095),
-                band INTEGER NOT NULL CHECK(band BETWEEN 0 AND 15),
-                channel_type INTEGER NOT NULL CHECK(channel_type >= 0),
-                base_hz INTEGER CHECK(base_hz IS NULL OR base_hz > 0),
-                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR spacing_hz > 0),
-                transmit_offset_hz INTEGER,
-                first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(observation_count > 0),
+                foreign_wacn INTEGER NOT NULL CHECK(typeof(foreign_wacn) = 'integer' AND foreign_wacn BETWEEN 0 AND 1048575),
+                foreign_system_id INTEGER NOT NULL CHECK(typeof(foreign_system_id) = 'integer' AND foreign_system_id BETWEEN 0 AND 4095),
+                band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
+                channel_type INTEGER NOT NULL
+                    CHECK(typeof(channel_type) = 'integer' AND channel_type BETWEEN 0 AND 5),
+                base_hz INTEGER CHECK(base_hz IS NULL OR
+                    (typeof(base_hz) = 'integer' AND base_hz > 0)),
+                spacing_hz INTEGER CHECK(spacing_hz IS NULL OR
+                    (typeof(spacing_hz) = 'integer' AND spacing_hz > 0)),
+                transmit_offset_hz INTEGER CHECK(transmit_offset_hz IS NULL OR
+                    typeof(transmit_offset_hz) = 'integer'),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
                 PRIMARY KEY(channel_id, foreign_wacn, foreign_system_id, band),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             ) WITHOUT ROWID
@@ -1848,8 +1941,7 @@ public class ReceiverActivitySchema
 
     private static final List<SqliteSchemaValidator.Table> TABLES = java.util.stream.Stream.concat(List.of(
         table("receiver_channel", "id", "configuration_id", "first_seen_ms",
-            "last_seen_ms", "radio_system_id", "nac", "rfss", "site",
-            "current_control_hz"),
+            "last_seen_ms", "radio_system_id"),
         table("receiver_activity_event", "id", "channel_id", "observed_at_ms", "action_code", "event_type_code",
             "source_radio_id", "target_id", "target_kind_code", "frequency_hz", "lcn_band", "lcn_number",
             "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id"),
@@ -2298,26 +2390,16 @@ public class ReceiverActivitySchema
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_channel (
-                configuration_id, first_seen_ms, last_seen_ms, nac, rfss, site, current_control_hz
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
+            VALUES (?, ?, ?)
             ON CONFLICT(configuration_id) DO UPDATE SET
                 first_seen_ms = min(receiver_channel.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms),
-                nac = coalesce(excluded.nac, receiver_channel.nac),
-                rfss = coalesce(excluded.rfss, receiver_channel.rfss),
-                site = coalesce(excluded.site, receiver_channel.site),
-                current_control_hz = coalesce(excluded.current_control_hz, receiver_channel.current_control_hz)
-            WHERE excluded.last_seen_ms >= receiver_channel.last_seen_ms
+                last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms)
             """))
         {
             statement.setString(1, metadata.configurationId());
             statement.setLong(2, metadata.firstSeenEpochMilliseconds());
             statement.setLong(3, metadata.lastSeenEpochMilliseconds());
-            setInteger(statement, 4, metadata.nac());
-            setInteger(statement, 5, metadata.rfss());
-            setInteger(statement, 6, metadata.site());
-            setLong(statement, 7, metadata.currentControlHertz());
             statement.executeUpdate();
         }
         synchronizeReceiverChannelWithConfiguration(connection, metadata.configurationId());
@@ -2333,27 +2415,7 @@ public class ReceiverActivitySchema
                     SELECT 1 FROM configuration_channel configured
                     WHERE configured.configuration_id = receiver_channel.configuration_id
                       AND configured.channel_kind = 'TRUNKED'
-                ) THEN radio_system_id ELSE NULL END,
-                nac = CASE WHEN EXISTS (
-                    SELECT 1 FROM configuration_channel configured
-                    WHERE configured.configuration_id = receiver_channel.configuration_id
-                      AND configured.decoder_type LIKE 'P25_%'
-                ) THEN nac ELSE NULL END,
-                rfss = CASE WHEN EXISTS (
-                    SELECT 1 FROM configuration_channel configured
-                    WHERE configured.configuration_id = receiver_channel.configuration_id
-                      AND configured.decoder_type LIKE 'P25_%'
-                ) THEN rfss ELSE NULL END,
-                site = CASE WHEN EXISTS (
-                    SELECT 1 FROM configuration_channel configured
-                    WHERE configured.configuration_id = receiver_channel.configuration_id
-                      AND configured.decoder_type LIKE 'P25_%'
-                ) THEN site ELSE NULL END,
-                current_control_hz = CASE WHEN EXISTS (
-                    SELECT 1 FROM configuration_channel configured
-                    WHERE configured.configuration_id = receiver_channel.configuration_id
-                      AND configured.channel_kind = 'TRUNKED'
-                ) THEN current_control_hz ELSE NULL END
+                ) THEN radio_system_id ELSE NULL END
             WHERE configuration_id = ?
             """))
         {
@@ -2823,19 +2885,18 @@ public class ReceiverActivitySchema
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT 1
             FROM receiver_channel channel
+            JOIN configuration_channel configured
+              ON configured.configuration_id = channel.configuration_id
             JOIN p25_site_snapshot site ON site.channel_id = channel.id
             WHERE channel.configuration_id = ?
-              AND channel.kind_code = ?
-              AND channel.protocol_code IN (?,?)
+              AND configured.channel_kind = 'TRUNKED'
+              AND configured.decoder_type IN ('P25_PHASE1', 'P25_PHASE2')
               AND ? >= channel.first_seen_ms
             LIMIT 1
             """))
         {
             statement.setString(1, fact.configurationId());
-            statement.setInt(2, RECEIVER_TRUNKED_SITE);
-            statement.setInt(3, PROTOCOL_APCO25);
-            statement.setInt(4, PROTOCOL_APCO25_PHASE2);
-            statement.setLong(5, fact.observedAtEpochMilliseconds());
+            statement.setLong(2, fact.observedAtEpochMilliseconds());
 
             try(ResultSet resultSet = statement.executeQuery())
             {
@@ -3078,7 +3139,7 @@ public class ReceiverActivitySchema
         return band != null && band.wacn() != null && band.wacn() >= 0 && band.wacn() <= 0xFFFFF &&
             band.system() != null && band.system() >= 0 && band.system() <= 0xFFF &&
             band.band() != null && band.band() >= 0 && band.band() <= 0xF &&
-            band.channelType() != null && band.channelType() >= 0 && band.channelType() <= 0xF;
+            band.channelType() != null && band.channelType() >= 0 && band.channelType() <= 5;
     }
 
     private static void setForeignSystemBand(PreparedStatement statement, int channelId,
@@ -3946,19 +4007,23 @@ public class ReceiverActivitySchema
                 a.event_type_code,
                 a.target_kind_code,
                 configured.name AS resolved_channel_name,
-                configured.alias_list_name AS resolved_alias_list_name,
+                configured_alias.name AS resolved_alias_list_name,
                 configured.decoder_type AS resolved_decoder,
                 system.system_key AS resolved_system_key,
                 system.p25_wacn AS resolved_wacn,
                 system.p25_system_id AS resolved_system_id,
-                rc.nac AS resolved_nac,
-                rc.rfss AS resolved_rfss,
-                rc.site AS resolved_site,
-                rc.current_control_hz AS resolved_current_control_hz
+                p25_site.nac AS resolved_nac,
+                p25_site.rfss AS resolved_rfss,
+                coalesce(p25_site.site, trunked_site.site_id) AS resolved_site,
+                coalesce(p25_site.current_control_hz, trunked_site.current_control_hz)
+                    AS resolved_current_control_hz
             FROM receiver_activity_event a
             LEFT JOIN receiver_channel rc ON rc.id = a.channel_id
             LEFT JOIN configuration_channel configured ON configured.configuration_id = rc.configuration_id
+            LEFT JOIN alias_list configured_alias ON configured_alias.id = configured.alias_list_id
             LEFT JOIN radio_system system ON system.id = rc.radio_system_id
+            LEFT JOIN p25_site_snapshot p25_site ON p25_site.channel_id = rc.id
+            LEFT JOIN trunked_site_snapshot trunked_site ON trunked_site.channel_id = rc.id
             """.formatted(
             receiverKindCase(receiverKindSql("configured.channel_kind", "configured.decoder_type")),
             protocolCase(protocolSql("configured.decoder_type")),

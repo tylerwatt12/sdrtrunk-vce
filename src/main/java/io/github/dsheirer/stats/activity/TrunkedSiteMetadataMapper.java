@@ -130,16 +130,15 @@ final class TrunkedSiteMetadataMapper
             {
                 int status = Boolean.TRUE.equals(neighbor.networkConnectionActive()) ?
                     TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE : 0;
-                Integer neighborModel = dmrModel(neighbor.model());
                 neighbors.add(new TrunkedSiteSchema.Neighbor(dmrVariant(neighbor.variant()),
-                    neighborModel != null ? neighborModel : 0, neighbor.network(), null, neighbor.site(),
+                    0, neighbor.network(), null, neighbor.site(),
                     neighbor.logicalChannelNumber(), neighbor.downlink(), status,
                     observedAt(neighbor.observedAtEpochMilliseconds(), observedAt)));
             }
         }
 
         return new TrunkedSiteSchema.Snapshot(observedAt, configurationId, hash, TrunkedSiteSchema.PROTOCOL_DMR,
-            dmrVariant(snapshot.variant()), modelCode != null ? modelCode : 0, snapshot.network(), null,
+            dmrVariant(snapshot.variant()), 0, snapshot.network(), null,
             snapshot.site(), null, modelCode,
             dmrBrand(snapshot.brand()), dmrMode(snapshot.mode()), dmrChannelType(snapshot.channelType()),
             snapshot.colorCodeTimeslot1(), snapshot.colorCodeTimeslot2(), null, 0, null, primaryFrequency,
@@ -152,7 +151,7 @@ final class TrunkedSiteMetadataMapper
                                                        NXDNNetworkConfigurationSnapshot snapshot)
     {
         NXDNNetworkConfigurationSnapshot.Location location = snapshot.currentLocation();
-        int identityDomain = nxdnIdentityDomain(location != null ? location.category() : snapshot.variant());
+        int locationCategory = nxdnLocationCategory(location != null ? location.category() : snapshot.variant());
         Integer network = location != null ? location.integrator() : null;
         Integer system = location != null ? location.system() : null;
         Integer site = location != null && location.site() != null ? location.site() : snapshot.typeDSite();
@@ -214,7 +213,7 @@ final class TrunkedSiteMetadataMapper
                 neighbor.observedAtEpochMilliseconds() :
                 neighborChannel != null ? neighborChannel.observedAtEpochMilliseconds() : 0;
             neighbors.add(new TrunkedSiteSchema.Neighbor(nxdnVariant(neighbor.variant()),
-                nxdnIdentityDomain(neighborLocation != null ? neighborLocation.category() : neighbor.variant()),
+                nxdnLocationCategory(neighborLocation != null ? neighborLocation.category() : neighbor.variant()),
                 neighborLocation != null ? neighborLocation.integrator() : null,
                 neighborLocation != null ? neighborLocation.system() : null, neighborSite,
                 neighborChannelNumber, neighborFrequency, status,
@@ -222,7 +221,7 @@ final class TrunkedSiteMetadataMapper
         }
 
         return new TrunkedSiteSchema.Snapshot(observedAt, configurationId, hash, TrunkedSiteSchema.PROTOCOL_NXDN,
-            nxdnVariant(snapshot.variant()), identityDomain, network, system, site, snapshot.ran(), null, null,
+            nxdnVariant(snapshot.variant()), locationCategory, network, system, site, snapshot.ran(), null, null,
             nxdnRepeaterMode(snapshot.repeaterStatus()), null, null, null, snapshot.currentRepeater(),
             nxdnServiceFlags(snapshot.services()),
             nxdnFailureCode(snapshot.failureStatus()), primaryFrequency, currentControl, channels, neighbors);
@@ -302,7 +301,7 @@ final class TrunkedSiteMetadataMapper
         };
     }
 
-    private static int nxdnIdentityDomain(String value)
+    private static int nxdnLocationCategory(String value)
     {
         return switch(safe(value))
         {

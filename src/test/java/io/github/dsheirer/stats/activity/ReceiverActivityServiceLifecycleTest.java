@@ -679,8 +679,8 @@ class ReceiverActivityServiceLifecycleTest
             service.getDecodeEventListener().accept(channel, context);
             awaitCount(database, "receiver_activity_event", 1);
             assertEquals(new ReceiverActivityMapper().mapConventionalCallOutput(current.snapshot(),
-                    ReceiverActivityRecords.CallOutput.RECORDED).contextKey(),
-                scalarText(database, "SELECT context_key FROM receiver_context LIMIT 1"));
+                    ReceiverActivityRecords.CallOutput.RECORDED).configurationId(),
+                scalarText(database, "SELECT configuration_id FROM receiver_channel LIMIT 1"));
 
             var retiredIngress = service.getObservationIngressForTest();
             pauseNextOutput.set(true);
@@ -1557,10 +1557,12 @@ class ReceiverActivityServiceLifecycleTest
     private static ReceiverActivityRecords.ActivityEvent activity(long timestamp)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new ReceiverActivityRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            ReceiverActivityRecords.ContextKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
-            "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854_187_500L, "00-0509", 1, false,
-            null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null, false, null, null);
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, guid,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
+            "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
+            false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
+            ReceiverActivityRecords.IdentityDomain.STANDARD, ReceiverActivityRecords.P25TargetIdentity.ORDINARY,
+            List.of());
     }
 
     private static class TestUserPreferences extends UserPreferences

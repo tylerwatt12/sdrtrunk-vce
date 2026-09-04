@@ -21,7 +21,7 @@ class ChannelActivitySnapshotTest
     @Test
     void normalizesNullTopLevelValues()
     {
-        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null, null,
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null,
             false, true, null, null);
 
         assertEquals("", snapshot.tableId());
@@ -86,7 +86,7 @@ class ChannelActivitySnapshotTest
         ChannelActivitySnapshot.Row snapshotRow = table.getLatestSnapshot().rows().getFirst();
         ChannelActivitySnapshot.Navigation navigation = snapshotRow.navigation();
         assertEquals("CONVENTIONAL", snapshotRow.role());
-        assertEquals("CONFIGURATION:" + configurationId, navigation.contextKey());
+        assertEquals(configurationId, navigation.channelConfigurationId());
         assertEquals("County Sheriff", navigation.aliasListName());
         assertEquals("p25", navigation.protocol());
         assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12"),

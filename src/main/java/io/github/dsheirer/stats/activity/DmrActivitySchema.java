@@ -79,26 +79,28 @@ public final class DmrActivitySchema
         column("last_talkgroup_id", "INTEGER", false, null, 0),
         column("last_peer_radio_id", "INTEGER", false, null, 0));
     private static final List<String> TALKGROUP_CHECKS = List.of(
-        "check(frequency_hz>0)",
-        "check(timeslotin(1,2))",
-        "check(talkgroup_idbetween1and16777215)",
-        "check(last_source_radio_idisnullorlast_source_radio_idbetween1and16777215)",
-        "check(last_seen_ms>=first_seen_ms)",
-        "check(call_count>0)",
-        "check(encrypted_count>=0)");
+        "check(typeof(frequency_hz)='integer'andfrequency_hz>0)",
+        "check(typeof(timeslot)='integer'andtimeslotin(1,2))",
+        "check(typeof(talkgroup_id)='integer'andtalkgroup_idbetween1and16777215)",
+        "check(last_source_radio_idisnullor(typeof(last_source_radio_id)='integer'andlast_source_radio_idbetween1and16777215))",
+        "check(typeof(first_seen_ms)='integer'andfirst_seen_ms>0)",
+        "check(typeof(last_seen_ms)='integer'andlast_seen_ms>=first_seen_ms)",
+        "check(typeof(call_count)='integer'andcall_count>0)",
+        "check(typeof(encrypted_count)='integer'andencrypted_count>=0)");
     private static final List<String> RADIO_CHECKS = List.of(
-        "check(frequency_hz>0)",
-        "check(timeslotin(1,2))",
-        "check(radio_idbetween1and16777215)",
-        "check(last_talkgroup_idisnullorlast_talkgroup_idbetween1and16777215)",
-        "check(last_peer_radio_idisnullorlast_peer_radio_idbetween1and16777215)",
-        "check(last_seen_ms>=first_seen_ms)",
-        "check(call_count>0)",
-        "check(source_call_count>=0)",
-        "check(target_call_count>=0)",
-        "check(group_call_count>=0)",
-        "check(private_call_count>=0)",
-        "check(encrypted_count>=0)");
+        "check(typeof(frequency_hz)='integer'andfrequency_hz>0)",
+        "check(typeof(timeslot)='integer'andtimeslotin(1,2))",
+        "check(typeof(radio_id)='integer'andradio_idbetween1and16777215)",
+        "check(last_talkgroup_idisnullor(typeof(last_talkgroup_id)='integer'andlast_talkgroup_idbetween1and16777215))",
+        "check(last_peer_radio_idisnullor(typeof(last_peer_radio_id)='integer'andlast_peer_radio_idbetween1and16777215))",
+        "check(typeof(first_seen_ms)='integer'andfirst_seen_ms>0)",
+        "check(typeof(last_seen_ms)='integer'andlast_seen_ms>=first_seen_ms)",
+        "check(typeof(call_count)='integer'andcall_count>0)",
+        "check(typeof(source_call_count)='integer'andsource_call_count>=0)",
+        "check(typeof(target_call_count)='integer'andtarget_call_count>=0)",
+        "check(typeof(group_call_count)='integer'andgroup_call_count>=0)",
+        "check(typeof(private_call_count)='integer'andprivate_call_count>=0)",
+        "check(typeof(encrypted_count)='integer'andencrypted_count>=0)");
 
     private DmrActivitySchema()
     {
@@ -124,14 +126,16 @@ public final class DmrActivitySchema
                     last_source_radio_id INTEGER,
                     PRIMARY KEY(channel_id, frequency_hz, timeslot, talkgroup_id),
                     FOREIGN KEY(channel_id) REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                    CHECK(frequency_hz > 0),
-                    CHECK(timeslot IN (1, 2)),
-                    CHECK(talkgroup_id BETWEEN 1 AND 16777215),
+                    CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz > 0),
+                    CHECK(typeof(timeslot) = 'integer' AND timeslot IN (1, 2)),
+                    CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id BETWEEN 1 AND 16777215),
                     CHECK(last_source_radio_id IS NULL OR
-                        last_source_radio_id BETWEEN 1 AND 16777215),
-                    CHECK(last_seen_ms >= first_seen_ms),
-                    CHECK(call_count > 0),
-                    CHECK(encrypted_count >= 0)
+                        (typeof(last_source_radio_id) = 'integer' AND
+                            last_source_radio_id BETWEEN 1 AND 16777215)),
+                    CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                    CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                    CHECK(typeof(call_count) = 'integer' AND call_count > 0),
+                    CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0)
                 ) WITHOUT ROWID
                 """);
             statement.executeUpdate("""
@@ -152,18 +156,21 @@ public final class DmrActivitySchema
                     last_peer_radio_id INTEGER,
                     PRIMARY KEY(channel_id, frequency_hz, timeslot, radio_id),
                     FOREIGN KEY(channel_id) REFERENCES receiver_channel(id) ON DELETE CASCADE,
-                    CHECK(frequency_hz > 0),
-                    CHECK(timeslot IN (1, 2)),
-                    CHECK(radio_id BETWEEN 1 AND 16777215),
-                    CHECK(last_talkgroup_id IS NULL OR last_talkgroup_id BETWEEN 1 AND 16777215),
-                    CHECK(last_peer_radio_id IS NULL OR last_peer_radio_id BETWEEN 1 AND 16777215),
-                    CHECK(last_seen_ms >= first_seen_ms),
-                    CHECK(call_count > 0),
-                    CHECK(source_call_count >= 0),
-                    CHECK(target_call_count >= 0),
-                    CHECK(group_call_count >= 0),
-                    CHECK(private_call_count >= 0),
-                    CHECK(encrypted_count >= 0)
+                    CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz > 0),
+                    CHECK(typeof(timeslot) = 'integer' AND timeslot IN (1, 2)),
+                    CHECK(typeof(radio_id) = 'integer' AND radio_id BETWEEN 1 AND 16777215),
+                    CHECK(last_talkgroup_id IS NULL OR
+                        (typeof(last_talkgroup_id) = 'integer' AND last_talkgroup_id BETWEEN 1 AND 16777215)),
+                    CHECK(last_peer_radio_id IS NULL OR
+                        (typeof(last_peer_radio_id) = 'integer' AND last_peer_radio_id BETWEEN 1 AND 16777215)),
+                    CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                    CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                    CHECK(typeof(call_count) = 'integer' AND call_count > 0),
+                    CHECK(typeof(source_call_count) = 'integer' AND source_call_count >= 0),
+                    CHECK(typeof(target_call_count) = 'integer' AND target_call_count >= 0),
+                    CHECK(typeof(group_call_count) = 'integer' AND group_call_count >= 0),
+                    CHECK(typeof(private_call_count) = 'integer' AND private_call_count >= 0),
+                    CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0)
                 ) WITHOUT ROWID
                 """);
             statement.executeUpdate("""
