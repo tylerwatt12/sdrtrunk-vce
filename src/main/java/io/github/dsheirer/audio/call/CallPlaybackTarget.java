@@ -24,9 +24,9 @@ import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -118,6 +118,12 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
         }
 
         String systemKey = systemKey(source, identifiers, protocol, configurationId);
+
+        if(systemKey == null)
+        {
+            return null;
+        }
+
         String prefix = "system:" + systemKey + ':';
 
         if(target instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
@@ -199,11 +205,11 @@ public record CallPlaybackTarget(String key, Kind kind, String systemKey, Intege
 
             if(wacn != null && system != null)
             {
-                return String.format(Locale.ROOT, "p25:%05x:%03x", wacn, system);
+                return RadioSystemKey.p25(wacn, system);
             }
         }
 
-        return protocolName(protocol) + ":channel:" + configurationId;
+        return RadioSystemKey.configured(protocol, configurationId);
     }
 
     private static Integer integerIdentifier(IdentifierCollection identifiers, Form form)
