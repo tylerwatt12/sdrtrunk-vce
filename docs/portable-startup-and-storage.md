@@ -14,13 +14,49 @@ files, JMBE libraries, and optional modules. Java Preferences are stored in the 
 ## First Launch And Application Migration
 
 When `data/database/sdrtrunk.sqlite` is absent, a graphical launch first looks beside the current install folder for
-portable data from an earlier sdrtrunk-vce build. The setup window offers these paths:
+portable data from an earlier sdrtrunk-vce build. The unified Setup Wizard offers four radio-card choices:
 
-- **Migrate Existing** using a discovered previous data folder.
-- **Choose Install…** to select a previous install folder, data folder, `database/sdrtrunk.sqlite` file, or a legacy
-  macOS `.app` bundle.
-- **Use Found XML** or **Choose XML…** to import an older XML playlist.
-- **Start Fresh** with an empty profile.
+- **Start fresh** is recommended for new users.
+- **Copy a previous VCE installation / data folder** includes the database and supported portable assets. Choose a
+  discovered nearby installation or browse explicitly; legacy macOS `.app` sources remain supported.
+- **Import a SQLite database only** imports only that file's contents. It does not copy a vault, JMBE library,
+  optional modules, or neighboring files, and does not remap stored output paths.
+- **Import legacy XML** reads supported configuration from an older playlist without modifying the source XML.
+
+The wizard's fixed sequence is Starting point, Administrator, Web access, Digital audio, RadioReference,
+Statistics & history, Tuner hardware, CPU benchmark, and Review & finish. Every step remains visible. Valid imported
+settings are marked **Carried over** and skipped by Continue; click a completed step to review or edit it. Deferred
+and failed steps are not shown as successful. Exit preserves accepted settings, but never saves password drafts.
+
+New profiles default to HTTPS on localhost port **8090**. The web interface remains available for alias editing;
+there is no desktop-only/disabled choice. An imported disabled web server is enabled on localhost and the adjustment
+is disclosed. Network access is never automatically enabled. Choosing **Other devices** binds reachable network
+interfaces under the host firewall; it is not a guaranteed LAN-only boundary and does not open firewall/router ports.
+Existing administrator credentials are preserved. Changing an imported administrator password requires the current
+password or the established account recovery workflow.
+
+Digital audio setup validates an existing JMBE JAR or builds it inline after explicit download/compile consent.
+RadioReference distinguishes stored credentials from a verified connection; passwords stay masked. Both are optional.
+Fresh profiles collect summary statistics; detailed activity history is opt-in. Imported Off choices remain Off.
+Time-based activity retention defaults to 30 days (1–365 days); these controls do not change recordings or ordinary logs.
+
+Tuner discovery lists physical devices as **Detected**, not Ready. It only enumerates descriptors/identities; it does
+not open, configure, tune, or start receiving from a tuner. Rescan and Skip are available, and no hardware or missing
+drivers do not prevent setup. Discovery runs again when revisiting the page rather than reusing an imported inventory.
+
+**Benchmark now** is recommended. Close other applications and pause CPU-heavy background work first. Existing valid
+per-test results are reused; missing, reset, or updated tests run individually. A changed CPU/JVM environment can
+invalidate all tests. Retry keeps completed valid results. **Skip this time** does not permanently suppress future
+prompts. JMBE and benchmarking display progress within the wizard; once started, navigation waits until completion,
+failure, or acknowledged cancellation. Cancellation of calibration takes effect between tests.
+
+Review lists effective output folders, web access, and existing auto-start selections. Applicable release information
+and vault-unlock controls appear here. The listener is checked before setup completes, and receiver construction
+follows calibration. Migration completion includes **Copy Message** and a visible ten-second continuation countdown;
+copying does not reset it. Other preparation pages do not automatically start work.
+
+Use **Help → Setup Wizard…** to reopen setup after an explicit restart confirmation, or launch graphically with
+`--setup-wizard`. Completed profiles normally launch without optional setup pages unless required preparation changes.
 
 The bundled Application Migrator is the only supported release database-migration entry point. During first-launch
 migration it copies an accepted SQLite database into a private staging folder, updates only that staged copy, runs
@@ -30,8 +66,10 @@ timestamped safety backup before atomically promoting their validated staged cop
 and optional module files are also copied when present during a full portable-data migration. Logs, recordings, event
 logs, screenshots, and streaming output remain in the previous data folder instead of being duplicated.
 
-Saved output and library paths that point inside the previous data folder are changed to the matching location inside
-the new data folder. Deliberately shared paths outside the previous data folder are left alone.
+For full-folder migration, saved output and library paths inside the previous data folder are changed to the matching
+location inside the new data folder. Deliberately shared paths outside it are left alone. SQLite-only imports preserve
+stored paths without remapping: absolute paths may still refer to the old installation, while portable-relative paths
+resolve under the destination data root. Check the effective folders on Review before starting channels.
 
 ### Alpha 8+ Database Compatibility
 
@@ -74,11 +112,17 @@ empty for every migrated account, preserving the existing behavior where all ale
 preference is preserved and the user's preference revision is incremented. Unknown or incomplete preference
 documents and exhausted revisions are refused rather than repaired or defaulted.
 
-Global database format 9 is the current format. Its format 8-to-9 step adds three per-user Live presentation choices.
+Global database format 9 added three per-user Live presentation choices in its format 8-to-9 step.
 Active-trunked-channel filtering defaults off. Retaining the last call on idle rows and clearing idle voice quality
 inherit the previous receiver-wide values for every existing account, defaulting false when those shared values are
 absent. The two obsolete shared keys are removed while traffic-grant age-out, the site-settings revision, and every
 unrelated portable preference remain intact.
+
+Global database format 13 adds one bounded setup-progress record in the existing `application_settings` table. The
+12-to-13 migration marks existing installations as previously configured without changing their other settings;
+the wizard revalidates actual readiness. New/copy-imported destinations get their own incomplete setup session.
+The record contains only completion and finite step states, not passwords, hardware inventories, benchmark results,
+or job logs. No new tables or separate database-version scheme are introduced.
 
 Supported Alpha 8-or-newer macOS `.app` releases remain migration sources. The setup workflow finds or opens
 the old bundle and uses its sibling `<app-name>-data` folder without changing that old installation. Current macOS

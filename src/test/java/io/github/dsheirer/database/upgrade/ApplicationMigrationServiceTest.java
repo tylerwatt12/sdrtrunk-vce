@@ -85,7 +85,7 @@ class ApplicationMigrationServiceTest
             .anyMatch(effect -> "P25 bandplan overrides".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(9).effects().stream()
             .anyMatch(effect -> "missing factory Alias Lists".equals(effect.subject())));
-        assertTrue(format1Plan.steps().getLast().effects().stream()
+        assertTrue(format1Plan.steps().get(10).effects().stream()
             .anyMatch(effect -> "per-user idle FFT channel markers".equals(effect.subject())));
 
         Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
@@ -281,6 +281,7 @@ class ApplicationMigrationServiceTest
             statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
             statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
             assertEquals(1, statement.executeUpdate());
+            try(var remove = connection.createStatement()) { remove.executeUpdate("DELETE FROM application_settings WHERE key='setup_wizard'"); }
         }
 
         IOException exception = assertThrows(IOException.class,
@@ -448,6 +449,7 @@ class ApplicationMigrationServiceTest
                     statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
                     statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
                     assertEquals(1, statement.executeUpdate());
+            try(var remove = connection.createStatement()) { remove.executeUpdate("DELETE FROM application_settings WHERE key='setup_wizard'"); }
                 }
             },
             (staged, source, target) ->
@@ -480,6 +482,7 @@ class ApplicationMigrationServiceTest
             statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
             statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
             assertEquals(1, statement.executeUpdate());
+            try(var remove = connection.createStatement()) { remove.executeUpdate("DELETE FROM application_settings WHERE key='setup_wizard'"); }
         }
 
         Path targetRoot = mTemporaryFolder.resolve("approved-plan-target");

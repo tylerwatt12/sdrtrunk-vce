@@ -24,7 +24,6 @@ import io.github.dsheirer.jmbe.github.GitHub;
 import io.github.dsheirer.jmbe.github.Release;
 import io.github.dsheirer.util.FileUtil;
 import io.github.dsheirer.util.OSType;
-import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.ZipUtility;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -33,12 +32,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.nio.file.StandardCopyOption;
 import java.util.stream.Stream;
-import javafx.application.Platform;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,12 +57,14 @@ public class JmbeCreator
     private static final String ARCH_X86_32 = "_32";
     private static final String ARCH_X86_64 = "_64";
 
-    private StringProperty mConsoleOutput = new SimpleStringProperty();
-    private BooleanProperty mCompleteProperty = new SimpleBooleanProperty();
-    private boolean mHasErrors = false;
-    private Release mRelease;
-    private Path mLibraryPath;
-    private StringBuilder mConsoleStringBuilder = new StringBuilder();
+    private final AtomicBoolean mCancelled = new AtomicBoolean();
+    private static final AtomicBoolean ACTIVE = new AtomicBoolean();
+    private final AtomicBoolean mStarted = new AtomicBoolean();
+    private volatile Process mProcess;
+    private volatile Thread mWorker;
+    private final Set<ProcessHandle> mChildren = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Release mRelease;
+    private final Path mLibraryPath;
 
     /**
      * Creates an instance.
@@ -86,139 +85,112 @@ public class JmbeCreator
         return mLibraryPath;
     }
 
-    /**
-     * Property that indicates if the creation process has finished.
-     */
-    public BooleanProperty completeProperty()
+    /** UI-independent single-use blocking job. Call on a worker, never the UI thread. */
+    public Path run(Consumer<String> progress) throws IOException, InterruptedException
     {
-        return mCompleteProperty;
-    }
-
-    /**
-     * Console output from the build process.
-     */
-    public StringProperty consoleOutputProperty()
-    {
-        return mConsoleOutput;
-    }
-
-    /**
-     * Prints (adds) the message text to the console property
-     * @param message to add
-     */
-    private void printToConsole(String message)
-    {
-        mConsoleStringBuilder.append(message).append("\n");
-        final String console = mConsoleStringBuilder.toString();
-        Platform.runLater(() -> consoleOutputProperty().setValue(console));
-    }
-
-    /**
-     * Indicates if the build process completed successfully (false) or there were errors (true).
-     */
-    public boolean hasErrors()
-    {
-        return mHasErrors;
-    }
-
-    /**
-     * Executes the build process that downloads the JMBE creator utility, unzips it, and commands the utility
-     * to create the library at the specified library path.
-     */
-    public void execute()
-    {
-        final Asset asset = getJMBECreatorAsset(mRelease);
-
-        if(asset != null)
+        if(!mStarted.compareAndSet(false, true)) throw new IllegalStateException("Create a new job for retry");
+        if(!ACTIVE.compareAndSet(false, true)) throw new IllegalStateException("JMBE creation is already running");
+        synchronized(this) { mWorker = Thread.currentThread(); }
+        Path temporary = null;
+        try
         {
-            ThreadPool.CACHED.execute(() -> {
-                Path tempDirectory = null;
-                try
+            checkCancelled();
+            Asset asset = creatorAsset();
+            if(asset == null) throw new IOException("No JMBE creator is available for this OS and architecture.");
+            Path target = mLibraryPath.toAbsolutePath().normalize();
+            Files.createDirectories(target.getParent());
+            temporary = Files.createTempDirectory(target.getParent(), ".jmbe-build-");
+            progress.accept("Downloading JMBE creator...");
+            Path creator = downloadCreator(asset, temporary);
+            checkCancelled();
+            if(creator == null) throw new IOException("JMBE download failed. Check your connection and retry.");
+            progress.accept("Extracting creator...");
+            Path unzipped = extractCreator(creator);
+            checkCancelled();
+            OSType os = OSType.getCurrentOSType();
+            if(os.isLinux() || os.isOsx()) restoreCreatorExecutables(unzipped);
+            Path script = FileUtil.findFile(unzipped, os.isWindows() ? CREATOR_SCRIPT_WINDOWS : CREATOR_SCRIPT_LINUX);
+            if(script == null) throw new IOException("The downloaded creator has no launch script.");
+            Path staged = temporary.resolve("library.jar");
+            String tag = mRelease.getTagName() == null ? "v" + mRelease.getVersion() : mRelease.getTagName();
+            progress.accept("Building JMBE...");
+            mProcess = launchCreator(script, staged, tag);
+            checkCancelled();
+            try(var reader = new BufferedReader(new InputStreamReader(mProcess.getInputStream())))
+            {
+                char[] buffer = new char[1024];
+                int count;
+                while((count = reader.read(buffer)) != -1)
                 {
-                    tempDirectory = Files.createTempDirectory("sdrtrunk-jmbe-creator");
-                    printToConsole("Created: Temp Directory [" + tempDirectory.toString() + "]");
-                    printToConsole("Downloading: JMBE Creator [" + asset.toString() + "]");
-                    printToConsole("Please wait ...");
-                    Path creator = GitHub.downloadArtifact(asset.getDownloadUrl(), tempDirectory);
-
-                    if(creator != null)
-                    {
-                        printToConsole("Downloaded: JMBE Creator [" + creator.toString() + "]");
-                        Path unzipped = ZipUtility.unzip(creator);
-                        printToConsole("Unzipped: [" + unzipped.toString() + "]");
-
-                        Path script = null;
-
-                        OSType osType = OSType.getCurrentOSType();
-
-                        if(osType.isLinux() || osType.isOsx())
-                        {
-                            restoreCreatorExecutables(unzipped);
-                            script = FileUtil.findFile(unzipped, CREATOR_SCRIPT_LINUX);
-                        }
-                        else if(osType.isWindows())
-                        {
-                            script = FileUtil.findFile(unzipped, CREATOR_SCRIPT_WINDOWS);
-                        }
-
-
-                        if(script != null)
-                        {
-                            ProcessBuilder processBuilder = new ProcessBuilder();
-                            String tagName = mRelease.getTagName();
-
-                            if(tagName == null)
-                            {
-                                tagName = "v" + mRelease.getVersion();
-                            }
-
-                            processBuilder.command(script.toString(), mLibraryPath.toString(), tagName);
-                            processBuilder.redirectErrorStream(true);
-                            runScript(processBuilder);
-                        }
-                        else
-                        {
-                            terminateWithErrors("Failed: Unable to find JMBE creator launch script for this OS");
-                            mLog.error("Script was null.  Unable to find JMBE creator launch script");
-                        }
-                    }
-                    else
-                    {
-                        terminateWithErrors("Failed: Unable to download the JMBE creator utility");
-                        mLog.error("Unable to download the JMBE creator utility");
-                    }
+                    checkCancelled();
+                    progress.accept(new String(buffer, 0, count));
                 }
-                catch(Throwable t)
-                {
-                    terminateWithErrors("Failed: Unknown Error - " + t.getLocalizedMessage());
-                    mLog.error("Failed to create the JMBE library", t);
-                }
-                finally
-                {
-                    if(tempDirectory != null)
-                    {
-                        try
-                        {
-                            FileUtils.deleteDirectory(tempDirectory.toFile());
-                            printToConsole("Deleted: Temporary Directory [" + tempDirectory.toString() + "]");
-                        }
-                        catch(IOException ioe)
-                        {
-                            printToConsole("Failed: Deleting Temporary Directory [" + tempDirectory.toString() + "]");
-                            mLog.error("Error deleting temporary directory [" + tempDirectory.toString() + "]");
-                        }
-                    }
-                }
-            });
+            }
+            int code = mProcess.waitFor();
+            checkCancelled();
+            if(code != 0) throw new IOException("JMBE creator exited with code " + code + ". Retry or choose an existing library.");
+            progress.accept("Validating library...");
+            JmbeLibraryMetadata.verify(staged, mRelease.getVersion());
+            checkCancelled();
+            progress.accept("Installing verified library...");
+            Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            return target;
         }
-        else
+        finally
         {
-            terminateWithErrors("Failed: Unable to identify correct JMBE creator utility from GitHub " +
-                    "repository for this computer's operating system and architecture");
-            mLog.error("Unable to create JMBE library.  Can't find JMBE Creator for this OS and architecture");
+            boolean interrupted = Thread.interrupted();
+            try
+            {
+                stopProcess();
+                //Cancellation is acknowledged only after child work has stopped, before cleaning its files.
+                for(ProcessHandle child: mChildren) child.onExit().join();
+                if(mProcess != null) mProcess.onExit().join();
+                if(temporary != null)
+                {
+                    progress.accept("Cleaning temporary build files...");
+                    try { FileUtils.deleteDirectory(temporary.toFile()); }
+                    catch(IOException e) { progress.accept("Temporary build cleanup failed."); }
+                }
+            }
+            finally
+            {
+                synchronized(this) { mWorker = null; }
+                ACTIVE.set(false);
+                if(interrupted) Thread.currentThread().interrupt();
+            }
         }
+    }
 
+    Asset creatorAsset() { return getJMBECreatorAsset(mRelease); }
+    Path downloadCreator(Asset asset, Path destination) throws IOException { return GitHub.downloadArtifact(asset.getDownloadUrl(), destination); }
+    Path extractCreator(Path archive) throws IOException { return ZipUtility.unzip(archive); }
+    Process launchCreator(Path script, Path staged, String tag) throws IOException
+    {
+        return new ProcessBuilder(script.toString(), staged.toString(), tag).redirectErrorStream(true).start();
+    }
 
+    public void cancel()
+    {
+        mCancelled.set(true);
+        stopProcess();
+        //Do not interrupt a cached executor thread after this job has relinquished it.
+        synchronized(this) { if(mWorker != null) mWorker.interrupt(); }
+    }
+
+    private void checkCancelled() throws InterruptedException
+    {
+        if(mCancelled.get() || Thread.currentThread().isInterrupted())
+            throw new InterruptedException("JMBE creation cancelled");
+    }
+
+    private void stopProcess()
+    {
+        Process process = mProcess;
+        if(process != null && process.isAlive())
+        {
+            process.descendants().forEach(child -> { mChildren.add(child); child.destroyForcibly(); });
+            process.destroyForcibly();
+        }
     }
 
     /**
@@ -247,65 +219,6 @@ public class JmbeCreator
             parent != null && parent.getFileName() != null && "bin".equals(parent.getFileName().toString());
     }
 
-
-    /**
-     * Terminates the execution and updates flags to indicate error state
-     * @param message to display as console output
-     */
-    private void terminateWithErrors(String message)
-    {
-        printToConsole(message);
-        printToConsole("Please follow the instructions for manually creating and installing the JMBE library");
-        Platform.runLater(() -> {
-            mHasErrors = true;
-            mCompleteProperty.set(true);
-        });
-    }
-
-    /**
-     * Runs the build script using the given process builder and handles the result.
-     */
-    private void runScript(ProcessBuilder processBuilder) throws IOException
-    {
-        try
-        {
-            Process process = processBuilder.start();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while((line = reader.readLine()) != null)
-            {
-                printToConsole(line);
-            }
-
-            int exitCode = process.waitFor();
-
-            if(exitCode == 0)
-            {
-                try
-                {
-                    JmbeLibraryMetadata.verify(mLibraryPath, mRelease.getVersion());
-                    printToConsole("Library Created Successfully!");
-                    Platform.runLater(() -> completeProperty().set(true));
-                }
-                catch(IOException e)
-                {
-                    terminateWithErrors("Failed: " + e.getMessage());
-                    mLog.error("Created JMBE library did not pass validation", e);
-                }
-            }
-            else
-            {
-                terminateWithErrors("Failed: Exit Code [" + exitCode + "]");
-                mLog.error("Script failed with exit code: " + exitCode);
-            }
-        }
-        catch(InterruptedException ie)
-        {
-            Thread.currentThread().interrupt();
-            terminateWithErrors("Failed: Script Process was interrupted");
-            mLog.error("Interrupted", ie);
-        }
-    }
 
     /**
      * Attempts to find the correct JMBE creator for this operating system and architecture for the specified release

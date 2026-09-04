@@ -298,7 +298,7 @@ class Format10To11DatabaseMigrationTest
     private static String settings(Connection connection) throws SQLException
     {
         return scalar(connection, "SELECT group_concat(value, '|') FROM " +
-            "(SELECT key || ':' || settings_json AS value FROM application_settings ORDER BY key)");
+            "(SELECT key || ':' || settings_json AS value FROM application_settings WHERE key <> 'setup_wizard' ORDER BY key)");
     }
 
     private static String scalar(Connection connection, String sql) throws SQLException

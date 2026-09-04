@@ -51,7 +51,6 @@ import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
-import io.github.dsheirer.gui.startup.CoordinatedStartupDialog;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewLogicalCallMonitorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
@@ -185,11 +184,13 @@ public class SDRTrunk
     private boolean mShutdownProcessed;
     private volatile boolean mDatabaseReplacementInProgress;
     private PortableDataRootLock mDataRootLock;
+    private final boolean mStartConfiguredChannels;
 
-    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock)
+    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock, boolean startConfiguredChannels)
     {
         mUserPreferences = userPreferences;
         mDataRootLock = dataRootLock;
+        mStartConfiguredChannels = startConfiguredChannels;
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
         mUpdateCheckService = new UpdateCheckService();
         mIconModel = new IconModel();
@@ -225,7 +226,6 @@ public class SDRTrunk
         IconFontSwing.register(FontAwesome.getIconFont());
 
         mTunerManager = new TunerManager(mUserPreferences);
-        mTunerManager.start();
 
         mSettingsManager = new SettingsManager();
 
@@ -238,9 +238,7 @@ public class SDRTrunk
             mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager);
         }
 
-        CalibrationManager calibrationManager = CalibrationManager.getInstance(mUserPreferences);
-        final boolean calibrating = !calibrationManager.isCalibrated() &&
-            !mUserPreferences.getVectorCalibrationPreference().isHideCalibrationDialog();
+        CalibrationManager.getInstance(mUserPreferences);
 
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
@@ -251,11 +249,9 @@ public class SDRTrunk
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
             this::receiveRecordedCall);
-        mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
             mUserPreferences, this::receiveStreamedCall);
-        mAudioStreamingManager.start();
 
         mDecodeEventViewService = new DecodeEventViewService(
             mConfigurationManager.getChannelProcessingManager(), mConfigurationManager.getAliasModel());
@@ -266,6 +262,20 @@ public class SDRTrunk
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
             mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
             mConfigurationManager.getScanListModel());
+
+        if(!GraphicsEnvironment.isHeadless() && !mStatsWebServerService.getRuntimeState().running())
+        {
+            try
+            {
+                if(!io.github.dsheirer.gui.setup.SetupWizard.ensureListener(mUserPreferences, mStatsWebServerService))
+                    throw new io.github.dsheirer.gui.setup.SetupWizard.Cancelled();
+            }
+            catch(io.github.dsheirer.gui.setup.SetupWizard.Cancelled e) { throw e; }
+            catch(Exception e) { throw new IllegalStateException("Web listener setup could not complete", e); }
+        }
+        mTunerManager.start();
+        mAudioRecordingManager.start();
+        mAudioStreamingManager.start();
 
         if(mJavaFxWindowManager != null)
         {
@@ -338,7 +348,7 @@ public class SDRTrunk
 
             try
             {
-                startPostLaunchExperience(calibrating);
+                startPostLaunchExperience();
             }
             catch(Exception e)
             {
@@ -350,13 +360,14 @@ public class SDRTrunk
                     vaultService.disableForRun();
                 }
 
-                startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
+                if(mStartConfiguredChannels) startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
             }
         });
     }
 
-    private void startPostLaunchExperience(boolean calibrationRequired)
+    private void startPostLaunchExperience()
     {
+        if(!mStartConfiguredChannels) return;
         List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
         EncryptionKeyVaultService vaultService = getLockedLaunchVault();
 
@@ -371,14 +382,8 @@ public class SDRTrunk
             return;
         }
 
-        CoordinatedStartupDialog dialog = new CoordinatedStartupDialog(mMainGui, mUserPreferences,
-            WhatsNewDialog.getPendingReleaseNotes(), calibrationRequired, vaultService, channels,
-            mConfigurationManager.getChannelProcessingManager());
-
-        if(dialog.hasSteps())
-        {
-            dialog.showExperience();
-        }
+        //Graphical launch readiness, release information and calibration finish before receiver construction.
+        startChannelsWithoutDialog(channels);
     }
 
     private void startChannelsWithoutDialog(List<Channel> channels)
@@ -641,6 +646,30 @@ public class SDRTrunk
         menuBar.add(screenCaptureItem);
 
         JMenu helpMenu = new JMenu("Help");
+        JMenuItem setupWizardItem = new JMenuItem("Setup Wizard…");
+        setupWizardItem.addActionListener(event -> {
+            if(mDatabaseReplacementInProgress) return;
+            if(JOptionPane.showConfirmDialog(mMainGui,
+                "Restart into Setup Wizard? Receiving and streaming will stop until you finish setup. " +
+                "Your existing profile and accepted settings will be preserved.", "Restart for setup",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
+            try
+            {
+                flushConfigurationForDatabaseReplacement();
+                processShutdown(false);
+                releaseDataRootLock();
+                ApplicationRelauncher.relaunch("--setup-wizard");
+                System.exit(0);
+            }
+            catch(Exception e)
+            {
+                JOptionPane.showMessageDialog(mMainGui,
+                    "Automatic restart failed. Close this process and start again with --setup-wizard.",
+                    "Restart required", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        helpMenu.add(setupWizardItem);
+        helpMenu.add(new JSeparator());
         if(WhatsNewDialog.hasCurrent())
         {
             JMenuItem whatsNewItem = new JMenuItem("What's New");
@@ -1403,32 +1432,53 @@ public class SDRTrunk
                 dataRootLock = PortableDataRootLock.acquire(dataRoot);
             }
 
-            SdrTrunkDatabaseBootstrap.BootstrapResult bootstrap = SdrTrunkDatabaseBootstrap.run(args);
-
-            if(!bootstrap.startApplication())
+            UserPreferences userPreferences;
+            boolean startConfiguredChannels = true;
+            if(!GraphicsEnvironment.isHeadless())
             {
-                if(dataRootLock != null)
+                var setup = io.github.dsheirer.gui.setup.SetupWizard.run(args, dataRoot, dataRootLock);
+                if(setup == null)
                 {
-                    dataRootLock.close();
+                    if(dataRootLock != null) dataRootLock.close();
+                    SqlitePreferencesFactory.shutdown();
+                    System.exit(0);
+                    return;
+                }
+                dataRootLock = setup.lock();
+                userPreferences = setup.preferences();
+                startConfiguredChannels = setup.startChannels();
+            }
+            else
+            {
+                if(java.util.Arrays.asList(args).contains("--setup-wizard"))
+                    throw new IllegalArgumentException("--setup-wizard requires a graphical desktop.");
+                SdrTrunkDatabaseBootstrap.BootstrapResult bootstrap = SdrTrunkDatabaseBootstrap.run(args);
+
+                if(!bootstrap.startApplication())
+                {
+                    if(dataRootLock != null)
+                    {
+                        dataRootLock.close();
+                    }
+
+                    return;
                 }
 
-                return;
+                if(dataRootLock == null)
+                {
+                    dataRootLock = PortableDataRootLock.acquire(dataRoot);
+                }
+
+                SqlitePreferencesFactory.install(databasePath);
+                userPreferences = new UserPreferences();
+
+                if(bootstrap.initializeNewPreferences())
+                {
+                    userPreferences.getApplicationPreference().setStatsLoggingEnabled(true);
+                }
             }
 
-            if(dataRootLock == null)
-            {
-                dataRootLock = PortableDataRootLock.acquire(dataRoot);
-            }
-
-            SqlitePreferencesFactory.install(databasePath);
-            UserPreferences userPreferences = new UserPreferences();
-
-            if(bootstrap.initializeNewPreferences())
-            {
-                userPreferences.getApplicationPreference().setStatsLoggingEnabled(true);
-            }
-
-            new SDRTrunk(userPreferences, dataRootLock);
+            new SDRTrunk(userPreferences, dataRootLock, startConfiguredChannels);
             dataRootLock = null;
         }
         catch(Exception e)
@@ -1447,6 +1497,11 @@ public class SDRTrunk
                 }
             }
 
+            if(e instanceof io.github.dsheirer.gui.setup.SetupWizard.Cancelled)
+            {
+                System.exit(0);
+                return;
+            }
             String message = "sdrtrunk-vce could not start.\n\n" + e.getMessage();
             System.err.println(message);
             e.printStackTrace(System.err);

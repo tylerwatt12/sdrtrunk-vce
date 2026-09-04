@@ -49,7 +49,7 @@ class Format11To12DatabaseMigrationTest
             assertEquals(3, before.size());
             String preserved = preservedDigest(connection);
             var plan = DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
-            assertEquals(1, plan.steps().size());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 11, plan.steps().size());
             var effect = plan.steps().getFirst().effects().getFirst();
             assertEquals(DatabaseMigrationEffect.Kind.DEFAULT, effect.kind());
             assertEquals("per-user idle FFT channel markers", effect.subject());
@@ -60,7 +60,7 @@ class Format11To12DatabaseMigrationTest
             try
             {
                 var report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(12, report.target().version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
                 assertEquals(List.of(effect), report.steps().getFirst().effects());
                 connection.commit();
             }
@@ -118,7 +118,7 @@ class Format11To12DatabaseMigrationTest
             assertEquals(11, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(connection));
             assertEquals(preserved, preservedDigest(connection));
-            assertEquals(12, DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
         }
     }
 
@@ -201,7 +201,8 @@ class Format11To12DatabaseMigrationTest
             AND name NOT IN ('web_user', 'database_metadata') ORDER BY name
             """))
         {
-            while(rows.next()) queries.add("SELECT * FROM \"" + rows.getString(1).replace("\"", "\"\"") + "\"");
+            while(rows.next()) queries.add("SELECT * FROM \"" + rows.getString(1).replace("\"", "\"\"") + "\"" +
+                ("application_settings".equals(rows.getString(1)) ? " WHERE key <> 'setup_wizard'" : ""));
         }
         queries.add("""
             SELECT id, username, tier, primary_admin, credential_version, password_algorithm, password_iterations,

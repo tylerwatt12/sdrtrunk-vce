@@ -54,6 +54,17 @@ public class JmbeEditor extends VBox
     private GridPane mLabelGridPane;
     private Path mLibraryDirectoryPath;
     private Button mCreateButton;
+    private JmbeCreator mActiveCreator;
+    private javafx.animation.Timeline mProgressTimer;
+    private long mCreationGeneration;
+
+    /** Detach a closing view and request cancellation; the worker acknowledges after stopping its child work. */
+    public void cancelCreation()
+    {
+        mCreationGeneration++;
+        if(mProgressTimer != null) mProgressTimer.stop();
+        if(mActiveCreator != null) mActiveCreator.cancel();
+    }
     private TextArea mConsoleTextArea;
 
     /**
@@ -138,33 +149,36 @@ public class JmbeEditor extends VBox
      */
     private void createJmbeLibrary(Path library)
     {
-        JmbeCreator jmbeCreator = new JmbeCreator(mCurrentRelease, library);
-        getConsoleTextArea().textProperty().bind(jmbeCreator.consoleOutputProperty());
-        jmbeCreator.completeProperty().addListener((observable, oldValue, newValue) -> {
-            getCreateButton().setDisable(false);
-            boolean failed = jmbeCreator.hasErrors();
-            String content = null;
-            if(failed)
+        if(mActiveCreator != null) return;
+        long generation = ++mCreationGeneration;
+        Release release = mCurrentRelease;
+        JmbeCreator creator = new JmbeCreator(release, library);
+        mActiveCreator = creator;
+        var output = new io.github.dsheirer.gui.setup.SetupJobOutput();
+        var timer = new javafx.animation.Timeline(new javafx.animation.KeyFrame(
+            javafx.util.Duration.millis(150), event -> getConsoleTextArea().setText(output.snapshot())));
+        timer.setCycleCount(javafx.animation.Animation.INDEFINITE);
+        mProgressTimer = timer;
+        timer.play();
+        io.github.dsheirer.util.ThreadPool.CACHED.execute(() -> {
+            String failure = null;
+            try
             {
-                content = "JMBE library creation attempt failed.  Please update the library manually by " +
-                    "downloading the JMBE creator application.";
+                Path result = creator.run(output);
+                mUserPreferences.getJmbeLibraryPreference().installLibrary(result);
             }
-            else
-            {
-                content = "JMBE library successfully created/updated";
-                mUserPreferences.getJmbeLibraryPreference().setPathJmbeLibrary(jmbeCreator.getLibraryPath());
-                getCurrentVersionLabel().setText(mCurrentRelease.getVersion().toString());
-            }
-            Alert alert = new Alert(Alert.AlertType.INFORMATION, content, ButtonType.OK);
-            alert.setTitle("JMBE Library Creator");
-            alert.setHeaderText((failed ? "Attempt failed." : "Success!") + " Please click OK to close this window");
-            alert.initOwner(getCreateButton().getScene().getWindow());
-            alert.showAndWait().ifPresent(buttonType -> {
-                jmbeCreator.completeProperty().unbind();
-                MyEventBus.getGlobalEventBus().post(new JmbeEditorRequest(true));
+            catch(Exception e) { failure = "JMBE creation failed. Retry or choose an existing library."; }
+            final String error = failure;
+            javafx.application.Platform.runLater(() -> {
+                timer.stop();
+                if(mActiveCreator == creator) { mActiveCreator = null; getCreateButton().setDisable(false); }
+                if(generation != mCreationGeneration) return;
+                getConsoleTextArea().setText(output.snapshot() + "\n" +
+                    (error == null ? "Library ready." : error));
+                getCreateButton().setDisable(false);
+                if(error == null) getCurrentVersionLabel().setText(release.getVersion().toString());
             });
         });
-        jmbeCreator.execute();
     }
 
     /**

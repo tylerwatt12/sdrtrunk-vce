@@ -394,6 +394,7 @@ public class JavaFxWindowManager extends Application
             ThemeManager.getInstance().register(scene);
             mJmbeEditorStage = new Stage();
             mJmbeEditorStage.setTitle("sdrtrunk-vce - JMBE Library Updater");
+            mJmbeEditorStage.setOnHidden(event -> { if(mJmbeEditor != null) mJmbeEditor.cancelCreation(); });
             mJmbeEditorStage.setScene(scene);
             ApplicationIcon.apply(mJmbeEditorStage);
             mUserPreferences.getJavaFxPreferences().monitor(mJmbeEditorStage, STAGE_MONITOR_KEY_JMBE_EDITOR);

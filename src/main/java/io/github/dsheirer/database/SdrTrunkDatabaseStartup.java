@@ -58,6 +58,8 @@ public final class SdrTrunkDatabaseStartup
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
             InitialAdminSetup.markRequired(connection);
+            io.github.dsheirer.gui.setup.SetupProgress.write(connection,
+                new io.github.dsheirer.gui.setup.SetupProgress(false, false));
             //The whole-file marker is authoritative only after every current schema, seed row, and required
             //fresh-profile marker has been installed successfully.
             DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);

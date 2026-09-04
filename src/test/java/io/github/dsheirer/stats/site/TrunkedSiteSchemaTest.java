@@ -465,7 +465,7 @@ class TrunkedSiteSchemaTest
                 "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='nxdn-site'"));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM configuration_channel"));
-            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM application_settings"));
+            assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM application_settings"));
 
             assertEquals(3, TrunkedSiteSchema.resetStats(connection));
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
@@ -473,7 +473,7 @@ class TrunkedSiteSchemaTest
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_neighbor_summary"));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM configuration_channel"));
-            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM application_settings"));
+            assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM application_settings"));
         }
     }
 
@@ -542,7 +542,7 @@ class TrunkedSiteSchemaTest
 
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM configuration_channel"));
-            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM application_settings"));
+            assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM application_settings"));
             assertEquals(2, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
             assertEquals(0, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid='abandoned-dmr'"));

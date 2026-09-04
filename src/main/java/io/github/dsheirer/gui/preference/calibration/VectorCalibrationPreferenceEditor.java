@@ -19,14 +19,10 @@
 
 package io.github.dsheirer.gui.preference.calibration;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.LoggerContext;
-import io.github.dsheirer.log.TextAreaLogAppender;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.vector.calibrate.Calibration;
-import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import javafx.application.Platform;
 import javafx.geometry.HPos;
@@ -42,17 +38,12 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.List;
 
 /**
  * Preference settings for vector calibration behavior.
  */
 public class VectorCalibrationPreferenceEditor extends HBox
 {
-    private static final Logger mLog = LoggerFactory.getLogger(VectorCalibrationPreferenceEditor.class);
     private VectorCalibrationPreference mPreference;
     private GridPane mEditorPane;
     private ToggleSwitch mHideDialogSwitch;
@@ -60,10 +51,12 @@ public class VectorCalibrationPreferenceEditor extends HBox
     private Label mCalibrationsPendingValue;
     private Button mResetAllButton;
     private Button mCalibrateButton;
+    private final Button mCancelButton = new Button("Cancel");
+    private io.github.dsheirer.vector.calibrate.CalibrationRunner mRunner;
+    private javafx.animation.Timeline mProgressTimer;
     private ProgressBar mProgressBar;
     private Label mCalibratingLabel;
     private TextArea mConsoleTextArea;
-    private TextAreaLogAppender mTextAreaLogAppender;
 
     /**
      * Constructs an instance
@@ -71,6 +64,17 @@ public class VectorCalibrationPreferenceEditor extends HBox
     public VectorCalibrationPreferenceEditor(UserPreferences userPreferences)
     {
         mPreference = userPreferences.getVectorCalibrationPreference();
+        mCancelButton.setDisable(true);
+        mCancelButton.setOnAction(event -> {
+            if(mRunner != null) { mRunner.cancel(); mCancelButton.setDisable(true); getCalibratingLabel().setText("Cancelling after the current test…"); }
+        });
+        sceneProperty().addListener((observable, oldScene, newScene) -> {
+            if(newScene == null && mRunner != null)
+            {
+                mRunner.cancel();
+                if(mProgressTimer != null) mProgressTimer.stop();
+            }
+        });
         setMaxHeight(Double.MAX_VALUE);
         setMaxWidth(Double.MAX_VALUE);
 
@@ -138,40 +142,13 @@ public class VectorCalibrationPreferenceEditor extends HBox
 
             HBox buttonsBox = new HBox();
             buttonsBox.setSpacing(10);
-            buttonsBox.getChildren().addAll(getCalibrateButton(), getResetAllButton());
+            buttonsBox.getChildren().addAll(getCalibrateButton(), getResetAllButton(), mCancelButton);
             GridPane.setHalignment(buttonsBox, HPos.CENTER);
             GridPane.setConstraints(buttonsBox, 0, row, 2, 1);
             mEditorPane.getChildren().add(buttonsBox);
         }
 
         return mEditorPane;
-    }
-
-    private void enableConsoleLogging()
-    {
-        LoggerContext loggerContext = (LoggerContext)LoggerFactory.getILoggerFactory();
-        Logger logger = loggerContext.getLogger(Calibration.class);
-        ((ch.qos.logback.classic.Logger)logger).setLevel(Level.INFO);
-        ((ch.qos.logback.classic.Logger)logger).addAppender(getTextAreaLogAppender());
-        getTextAreaLogAppender().start();
-    }
-
-    private void disableConsoleLogging()
-    {
-        LoggerContext loggerContext = (LoggerContext)LoggerFactory.getILoggerFactory();
-        Logger logger = loggerContext.getLogger(Calibration.class);
-        ((ch.qos.logback.classic.Logger)logger).detachAppender(getTextAreaLogAppender());
-        getTextAreaLogAppender().stop();
-    }
-
-    private TextAreaLogAppender getTextAreaLogAppender()
-    {
-        if(mTextAreaLogAppender == null)
-        {
-            mTextAreaLogAppender = new TextAreaLogAppender(getConsoleTextArea(), "My Console Logger");
-        }
-
-        return mTextAreaLogAppender;
     }
 
     private TextArea getConsoleTextArea()
@@ -226,39 +203,40 @@ public class VectorCalibrationPreferenceEditor extends HBox
                 getResetAllButton().setDisable(true);
                 getConsoleTextArea().clear();
                 getConsoleTextArea().appendText("Calibrating.  Each item typically takes a few seconds.");
-                enableConsoleLogging();
                 getCalibratingLabel().setVisible(true);
                 getProgressBar().setVisible(true);
                 getProgressBar().setProgress(0.0);
-
-                ThreadPool.CACHED.submit(() ->
-                {
+                var output = new io.github.dsheirer.gui.setup.SetupJobOutput();
+                var latest = new java.util.concurrent.atomic.AtomicReference<io.github.dsheirer.vector.calibrate.CalibrationRunner.Progress>();
+                var runner = new io.github.dsheirer.vector.calibrate.CalibrationRunner();
+                mRunner = runner;
+                mCancelButton.setDisable(false);
+                javafx.animation.Timeline refresh = new javafx.animation.Timeline(new javafx.animation.KeyFrame(
+                    javafx.util.Duration.millis(150), tick -> {
+                        getConsoleTextArea().setText(output.snapshot());
+                        var progress = latest.get();
+                        if(progress != null) getProgressBar().setProgress(progress.total() == 0 ? 1 :
+                            (double)progress.completed() / progress.total());
+                    }));
+                refresh.setCycleCount(javafx.animation.Animation.INDEFINITE);
+                mProgressTimer = refresh;
+                refresh.play();
+                ThreadPool.CACHED.submit(() -> {
                     try
                     {
-                        CalibrationManager manager = CalibrationManager.getInstance();
-                        List<Calibration> calibrations = manager.getUncalibrated();
-                        int counter = 0;
-                        for(Calibration calibration: calibrations)
-                        {
-                            counter++;
-
-                            final String message = "\n\nCalibration [" + counter + "/" + calibrations.size() + "] - " + calibration.getType();
-                            Platform.runLater(() -> getConsoleTextArea().appendText(message));
-                            performCalibration(calibration, (double)counter / (double)calibrations.size());
-                        }
+                        var result = runner.run(CalibrationManager.getInstance().getUncalibrated(), latest::set, output);
+                        output.accept(result.cancelled() ? "Cancelled at a safe boundary; completed results were preserved." : result.failed() > 0 ? "Some tests failed; retry outstanding tests." :
+                            "Calibration complete. Restart receiving to apply all choices to existing DSP consumers.");
                     }
-                    catch(Throwable t)
-                    {
-                        mLog.error("Error while performing calibrations", t);
-                    }
-
-                    Platform.runLater(() ->
-                    {
-                        getConsoleTextArea().appendText("\nCalibration Complete!\nNote: restart the application to use these new settings.");
+                    catch(Exception e) { output.accept("Calibration could not finish. Retry outstanding tests."); }
+                    Platform.runLater(() -> {
+                        refresh.stop();
+                        mRunner = null;
+                        mCancelButton.setDisable(true);
+                        getConsoleTextArea().setText(output.snapshot());
                         getCalibratingLabel().setVisible(false);
                         getProgressBar().setVisible(false);
                         updateControls();
-                        disableConsoleLogging();
                     });
                 });
             });
@@ -276,19 +254,6 @@ public class VectorCalibrationPreferenceEditor extends HBox
         }
 
         return mCalibratingLabel;
-    }
-
-    private void performCalibration(Calibration calibration, double progress)
-    {
-        try
-        {
-            calibration.calibrate();
-            Platform.runLater(() -> getProgressBar().setProgress(progress));
-        }
-        catch(CalibrationException ce)
-        {
-            mLog.error("Calibration error for " + calibration.getType(), ce);
-        }
     }
 
     private void updateControls()

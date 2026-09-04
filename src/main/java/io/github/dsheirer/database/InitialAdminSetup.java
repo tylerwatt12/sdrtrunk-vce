@@ -78,7 +78,7 @@ public final class InitialAdminSetup
      * Indicates whether startup must collect an administrator password.  If a prior attempt persisted the credential
      * but was interrupted before updating the marker, the credential is authoritative and setup is completed here.
      */
-    static boolean isPasswordRequired(Path databasePath) throws IOException, SQLException
+    public static boolean isPasswordRequired(Path databasePath) throws IOException, SQLException
     {
         String state = readState(databasePath);
 
@@ -101,7 +101,7 @@ public final class InitialAdminSetup
         return true;
     }
 
-    static void provision(Path databasePath, char[] password) throws IOException, SQLException
+    public static void provision(Path databasePath, char[] password) throws IOException, SQLException
     {
         new WebAccessService(databasePath).provisionOrResetPrimaryAdmin(password);
         writeState(databasePath, COMPLETE);

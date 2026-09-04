@@ -69,6 +69,9 @@ public class CalibrationManager
     private final Preferences mPreferences = Preferences.userNodeForPackage(CalibrationManager.class);
     private static CalibrationManager sInstance;
     private static VectorCalibrationPreference sVectorCalibrationPreference;
+    private String mPendingReason = "Pending results are missing, explicitly reset, or belong to an older test version.";
+
+    public String getPendingReason() { return isCalibrated() ? "All test versions and the CPU/JVM environment match." : mPendingReason; }
 
     /**
      * Uses the singleton pattern to construct a single instance.
@@ -165,6 +168,7 @@ public class CalibrationManager
 
         if(mCalibrationEnvironment.invalidateIfChanged(storedSignature, mCalibrationMap.values()))
         {
+            mPendingReason = "The CPU/JVM environment changed or has no saved signature; all tests need calibration.";
             mPreferences.put(PREFERENCE_KEY_CALIBRATION_ENVIRONMENT, currentSignature);
             mLog.info("CPU calibration environment changed; all SIMD calibrations will be rerun.");
         }
@@ -178,6 +182,7 @@ public class CalibrationManager
                 mLog.warn("Ignoring unsupported calibration implementation [{}] for [{}] on this host",
                     implementation, calibration.getType());
                 calibration.reset();
+                mPendingReason = "One or more saved implementations are unsupported on this CPU/JVM; those tests must be rerun.";
             }
         }
     }

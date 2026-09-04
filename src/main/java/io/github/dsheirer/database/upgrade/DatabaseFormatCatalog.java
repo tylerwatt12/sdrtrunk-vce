@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 12;
+    public static final int CURRENT_VERSION = 13;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -169,9 +169,14 @@ public final class DatabaseFormatCatalog
             "Add disabled-by-default idle FFT channel markers to each user preference document",
             "Increment each preference revision; refuse malformed documents and exhausted revisions"));
 
+    private static final FormatDescriptor FORMAT_13 = descriptor(13, "resumable-setup-wizard",
+        "Bounded setup wizard progress", FORMAT_12_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
+        List.of("main format 13"), "src/test/java/io/github/dsheirer/database/upgrade/Format13TestDatabase.java",
+        List.of("Preserve existing configuration and add a single bounded setup progress record"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
-            FORMAT_10, FORMAT_11, FORMAT_12);
+            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -287,7 +292,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_12;
+        return FORMAT_13;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -422,6 +427,11 @@ public final class DatabaseFormatCatalog
 
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor) throws SQLException
     {
+        if(descriptor.version() >= 13)
+        {
+            try { io.github.dsheirer.gui.setup.SetupProgress.read(connection); }
+            catch(SQLException e) { throw new FormatRejectionException("Invalid or missing bounded setup progress"); }
+        }
         if(descriptor.version() <= 3)
         {
             requirePositiveMetadata(connection, "p25_call_output_metrics_started_at_ms", descriptor);
@@ -483,7 +493,7 @@ public final class DatabaseFormatCatalog
             case 7 -> 2;
             case 8 -> 3;
             case 9, 10, 11 -> 4;
-            case 12 -> 5;
+            case 12, 13 -> 5;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

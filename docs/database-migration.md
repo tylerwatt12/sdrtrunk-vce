@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -158,9 +158,21 @@ the global format catalog and chain runner. Remove the old gate instead of retai
 transformation logic that is still correct is assigned to the appropriate adjacent step rather than exposed as an
 alternate path.
 
-Retain the existing launcher and setup experience, child-process isolation, source backup, staged-copy workflow,
+Retain the existing launcher, child-process isolation, source backup, staged-copy workflow,
 validation, and atomic promotion where they already meet this contract. Graphical setup, headless setup, and direct
 SQLite-file selection are entry points to the same engine, not separate implementations.
+
+The Swing Setup Wizard owns first-run graphical presentation. Migration preflight, progress, and completion stay on
+its Starting point page; completion offers Copy Message and a ten-second continuation countdown. After promotion,
+Back can review the installed source/results but cannot replace the database. The separately confirmed post-setup
+SQLite replacement workflow retains its existing service-stop, backup, validation, restart, and quit-blocking rules.
+
+Format 13 adds only the bounded `setup_wizard` record in `application_settings`. The adjacent 12-to-13 step preserves
+all existing configuration and marks existing installations previously configured; runtime readiness checks decide
+whether required setup work remains. New databases begin incomplete. Copy imports reset this record on the staged
+destination before validation/promotion, without changing the selected source. The record never stores credential
+drafts, hardware inventories, benchmark data, or transcripts. Its absence or malformed contents in format 13 are
+validation errors, not permission for startup to repair the database.
 
 ## Schema-Change Rule
 

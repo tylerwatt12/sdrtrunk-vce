@@ -125,6 +125,30 @@ public class JmbeLibraryPreference extends Preference
         }
     }
 
+    /** Validated, atomic setup installation. Failure leaves the selected library and its preference unchanged. */
+    public void installLibrary(Path source) throws java.io.IOException
+    {
+        if(!JmbeLibraryMetadata.isSupported(source)) throw new java.io.IOException("Unsupported JMBE library");
+        Path directory = PortableApplicationPaths.getDataRoot().resolve("jmbe");
+        Files.createDirectories(directory);
+        Path target = directory.resolve(source.getFileName()).toAbsolutePath().normalize();
+        if(!source.toAbsolutePath().normalize().equals(target))
+        {
+            Path temporary = Files.createTempFile(directory, ".jmbe-install-", ".jar");
+            try
+            {
+                Files.copy(source, temporary, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                JmbeLibraryMetadata.verify(temporary, JmbeLibraryMetadata.getVersion(source));
+                Files.move(temporary, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            finally { Files.deleteIfExists(temporary); }
+        }
+        mPathJmbeLibrary = target;
+        mPreferences.put(PREFERENCE_KEY_PATH_JMBE_LIBRARY, PortableApplicationPaths.toPortablePath(target));
+        notifyPreferenceUpdated();
+    }
+
     /**
      * Resets (removes) the current JMBE library path
      */

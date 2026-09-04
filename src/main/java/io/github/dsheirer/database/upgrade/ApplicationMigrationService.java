@@ -184,6 +184,8 @@ public final class ApplicationMigrationService
                 mMigrationRunner.run(stagedDatabase, null, null);
 
             listener.update("Checking updated data");
+            //A copied profile belongs to a new destination. Never inherit the source installation's completed wizard.
+            new io.github.dsheirer.gui.setup.SetupProgress(false, true).save(stagedDatabase);
             validateGlobalDatabase(stagedDatabase);
 
             if(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE)

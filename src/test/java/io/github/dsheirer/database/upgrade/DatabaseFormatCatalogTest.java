@@ -148,7 +148,7 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format12TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format13TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
 
         try(Connection connection = open(database))
         {
@@ -322,7 +322,7 @@ class DatabaseFormatCatalogTest
         {
             SQLException exception = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspect(connection));
-            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12]"),
+            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13]"),
                 exception::getMessage);
             assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
                 exception::getMessage);

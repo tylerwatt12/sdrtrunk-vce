@@ -173,14 +173,16 @@ class ApplicationMigrationSuccessDialogTest
     }
 
     @Test
-    void bothInteractiveBootstrapMigrationPathsUseTheAutoAcceptDialog() throws Exception
+    void firstRunMigrationReportsAreInlineAndReplacementRetainsItsAutoAcceptDialog() throws Exception
     {
         String bootstrap = Files.readString(Path.of(
             "src/main/java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java"));
-        String call = "ApplicationMigrationSuccessDialog.show(null, MIGRATOR_TITLE";
-
-        assertEquals(2, bootstrap.split(java.util.regex.Pattern.quote(call), -1).length - 1);
-        assertFalse(bootstrap.contains("JOptionPane.showMessageDialog(null,\n" +
-            "                        \"Your database was migrated successfully."));
+        assertFalse(bootstrap.contains("JOptionPane"));
+        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
+        assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.currentDatabaseReport"));
+        assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.previousImportReport"));
+        assertTrue(wizard.contains("Copy Message"));
+        assertTrue(wizard.contains("countdown.start()"));
+        assertFalse(wizard.contains("ApplicationMigrationSuccessDialog.show("));
     }
 }

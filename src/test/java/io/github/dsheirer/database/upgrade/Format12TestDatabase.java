@@ -11,7 +11,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact current format-12 fixture using the authoritative fresh-database path. */
+/** Exact populated format-12 fixture through its frozen predecessor and adjacent migration. */
 public final class Format12TestDatabase
 {
     private Format12TestDatabase()
@@ -20,10 +20,12 @@ public final class Format12TestDatabase
 
     public static Path create(Path database) throws Exception
     {
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Format11TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.requireCurrent(connection);
+            new Format11To12DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 12);
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             if(detected.version() != 12 ||
                 !DatabaseFormatCatalog.requireVersion(12).fingerprint().equals(fingerprint))

@@ -24,14 +24,15 @@ final class ApplicationRelauncher
     {
     }
 
-    static Process relaunch() throws IOException
+    static Process relaunch(String... applicationArguments) throws IOException
     {
         String executableName = System.getProperty("os.name", "").toLowerCase().contains("win") ?
             "java.exe" : "java";
         Path javaExecutable = Path.of(System.getProperty("java.home"), "bin", executableName);
-        List<String> command = buildCommand(javaExecutable,
+        List<String> command = new ArrayList<>(buildCommand(javaExecutable,
             ManagementFactory.getRuntimeMXBean().getInputArguments(),
-            System.getProperty("java.class.path"), SDRTrunk.class.getName());
+            System.getProperty("java.class.path"), SDRTrunk.class.getName()));
+        command.addAll(List.of(applicationArguments));
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectInput(ProcessBuilder.Redirect.PIPE);
         builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
