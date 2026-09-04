@@ -43,6 +43,13 @@ import java.util.UUID;
  */
 public class ConfigurationDatabaseStore
 {
+    /**
+     * Channel fields whose sole persisted authority is the relational row. Legacy JSON aliases are included so a
+     * nonstandard writer cannot bypass the same one-fact/one-owner rule.
+     */
+    private static final List<String> CHANNEL_ROW_OWNED_JSON_FIELDS = List.of(
+        "configurationId", "system", "site", "name", "aliasListId", "aliasListName", "radioResolveId",
+        "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
     private final Path mDatabasePath;
     private final ObjectMapper mObjectMapper = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
@@ -152,9 +159,7 @@ public class ConfigurationDatabaseStore
             while(resultSet.next())
             {
                 String json = resultSet.getString("config_json");
-                requireAbsent(json, "configurationId", "configuration_channel.config_json");
-                requireAbsent(json, "radioResolveId", "configuration_channel.config_json");
-                requireAbsent(json, "radresGuid", "configuration_channel.config_json");
+                requireAbsent(json, CHANNEL_ROW_OWNED_JSON_FIELDS, "configuration_channel.config_json");
                 String configurationId = requireCanonicalConfigurationId(resultSet.getString("configuration_id"));
                 Channel channel = mObjectMapper.readValue(json, Channel.class);
                 channel.setConfigurationId(configurationId);
@@ -430,8 +435,7 @@ public class ConfigurationDatabaseStore
     private String channelPayload(Channel channel) throws IOException
     {
         ObjectNode payload = mObjectMapper.valueToTree(channel);
-        payload.remove(List.of("configurationId", "system", "site", "name", "aliasListName", "radioResolveId",
-            "autoStart", "autoStartOrder", "channelType"));
+        payload.remove(CHANNEL_ROW_OWNED_JSON_FIELDS);
         return mObjectMapper.writeValueAsString(payload);
     }
 
@@ -444,10 +448,18 @@ public class ConfigurationDatabaseStore
 
     private void requireAbsent(String json, String property, String source) throws IOException
     {
+        requireAbsent(json, List.of(property), source);
+    }
+
+    private void requireAbsent(String json, List<String> properties, String source) throws IOException
+    {
         JsonNode payload = mObjectMapper.readTree(json);
-        if(payload.has(property))
+        for(String property: properties)
         {
-            throw new IOException(source + " must not duplicate relational field [" + property + "]");
+            if(payload.has(property))
+            {
+                throw new IOException(source + " must not duplicate relational field [" + property + "]");
+            }
         }
     }
 

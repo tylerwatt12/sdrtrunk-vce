@@ -47,7 +47,7 @@ final class StatsAliasCatalog
     static final int MAX_TARGET_RANGES = 500;
     private static final int MAX_METRIC_ENRICH_BATCH_ALIASES =
         Math.min(MAX_ENRICH_ALIASES, Math.min(MAX_TARGET_ALIAS_LISTS, MAX_TARGET_RANGES));
-    static final int MAX_SCOPED_TARGET_RANGES = 10_000;
+    static final int MAX_SOURCE_TARGET_RANGES = 10_000;
     static final int MAX_BROADCAST_CHANNELS_PER_ALIAS = AliasAdministrationService.MAX_BROADCAST_CHANNELS;
     static final int MAX_BROADCAST_CHANNEL_NAME_CHARACTERS =
         AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH;
@@ -945,7 +945,7 @@ final class StatsAliasCatalog
 
         ENRICHMENT_ADMISSION.execute(() -> {
             IdentityTargets sharedTargets = IdentityTargets.singleCoverageTarget(aliases);
-            List<CoverageScope> sharedScopes = null;
+            List<CoverageSource> sharedSources = null;
 
             if(sharedTargets != null)
             {
@@ -955,9 +955,9 @@ final class StatsAliasCatalog
                     return null;
                 }
 
-                sharedScopes = loadCoverageScopes(connection, sharedTargets);
+                sharedSources = loadCoverageSources(connection, sharedTargets);
 
-                if(sharedScopes.isEmpty())
+                if(sharedSources.isEmpty())
                 {
                     applyNoCoverageMetrics(aliases, false);
                     return null;
@@ -968,7 +968,7 @@ final class StatsAliasCatalog
             {
                 List<Map<String,Object>> batch = aliases.subList(start,
                     Math.min(start + MAX_METRIC_ENRICH_BATCH_ALIASES, aliases.size()));
-                enrichAdmitted(connection, batch, false, sharedScopes);
+                enrichAdmitted(connection, batch, false, sharedSources);
             }
 
             return null;
@@ -985,12 +985,12 @@ final class StatsAliasCatalog
     private Map<Long,List<Map<String,Object>>> enrichAdmitted(Connection connection,
                                                                List<Map<String,Object>> aliases,
                                                                boolean includeBreakdown,
-                                                               List<CoverageScope> preloadedScopes) throws SQLException
+                                                               List<CoverageSource> preloadedSources) throws SQLException
     {
         Map<Long,Map<String,MetricAccumulator>> metrics = new LinkedHashMap<>();
-        List<CoverageScope> scopes = preloadedScopes;
+        List<CoverageSource> sources = preloadedSources;
 
-        if(scopes == null)
+        if(sources == null)
         {
             IdentityTargets targets = IdentityTargets.from(aliases);
 
@@ -999,29 +999,29 @@ final class StatsAliasCatalog
                 return applyNoCoverageMetrics(aliases, includeBreakdown);
             }
 
-            scopes = loadCoverageScopes(connection, targets);
+            sources = loadCoverageSources(connection, targets);
         }
 
-        if(scopes.isEmpty())
+        if(sources.isEmpty())
         {
             return applyNoCoverageMetrics(aliases, includeBreakdown);
         }
 
-        Map<Long,Map<String,CoverageScope>> coverage = new LinkedHashMap<>();
+        Map<Long,Map<String,CoverageSource>> coverage = new LinkedHashMap<>();
         int coveragePairs = 0;
 
         for(Map<String,Object> alias: aliases)
         {
             long aliasId = number(alias.get("alias_id"));
-            Map<String,CoverageScope> compatible = new LinkedHashMap<>();
+            Map<String,CoverageSource> compatible = new LinkedHashMap<>();
 
             if(isSupportedIdentity(alias))
             {
-                for(CoverageScope scope: scopes)
+                for(CoverageSource source: sources)
                 {
-                    if(isEligible(alias, scope))
+                    if(isEligible(alias, source))
                     {
-                        compatible.put(scope.key, scope);
+                        compatible.put(source.key, source);
                     }
                 }
             }
@@ -1036,44 +1036,44 @@ final class StatsAliasCatalog
             coverage.put(aliasId, compatible);
             Map<String,MetricAccumulator> aliasMetrics = new LinkedHashMap<>();
 
-            for(CoverageScope scope: compatible.values())
+            for(CoverageSource source: compatible.values())
             {
-                aliasMetrics.put(scope.key, new MetricAccumulator(scope));
+                aliasMetrics.put(source.key, new MetricAccumulator(source));
             }
 
             metrics.put(aliasId, aliasMetrics);
         }
 
-        Set<Long> trunkedScopeIds = new LinkedHashSet<>();
-        Set<Long> conventionalContextIds = new LinkedHashSet<>();
+        Set<Long> radioSystemIds = new LinkedHashSet<>();
+        Set<Long> conventionalChannelIds = new LinkedHashSet<>();
 
-        for(Map<String,CoverageScope> aliasCoverage: coverage.values())
+        for(Map<String,CoverageSource> aliasCoverage: coverage.values())
         {
-            for(CoverageScope scope: aliasCoverage.values())
+            for(CoverageSource source: aliasCoverage.values())
             {
-                if(scope.trunked)
+                if(source.trunked)
                 {
-                    trunkedScopeIds.add(scope.numericId);
+                    radioSystemIds.add(source.numericId);
                 }
                 else
                 {
-                    conventionalContextIds.add(scope.numericId);
+                    conventionalChannelIds.add(source.numericId);
                 }
             }
         }
 
-        Map<Long,List<CoverageScope>> scopeById = scopeProjections(scopes, true);
-        Map<Long,List<CoverageScope>> contextById = scopeProjections(scopes, false);
-        ScopedIdentityTargets scopedTargets = ScopedIdentityTargets.from(aliases, coverage);
-        applyTrunkedEvidence(connection, metrics, trunkedScopeIds, scopeById, scopedTargets,
+        Map<Long,List<CoverageSource>> systemSourcesById = sourceProjections(sources, true);
+        Map<Long,List<CoverageSource>> channelSourcesById = sourceProjections(sources, false);
+        SourceIdentityTargets sourceTargets = SourceIdentityTargets.from(aliases, coverage);
+        applyTrunkedEvidence(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyConventionalDmrEvidence(connection, metrics, conventionalContextIds, contextById, scopedTargets,
+        applyConventionalDmrEvidence(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyConventionalDmrOutputs(connection, metrics, conventionalContextIds, contextById, scopedTargets,
+        applyConventionalDmrOutputs(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyRelationships(connection, metrics, trunkedScopeIds, scopeById, scopedTargets,
+        applyRelationships(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyCurrentAffiliations(connection, metrics, trunkedScopeIds, scopeById, scopedTargets,
+        applyCurrentAffiliations(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
 
         Map<Long,List<Map<String,Object>>> breakdown = new LinkedHashMap<>();
@@ -1131,27 +1131,27 @@ final class StatsAliasCatalog
         return breakdown;
     }
 
-    private static List<CoverageScope> loadCoverageScopes(Connection connection, IdentityTargets targets)
+    private static List<CoverageSource> loadCoverageSources(Connection connection, IdentityTargets targets)
         throws SQLException
     {
         StringBuilder trunkedSql = new StringBuilder("""
-            SELECT scope.id AS radio_system_id, scope.system_key AS radio_system_key, scope.protocol_code,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id,
+            SELECT source.id AS radio_system_id, source.system_key AS radio_system_key, source.protocol_code,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
                 channel.id AS channel_id, channel.configuration_id,
                 coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
                 nullif(trim(config.system_name), '') AS system_name,
-                list.name AS alias_list_name
-            FROM radio_system scope
-            JOIN receiver_channel channel ON channel.radio_system_id = scope.id
+                config.alias_list_id, list.name AS alias_list_name
+            FROM radio_system source
+            JOIN receiver_channel channel ON channel.radio_system_id = source.id
             JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             JOIN alias_list list ON list.id = config.alias_list_id
             WHERE config.channel_kind = 'TRUNKED' AND
             """);
         List<Object> trunkedParameters = new ArrayList<>();
-        targets.appendCoveragePredicate(trunkedSql, trunkedParameters, "scope.protocol_code",
-            "list.name");
+        targets.appendCoveragePredicate(trunkedSql, trunkedParameters, "source.protocol_code",
+            "config.alias_list_id");
         trunkedSql.append("""
-            ORDER BY scope.id, channel.id
+            ORDER BY source.id, channel.id
             LIMIT ?
             """);
         trunkedParameters.add(MAX_COVERAGE_ROWS + 1);
@@ -1166,7 +1166,8 @@ final class StatsAliasCatalog
         StringBuilder conventionalSql = new StringBuilder("""
             SELECT channel.id AS channel_id, channel.configuration_id,
                 coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
-                list.name AS alias_list_name, nullif(trim(config.system_name), '') AS system_name
+                config.alias_list_id, list.name AS alias_list_name,
+                nullif(trim(config.system_name), '') AS system_name
             FROM receiver_channel channel
             JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             JOIN alias_list list ON list.id = config.alias_list_id
@@ -1174,7 +1175,7 @@ final class StatsAliasCatalog
             """);
         List<Object> conventionalParameters = new ArrayList<>();
         targets.appendAliasListPredicate(conventionalSql, conventionalParameters, 3,
-            "list.name");
+            "config.alias_list_id");
         conventionalSql.append("""
             ORDER BY channel.id
             LIMIT ?
@@ -1188,61 +1189,62 @@ final class StatsAliasCatalog
             throw new StatsApiException(413, "Alias coverage exceeds the bounded receiver limit");
         }
 
-        Map<Long,CoverageScope> p25ById = new LinkedHashMap<>();
-        Map<String,CoverageScope> trunkedByProjection = new LinkedHashMap<>();
+        Map<Long,CoverageSource> p25ById = new LinkedHashMap<>();
+        Map<String,CoverageSource> trunkedByProjection = new LinkedHashMap<>();
 
         for(Map<String,Object> row: trunked)
         {
             long radioSystemId = number(row.get("radio_system_id"));
             int protocolCode = (int)number(row.get("protocol_code"));
-            String aliasList = text(row.get("alias_list_name"));
-            CoverageScope scope;
+            long aliasListId = number(row.get("alias_list_id"));
+            CoverageSource source;
 
             if(protocolCode == 1)
             {
                 //P25 aliases are deliberately resolved across every list assigned to the decoded system.
-                scope = p25ById.computeIfAbsent(radioSystemId, ignored -> CoverageScope.trunked(row));
+                source = p25ById.computeIfAbsent(radioSystemId, ignored -> CoverageSource.trunked(row));
             }
             else
             {
                 //DMR/NXDN ownership is list-specific. Keep an explicit projection per list so one saved channel
                 //cannot silently become the canonical alias source for every other channel on this radio system.
-                String projectionKey = radioSystemId + "\u0000" + aliasList;
-                scope = trunkedByProjection.computeIfAbsent(projectionKey,
-                    ignored -> CoverageScope.trunked(row));
+                String projectionKey = radioSystemId + "\u0000" + aliasListId;
+                source = trunkedByProjection.computeIfAbsent(projectionKey,
+                    ignored -> CoverageSource.trunked(row));
             }
 
-            scope.addAliasList(text(row.get("alias_list_name")));
+            source.addAliasList(aliasListId, text(row.get("alias_list_name")));
         }
 
-        List<CoverageScope> scopes = new ArrayList<>(p25ById.values());
-        scopes.addAll(trunkedByProjection.values());
+        List<CoverageSource> sources = new ArrayList<>(p25ById.values());
+        sources.addAll(trunkedByProjection.values());
 
         for(Map<String,Object> row: conventionalDmr)
         {
-            CoverageScope scope = CoverageScope.conventionalDmr(row);
-            scope.addAliasList(text(row.get("alias_list_name")));
-            scopes.add(scope);
+            CoverageSource source = CoverageSource.conventionalDmr(row);
+            source.addAliasList(number(row.get("alias_list_id")), text(row.get("alias_list_name")));
+            sources.add(source);
         }
 
-        return scopes;
+        return sources;
     }
 
-    private static boolean isEligible(Map<String,Object> alias, CoverageScope scope)
+    private static boolean isEligible(Map<String,Object> alias, CoverageSource source)
     {
         int protocol = protocolCode(text(alias.get("protocol")));
 
-        if(protocol != scope.protocolCode)
+        if(protocol != source.protocolCode)
         {
             return false;
         }
 
-        return scope.aliasLists.contains(lower(text(alias.get("alias_list_name"))));
+        long aliasListId = number(alias.get("alias_list_id"));
+        return aliasListId > 0 && source.aliasListIds.contains(aliasListId);
     }
 
     private void applyTrunkedEvidence(Connection connection, Map<Long,Map<String,MetricAccumulator>> metrics,
                                       Set<Long> radioSystemIds,
-                                      Map<Long,List<CoverageScope>> scopes, ScopedIdentityTargets targets,
+                                      Map<Long,List<CoverageSource>> sources, SourceIdentityTargets targets,
                                       EvidenceBudget budget) throws SQLException
     {
         if(radioSystemIds.isEmpty())
@@ -1270,10 +1272,10 @@ final class StatsAliasCatalog
                 summary.data_count AS data_observation_count,
                 %s AS other_signaling_observation_count,
                 %s AS signaling_observation_count,
-                scope.protocol_code, scope.system_key AS radio_system_key,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id
             FROM radio_system_identity_summary summary
-            JOIN radio_system scope ON scope.id = summary.radio_system_id
+            JOIN radio_system source ON source.id = summary.radio_system_id
             WHERE summary.radio_system_id IN (%s)
               AND
             """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
@@ -1300,10 +1302,10 @@ final class StatsAliasCatalog
                 summary.data_count AS data_observation_count,
                 %s AS other_signaling_observation_count,
                 %s AS signaling_observation_count,
-                scope.protocol_code, scope.system_key AS radio_system_key,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id
             FROM p25_zero_local_fq_talkgroup_summary summary
-            JOIN radio_system scope ON scope.id = summary.radio_system_id
+            JOIN radio_system source ON source.id = summary.radio_system_id
             WHERE summary.radio_system_id IN (%s)
               AND
             """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
@@ -1316,7 +1318,7 @@ final class StatsAliasCatalog
         parameters.add(budget.queryLimit());
         List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
         budget.consume(evidence.size());
-        evidence = projectEvidence(evidence, scopes, "radio_system_id", targets, budget);
+        evidence = projectEvidence(evidence, sources, "radio_system_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, evidence);
         applyEvidenceRows(evidence, metrics);
@@ -1324,8 +1326,8 @@ final class StatsAliasCatalog
 
     private void applyConventionalDmrEvidence(Connection connection,
                                                Map<Long,Map<String,MetricAccumulator>> metrics,
-                                               Set<Long> channelIds, Map<Long,List<CoverageScope>> scopes,
-                                               ScopedIdentityTargets targets, EvidenceBudget budget)
+                                               Set<Long> channelIds, Map<Long,List<CoverageSource>> sources,
+                                               SourceIdentityTargets targets, EvidenceBudget budget)
         throws SQLException
     {
         if(channelIds.isEmpty())
@@ -1385,7 +1387,7 @@ final class StatsAliasCatalog
         parameters.add(budget.queryLimit());
         List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
         budget.consume(evidence.size());
-        evidence = projectEvidence(evidence, scopes, "channel_id", targets, budget);
+        evidence = projectEvidence(evidence, sources, "channel_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, evidence);
         applyEvidenceRows(evidence, metrics);
@@ -1397,14 +1399,14 @@ final class StatsAliasCatalog
         for(Map<String,Object> row: evidence)
         {
             Long aliasId = nullableNumber(row.get("resolved_alias_id"));
-            String scopeKey = text(row.get("coverage_key"));
+            String sourceKey = text(row.get("coverage_key"));
 
-            if(aliasId == null || scopeKey == null)
+            if(aliasId == null || sourceKey == null)
             {
                 continue;
             }
 
-            MetricAccumulator accumulator = metrics.getOrDefault(aliasId, Map.of()).get(scopeKey);
+            MetricAccumulator accumulator = metrics.getOrDefault(aliasId, Map.of()).get(sourceKey);
 
             if(accumulator != null)
             {
@@ -1420,8 +1422,8 @@ final class StatsAliasCatalog
      */
     private void applyConventionalDmrOutputs(Connection connection,
                                              Map<Long,Map<String,MetricAccumulator>> metrics,
-                                             Set<Long> channelIds, Map<Long,List<CoverageScope>> scopes,
-                                             ScopedIdentityTargets targets, EvidenceBudget budget)
+                                             Set<Long> channelIds, Map<Long,List<CoverageSource>> sources,
+                                             SourceIdentityTargets targets, EvidenceBudget budget)
         throws SQLException
     {
         if(channelIds.isEmpty())
@@ -1463,7 +1465,7 @@ final class StatsAliasCatalog
         parameters.add(budget.queryLimit());
         List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
         budget.consume(evidence.size());
-        evidence = projectEvidence(evidence, scopes, "channel_id", targets, budget);
+        evidence = projectEvidence(evidence, sources, "channel_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, evidence);
         applyEvidenceRows(evidence, metrics);
@@ -1471,7 +1473,7 @@ final class StatsAliasCatalog
 
     private void applyRelationships(Connection connection, Map<Long,Map<String,MetricAccumulator>> metrics,
                                     Set<Long> radioSystemIds,
-                                    Map<Long,List<CoverageScope>> scopes, ScopedIdentityTargets targets,
+                                    Map<Long,List<CoverageSource>> sources, SourceIdentityTargets targets,
                                     EvidenceBudget budget) throws SQLException
     {
         if(radioSystemIds.isEmpty())
@@ -1488,48 +1490,48 @@ final class StatsAliasCatalog
                 max(relationship.last_seen_ms) AS last_seen_ms,
                 count(*) AS relationship_count,
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
-                scope.protocol_code, scope.system_key AS radio_system_key,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id,
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
                 NULL AS p25_identity_state_code, NULL AS p25_home_wacn,
                 NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
-            FROM trunked_radio_talkgroup_summary relationship
-            JOIN radio_system scope ON scope.id = relationship.radio_system_id
+            FROM trunked_radio_group_summary relationship
+            JOIN radio_system source ON source.id = relationship.radio_system_id
             WHERE relationship.radio_system_id IN (%s)
               AND
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
         targets.appendPredicate(sql, "relationship.radio_system_id", "2", "relationship.radio_id");
         sql.append("""
-            GROUP BY relationship.radio_system_id, relationship.radio_id, scope.protocol_code,
-                scope.system_key, scope.p25_wacn, scope.p25_system_id
+            GROUP BY relationship.radio_system_id, relationship.radio_id, source.protocol_code,
+                source.system_key, source.p25_wacn, source.p25_system_id
 
             UNION ALL
 
-            SELECT relationship.radio_system_id, relationship.target_kind_code AS identity_kind_code,
-                relationship.talkgroup_id AS identity_id,
+            SELECT relationship.radio_system_id, relationship.group_kind_code AS identity_kind_code,
+                relationship.group_id AS identity_id,
                 min(relationship.first_seen_ms) AS first_seen_ms,
                 max(relationship.last_seen_ms) AS last_seen_ms,
                 count(*) AS relationship_count,
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
-                scope.protocol_code, scope.system_key AS radio_system_key,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id,
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
-            FROM trunked_radio_talkgroup_summary relationship
-            JOIN radio_system scope ON scope.id = relationship.radio_system_id
+            FROM trunked_radio_group_summary relationship
+            JOIN radio_system source ON source.id = relationship.radio_system_id
             LEFT JOIN radio_system_identity_summary target
               ON target.radio_system_id = relationship.radio_system_id
-             AND target.identity_kind_code = relationship.target_kind_code
-             AND target.identity_id = relationship.talkgroup_id
+             AND target.identity_kind_code = relationship.group_kind_code
+             AND target.identity_id = relationship.group_id
             WHERE relationship.radio_system_id IN (%s)
               AND
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
-        targets.appendPredicate(sql, "relationship.radio_system_id", "relationship.target_kind_code",
-            "relationship.talkgroup_id");
+        targets.appendPredicate(sql, "relationship.radio_system_id", "relationship.group_kind_code",
+            "relationship.group_id");
         sql.append("""
-            GROUP BY relationship.radio_system_id, relationship.target_kind_code, relationship.talkgroup_id,
-                scope.protocol_code, scope.system_key, scope.p25_wacn, scope.p25_system_id,
+            GROUP BY relationship.radio_system_id, relationship.group_kind_code, relationship.group_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
             ORDER BY 1, 2, 3
@@ -1539,7 +1541,7 @@ final class StatsAliasCatalog
         List<Map<String,Object>> identities = queryRows(connection, sql.toString(), parameters.toArray());
         budget.consume(identities.size());
 
-        identities = projectEvidence(identities, scopes, "radio_system_id", targets, budget);
+        identities = projectEvidence(identities, sources, "radio_system_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, identities);
 
@@ -1558,21 +1560,21 @@ final class StatsAliasCatalog
 
     private void applyCurrentAffiliations(Connection connection,
                                            Map<Long,Map<String,MetricAccumulator>> metrics, Set<Long> radioSystemIds,
-                                           Map<Long,List<CoverageScope>> scopes, ScopedIdentityTargets targets,
+                                           Map<Long,List<CoverageSource>> sources, SourceIdentityTargets targets,
                                            EvidenceBudget budget) throws SQLException
     {
-        Set<Long> p25Scopes = new LinkedHashSet<>();
+        Set<Long> p25Systems = new LinkedHashSet<>();
 
         for(long radioSystemId: radioSystemIds)
         {
-            if(scopes.getOrDefault(radioSystemId, List.of()).stream()
-                .anyMatch(scope -> scope.protocolCode == 1))
+            if(sources.getOrDefault(radioSystemId, List.of()).stream()
+                .anyMatch(source -> source.protocolCode == 1))
             {
-                p25Scopes.add(radioSystemId);
+                p25Systems.add(radioSystemId);
             }
         }
 
-        if(p25Scopes.isEmpty())
+        if(p25Systems.isEmpty())
         {
             return;
         }
@@ -1581,45 +1583,45 @@ final class StatsAliasCatalog
         StringBuilder sql = new StringBuilder();
         targets.appendCte(sql, parameters, true);
         sql.append("""
-            SELECT scope.id AS radio_system_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
+            SELECT source.id AS radio_system_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
                 max(affiliation.confirmed_at_ms) AS updated_at_ms,
-                count(*) AS current_affiliation_count, scope.protocol_code,
-                scope.system_key AS radio_system_key,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id, NULL AS p25_identity_state_code,
+                count(*) AS current_affiliation_count, source.protocol_code,
+                source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id, NULL AS p25_identity_state_code,
                 NULL AS p25_home_wacn, NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
-            FROM radio_system scope
-            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = scope.id
-            WHERE scope.id IN (%s)
+            FROM radio_system source
+            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
+            WHERE source.id IN (%s)
               AND
-            """.formatted(placeholders(p25Scopes.size())));
-        parameters.addAll(p25Scopes);
-        targets.appendPredicate(sql, "scope.id", "2", "affiliation.radio_id");
+            """.formatted(placeholders(p25Systems.size())));
+        parameters.addAll(p25Systems);
+        targets.appendPredicate(sql, "source.id", "2", "affiliation.radio_id");
         sql.append("""
-            GROUP BY scope.id, affiliation.radio_id, scope.protocol_code,
-                scope.system_key, scope.p25_wacn, scope.p25_system_id
+            GROUP BY source.id, affiliation.radio_id, source.protocol_code,
+                source.system_key, source.p25_wacn, source.p25_system_id
 
             UNION ALL
 
-            SELECT scope.id AS radio_system_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
+            SELECT source.id AS radio_system_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
                 max(affiliation.confirmed_at_ms) AS updated_at_ms,
-                count(*) AS current_affiliation_count, scope.protocol_code,
-                scope.system_key AS radio_system_key,
-                scope.p25_wacn AS wacn, scope.p25_system_id AS system_id, target.p25_identity_state_code,
+                count(*) AS current_affiliation_count, source.protocol_code,
+                source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id, target.p25_identity_state_code,
                 target.p25_home_wacn, target.p25_home_system_id, target.p25_home_talkgroup_id
-            FROM radio_system scope
-            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = scope.id
+            FROM radio_system source
+            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
             LEFT JOIN radio_system_identity_summary target
-              ON target.radio_system_id = scope.id
+              ON target.radio_system_id = source.id
              AND target.identity_kind_code = 1
              AND target.identity_id = affiliation.talkgroup_id
-            WHERE scope.id IN (%s)
+            WHERE source.id IN (%s)
               AND
-            """.formatted(placeholders(p25Scopes.size())));
-        parameters.addAll(p25Scopes);
-        targets.appendPredicate(sql, "scope.id", "1", "affiliation.talkgroup_id");
+            """.formatted(placeholders(p25Systems.size())));
+        parameters.addAll(p25Systems);
+        targets.appendPredicate(sql, "source.id", "1", "affiliation.talkgroup_id");
         sql.append("""
-            GROUP BY scope.id, affiliation.talkgroup_id, scope.protocol_code,
-                scope.system_key, scope.p25_wacn, scope.p25_system_id,
+            GROUP BY source.id, affiliation.talkgroup_id, source.protocol_code,
+                source.system_key, source.p25_wacn, source.p25_system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
             ORDER BY 1, 2, 3
@@ -1629,7 +1631,7 @@ final class StatsAliasCatalog
         List<Map<String,Object>> identities = queryRows(connection, sql.toString(), parameters.toArray());
         budget.consume(identities.size());
 
-        identities = projectEvidence(identities, scopes, "radio_system_id", targets, budget);
+        identities = projectEvidence(identities, sources, "radio_system_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, identities);
 
@@ -1646,16 +1648,16 @@ final class StatsAliasCatalog
     }
 
     private static List<Map<String,Object>> projectEvidence(List<Map<String,Object>> rows,
-                                                            Map<Long,List<CoverageScope>> scopes,
-                                                            String radioSystemIdColumn, ScopedIdentityTargets targets,
+                                                            Map<Long,List<CoverageSource>> sources,
+                                                            String radioSystemIdColumn, SourceIdentityTargets targets,
                                                             EvidenceBudget budget)
     {
         List<Map<String,Object>> projected = new ArrayList<>(rows.size());
 
         for(Map<String,Object> row: rows)
         {
-            List<CoverageScope> projections = scopes.getOrDefault(number(row.get(radioSystemIdColumn)), List.of()).stream()
-                .filter(scope -> targets.matches(row, scope))
+            List<CoverageSource> projections = sources.getOrDefault(number(row.get(radioSystemIdColumn)), List.of()).stream()
+                .filter(source -> targets.matches(row, source))
                 .toList();
 
             for(int index = 0; index < projections.size(); index++)
@@ -1684,9 +1686,9 @@ final class StatsAliasCatalog
                                                   Map<String,Object> row)
     {
         Long aliasId = nullableNumber(row.get("resolved_alias_id"));
-        String scopeKey = text(row.get("coverage_key"));
-        return aliasId != null && scopeKey != null ?
-            metrics.getOrDefault(aliasId, Map.of()).get(scopeKey) : null;
+        String sourceKey = text(row.get("coverage_key"));
+        return aliasId != null && sourceKey != null ?
+            metrics.getOrDefault(aliasId, Map.of()).get(sourceKey) : null;
     }
 
     private static void aggregate(Map<String,Object> alias, java.util.Collection<MetricAccumulator> rows)
@@ -1801,15 +1803,15 @@ final class StatsAliasCatalog
         return List.copyOf(merged);
     }
 
-    private static Map<Long,List<CoverageScope>> scopeProjections(List<CoverageScope> scopes, boolean trunked)
+    private static Map<Long,List<CoverageSource>> sourceProjections(List<CoverageSource> sources, boolean trunked)
     {
-        Map<Long,List<CoverageScope>> result = new HashMap<>();
+        Map<Long,List<CoverageSource>> result = new HashMap<>();
 
-        for(CoverageScope scope: scopes)
+        for(CoverageSource source: sources)
         {
-            if(scope.trunked == trunked)
+            if(source.trunked == trunked)
             {
-                result.computeIfAbsent(scope.numericId, ignored -> new ArrayList<>()).add(scope);
+                result.computeIfAbsent(source.numericId, ignored -> new ArrayList<>()).add(source);
             }
         }
 
@@ -1958,22 +1960,22 @@ final class StatsAliasCatalog
     private record IdentityRange(long minimum, long maximum) {}
 
     /**
-     * Compact, merged identity ranges and assigned Alias Lists derived solely from the alias rows in this response.
+     * Compact, merged identity ranges and assigned Alias List IDs derived solely from the alias rows in this response.
      * Every evidence query applies these predicates in SQLite before allocating result maps.
      */
     private static final class IdentityTargets
     {
-        private final Map<Integer,Set<String>> mAliasLists;
+        private final Map<Integer,Set<Long>> mAliasListIds;
 
-        private IdentityTargets(Map<Integer,Set<String>> aliasLists)
+        private IdentityTargets(Map<Integer,Set<Long>> aliasListIds)
         {
-            mAliasLists = aliasLists;
+            mAliasListIds = aliasListIds;
         }
 
         private static IdentityTargets from(List<Map<String,Object>> aliases)
         {
             Map<TargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
-            Map<Integer,Set<String>> aliasLists = new LinkedHashMap<>();
+            Map<Integer,Set<Long>> aliasListIds = new LinkedHashMap<>();
 
             for(Map<String,Object> alias: aliases)
             {
@@ -1983,11 +1985,11 @@ final class StatsAliasCatalog
                 }
 
                 int protocol = protocolCode(text(alias.get("protocol")));
-                String aliasList = text(alias.get("alias_list_name"));
+                long aliasListId = number(alias.get("alias_list_id"));
 
-                if(aliasList != null)
+                if(aliasListId > 0)
                 {
-                    aliasLists.computeIfAbsent(protocol, ignored -> new LinkedHashSet<>()).add(lower(aliasList));
+                    aliasListIds.computeIfAbsent(protocol, ignored -> new LinkedHashSet<>()).add(aliasListId);
                 }
 
                 IdentityRange range = identityRange(alias);
@@ -2001,7 +2003,7 @@ final class StatsAliasCatalog
                     range.minimum(), range.maximum());
             }
 
-            int listCount = aliasLists.values().stream().mapToInt(Set::size).sum();
+            int listCount = aliasListIds.values().stream().mapToInt(Set::size).sum();
 
             if(listCount > MAX_TARGET_ALIAS_LISTS)
             {
@@ -2021,7 +2023,7 @@ final class StatsAliasCatalog
                 throw new StatsApiException(413, "Alias enrichment exceeds the bounded identity-range limit");
             }
 
-            return new IdentityTargets(aliasLists);
+            return new IdentityTargets(aliasListIds);
         }
 
         /**
@@ -2032,7 +2034,7 @@ final class StatsAliasCatalog
          */
         private static IdentityTargets singleCoverageTarget(List<Map<String,Object>> aliases)
         {
-            Map<Integer,Set<String>> aliasLists = new LinkedHashMap<>();
+            Map<Integer,Set<Long>> aliasListIds = new LinkedHashMap<>();
             int targetCount = 0;
 
             for(Map<String,Object> alias: aliases)
@@ -2042,29 +2044,29 @@ final class StatsAliasCatalog
                     continue;
                 }
 
-                String aliasList = lower(text(alias.get("alias_list_name")));
+                long aliasListId = number(alias.get("alias_list_id"));
 
-                if(aliasList == null)
+                if(aliasListId <= 0)
                 {
                     continue;
                 }
 
                 int protocol = protocolCode(text(alias.get("protocol")));
-                Set<String> protocolLists = aliasLists.computeIfAbsent(protocol,
+                Set<Long> protocolLists = aliasListIds.computeIfAbsent(protocol,
                     ignored -> new LinkedHashSet<>());
 
-                if(protocolLists.add(aliasList) && ++targetCount > 1)
+                if(protocolLists.add(aliasListId) && ++targetCount > 1)
                 {
                     return null;
                 }
             }
 
-            return new IdentityTargets(aliasLists);
+            return new IdentityTargets(aliasListIds);
         }
 
         private boolean isEmpty()
         {
-            return mAliasLists.isEmpty();
+            return mAliasListIds.isEmpty();
         }
 
         private static void addRange(Map<TargetKey,List<IdentityRange>> ranges, TargetKey key,
@@ -2076,7 +2078,7 @@ final class StatsAliasCatalog
         private void appendCoveragePredicate(StringBuilder sql, List<Object> parameters,
                                              String protocolColumn, String aliasListColumn)
         {
-            if(mAliasLists.isEmpty())
+            if(mAliasListIds.isEmpty())
             {
                 sql.append("0 ");
                 return;
@@ -2085,7 +2087,7 @@ final class StatsAliasCatalog
             sql.append('(');
             boolean first = true;
 
-            for(Map.Entry<Integer,Set<String>> entry: mAliasLists.entrySet())
+            for(Map.Entry<Integer,Set<Long>> entry: mAliasListIds.entrySet())
             {
                 if(!first)
                 {
@@ -2093,7 +2095,7 @@ final class StatsAliasCatalog
                 }
 
                 sql.append('(').append(protocolColumn).append(" = ? AND ").append(aliasListColumn)
-                    .append(" COLLATE NOCASE IN (").append(placeholders(entry.getValue().size())).append("))");
+                    .append(" IN (").append(placeholders(entry.getValue().size())).append("))");
                 parameters.add(entry.getKey());
                 parameters.addAll(entry.getValue());
                 first = false;
@@ -2106,46 +2108,46 @@ final class StatsAliasCatalog
         private void appendAliasListPredicate(StringBuilder sql, List<Object> parameters, int protocol,
                                               String aliasListColumn)
         {
-            Set<String> aliasLists = mAliasLists.getOrDefault(protocol, Set.of());
+            Set<Long> aliasListIds = mAliasListIds.getOrDefault(protocol, Set.of());
 
-            if(aliasLists.isEmpty())
+            if(aliasListIds.isEmpty())
             {
                 sql.append("0 ");
                 return;
             }
 
-            sql.append(aliasListColumn).append(" COLLATE NOCASE IN (")
-                .append(placeholders(aliasLists.size())).append(')');
-            parameters.addAll(aliasLists);
+            sql.append(aliasListColumn).append(" IN (")
+                .append(placeholders(aliasListIds.size())).append(')');
+            parameters.addAll(aliasListIds);
             sql.append(' ');
         }
 
     }
 
-    private record ScopedTargetKey(boolean trunked, long radioSystemId, String projectionAliasList,
+    private record SourceTargetKey(boolean trunked, long radioSystemId, Long projectionAliasListId,
                                    int identityKindCode) {}
 
-    private record SqlScopedTarget(long radioSystemId, int identityKindCode, long minimum, long maximum) {}
+    private record SqlSourceTarget(long radioSystemId, int identityKindCode, long minimum, long maximum) {}
 
     /**
-     * Correlates each selected alias range to only the receiver scopes where that alias is eligible.  Evidence SQL
+     * Correlates each selected alias range to only the receiver sources where that alias is eligible.  Evidence SQL
      * consumes this bounded relation as a VALUES CTE, avoiding the protocol-wide list/range cross product that could
      * otherwise fill the response budget with identities from the wrong Alias List.
      */
-    private static final class ScopedIdentityTargets
+    private static final class SourceIdentityTargets
     {
         private static final String CTE_NAME = "requested_identity";
-        private final Map<ScopedTargetKey,List<IdentityRange>> mRanges;
+        private final Map<SourceTargetKey,List<IdentityRange>> mRanges;
 
-        private ScopedIdentityTargets(Map<ScopedTargetKey,List<IdentityRange>> ranges)
+        private SourceIdentityTargets(Map<SourceTargetKey,List<IdentityRange>> ranges)
         {
             mRanges = ranges;
         }
 
-        private static ScopedIdentityTargets from(List<Map<String,Object>> aliases,
-                                                  Map<Long,Map<String,CoverageScope>> coverage)
+        private static SourceIdentityTargets from(List<Map<String,Object>> aliases,
+                                                  Map<Long,Map<String,CoverageSource>> coverage)
         {
-            Map<ScopedTargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
+            Map<SourceTargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
 
             for(Map<String,Object> alias: aliases)
             {
@@ -2159,47 +2161,47 @@ final class StatsAliasCatalog
                 long aliasId = number(alias.get("alias_id"));
                 int kind = identityKindCode(alias);
 
-                for(CoverageScope scope: coverage.getOrDefault(aliasId, Map.of()).values())
+                for(CoverageSource source: coverage.getOrDefault(aliasId, Map.of()).values())
                 {
-                    String projectionAliasList = scope.protocolCode == 1 ? null :
-                        lower(text(alias.get("alias_list_name")));
-                    ScopedTargetKey key = new ScopedTargetKey(scope.trunked, scope.numericId,
-                        projectionAliasList, kind);
+                    Long projectionAliasListId = source.protocolCode == 1 ? null :
+                        nullableNumber(alias.get("alias_list_id"));
+                    SourceTargetKey key = new SourceTargetKey(source.trunked, source.numericId,
+                        projectionAliasListId, kind);
                     ranges.computeIfAbsent(key, ignored -> new ArrayList<>()).add(range);
                 }
             }
 
-            Map<ScopedTargetKey,List<IdentityRange>> merged = new LinkedHashMap<>();
+            Map<SourceTargetKey,List<IdentityRange>> merged = new LinkedHashMap<>();
             int rangeCount = 0;
 
-            for(Map.Entry<ScopedTargetKey,List<IdentityRange>> entry: ranges.entrySet())
+            for(Map.Entry<SourceTargetKey,List<IdentityRange>> entry: ranges.entrySet())
             {
                 List<IdentityRange> result = mergeRanges(entry.getValue());
                 rangeCount += result.size();
 
-                if(rangeCount > MAX_SCOPED_TARGET_RANGES)
+                if(rangeCount > MAX_SOURCE_TARGET_RANGES)
                 {
                     throw new StatsApiException(413,
-                        "Alias evidence exceeds the bounded scope and identity-range limit");
+                        "Alias evidence exceeds the bounded source and identity-range limit");
                 }
 
                 merged.put(entry.getKey(), result);
             }
 
-            return new ScopedIdentityTargets(Map.copyOf(merged));
+            return new SourceIdentityTargets(Map.copyOf(merged));
         }
 
         private void appendCte(StringBuilder sql, List<Object> parameters, boolean trunked)
         {
-            Set<SqlScopedTarget> targets = new LinkedHashSet<>();
+            Set<SqlSourceTarget> targets = new LinkedHashSet<>();
 
-            for(Map.Entry<ScopedTargetKey,List<IdentityRange>> entry: mRanges.entrySet())
+            for(Map.Entry<SourceTargetKey,List<IdentityRange>> entry: mRanges.entrySet())
             {
                 if(entry.getKey().trunked() == trunked)
                 {
                     for(IdentityRange range: entry.getValue())
                     {
-                        targets.add(new SqlScopedTarget(entry.getKey().radioSystemId(),
+                        targets.add(new SqlSourceTarget(entry.getKey().radioSystemId(),
                             entry.getKey().identityKindCode(), range.minimum(), range.maximum()));
                     }
                 }
@@ -2217,7 +2219,7 @@ final class StatsAliasCatalog
                 sql.append("VALUES ").append(String.join(",",
                     java.util.Collections.nCopies(targets.size(), "(?,?,?,?)")));
 
-                for(SqlScopedTarget target: targets)
+                for(SqlSourceTarget target: targets)
                 {
                     parameters.add(target.radioSystemId());
                     parameters.add(target.identityKindCode());
@@ -2229,29 +2231,29 @@ final class StatsAliasCatalog
             sql.append(") ");
         }
 
-        private void appendPredicate(StringBuilder sql, String scopeColumn, String kindExpression,
+        private void appendPredicate(StringBuilder sql, String ownerColumn, String kindExpression,
                                      String identityExpression)
         {
             sql.append("EXISTS (SELECT 1 FROM ").append(CTE_NAME).append(" target WHERE target.radio_system_id = ")
-                .append(scopeColumn).append(" AND (target.identity_kind_code = ").append(kindExpression)
+                .append(ownerColumn).append(" AND (target.identity_kind_code = ").append(kindExpression)
                 .append(" OR (target.identity_kind_code = 1 AND ").append(kindExpression)
                 .append(" = 3)) AND ").append(identityExpression)
                 .append(" BETWEEN target.minimum AND target.maximum) ");
         }
 
-        private boolean matches(Map<String,Object> row, CoverageScope scope)
+        private boolean matches(Map<String,Object> row, CoverageSource source)
         {
             int kind = (int)number(row.get("identity_kind_code"));
             kind = kind == 3 ? 1 : kind;
             long identity = number(row.get("identity_id"));
-            String projectionAliasList = scope.protocolCode == 1 ? null : lower(scope.canonicalAliasList);
-            List<IdentityRange> ranges = mRanges.getOrDefault(new ScopedTargetKey(scope.trunked,
-                scope.numericId, projectionAliasList, kind), List.of());
+            Long projectionAliasListId = source.protocolCode == 1 ? null : source.canonicalAliasListId;
+            List<IdentityRange> ranges = mRanges.getOrDefault(new SourceTargetKey(source.trunked,
+                source.numericId, projectionAliasListId, kind), List.of());
             return ranges.stream().anyMatch(range -> identity >= range.minimum() && identity <= range.maximum());
         }
     }
 
-    private static final class CoverageScope
+    private static final class CoverageSource
     {
         private final String key;
         private final long numericId;
@@ -2266,10 +2268,11 @@ final class StatsAliasCatalog
         private final String siteName;
         private final Long wacn;
         private final Long systemId;
-        private final Set<String> aliasLists = new HashSet<>();
+        private final Set<Long> aliasListIds = new HashSet<>();
+        private Long canonicalAliasListId;
         private String canonicalAliasList;
 
-        private CoverageScope(String key, long numericId, Long radioSystemId, Long channelId, boolean trunked,
+        private CoverageSource(String key, long numericId, Long radioSystemId, Long channelId, boolean trunked,
                               int protocolCode, String protocol,
                               String systemKey, String configurationId, String systemName, String siteName,
                               Long wacn, Long systemId)
@@ -2289,12 +2292,12 @@ final class StatsAliasCatalog
             this.systemId = systemId;
         }
 
-        private static CoverageScope trunked(Map<String,Object> row)
+        private static CoverageSource trunked(Map<String,Object> row)
         {
             long id = number(row.get("radio_system_id"));
             int protocolCode = (int)number(row.get("protocol_code"));
             boolean linkedP25 = protocolCode == 1;
-            return new CoverageScope("radio-system:" + id, id, id,
+            return new CoverageSource("radio-system:" + id, id, id,
                 linkedP25 ? null : nullableNumber(row.get("channel_id")), true, protocolCode,
                 switch(protocolCode) { case 1 -> "P25"; case 3 -> "DMR"; case 4 -> "NXDN"; default -> "Unknown"; },
                 text(row.get("radio_system_key")), linkedP25 ? null : text(row.get("configuration_id")),
@@ -2302,22 +2305,23 @@ final class StatsAliasCatalog
                 nullableNumber(row.get("system_id")));
         }
 
-        private static CoverageScope conventionalDmr(Map<String,Object> row)
+        private static CoverageSource conventionalDmr(Map<String,Object> row)
         {
             long id = number(row.get("channel_id"));
-            return new CoverageScope("channel:" + id, id, null, id, false, 3, "DMR", null,
+            return new CoverageSource("channel:" + id, id, null, id, false, 3, "DMR", null,
                 text(row.get("configuration_id")), text(row.get("system_name")),
                 text(row.get("site_name")), null, null);
         }
 
-        private void addAliasList(String aliasList)
+        private void addAliasList(long aliasListId, String aliasList)
         {
-            if(aliasList != null)
+            if(aliasListId > 0)
             {
-                aliasLists.add(lower(aliasList));
+                aliasListIds.add(aliasListId);
 
-                if(canonicalAliasList == null)
+                if(canonicalAliasListId == null)
                 {
+                    canonicalAliasListId = aliasListId;
                     canonicalAliasList = aliasList;
                 }
             }
@@ -2328,6 +2332,7 @@ final class StatsAliasCatalog
             row.put("coverage_key", key);
             row.put("topology", trunked ? "TRUNKED" : "CONVENTIONAL");
             row.put("protocol_code", protocolCode);
+            row.put("alias_list_id", canonicalAliasListId);
             row.put("alias_list_name", canonicalAliasList);
             row.put("radio_system_key", systemKey);
             row.put("wacn", wacn);
@@ -2337,7 +2342,7 @@ final class StatsAliasCatalog
 
     private static final class MetricAccumulator
     {
-        private final CoverageScope scope;
+        private final CoverageSource source;
         private long callCount;
         private Long recordedCount;
         private Long streamedCount;
@@ -2357,13 +2362,13 @@ final class StatsAliasCatalog
         private Long firstEvidenceMs;
         private Long lastEvidenceMs;
 
-        private MetricAccumulator(CoverageScope scope)
+        private MetricAccumulator(CoverageSource source)
         {
-            this.scope = scope;
-            boolean trunked = scope.trunked;
+            this.source = source;
+            boolean trunked = source.trunked;
             recordedCount = 0L;
             streamedCount = 0L;
-            grantCount = trunked && scope.protocolCode == 1 ? 0L : null;
+            grantCount = trunked && source.protocolCode == 1 ? 0L : null;
             joinCount = trunked ? 0L : null;
             emergencyCount = trunked ? 0L : null;
             registerCount = trunked ? 0L : null;
@@ -2374,7 +2379,7 @@ final class StatsAliasCatalog
             signalingCount = trunked ? 0L : null;
             relationshipCount = trunked ? 0L : null;
             joinRelationshipCount = trunked ? 0L : null;
-            currentAffiliationCount = trunked && scope.protocolCode == 1 ? 0L : null;
+            currentAffiliationCount = trunked && source.protocolCode == 1 ? 0L : null;
         }
 
         private void addEvidence(Map<String,Object> row)
@@ -2414,28 +2419,28 @@ final class StatsAliasCatalog
 
         private String sortKey()
         {
-            return scope.protocol + "\u0000" + scopeLabel() + "\u0000" + scope.key;
+            return source.protocol + "\u0000" + sourceLabel() + "\u0000" + source.key;
         }
 
-        private String scopeLabel()
+        private String sourceLabel()
         {
-            if(scope.systemName != null && scope.siteName != null && !scope.systemName.equals(scope.siteName))
+            if(source.systemName != null && source.siteName != null && !source.systemName.equals(source.siteName))
             {
-                return scope.systemName + " / " + scope.siteName;
+                return source.systemName + " / " + source.siteName;
             }
 
-            if(scope.systemName != null)
+            if(source.systemName != null)
             {
-                return scope.systemName;
+                return source.systemName;
             }
 
-            if(scope.siteName != null)
+            if(source.siteName != null)
             {
-                return scope.siteName;
+                return source.siteName;
             }
 
-            return scope.systemKey != null ? scope.systemKey : scope.configurationId != null ? scope.configurationId :
-                scope.key;
+            return source.systemKey != null ? source.systemKey : source.configurationId != null ? source.configurationId :
+                source.key;
         }
 
         private Long metric(String field)
@@ -2465,16 +2470,17 @@ final class StatsAliasCatalog
         private Map<String,Object> toMap()
         {
             Map<String,Object> row = new LinkedHashMap<>();
-            row.put("source_label", scopeLabel());
-            row.put("topology", scope.trunked ? "TRUNKED" : "CONVENTIONAL");
-            row.put("protocol", scope.protocol);
-            row.put("radio_system_id", scope.radioSystemId);
-            row.put("channel_id", scope.channelId);
-            row.put("system_name", scope.systemName);
-            row.put("site_name", scope.siteName);
-            row.put("radio_system_key", scope.systemKey);
-            row.put("configuration_id", scope.configurationId);
-            row.put("alias_list_name", scope.canonicalAliasList);
+            row.put("source_label", sourceLabel());
+            row.put("topology", source.trunked ? "TRUNKED" : "CONVENTIONAL");
+            row.put("protocol", source.protocol);
+            row.put("radio_system_id", source.radioSystemId);
+            row.put("channel_id", source.channelId);
+            row.put("system_name", source.systemName);
+            row.put("site_name", source.siteName);
+            row.put("radio_system_key", source.systemKey);
+            row.put("configuration_id", source.configurationId);
+            row.put("alias_list_id", source.canonicalAliasListId);
+            row.put("alias_list_name", source.canonicalAliasList);
             row.put("metrics_state", observed() ? "observed" : "covered_no_evidence");
 
             for(String field: METRIC_FIELDS)

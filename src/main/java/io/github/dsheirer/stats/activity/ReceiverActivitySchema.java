@@ -973,7 +973,7 @@ public class ReceiverActivitySchema
         boolean changed = previous == null || generationChanged ||
             !java.util.Objects.equals(snapshot.snapshotHash(), previous.snapshotHash());
 
-        TrunkedSiteSchema.clearSiteStats(connection, snapshot.configurationId());
+        TrunkedSiteSchema.clearChannelStats(connection, snapshot.configurationId());
         upsertSiteSnapshot(connection, snapshot, channelId);
         RadioSystemSchema.ensureRadioSystem(connection, channelId, snapshot.observedAtEpochMilliseconds(),
             ReceiverActivityRecords.IdentityDomain.STANDARD, snapshot.wacn(), snapshot.systemId());
@@ -1228,7 +1228,7 @@ public class ReceiverActivitySchema
     }
 
     /** Clears activity owned by one saved channel while preserving shared radio-system summaries. */
-    static int clearSiteStats(Connection connection, String configurationId) throws SQLException
+    static int clearChannelStats(Connection connection, String configurationId) throws SQLException
     {
         if(configurationId == null || configurationId.isBlank())
         {

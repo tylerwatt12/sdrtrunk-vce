@@ -209,13 +209,11 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void replacementDropsOpaqueRetiredRowsAndLeavesLegacyChannelMapsUntouched() throws Exception
+    void replacementDropsOpaqueRetiredChannelRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retired-configuration.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
-        String channelMapJson = "{\"name\":\"Retired Map\",\"ranges\":[{\"first\":1,\"last\":9}]}";
-
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement channelStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
@@ -233,16 +231,10 @@ class ConfigurationDatabaseStoreTest
                 ) VALUES (78, '33333333-3333-4333-8333-333333333333', 'CONVENTIONAL', 10, 'Legacy System',
                     'Audio Input', 'Retired Sound Card', NULL, NULL, 1, 5, 'DMR', NULL,
                     '{"type":"retired-sound-card","payload":"must be dropped without decoding"}')
-                """);
-            PreparedStatement mapStatement = connection.prepareStatement("""
-                INSERT INTO configuration_channel_map (id, sort_order, name, config_json)
-                VALUES (88, 3, 'Retired Map', ?)
                 """))
         {
             channelStatement.executeUpdate();
             soundCardStatement.executeUpdate();
-            mapStatement.setString(1, channelMapJson);
-            mapStatement.executeUpdate();
         }
 
         Channel active = new Channel("Supported DMR");
@@ -262,23 +254,12 @@ class ConfigurationDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement retiredQuery = connection.prepareStatement("""
                 SELECT COUNT(*) FROM configuration_channel WHERE id IN (77, 78)
-                """);
-            PreparedStatement mapQuery = connection.prepareStatement("""
-                SELECT sort_order, name, config_json FROM configuration_channel_map WHERE id = 88
                 """))
         {
             try(ResultSet resultSet = retiredQuery.executeQuery())
             {
                 assertTrue(resultSet.next());
                 assertEquals(0, resultSet.getInt(1));
-            }
-
-            try(ResultSet resultSet = mapQuery.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                assertEquals(3, resultSet.getInt("sort_order"));
-                assertEquals("Retired Map", resultSet.getString("name"));
-                assertEquals(channelMapJson, resultSet.getString("config_json"));
             }
         }
     }
@@ -483,9 +464,56 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void blankConventionalRadioResolveIdIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
+    void currentFormatLoadRejectsEveryRowOwnedChannelFieldDuplicatedInJson() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("blank-conventional-guid.sqlite");
+        Path database = mTemporaryFolder.resolve("duplicated-row-owned-fields.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        Channel channel = new Channel("Airport Ground");
+        channel.setDecodeConfiguration(new DecodeConfigAM());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(121_900_000L);
+        channel.setSourceConfiguration(source);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+
+        List<String> rowOwnedFields = List.of(
+            "configurationId", "system", "site", "name", "aliasListId", "aliasListName", "radioResolveId",
+            "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement pragma = connection.createStatement();
+            PreparedStatement add = connection.prepareStatement("""
+                UPDATE configuration_channel
+                SET config_json=json_set(config_json, ?, 'conflicting value')
+                """);
+            PreparedStatement remove = connection.prepareStatement("""
+                UPDATE configuration_channel
+                SET config_json=json_remove(config_json, ?)
+                """))
+        {
+            pragma.execute("PRAGMA ignore_check_constraints=ON");
+
+            for(String property: rowOwnedFields)
+            {
+                String path = "$." + property;
+                add.setString(1, path);
+                assertEquals(1, add.executeUpdate());
+                IOException exception = assertThrows(IOException.class, store::load, property);
+                assertTrue(exception.getMessage().contains(property), exception::getMessage);
+                remove.setString(1, path);
+                assertEquals(1, remove.executeUpdate());
+            }
+
+            pragma.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+    }
+
+    @Test
+    void missingConventionalRadioResolveIdIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("missing-conventional-radioresolve.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("Airport Ground");
@@ -504,12 +532,12 @@ class ConfigurationDatabaseStoreTest
                 """);
         }
 
-        Channel loadedBlank = store.load().channels().getFirst();
-        assertEquals(configurationId, loadedBlank.getConfigurationId());
-        assertFalse(loadedBlank.hasRadioResolveId(), "loading must preserve an explicitly blank correlation value");
+        Channel loadedMissing = store.load().channels().getFirst();
+        assertEquals(configurationId, loadedMissing.getConfigurationId());
+        assertFalse(loadedMissing.hasRadioResolveId(), "loading must preserve a missing correlation value");
 
         TestConfiguration replacement = new TestConfiguration();
-        replacement.setChannels(List.of(loadedBlank));
+        replacement.setChannels(List.of(loadedMissing));
         replace(database, replacement);
 
         try(Connection connection = SdrTrunkDatabase.open(database);

@@ -145,7 +145,7 @@ class LogicalCallStatisticsSchemaTest
                 assertEquals(0, scalar(connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE name='" + removed + "'"));
             }
-            for(String table: List.of("radio_system_identity_summary", "trunked_radio_talkgroup_summary",
+            for(String table: List.of("radio_system_identity_summary", "trunked_radio_group_summary",
                 "trunked_logical_call_bucket", "p25_site_call_bucket"))
             {
                 for(String removedColumn: List.of("call_count", "encrypted_count", "recorded_count",

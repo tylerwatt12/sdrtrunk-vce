@@ -163,18 +163,17 @@ class StatsAliasResolverTest
                 """);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
-            List<Map<String,Object>> nxdnTalkgroups = rows(
-                row("NXDN County", 91), row("NXDN Other", 91));
-            List<Map<String,Object>> nxdnRadios = rows(row("NXDN County", 123));
+            List<Map<String,Object>> nxdnTalkgroups = rows(row(1, 91), row(2, 91));
+            List<Map<String,Object>> nxdnRadios = rows(row(1, 123));
             List<Map<String,Object>> p25Talkgroups = rows(
-                row("P25 Conventional", 101), row("P25 Conventional", 102));
-            List<Map<String,Object>> p25Radios = rows(row("P25 Conventional", 456));
-            List<Map<String,Object>> dmrTalkgroups = rows(row("DMR County", 301));
-            List<Map<String,Object>> dmrRadios = rows(row("DMR County", 302));
-            Map<String,Object> dmrActivityRow = activityRow("DMR", 1, "DMR County", 302, 301, 1);
-            Map<String,Object> nxdnActivityRow = activityRow("NXDN", 1, "NXDN County", 123, 91, 1);
+                row(3, 101), row(3, 102));
+            List<Map<String,Object>> p25Radios = rows(row(3, 456));
+            List<Map<String,Object>> dmrTalkgroups = rows(row(4, 301));
+            List<Map<String,Object>> dmrRadios = rows(row(4, 302));
+            Map<String,Object> dmrActivityRow = activityRow("DMR", 1, 4, 302, 301, 1);
+            Map<String,Object> nxdnActivityRow = activityRow("NXDN", 1, 1, 123, 91, 1);
             Map<String,Object> p25ConventionalActivityRow =
-                activityRow("APCO25", 2, "P25 Conventional", 456, 101, 1);
+                activityRow("APCO25", 2, 3, 456, 101, 1);
             List<Map<String,Object>> activity = rows(dmrActivityRow, nxdnActivityRow,
                 p25ConventionalActivityRow);
 
@@ -316,13 +315,20 @@ class StatsAliasResolverTest
                 "system-level views must not choose an arbitrary Alias List when labels conflict");
 
             Map<String,Object> north = observedP25Row(700);
-            north.put("alias_list_name", "North");
+            north.put("alias_list_id", 1L);
             Map<String,Object> south = observedP25Row(700);
-            south.put("alias_list_name", "South");
+            south.put("alias_list_id", 2L);
             resolver.resolveObservedTalkgroups(connection, rows(north, south));
             assertEquals("Dispatch", north.get("matched_alias_name"));
             assertEquals("South Dispatch", south.get("matched_alias_name"),
                 "channel-level views continue to use that channel's exact Alias List");
+
+            statement.executeUpdate("DELETE FROM alias WHERE id=2");
+            Map<String,Object> missing = p25Row();
+            missing.put("talkgroup_id", 700);
+            resolver.enrichTalkgroups(connection, rows(missing));
+            assertNull(missing.get("alias_name"),
+                "system-level views require the identity to resolve in every assigned Alias List");
         }
     }
 
@@ -348,6 +354,7 @@ class StatsAliasResolverTest
                     radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
                 ) VALUES (77, 1, 700, 1, 2)
                 """);
+            statement.executeUpdate("UPDATE alias_list SET name='Renamed County' WHERE id=1");
 
             Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
             Map<String,Object> alias = (Map<String,Object>)response.get("alias");
@@ -356,6 +363,7 @@ class StatsAliasResolverTest
 
             assertEquals(1L, ((Number)alias.get("coverage_source_count")).longValue());
             assertEquals(1L, ((Number)alias.get("observed_source_count")).longValue());
+            assertEquals("Renamed County", alias.get("alias_list_name"));
             assertEquals(77L, ((Number)source.get("radio_system_id")).longValue());
             assertEquals(P25_SYSTEM_KEY, source.get("radio_system_key"));
             assertEquals("Metro", source.get("source_label"));
@@ -412,7 +420,7 @@ class StatsAliasResolverTest
             StatsAliasResolver resolver = new StatsAliasResolver();
             Map<String,Object> selected = observedP25Row(42);
             Map<String,Object> irrelevant = observedP25Row(99);
-            irrelevant.put("alias_list_name", "Irrelevant");
+            irrelevant.put("alias_list_id", 2L);
             resolver.resolveObservedTalkgroups(connection, rows(selected, irrelevant));
 
             assertEquals("exact", selected.get("match_kind"));
@@ -423,23 +431,23 @@ class StatsAliasResolverTest
     }
 
     @Test
-    void systemAliasListPairBudgetIsSharedAcrossSystemsAndCountsRepeatedListNames()
+    void systemAliasListPairBudgetIsSharedAcrossSystemsAndCountsRepeatedListIds()
     {
         StatsAliasResolver.AliasListPairBudget budget = new StatsAliasResolver.AliasListPairBudget(2);
-        budget.add("p25:bee00:001", "Shared");
-        budget.add("p25:bee00:002", "Shared");
+        budget.add("p25:bee00:001", 1);
+        budget.add("p25:bee00:002", 1);
         assertEquals(1, budget.queryLimit());
 
         StatsApiException overflow = assertThrows(StatsApiException.class,
-            () -> budget.add("p25:bee00:003", "Shared"));
+            () -> budget.add("p25:bee00:003", 1));
         assertEquals(413, overflow.status());
         assertEquals("response_too_large", overflow.code());
     }
 
     @Test
-    void assignedAliasListLookupUsesCaseInsensitiveConfigurationNames() throws Exception
+    void assignedAliasListLookupSurvivesListRenameBecauseIdentityUsesId() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("alias-list-case.sqlite");
+        Path database = mTemporaryFolder.resolve("alias-list-rename.sqlite");
         createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -453,12 +461,16 @@ class StatsAliasResolverTest
                 INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
                 VALUES (1, 1, 'Case Dispatch', 'TALKGROUP', 'DMR', 42)
                 """);
-            Map<String,Object> identity = row("mixed case", 42);
+            Map<String,Object> identity = row(1, 42);
+
+            statement.executeUpdate("UPDATE alias_list SET name='Renamed List' WHERE id=1");
 
             new StatsAliasResolver().enrichDmrTalkgroups(connection, rows(identity),
                 "identity_id", "alias_");
 
             assertEquals("Case Dispatch", identity.get("alias_name"));
+            assertEquals(1L, ((Number)identity.get("alias_list_id")).longValue());
+            assertEquals("Renamed List", identity.get("alias_list_name"));
         }
     }
 
@@ -471,7 +483,7 @@ class StatsAliasResolverTest
 
         for(int x = 0; x <= StatsAliasResolver.MAX_INPUT_ROWS; x++)
         {
-            rows.add(row("P25", x + 1));
+            rows.add(row(1, x + 1));
         }
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -500,10 +512,10 @@ class StatsAliasResolverTest
         statement.executeUpdate("DELETE FROM alias_list");
     }
 
-    private static Map<String,Object> row(String aliasList, int identityId)
+    private static Map<String,Object> row(long aliasListId, int identityId)
     {
         Map<String,Object> row = new LinkedHashMap<>();
-        row.put("alias_list_name", aliasList);
+        row.put("alias_list_id", aliasListId);
         row.put("identity_id", identityId);
         return row;
     }
@@ -523,20 +535,20 @@ class StatsAliasResolverTest
     {
         Map<String,Object> row = p25Row();
         row.put("topology", "TRUNKED");
-        row.put("alias_list_name", "Selected");
+        row.put("alias_list_id", 1L);
         row.put("talkgroup_id", talkgroup);
         row.put("protocol_code", 1);
         row.put("p25_identity_state_code", 1);
         return row;
     }
 
-    private static Map<String,Object> activityRow(String protocol, int channelKind, String aliasList,
+    private static Map<String,Object> activityRow(String protocol, int channelKind, long aliasListId,
                                                   int source, int target, int targetKind)
     {
         Map<String,Object> row = new LinkedHashMap<>();
         row.put("protocol", protocol);
         row.put("channel_kind_code", channelKind);
-        row.put("alias_list_name", aliasList);
+        row.put("alias_list_id", aliasListId);
         row.put("source_radio_id", source);
         row.put("target_id", target);
         row.put("target_kind_code", targetKind);

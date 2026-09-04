@@ -301,20 +301,20 @@ class AliasDatabaseStoreTest
     }
 
     @Test
-    void identifierViewsExposeListNameAndRemainReadOnly() throws Exception
+    void identifierViewsExposeListIdAndRemainReadOnly() throws Exception
     {
         AliasDatabaseStore store = populatedStore("views.sqlite");
         try(Connection connection = SdrTrunkDatabase.open(store.getDatabasePath());
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery(
-                "SELECT alias_list_name FROM alias_talkgroup"))
+                "SELECT alias_list_id FROM alias_talkgroup"))
         {
             assertTrue(resultSet.next());
-            assertEquals("County P25", resultSet.getString("alias_list_name"));
+            assertTrue(resultSet.getLong("alias_list_id") > 0);
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO alias_talkgroup (
-                    alias_id, protocol, value, ranged, alias_list_name
-                ) VALUES (1, 'APCO25', 100, 0, 'County P25')
+                    alias_id, protocol, value, ranged, alias_list_id
+                ) VALUES (1, 'APCO25', 100, 0, 1)
                 """));
         }
     }

@@ -38,7 +38,7 @@ public final class ReceiverActivityMaintenance
         SHRINK,
         CHECK,
         RESET_STATS,
-        CLEAR_SITE_STATS
+        CLEAR_CHANNEL_STATS
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
@@ -59,13 +59,13 @@ public final class ReceiverActivityMaintenance
                 case SHRINK -> sb.append("Shrink complete");
                 case CHECK -> sb.append(checkOk() ? "Database check passed" : "Database check failed");
                 case RESET_STATS -> sb.append("Lifetime stats reset");
-                case CLEAR_SITE_STATS -> sb.append("Site statistics cleared");
+                case CLEAR_CHANNEL_STATS -> sb.append("Channel statistics cleared");
             }
 
             if(operation != Operation.CHECK)
             {
                 sb.append(". Deleted ").append(rowsDeleted).append(
-                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_SITE_STATS ?
+                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_CHANNEL_STATS ?
                     " stats row(s)" : " expired row(s)");
             }
 
@@ -130,8 +130,8 @@ public final class ReceiverActivityMaintenance
                 checkpoint(connection);
                 optimize(connection);
             }
-            case CLEAR_SITE_STATS -> throw new IllegalArgumentException(
-                "CLEAR_SITE_STATS requires a channel configuration ID");
+            case CLEAR_CHANNEL_STATS -> throw new IllegalArgumentException(
+                "CLEAR_CHANNEL_STATS requires a channel configuration ID");
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
@@ -139,21 +139,21 @@ public final class ReceiverActivityMaintenance
     }
 
     /**
-     * Clears statistics and history owned by one configured site without changing its channel configuration or
-     * system-wide summaries that may be shared by other sites.
+     * Clears statistics and history owned by one saved channel without changing its configuration or system-wide
+     * summaries that may be shared by other channels.
      */
-    public static Result clearSiteStats(Path databasePath, String configurationId) throws IOException, SQLException
+    public static Result clearChannelStats(Path databasePath, String configurationId) throws IOException, SQLException
     {
         try(Connection connection = SdrTrunkDatabase.open(databasePath))
         {
-            return clearSiteStats(connection, databasePath, configurationId);
+            return clearChannelStats(connection, databasePath, configurationId);
         }
     }
 
     /**
-     * Clears one site's statistics on the caller-owned writer connection.
+     * Clears one saved channel's statistics on the caller-owned writer connection.
      */
-    static Result clearSiteStats(Connection connection, Path databasePath, String configurationId)
+    static Result clearChannelStats(Connection connection, Path databasePath, String configurationId)
         throws IOException, SQLException
     {
         if(configurationId == null || configurationId.isBlank())
@@ -163,10 +163,10 @@ public final class ReceiverActivityMaintenance
 
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
-        int rowsDeleted = clearSiteStats(connection, configurationId);
+        int rowsDeleted = clearChannelStats(connection, configurationId);
         checkpoint(connection);
         optimize(connection);
-        return new Result(Operation.CLEAR_SITE_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
+        return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
             walBytesBefore, size(walPath(databasePath)));
     }
 
@@ -205,13 +205,13 @@ public final class ReceiverActivityMaintenance
         });
     }
 
-    private static int clearSiteStats(Connection connection, String configurationId) throws SQLException
+    private static int clearChannelStats(Connection connection, String configurationId) throws SQLException
     {
         return inTransaction(connection, () -> {
             int deleted = DmrActivitySchema.clearChannelStats(connection, configurationId) +
-                ReceiverActivitySchema.clearSiteStats(connection, configurationId) +
-                TrunkedSiteSchema.clearSiteStats(connection, configurationId);
-            ReceiverActivitySchema.updateStatus(connection, "last_site_stats_clear_ms",
+                ReceiverActivitySchema.clearChannelStats(connection, configurationId) +
+                TrunkedSiteSchema.clearChannelStats(connection, configurationId);
+            ReceiverActivitySchema.updateStatus(connection, "last_channel_stats_clear_ms",
                 Long.toString(System.currentTimeMillis()));
             return deleted;
         });

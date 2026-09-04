@@ -494,7 +494,7 @@ public final class TrunkedSiteSchema
         }
     }
 
-    public static int clearSiteStats(Connection connection, String configurationId) throws SQLException
+    public static int clearChannelStats(Connection connection, String configurationId) throws SQLException
     {
         if(configurationId == null || configurationId.isBlank())
         {

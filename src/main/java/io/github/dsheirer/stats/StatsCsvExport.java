@@ -40,13 +40,13 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static final DateTimeFormatter FILE_TIME =
         DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
 
-    static StatsCsvExport create(String dataset, String scopeLabel, List<Map<String,Object>> rows)
+    static StatsCsvExport create(String dataset, String selectionLabel, List<Map<String,Object>> rows)
         throws IOException
     {
-        return create(dataset, scopeLabel, rows, MAX_BYTES);
+        return create(dataset, selectionLabel, rows, MAX_BYTES);
     }
 
-    static StatsCsvExport create(String dataset, String scopeLabel, List<Map<String,Object>> rows, int maximumBytes)
+    static StatsCsvExport create(String dataset, String selectionLabel, List<Map<String,Object>> rows, int maximumBytes)
         throws IOException
     {
         if(rows.size() > MAX_ROWS)
@@ -83,7 +83,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 (MAX_BYTES / (1024 * 1024)) + " MiB size limit");
         }
 
-        return new StatsCsvExport(fileName(dataset, scopeLabel), output.toByteArray(), rows.size());
+        return new StatsCsvExport(fileName(dataset, selectionLabel), output.toByteArray(), rows.size());
     }
 
     private static List<Column> columns(String dataset)
@@ -92,7 +92,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
         {
             case "system-talkgroups" -> List.of(
                 text("protocol", "protocol"), text("system_name", "configured_system"),
-                text("scope", "system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 number("talkgroup_id", "talkgroup_id"),
@@ -112,7 +112,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "system-radios" -> List.of(
                 text("protocol", "protocol"), text("system_name", "configured_system"),
-                text("scope", "system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 number("radio_id", "radio_id"),
@@ -137,7 +137,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "site-channels" -> List.of(
                 text("protocol", "site_protocol"), text("system_name", "site_system_name"),
-                text("scope", "site_system_key"), text("site_guid", "site_guid"),
+                text("radio_system_key", "radio_system_key"), text("configuration_id", "configuration_id"),
                 text("site_name", "site_name"), text("wacn_hex", row -> siteP25Hex(row, "site_wacn", 5)),
                 number("wacn", "site_wacn"),
                 text("system_id_hex", row -> siteP25Hex(row, "site_system_id", 3)),
@@ -166,9 +166,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "site-neighbors" -> List.of(
                 text("protocol", "site_protocol"), text("system_name", "site_system_name"),
-                text("source_scope", "site_system_key"), text("source_site_guid", "site_guid"),
+                text("radio_system_key", "radio_system_key"), text("configuration_id", "configuration_id"),
                 text("source_site_name", "site_name"), text("entry_type", "entry_type"),
-                text("neighbor_name", "neighbor_name"), text("neighbor_guid", "neighbor_guid"),
+                text("neighbor_name", "neighbor_name"),
                 text("wacn_hex", row -> siteP25Hex(row, "wacn", 5)), number("wacn", "wacn"),
                 text("system_id_hex", row -> siteP25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
@@ -235,7 +235,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "signal-health" -> List.of(
                 text("protocol", "protocol"), text("system_name", row -> firstValue(row,
-                    "configured_system", "channel_name")), text("site_guid", "guid"),
+                    "configured_system", "channel_name")), text("radio_system_key", "radio_system_key"),
+                text("configuration_id", "configuration_id"),
                 text("site_name", "channel_name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
@@ -260,7 +261,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "site-quality" -> List.of(
                 text("protocol", "protocol"), text("system_name", row -> firstValue(row,
-                    "configured_system", "channel_name")), text("site_guid", "guid"),
+                    "configured_system", "channel_name")), text("radio_system_key", "radio_system_key"),
+                text("configuration_id", "configuration_id"),
                 text("site_name", "channel_name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
@@ -385,7 +387,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
 
     private static String nxdnDisplay(Map<String,Object> row, String key)
     {
-        if(!"NXDN".equals(row.get("protocol")) || numberValue(row.get("identity_domain_code")) != 2 ||
+        if(!"NXDN".equals(row.get("protocol")) || numberValue(row.get("address_domain_code")) != 2 ||
             !(row.get(key) instanceof Number number))
         {
             return "";
@@ -430,7 +432,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
 
     private static String addressDomain(Map<String,Object> row)
     {
-        return apiProtocol(row).addressDomain(numberValue(row.get("identity_domain_code")));
+        return apiProtocol(row).addressDomain(numberValue(row.get("address_domain_code")));
     }
 
     private static String variant(Map<String,Object> row)
@@ -456,7 +458,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
 
     private static String siteClassification(Map<String,Object> row)
     {
-        return apiProtocol(row).siteClassification(numberValue(row.get("identity_domain_code")));
+        return apiProtocol(row).siteClassification(numberValue(row.get("location_category_code")));
     }
 
     private static String lastEventType(Map<String,Object> row)
@@ -546,10 +548,10 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
         return text;
     }
 
-    private static String fileName(String dataset, String scopeLabel)
+    private static String fileName(String dataset, String selectionLabel)
     {
-        String scope = scopeLabel != null ? scopeLabel : "all";
-        String safe = scope.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")
+        String selection = selectionLabel != null ? selectionLabel : "all";
+        String safe = selection.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")
             .replaceAll("^-+|-+$", "");
         if(safe.isBlank()) safe = "all";
         if(safe.length() > 48) safe = safe.substring(0, 48).replaceAll("-+$", "");

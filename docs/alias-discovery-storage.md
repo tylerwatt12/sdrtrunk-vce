@@ -3,170 +3,156 @@
 > **Release scope:** This design describes current `main` and Nightly behavior. Numbered Alpha builds may omit these
 > newer Alias and website features.
 
-## User-visible purpose
+## User-visible behavior
 
-The Alias page's Discover tab calls `/api/v1/alias-lists/{id}/observed-talkgroups` to show P25, DMR, and NXDN talkgroups or
-patch groups that have been observed for a selected alias list. Exact aliases are excluded by default, while a
-covering range is reported without hiding the received identity. Administrators can use an observation to prefill a
-normal alias without changing the identity that was received over the air.
+The Alias page can show P25, DMR, and NXDN talkgroups or patch groups observed for one selected Alias List. Exact
+aliases are hidden by default. A covering range is reported without changing the identity received over the air. An
+administrator may use a result to prefill a normal Alias.
 
-Each P25, DMR, NXDN, or NBFM list also owns an Unmatched Talkgroups policy. The policy supplies recording, stream, and
-scan-list destinations when a destination talkgroup has no exact or range alias in that Alias List. For the NBFM
-family, this classification applies to the configured logical AM or NBFM destination talkgroup; FleetSync and
-MDC-1200 signaling identities remain normal Alias evidence and do not replace that destination. The policy contains no
-matcher, display identity, or Stream As value, so it does not create a false catch-all alias. It routes the completed
-call under its received identity; creating a normal Alias for a newly identified talkgroup remains an explicit
-administrator action. The Discover tab remains limited to the persisted P25, DMR, and NXDN observation catalog.
+Each P25, DMR, NXDN, or NBFM Alias List can also define an Unmatched Talkgroups policy for recording, streaming, and
+scan-list routing. The policy is not a catch-all alias: it has no matcher, display identity, or Stream As value. It
+routes a completed call under the received identity only when that Alias List has no exact or covering-range match.
+
+For NBFM and AM, the policy applies to the configured logical destination talkgroup. FleetSync and MDC-1200 signaling
+identities remain separate Alias evidence and never replace that destination.
+
+## One authoritative relationship
+
+`configuration_channel.alias_list_id` is the only stored relationship between a saved channel and its Alias List.
+Queries join `alias_list` by ID. They do not copy or match an Alias List name in activity tables. Renaming an Alias
+List therefore changes display text without changing ownership or requiring synchronized activity updates.
+
+Observed activity is owned by the saved channel UUID through `receiver_channel.configuration_id`. Display names,
+system/site labels, decoder choices, and RadioResolve identifiers do not participate in identity.
+
+For trunked systems:
+
+- complete P25 WACN/System identity can be shared by several receiver channels;
+- provisional P25, DMR, and NXDN systems remain saved-channel-specific; and
+- each channel keeps its exact Alias List assignment even when several channels share one P25 radio system.
+
+A system-level alias is returned only when every applicable assigned list that resolves the identity produces the
+same effective alias presentation. If two lists disagree, or only some applicable lists resolve it, the system-level
+alias is left blank. Channel-level views always resolve through that channel's exact Alias List. No query picks an
+arbitrary first list.
 
 ## Administrator-owned configuration
 
-Alias schema v6 removes receiver-local playback priority from `alias` and `alias_list`. The remaining
-`unmatched_talkgroup_record_enabled` field is a compact `0` or `1` value on each `alias_list` row.
+`alias_list` stores the unmatched-talkgroup recording flag. Stream and scan-list destinations use normalized child
+tables keyed by the owning Alias List ID and destination ID. These are administrator-owned configuration rows: calls
+never add them, and foreign-key cascades remove them only when an owner is deleted.
 
-`alias_list_unmatched_talkgroup_stream` stores one row per selected stream destination. Its unique
-`(alias_list_id, channel_name)` constraint prevents duplicates and supplies the list-prefix access path used when
-loading configuration. No name-only query exists, so no separate `channel_name` index is created. A typical list has
-zero to four routes; the web request is capped at 64. These rows are created only by an administrator, remain until
-the policy is changed, and are deleted by cascade with their alias list. They do not grow with calls or receiver
-uptime.
+`scan_list` is a bounded administrator catalog with stable IDs, display order, case-insensitive unique names, optional
+description, publication state, and one required default. `alias_scan_list_membership` and the unmatched-policy
+membership table use composite ID keys. Runtime routing loads these relationships into an immutable snapshot, so a
+completed-call decision does not query SQLite.
 
-`scan_list` stores administrator-owned definitions with a durable integer ID, display order, case-insensitive unique
-name, optional bounded description, published flag, and default flag. A fresh database contains one published
-`Default` definition. The immutable runtime model requires exactly one default, while
-`idx_scan_list_one_default` prevents more than one default in storage. The administration boundary caps the catalog
-at 100 definitions.
+The administration boundary caps scan lists at 100 definitions and each unmatched stream selection at 64. Normal
+installations have zero to four routes per Alias List. Row count is bounded by administrator-owned configuration, not
+receiver uptime.
 
-`alias_scan_list_membership` stores one row for each selected Alias and scan-list pair. It is `WITHOUT ROWID` with an
-Alias-first composite primary key, which supports loading the scan-list IDs for a completed call's durable owner. The
-reverse index `idx_alias_scan_list_by_list` supports bounded administrator catalog and membership queries by scan
-list. Foreign-key cascades remove memberships when an Alias or scan list is deleted.
+## Observed identity sources
 
-`alias_list_unmatched_talkgroup_scan_list_membership` stores one row for each Alias List global unmatched-talkgroup
-route and scan-list pair. It is `WITHOUT ROWID` with an Alias-List-first composite primary key, which supports one
-lookup when a completed call's frozen destination status is unmatched. The reverse index
-`idx_alias_list_unmatched_talkgroup_scan_list_by_list` supports scan-list administration and member counts. Foreign-key
-cascades remove routes when either owning definition is deleted. A matched exact or covering range Alias suppresses
-the global fallback; source-radio matches alone do not. Duplicate routes from matched Aliases, unmatched policies, or
-multiple receiver contexts are folded into one scan-list ID before delivery.
+Discovery reads existing bounded summaries; it creates no new activity table and performs no writes.
 
-These are configuration rows, not call history. Their row count is bounded by the administrator-owned Alias catalog
-multiplied by the capped scan-list catalog; calls never insert or update them. Runtime routing loads the membership
-map into one immutable snapshot, so completed-call matching does not query SQLite. Rows remain until an administrator
-changes membership or deletes an owning configuration object.
+### Trunked P25, DMR, and NXDN
 
-## Qualifier-safe P25 identity summaries
+`radio_system_identity_summary` stores one mutable talkgroup, radio, or patch row per `radio_system_id`. Discovery
+selects the radio systems reached through receiver channels whose `configuration_channel.alias_list_id` equals the
+selected list, then reads talkgroup and patch identities through the summary primary key.
 
-P25 activity schema v26 extends the existing `trunked_identity_summary` row with four integer fields:
+Shared P25 systems can be reached by channels assigned to different lists. Filtering remains channel-owned: selecting
+one list does not silently expose another list's configuration. System-level presentation follows the unambiguous
+resolution rule above.
 
-- a state code for unknown, ordinary, stable fully-qualified, or ambiguous identity evidence; and
-- nullable home WACN, System ID, and talkgroup ID values, present only for stable fully-qualified evidence.
+The trunked discovery path is equivalent to this bounded shape:
 
-For positive local IDs, repeated observations update the same
-`(scope_id, identity_kind_code, identity_id)` summary. The four qualifier fields add no event rows or indexes and add
-approximately 4 to 24 bytes to an existing row depending on SQLite varint sizes and record-header overhead; ordinary
-rows normally use only the compact state value plus null markers. The existing defensive limit remains 100,000
-identity rows per scope, so the new fields add at most a few MiB even at that abnormal saturation point.
+```sql
+SELECT summary.*
+FROM configuration_channel AS configured
+JOIN receiver_channel AS receiver
+  ON receiver.configuration_id = configured.configuration_id
+JOIN radio_system_identity_summary AS summary
+  ON summary.radio_system_id = receiver.radio_system_id
+WHERE configured.alias_list_id = ?
+  AND summary.identity_kind_code IN (1, 3)
+ORDER BY summary.last_seen_ms DESC, summary.identity_id
+LIMIT ?;
+```
 
-A valid fully-qualified P25 talkgroup can use local ID zero. The existing summary key cannot represent this safely:
-one `(scope, talkgroup, local ID)` row would collapse every different home tuple observed with local ID zero. The
-dedicated `p25_zero_local_fq_talkgroup_summary` instead stores one `WITHOUT ROWID` row keyed by
-`(scope_id, home_wacn, home_system_id, home_talkgroup_id)`. It accepts only local ID zero with WACN
-`0..0xFFFFF`, System ID `0..0xFFF`, and home talkgroup `1..0xFFFE`; home talkgroup zero and `0xFFFF` are reserved,
-and invalid or incomplete tuples are normalized to unknown evidence instead of becoming alias candidates.
+Positive local P25 talkgroups may carry complete home WACN/System/talkgroup evidence in the ordinary identity summary.
+A valid fully-qualified P25 talkgroup with local ID zero instead uses
+`p25_zero_local_fq_talkgroup_summary`, keyed by
+`(radio_system_id, home_wacn, home_system_id, home_talkgroup_id)`. This keeps different home tuples separate. Zero-local
+rows are diagnostic and review-only because they cannot create a usable talkgroup-zero Alias.
 
-Each tuple row is a mutable summary containing first/last observation times, the fixed Activity action counters
-(including calls), and encrypted, recorded, and streamed counts. Initial activity, an untracked mid-call continuation,
-late call attribution, and completed output update that one summary without creating immutable call or event rows.
-New tuple admission is independently capped at 100,000 rows per scope; existing tuples continue updating at the cap.
-Budgeting approximately 250–400 bytes per tuple row and its two indexes gives a conservative saturated estimate of
-25–40 MiB per scope, although normal systems should remain far below that defensive limit.
+New ordinary identities and zero-local tuples are each capped at 100,000 rows per radio system. Existing rows continue
+updating after the cap. Rows contain first/last times and fixed counters, not immutable events or JSON.
 
-P25 identity scopes combine one linked WACN/System with one durable Alias List. Sites for the same P25 system share
-observations only while they use that same list; sites using different lists write to separate scopes. The Discover
-tab for a selected list therefore shows only observations collected under that list. DMR and NXDN trunked scopes
-remain receiver-context owned. Conventional discovery uses the existing DMR talkgroup summaries and protocol-neutral
-hourly call-identity buckets.
+### Conventional channels
 
-## Write rate and retention
+Conventional P25 and NXDN discovery reads the protocol-neutral hourly call-identity bucket by `channel_id`.
+Conventional DMR reads its carrier- and native-timeslot-specific talkgroup summary by `channel_id`. The saved channel's
+`alias_list_id` determines the exact list used for matching.
 
-Discovery adds no writes. It reads summaries already maintained for the Systems and Conventional pages. P25
-qualifier evidence is carried through the existing bounded statistics queue and single database writer, then merged
-into the applicable mutable identity or zero-local tuple row as call, signaling, recording, and streaming counters.
-Normal steady-state row creation therefore remains zero after identities are learned; initial discovery is bounded
-by the separate 100,000-row-per-scope admission limit for each summary.
+```sql
+SELECT summary.*
+FROM configuration_channel AS configured
+JOIN receiver_channel AS receiver
+  ON receiver.configuration_id = configured.configuration_id
+JOIN dmr_conventional_talkgroup_summary AS summary
+  ON summary.channel_id = receiver.id
+WHERE configured.alias_list_id = ?
+ORDER BY summary.last_seen_ms DESC, summary.frequency_hz, summary.timeslot, summary.talkgroup_id
+LIMIT ?;
+```
 
-Identity summaries and conventional summaries use the configured Statistics retention period, from 1 through 365
-days. Hourly call-identity buckets use the same cutoff. Zero-local tuple cleanup selects at most 1,000 expired keys per
-statement through `idx_p25_zero_local_fq_retention(last_seen_ms, scope_id, home_wacn, home_system_id,
-home_talkgroup_id)` and repeats bounded batches until current. Site clear removes the tuple rows when the last context
-for their scope is cleared, via the scope foreign-key cascade; full statistics reset removes them explicitly. Alias
-policies and scan-list memberships are configuration and remain until an administrator changes or deletes them.
+The same talkgroup number on another conventional channel is a separate observed source because its `channel_id`
+differs. For DMR, frequency and timeslot 1 or 2 further prevent unrelated traffic from collapsing together.
 
-## Query access path
+## Matching and response rules
 
-The endpoint first resolves one alias list by primary key. Its trunked branch selects only scopes owned by a receiver
-context configured with that list, using
-`idx_trunked_identity_scope_context_scope(scope_id, context_id)`, then reads talkgroup and patch rows through the
-`trunked_identity_summary` primary-key scope prefix. For P25, it unions zero-local fully-qualified tuples through
-`idx_p25_zero_local_fq_scope_last_seen(scope_id, last_seen_ms DESC, home_wacn, home_system_id,
-home_talkgroup_id)` and returns them as local talkgroup ID zero with stable fully-qualified state and the complete home
-tuple. Two different tuples remain separate, and an ordinary talkgroup whose local number equals one tuple's home
-talkgroup remains a separate observation. The decoded home tuple remains diagnostic evidence only. Discover creates
-ordinary P25 aliases from usable local talkgroup IDs; zero-local tuples remain review-only and can never create a
-talkgroup-zero alias. Conventional DMR reads the
-`dmr_conventional_talkgroup_summary` context-key primary key. Conventional P25 and NXDN read the
-`call_identity_bucket` context-key primary key. Exact-alias checks use the existing alias matcher indexes.
+Exact and range checks use the normal Alias matcher indexes. A source is excluded as exact only when the selected
+list has an exact matcher for the same protocol and identity. A covering range is returned as useful context, not as a
+replacement identity.
 
-The response uses the shared server-side page limit of 500 rows. The query never reads `p25_activity_event` or
-depends on optional detailed history. Representative-volume tests explain the production SQL and require indexed
-scope, context, summary, bucket, and alias searches with no detailed-event access.
+The storage and query layer uses these keys:
 
-Startup validation checks the tuple table's exact DDL and column set, its four-column primary key, its cascading scope
-foreign key, and both indexes including column order and descending recency direction. Normal application services do
-not create or repair a missing or mismatched table or index.
+- `configuration_id` as the durable saved-channel identity, with numeric `channel_id` used only for internal joins;
+- `radio_system_key` as the durable trunked-system identity, with numeric `radio_system_id` used only for internal
+  joins; and
+- `source_label`, `system_name`, and `site_name` for current display text.
 
-## Alpha 8 Family Baseline Migration Behavior
+Public API and CSV rows expose `configuration_id` and `radio_system_key`, not the internal numeric owner IDs. Numeric
+talkgroup IDs are never assumed to be globally unique. Every list is server-bounded to 500 rows.
 
-This section describes the bundled global chain. Older binaries retain the migration boundary documented by their
-version-matched release notes.
+## Write rate, retention, and cleanup
 
-Alpha 8, Alpha 9, and Alpha 10 shipped the same exact Alias v4/P25 v24 schema fingerprint and stored no release
-provenance. The bundled migrator therefore resolves all three to one legacy baseline format without attempting to
-infer a release label, then applies the registered adjacent steps through the target format.
+Discovery itself adds zero writes. Normal activity reaches the single background database writer through the bounded
+statistics queue. Initial activity, late attribution, and completed recording/streaming output merge into an existing
+summary key whenever possible. Normal steady-state row creation approaches zero after identities are learned.
 
-Across the steps that advance this baseline to Alias v6/P25 v27, the migrator converts only one plain, structurally
-unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls remain aliases for manual
-review. The v24 shared projection cannot establish qualifier-safe P25 history, so the relevant step rebuilds that
-shared storage and projected P25, DMR, and NXDN identity history restarts. Legacy P25 affiliation history is also
-counted and reset instead of being interpreted or re-keyed. The identity, affiliation, site-presence,
-presence-lifecycle, and zero-local tuple projections start empty and rebuild from new traffic.
+Observed summaries use the configured Statistics retention period of 1 through 365 days. Time-first indexes select at
+most 1,000 expired rows per cleanup statement. Deleting a saved channel cascades its channel-owned conventional facts.
+Deleting an unshared provisional DMR, NXDN, or P25 system cascades its system summaries. A native P25 system remains
+while another receiver channel or retained system fact uses it, then bounded orphan cleanup removes it.
 
-Supported administrator-owned aliases and unrelated configuration remain intact. Stored P25 fully-qualified
-talkgroup and radio Alias rows and their dependent routes are removed; their home values are not converted into
-ordinary local aliases. These resets and removals are declared with row counts in preflight and the completion report.
+Alias policies, routes, and scan-list memberships are configuration and remain until an administrator changes or
+deletes them. Statistics clear never deletes those configuration rows.
 
-P25 activity schema v28 introduces resolved-call accounting and starts its system-level logical-call and P25
-site-observation counters at an explicit collection boundary. It does not reinterpret older physical call counters as
-resolved logical calls.
+## Validation and query plans
 
-The legacy schema also permitted WACN or System ID qualifier columns on non-fully-qualified matcher types, even though
-that combination has no supported meaning in Alias v6. The migrator refuses such a database with the affected rows
-unchanged instead of silently discarding administrator-owned qualifier values.
+Fresh databases create the current schema in the single startup schema routine. Existing databases change only in the
+backed-up, staged Application Migrator. Startup validates exact table definitions, keys, cascading foreign keys, and
+ordered indexes; it never creates or repairs a missing activity object.
 
-## Later Format Migration Rule
+Representative-volume tests require indexed searches for:
 
-The release audit found no successfully published nightly with the intermediate Alias v5 layout. The source-recovered
-Alias v5 fingerprint is therefore a known unsupported developer state, not a guessed migration input. If a database
-from that state was actually deployed, retain it with its matching `build_info.txt`; adding support requires an exact
-deployed fixture and an explicit adjacent step.
+- selected Alias List to configured receiver channels by `alias_list_id`;
+- receiver channels to radio systems by numeric IDs;
+- recent system identities and zero-local P25 tuples by `radio_system_id`;
+- conventional identities by `channel_id`; and
+- exact and covering-range Alias matches by the existing matcher indexes.
 
-The first published later format is Alias v6/P25 v26. The Alpha 8-family -> v26 step creates `Default`, maps every
-retained Alias whose effective priority is not `-1` into it, maps each converted unmatched-talkgroup catch-all whose
-priority is not `-1` to the same list, and removes the retired priority columns. Normal startup remains
-validation-only; the backed-up staged Application Migrator runs this and every later registered step. See
-[Database Migration Contract](database-migration.md).
-
-The following v26-to-v27 step creates a missing canonical factory Alias List and its unmatched-talkgroup Default
-scan-list route only when that name is absent. A case-insensitive existing list in the correct family keeps its stored
-spelling and existing routing, and compatible blank channels are assigned to that spelling. A canonical name already
-owned by the wrong family is an explicit preflight refusal.
+The discovery query never reads optional detailed Activity. It does not depend on names or RadioResolve IDs, and it
+never chooses one Alias List merely because it was encountered first.

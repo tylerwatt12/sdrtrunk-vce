@@ -48,7 +48,7 @@ class RadioSystemIdentityModelTest
             insertChannel(connection, P25_B, "TRUNKED", "P25_PHASE1", 2, "P25 B", correlation(2));
             insertChannel(connection, P25_OTHER, "TRUNKED", "P25_PHASE1", 1, "P25 Other", correlation(3));
 
-            //Offline capture characterization found WACN BEE00 / System 3A9 on more than one saved channel.
+            //A native P25 identity can be observed through more than one saved channel.
             record(connection, trunked(P25_A, "APCO25", 0xBEE00, 0x3A9, 4400, 1_000));
             record(connection, trunked(P25_B, "APCO25", 0xBEE00, 0x3A9, 4400, 2_000));
             record(connection, trunked(P25_OTHER, "APCO25", 0xBEE00, 0x3AA, 4400, 3_000));
@@ -85,8 +85,7 @@ class RadioSystemIdentityModelTest
             insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
             insertChannel(connection, NXDN_B, "TRUNKED", "NXDN", 2, "NXDN B", correlation(7));
 
-            //Offline captures showed DMR Network 0 / Sites 1-9 and NXDN RAN 1 / System 303 / Site 1. Until
-            //capture-backed native grouping rules exist, both protocols intentionally remain saved-channel scoped.
+            //Until native grouping rules are defined, DMR and NXDN intentionally remain saved-channel scoped.
             record(connection, trunked(DMR_A, "DMR", null, null, 91, 1_000));
             record(connection, trunked(DMR_B, "DMR", null, null, 91, 2_000));
             record(connection, trunked(NXDN_A, "NXDN", null, null, 91, 3_000));
@@ -227,7 +226,7 @@ class RadioSystemIdentityModelTest
             execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" + P25_B + "'");
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
             execute(connection, "DELETE FROM radio_system_identity_summary WHERE radio_system_id=" + system);
-            execute(connection, "DELETE FROM trunked_radio_talkgroup_summary WHERE radio_system_id=" + system);
+            execute(connection, "DELETE FROM trunked_radio_group_summary WHERE radio_system_id=" + system);
             assertEquals(1, ReceiverActivitySchema.pruneUnusedRadioSystems(connection));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
         }
@@ -243,7 +242,8 @@ class RadioSystemIdentityModelTest
             assertEquals(0, scalar(connection, """
                 SELECT COUNT(*) FROM sqlite_master
                 WHERE name IN ('receiver_context', 'trunked_identity_scope', 'trunked_identity_scope_context',
-                    'radio_system_context', 'p25_system', 'trunked_identity_summary')
+                    'radio_system_context', 'p25_system', 'trunked_identity_summary',
+                    'trunked_radio_talkgroup_summary')
                 """));
             assertEquals(0, scalar(connection, """
                 SELECT COUNT(*) FROM database_metadata

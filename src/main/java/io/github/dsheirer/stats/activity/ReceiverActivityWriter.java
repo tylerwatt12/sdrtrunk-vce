@@ -517,9 +517,9 @@ class ReceiverActivityWriter implements AutoCloseable
                 StatsDatabaseMaintenanceRequest request = command.request();
                 ReceiverActivityMaintenance.Result result;
 
-                if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS)
+                if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS)
                 {
-                    result = ReceiverActivityMaintenance.clearSiteStats(connection, mDatabasePath,
+                    result = ReceiverActivityMaintenance.clearChannelStats(connection, mDatabasePath,
                         request.configurationId());
                 }
                 else

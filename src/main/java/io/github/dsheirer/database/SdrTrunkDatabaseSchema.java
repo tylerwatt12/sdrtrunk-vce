@@ -148,7 +148,7 @@ public final class SdrTrunkDatabaseSchema
             alias_list_id INTEGER REFERENCES alias_list(id)
                 DEFERRABLE INITIALLY DEFERRED,
             radioresolve_id TEXT CHECK(
-                radioresolve_id IS NULL OR length(trim(radioresolve_id)) = 0 OR (
+                radioresolve_id IS NULL OR (
                     radioresolve_id = trim(radioresolve_id)
                     AND length(radioresolve_id) = 36
                     AND radioresolve_id = lower(radioresolve_id)
@@ -170,11 +170,23 @@ public final class SdrTrunkDatabaseSchema
             ),
             decoder_type TEXT,
             primary_frequency_hz INTEGER,
-            config_json TEXT NOT NULL CHECK(json_valid(config_json)),
-            CHECK(
-                channel_kind = 'CONVENTIONAL' OR (
-                    radioresolve_id IS NOT NULL AND length(trim(radioresolve_id)) > 0
-                )
+            config_json TEXT NOT NULL CHECK(
+                CASE WHEN json_valid(config_json) THEN
+                    json_type(config_json, '$.configurationId') IS NULL
+                    AND json_type(config_json, '$.system') IS NULL
+                    AND json_type(config_json, '$.site') IS NULL
+                    AND json_type(config_json, '$.name') IS NULL
+                    AND json_type(config_json, '$.aliasListId') IS NULL
+                    AND json_type(config_json, '$.aliasListName') IS NULL
+                    AND json_type(config_json, '$.radioResolveId') IS NULL
+                    AND json_type(config_json, '$.radresGuid') IS NULL
+                    AND json_type(config_json, '$.radres_guid') IS NULL
+                    AND json_type(config_json, '$.autoStart') IS NULL
+                    AND json_type(config_json, '$.enabled') IS NULL
+                    AND json_type(config_json, '$.autoStartOrder') IS NULL
+                    AND json_type(config_json, '$.order') IS NULL
+                    AND json_type(config_json, '$.channelType') IS NULL
+                ELSE 0 END
             )
         )
         """;
@@ -191,7 +203,11 @@ public final class SdrTrunkDatabaseSchema
                 AND replace(configuration_id, '-', '') NOT GLOB '*[^0-9a-f]*'
             ),
             sort_order INTEGER NOT NULL CHECK(sort_order >= 0),
-            config_json TEXT NOT NULL CHECK(json_valid(config_json))
+            config_json TEXT NOT NULL CHECK(
+                CASE WHEN json_valid(config_json) THEN
+                    json_type(config_json, '$.configurationId') IS NULL
+                ELSE 0 END
+            )
         )
         """;
     private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_OBJECTS = List.of(
@@ -250,9 +266,8 @@ public final class SdrTrunkDatabaseSchema
                    alias.min_value,
                    alias.max_value,
                    CASE WHEN alias.matcher_type = 'TALKGROUP_RANGE' THEN 1 ELSE 0 END AS ranged,
-                   alias_list.name AS alias_list_name
+                   alias.alias_list_id
             FROM alias
-            JOIN alias_list ON alias_list.id = alias.alias_list_id
             WHERE alias.matcher_type IN (
                   'TALKGROUP',
                   'TALKGROUP_RANGE'
@@ -266,9 +281,8 @@ public final class SdrTrunkDatabaseSchema
                    alias.min_value,
                    alias.max_value,
                    CASE WHEN alias.matcher_type = 'RADIO_ID_RANGE' THEN 1 ELSE 0 END AS ranged,
-                   alias_list.name AS alias_list_name
+                   alias.alias_list_id
             FROM alias
-            JOIN alias_list ON alias_list.id = alias.alias_list_id
             WHERE alias.matcher_type IN (
                   'RADIO_ID',
                   'RADIO_ID_RANGE'
@@ -301,7 +315,6 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_channel_decoder",
         "idx_configuration_channel_frequency",
         "idx_configuration_channel_unique_radioresolve_id",
-        "idx_configuration_channel_map_sort",
         "idx_configuration_broadcast_sort",
         "idx_web_user_one_primary_admin"
     );
@@ -335,7 +348,6 @@ public final class SdrTrunkDatabaseSchema
                 "sort_order", "system_name", "site_name",
                 "name", "alias_list_id", "radioresolve_id", "auto_start", "auto_start_order", "decoder_type",
                 "primary_frequency_hz", "config_json"),
-            new SqliteSchemaValidator.Table("configuration_channel_map", "id", "sort_order", "name", "config_json"),
             new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "configuration_id",
                 "sort_order", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
@@ -380,14 +392,6 @@ public final class SdrTrunkDatabaseSchema
                 WHERE NOT EXISTS (SELECT 1 FROM scan_list)
                 """);
             statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS configuration_channel_map (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sort_order INTEGER NOT NULL,
-                    name TEXT,
-                    config_json TEXT NOT NULL
-                )
-                """);
             statement.executeUpdate(CONFIGURATION_BROADCAST_STREAM_TABLE_SQL);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS application_settings (
@@ -415,8 +419,7 @@ public final class SdrTrunkDatabaseSchema
             statement.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS " +
                 "idx_configuration_channel_unique_radioresolve_id " +
                 "ON configuration_channel(lower(radioresolve_id)) " +
-                "WHERE radioresolve_id IS NOT NULL AND length(trim(radioresolve_id)) > 0");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_map_sort ON configuration_channel_map(sort_order, id)");
+                "WHERE radioresolve_id IS NOT NULL");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
                 "ON alias_broadcast_channel(broadcast_configuration_id)");

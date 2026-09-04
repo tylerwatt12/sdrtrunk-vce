@@ -52,8 +52,26 @@ class RadioSystemSchemaTest
                 VALUES (%d, 1, 91, 1000, 1000, -1)
                 """.formatted(radioSystemId)));
             assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system_identity_summary(
+                    radio_system_id, identity_kind_code, identity_id, p25_identity_state_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES (%d, 1, 91, 2, 1000, 1000)
+                """.formatted(radioSystemId)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system_identity_summary(
+                    radio_system_id, identity_kind_code, identity_id, p25_identity_state_code,
+                    p25_home_wacn, p25_home_system_id, p25_home_talkgroup_id,
+                    first_seen_ms, last_seen_ms)
+                VALUES (%d, 1, 91, 2, 1048576, 937, 91, 1000, 1000)
+                """.formatted(radioSystemId)));
+            assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_radio_affiliation(radio_system_id, radio_id, talkgroup_id, confirmed_at_ms)
                 VALUES (%d, 101, 91, 0)
+                """.formatted(radioSystemId)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_radio_group_summary(
+                    radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms)
+                VALUES (%d, 101, 91, 2, 1000, 1000)
                 """.formatted(radioSystemId)));
         }
     }
@@ -70,16 +88,16 @@ class RadioSystemSchemaTest
                 VALUES (%d, 1, 91, 1000, 1000)
                 """.formatted(radioSystemId));
             execute(connection, """
-                INSERT INTO trunked_radio_talkgroup_summary(
-                    radio_system_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms)
-                VALUES (%d, 101, 91, 1, 1000, 1000)
+                INSERT INTO trunked_radio_group_summary(
+                    radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms)
+                VALUES (%d, 101, 91, 3, 1000, 1000)
                 """.formatted(radioSystemId));
 
             assertTrue(ReceiverActivitySchema.deleteOlderThan(connection, 2_000) >= 2);
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM radio_system_identity_summary WHERE radio_system_id=" + radioSystemId));
             assertEquals(0, scalar(connection,
-                "SELECT COUNT(*) FROM trunked_radio_talkgroup_summary WHERE radio_system_id=" + radioSystemId));
+                "SELECT COUNT(*) FROM trunked_radio_group_summary WHERE radio_system_id=" + radioSystemId));
             //The configured channel still owns this provisional DMR system, so cleanup keeps exactly one owner row.
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + radioSystemId));
         }

@@ -161,6 +161,56 @@ class ReceiverActivitySchemaIntegrityTest
                 VALUES (1, 'not-a-canonical-sha256', 1000, 1000)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_snapshot(
+                    channel_id, snapshot_hash, first_seen_ms, last_seen_ms, protocol, nac)
+                VALUES (1, '%s', 1000, 1000, 'APCO25', 1.5)
+                """.formatted("a".repeat(64))));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_snapshot(
+                    channel_id, snapshot_hash, first_seen_ms, last_seen_ms, protocol, micro_slots)
+                VALUES (1, '%s', 1000, 1000, 'APCO25', 8000)
+                """.formatted("a".repeat(64))));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_snapshot(
+                    channel_id, snapshot_hash, first_seen_ms, last_seen_ms, protocol, data_access)
+                VALUES (1, '%s', 1000, 1000, 'APCO25', 'Unknown mode')
+                """.formatted("a".repeat(64))));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_snapshot(
+                    channel_id, snapshot_hash, first_seen_ms, last_seen_ms, protocol, wuid_lease_minutes)
+                VALUES (1, '%s', 1000, 1000, 'APCO25', 271)
+                """.formatted("a".repeat(64))));
+            execute(connection, """
+                INSERT INTO p25_site_snapshot(
+                    channel_id, snapshot_hash, first_seen_ms, last_seen_ms, protocol)
+                VALUES (1, '%s', 1000, 1000, 'APCO25')
+                """.formatted("a".repeat(64)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_channel(
+                    channel_id, channel_key, timeslots, confirmed_at_ms)
+                VALUES (1, '0-1', 3, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_frequency_band(
+                    channel_id, band, tdma, base_hz, spacing_hz, timeslots, confirmed_at_ms)
+                VALUES (1, 0, 1, 851000000, 12500, 3, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_foreign_system_band(
+                    channel_id, foreign_wacn, foreign_system_id, band, channel_type, confirmed_at_ms)
+                VALUES (1, 781824, 937, 0, 6, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_patch_group(
+                    channel_id, patch_group, version, confirmed_at_ms)
+                VALUES (1, 91, 32, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_patch_group(
+                    channel_id, patch_group, version, confirmed_at_ms)
+                VALUES (1, 65535, 1, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_control_channel_quality(
                     channel_id, frequency_hz, bucket_start_ms, observed_at_ms, decode_health_pct)
                 VALUES (1, 851000000, 0, 1000, 101.0)

@@ -27,7 +27,7 @@ class StatsCsvExportTest
     {
         Map<String,Object> row = Map.ofEntries(
             Map.entry("protocol", "P25"), Map.entry("configured_system", "County, Public Safety"),
-            Map.entry("scope_token", "p25:BEE00:348"), Map.entry("wacn", 0xBEE00),
+            Map.entry("radio_system_key", "p25:bee00:348"), Map.entry("wacn", 0xBEE00),
             Map.entry("system_id", 0x348), Map.entry("talkgroup_id", 56132),
             Map.entry("target_kind_code", 1), Map.entry("alias_name", "  =HYPERLINK(\"bad\")"),
             Map.entry("alias_description", "Line one\nLine two"), Map.entry("alias_group", "+Formula"),
@@ -57,6 +57,7 @@ class StatsCsvExportTest
             assertEquals("BEE00", parsed.get("wacn_hex"));
             assertEquals("56132", parsed.get("talkgroup_id"));
             assertEquals("1", parsed.get("alias_list_id"));
+            assertEquals("p25:bee00:348", parsed.get("radio_system_key"));
         }
     }
 

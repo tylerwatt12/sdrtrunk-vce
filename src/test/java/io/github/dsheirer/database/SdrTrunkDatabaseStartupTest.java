@@ -36,6 +36,88 @@ class SdrTrunkDatabaseStartupTest
     Path mTemporaryFolder;
 
     @Test
+    void freshSchemaOmitsRetiredNamedChannelMaps() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("fresh-schema.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            assertEquals("0", scalar(statement, """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE name IN ('configuration_channel_map', 'idx_configuration_channel_map_sort')
+                """));
+            assertEquals("2", scalar(statement, """
+                SELECT sum(count) FROM (
+                    SELECT COUNT(*) AS count
+                    FROM pragma_table_info('alias_talkgroup')
+                    WHERE name = 'alias_list_id'
+                    UNION ALL
+                    SELECT COUNT(*) AS count
+                    FROM pragma_table_info('alias_radio')
+                    WHERE name = 'alias_list_id'
+                )
+                """));
+            assertEquals("0", scalar(statement, """
+                SELECT COUNT(*) FROM (
+                    SELECT name FROM pragma_table_info('alias_talkgroup')
+                    UNION ALL
+                    SELECT name FROM pragma_table_info('alias_radio')
+                )
+                WHERE name = 'alias_list_name'
+                """));
+        }
+    }
+
+    @Test
+    void configurationRowsRejectDuplicateJsonAuthorityAndNoncanonicalRadioResolveIds() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("configuration-authority.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            String base = """
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, config_json, radioresolve_id
+                ) VALUES ('11111111-1111-4111-8111-111111111111', 'TRUNKED', 0, %s, %s)
+                """;
+            assertThrows(java.sql.SQLException.class,
+                () -> statement.executeUpdate(base.formatted("'{\"name\":\"duplicate\"}'", "NULL")));
+            assertThrows(java.sql.SQLException.class,
+                () -> statement.executeUpdate(base.formatted("'{}'", "''")));
+            statement.executeUpdate(base.formatted("'{}'", "NULL"));
+
+            for(String property: List.of("configurationId", "system", "site", "name", "aliasListId",
+                "aliasListName", "radioResolveId", "radresGuid", "radres_guid", "autoStart", "enabled",
+                "autoStartOrder", "order", "channelType"))
+            {
+                assertThrows(java.sql.SQLException.class, () -> statement.executeUpdate("""
+                    UPDATE configuration_channel
+                    SET config_json=json_set(config_json, '$.%s', 'duplicate')
+                    """.formatted(property)), property);
+            }
+
+            assertThrows(java.sql.SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO configuration_broadcast_stream(configuration_id, sort_order, config_json)
+                VALUES ('22222222-2222-4222-8222-222222222222', 0,
+                    '{"configurationId":"33333333-3333-4333-8333-333333333333"}')
+                """));
+            statement.executeUpdate("""
+                INSERT INTO configuration_broadcast_stream(configuration_id, sort_order, config_json)
+                VALUES ('22222222-2222-4222-8222-222222222222', 0, '{}')
+                """);
+            assertThrows(java.sql.SQLException.class, () -> statement.executeUpdate("""
+                UPDATE configuration_broadcast_stream
+                SET config_json=json_set(config_json, '$.configurationId',
+                    '33333333-3333-4333-8333-333333333333')
+                """));
+        }
+    }
+
+    @Test
     void createsAndValidatesCurrentDmrSchemaWithoutASecondVersionMarker() throws Exception
     {
         Path database = mTemporaryFolder.resolve("new-global.sqlite");

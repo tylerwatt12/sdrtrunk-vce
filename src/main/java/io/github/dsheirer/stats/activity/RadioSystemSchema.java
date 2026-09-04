@@ -96,15 +96,15 @@ final class RadioSystemSchema
             )
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_radio_talkgroup_reverse
-            ON trunked_radio_talkgroup_summary(
-                radio_system_id, talkgroup_id, target_kind_code, last_seen_ms DESC, radio_id
+            CREATE INDEX IF NOT EXISTS idx_trunked_radio_group_reverse
+            ON trunked_radio_group_summary(
+                radio_system_id, group_id, group_kind_code, last_seen_ms DESC, radio_id
             )
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_radio_talkgroup_retention
-            ON trunked_radio_talkgroup_summary(
-                last_seen_ms, radio_system_id, radio_id, talkgroup_id, target_kind_code
+            CREATE INDEX IF NOT EXISTS idx_trunked_radio_group_retention
+            ON trunked_radio_group_summary(
+                last_seen_ms, radio_system_id, radio_id, group_id, group_kind_code
             )
             """);
         statement.executeUpdate("""
@@ -136,8 +136,8 @@ final class RadioSystemSchema
             new SqliteSchemaValidator.Definition("table", "radio_system_identity_summary", identitySummarySql()),
             new SqliteSchemaValidator.Definition("table", "p25_zero_local_fq_talkgroup_summary",
                 zeroLocalFullyQualifiedTalkgroupSummarySql()),
-            new SqliteSchemaValidator.Definition("table", "trunked_radio_talkgroup_summary",
-                radioTalkgroupSummarySql()),
+            new SqliteSchemaValidator.Definition("table", "trunked_radio_group_summary",
+                radioGroupSummarySql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_affiliation", radioAffiliationSql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_site_presence", radioSitePresenceSql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_presence_lifecycle",
@@ -221,11 +221,12 @@ final class RadioSystemSchema
                 identity_id INTEGER NOT NULL CHECK(typeof(identity_id) = 'integer' AND identity_id > 0),
                 p25_identity_state_code INTEGER NOT NULL DEFAULT 0
                     CHECK(typeof(p25_identity_state_code) = 'integer' AND p25_identity_state_code IN (0, 1, 2, 3)),
-                p25_home_wacn INTEGER CHECK(p25_home_wacn IS NULL OR typeof(p25_home_wacn) = 'integer'),
-                p25_home_system_id INTEGER
-                    CHECK(p25_home_system_id IS NULL OR typeof(p25_home_system_id) = 'integer'),
-                p25_home_talkgroup_id INTEGER
-                    CHECK(p25_home_talkgroup_id IS NULL OR typeof(p25_home_talkgroup_id) = 'integer'),
+                p25_home_wacn INTEGER CHECK(p25_home_wacn IS NULL OR
+                    (typeof(p25_home_wacn) = 'integer' AND p25_home_wacn BETWEEN 0 AND 1048575)),
+                p25_home_system_id INTEGER CHECK(p25_home_system_id IS NULL OR
+                    (typeof(p25_home_system_id) = 'integer' AND p25_home_system_id BETWEEN 0 AND 4095)),
+                p25_home_talkgroup_id INTEGER CHECK(p25_home_talkgroup_id IS NULL OR
+                    (typeof(p25_home_talkgroup_id) = 'integer' AND p25_home_talkgroup_id BETWEEN 1 AND 65534)),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL
                     CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
@@ -264,6 +265,9 @@ final class RadioSystemSchema
                         AND last_talker_alias_seen_ms IS NOT NULL)),
                 CHECK(
                     (p25_identity_state_code = 2
+                        AND p25_home_wacn IS NOT NULL
+                        AND p25_home_system_id IS NOT NULL
+                        AND p25_home_talkgroup_id IS NOT NULL
                         AND p25_home_wacn BETWEEN 0 AND 1048575
                         AND p25_home_system_id BETWEEN 0 AND 4095
                         AND p25_home_talkgroup_id BETWEEN 1 AND 65534)
@@ -310,15 +314,15 @@ final class RadioSystemSchema
             """.formatted(ACTION_COUNT_DEFINITIONS);
     }
 
-    private static String radioTalkgroupSummarySql()
+    private static String radioGroupSummarySql()
     {
         return """
-            CREATE TABLE IF NOT EXISTS trunked_radio_talkgroup_summary (
+            CREATE TABLE IF NOT EXISTS trunked_radio_group_summary (
                 radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
                 radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
-                talkgroup_id INTEGER NOT NULL CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id > 0),
-                target_kind_code INTEGER NOT NULL
-                    CHECK(typeof(target_kind_code) = 'integer' AND target_kind_code IN (1, 3)),
+                group_id INTEGER NOT NULL CHECK(typeof(group_id) = 'integer' AND group_id > 0),
+                group_kind_code INTEGER NOT NULL
+                    CHECK(typeof(group_kind_code) = 'integer' AND group_kind_code IN (1, 3)),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL
                     CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
@@ -335,7 +339,7 @@ final class RadioSystemSchema
                     (typeof(last_encryption_algorithm_id) = 'integer' AND last_encryption_algorithm_id >= 0)),
                 last_encryption_key_id INTEGER CHECK(last_encryption_key_id IS NULL OR
                     (typeof(last_encryption_key_id) = 'integer' AND last_encryption_key_id >= 0)),
-                PRIMARY KEY(radio_system_id, radio_id, talkgroup_id, target_kind_code)
+                PRIMARY KEY(radio_system_id, radio_id, group_id, group_kind_code)
             ) WITHOUT ROWID
             """.formatted(ACTION_COUNT_DEFINITIONS);
     }
@@ -439,7 +443,7 @@ final class RadioSystemSchema
             "last_talker_alias_seen_ms"));
 
         List<String> relationshipColumns = new ArrayList<>(List.of(
-            "radio_system_id", "radio_id", "talkgroup_id", "target_kind_code", "first_seen_ms", "last_seen_ms"));
+            "radio_system_id", "radio_id", "group_id", "group_kind_code", "first_seen_ms", "last_seen_ms"));
         relationshipColumns.addAll(ACTION_COUNT_COLUMNS);
         relationshipColumns.addAll(List.of("logical_call_count", "encrypted_logical_call_count",
             "recorded_output_count", "streamed_output_count",
@@ -457,7 +461,7 @@ final class RadioSystemSchema
             new SqliteSchemaValidator.Table("radio_system_identity_summary", identityColumns),
             new SqliteSchemaValidator.Table("p25_zero_local_fq_talkgroup_summary",
                 zeroLocalFullyQualifiedColumns),
-            new SqliteSchemaValidator.Table("trunked_radio_talkgroup_summary", relationshipColumns),
+            new SqliteSchemaValidator.Table("trunked_radio_group_summary", relationshipColumns),
             new SqliteSchemaValidator.Table("trunked_radio_affiliation", "radio_system_id", "radio_id", "talkgroup_id",
                 "confirmed_at_ms"),
             new SqliteSchemaValidator.Table("trunked_radio_site_presence", "radio_system_id", "radio_id", "channel_id",
@@ -471,7 +475,7 @@ final class RadioSystemSchema
     {
         return List.of("idx_radio_system_identity_last_seen", "idx_radio_system_identity_retention",
             "idx_p25_zero_local_fq_system_last_seen", "idx_p25_zero_local_fq_retention",
-            "idx_trunked_radio_talkgroup_reverse", "idx_trunked_radio_talkgroup_retention",
+            "idx_trunked_radio_group_reverse", "idx_trunked_radio_group_retention",
             "idx_trunked_radio_affiliation_talkgroup", "idx_trunked_radio_affiliation_retention",
             "idx_trunked_radio_site_presence_channel", "idx_trunked_radio_site_presence_retention",
             "idx_trunked_radio_presence_lifecycle_retention");
@@ -484,8 +488,8 @@ final class RadioSystemSchema
             List.of("radio_system_id", "identity_kind_code", "identity_id"));
         validatePrimaryKey(connection, "p25_zero_local_fq_talkgroup_summary",
             List.of("radio_system_id", "home_wacn", "home_system_id", "home_talkgroup_id"));
-        validatePrimaryKey(connection, "trunked_radio_talkgroup_summary",
-            List.of("radio_system_id", "radio_id", "talkgroup_id", "target_kind_code"));
+        validatePrimaryKey(connection, "trunked_radio_group_summary",
+            List.of("radio_system_id", "radio_id", "group_id", "group_kind_code"));
         validatePrimaryKey(connection, "trunked_radio_affiliation", List.of("radio_system_id", "radio_id"));
         validatePrimaryKey(connection, "trunked_radio_site_presence", List.of("radio_system_id", "radio_id"));
         validatePrimaryKey(connection, "trunked_radio_presence_lifecycle", List.of("radio_system_id", "radio_id"));
@@ -495,7 +499,7 @@ final class RadioSystemSchema
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "p25_zero_local_fq_talkgroup_summary", Set.of(
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
-        validateForeignKeys(connection, "trunked_radio_talkgroup_summary", Set.of(
+        validateForeignKeys(connection, "trunked_radio_group_summary", Set.of(
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "trunked_radio_affiliation", Set.of(
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
@@ -528,18 +532,18 @@ final class RadioSystemSchema
             new IndexColumn(2, "home_wacn", false),
             new IndexColumn(3, "home_system_id", false),
             new IndexColumn(4, "home_talkgroup_id", false)));
-        validateIndex(connection, "idx_trunked_radio_talkgroup_reverse", List.of(
+        validateIndex(connection, "idx_trunked_radio_group_reverse", List.of(
             new IndexColumn(0, "radio_system_id", false),
-            new IndexColumn(1, "talkgroup_id", false),
-            new IndexColumn(2, "target_kind_code", false),
+            new IndexColumn(1, "group_id", false),
+            new IndexColumn(2, "group_kind_code", false),
             new IndexColumn(3, "last_seen_ms", true),
             new IndexColumn(4, "radio_id", false)));
-        validateIndex(connection, "idx_trunked_radio_talkgroup_retention", List.of(
+        validateIndex(connection, "idx_trunked_radio_group_retention", List.of(
             new IndexColumn(0, "last_seen_ms", false),
             new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false),
-            new IndexColumn(3, "talkgroup_id", false),
-            new IndexColumn(4, "target_kind_code", false)));
+            new IndexColumn(3, "group_id", false),
+            new IndexColumn(4, "group_kind_code", false)));
         validateIndex(connection, "idx_trunked_radio_affiliation_talkgroup", List.of(
             new IndexColumn(0, "radio_system_id", false),
             new IndexColumn(1, "talkgroup_id", false),
@@ -1342,7 +1346,7 @@ final class RadioSystemSchema
         }
 
         try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM trunked_radio_talkgroup_summary WHERE radio_system_id = ?"))
+            "DELETE FROM trunked_radio_group_summary WHERE radio_system_id = ?"))
         {
             statement.setInt(1, radioSystemId);
             statement.executeUpdate();
@@ -1416,7 +1420,7 @@ final class RadioSystemSchema
         deleted += deleteIdentityBatches(connection, "trunked_radio_affiliation", cutoff);
         deleted += deleteIdentityBatches(connection, "trunked_radio_site_presence", cutoff);
         deleted += deleteIdentityBatches(connection, "trunked_radio_presence_lifecycle", cutoff);
-        deleted += deleteIdentityBatches(connection, "trunked_radio_talkgroup_summary", cutoff);
+        deleted += deleteIdentityBatches(connection, "trunked_radio_group_summary", cutoff);
         deleted += deleteIdentityBatches(connection, "p25_zero_local_fq_talkgroup_summary", cutoff);
         deleted += deleteIdentityBatches(connection, "radio_system_identity_summary", cutoff);
         return deleted;
@@ -1441,7 +1445,7 @@ final class RadioSystemSchema
                               SELECT 1 FROM p25_zero_local_fq_talkgroup_summary WHERE radio_system_id = system.id
                           )
                           AND NOT EXISTS (
-                              SELECT 1 FROM trunked_radio_talkgroup_summary WHERE radio_system_id = system.id
+                              SELECT 1 FROM trunked_radio_group_summary WHERE radio_system_id = system.id
                           )
                           AND NOT EXISTS (
                               SELECT 1 FROM trunked_radio_affiliation WHERE radio_system_id = system.id
@@ -1479,7 +1483,7 @@ final class RadioSystemSchema
         deleted += deleteAll(connection, "trunked_radio_affiliation");
         deleted += deleteAll(connection, "trunked_radio_site_presence");
         deleted += deleteAll(connection, "trunked_radio_presence_lifecycle");
-        deleted += deleteAll(connection, "trunked_radio_talkgroup_summary");
+        deleted += deleteAll(connection, "trunked_radio_group_summary");
         deleted += deleteAll(connection, "p25_zero_local_fq_talkgroup_summary");
         deleted += deleteAll(connection, "radio_system_identity_summary");
         deleted += deleteAll(connection, "radio_system");
@@ -1804,43 +1808,43 @@ final class RadioSystemSchema
 
         if(!identityExists(connection, radioSystemId, radio) || !identityExists(connection, radioSystemId, destination) ||
             !relationshipExists(connection, radioSystemId, radioId, destination) &&
-                !hasSystemCapacity(connection, "trunked_radio_talkgroup_summary", radioSystemId,
+                !hasSystemCapacity(connection, "trunked_radio_group_summary", radioSystemId,
                     MAX_RELATIONSHIPS_PER_SYSTEM))
         {
             return false;
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO trunked_radio_talkgroup_summary (
-                radio_system_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, %s,
+            INSERT INTO trunked_radio_group_summary (
+                radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms, %s,
                 logical_call_count, encrypted_logical_call_count, recorded_output_count, streamed_output_count,
                 last_encryption_algorithm_id, last_encryption_key_id
             ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(radio_system_id, radio_id, talkgroup_id, target_kind_code) DO UPDATE SET
-                first_seen_ms = min(trunked_radio_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(trunked_radio_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
+            ON CONFLICT(radio_system_id, radio_id, group_id, group_kind_code) DO UPDATE SET
+                first_seen_ms = min(trunked_radio_group_summary.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(trunked_radio_group_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
-                logical_call_count = trunked_radio_talkgroup_summary.logical_call_count + excluded.logical_call_count,
-                encrypted_logical_call_count = trunked_radio_talkgroup_summary.encrypted_logical_call_count +
+                logical_call_count = trunked_radio_group_summary.logical_call_count + excluded.logical_call_count,
+                encrypted_logical_call_count = trunked_radio_group_summary.encrypted_logical_call_count +
                     excluded.encrypted_logical_call_count,
-                recorded_output_count = trunked_radio_talkgroup_summary.recorded_output_count +
+                recorded_output_count = trunked_radio_group_summary.recorded_output_count +
                     excluded.recorded_output_count,
-                streamed_output_count = trunked_radio_talkgroup_summary.streamed_output_count +
+                streamed_output_count = trunked_radio_group_summary.streamed_output_count +
                     excluded.streamed_output_count,
                 last_encryption_algorithm_id = CASE
                     WHEN excluded.last_encryption_algorithm_id IS NOT NULL
-                         AND excluded.last_seen_ms >= trunked_radio_talkgroup_summary.last_seen_ms
+                         AND excluded.last_seen_ms >= trunked_radio_group_summary.last_seen_ms
                     THEN excluded.last_encryption_algorithm_id
-                    ELSE trunked_radio_talkgroup_summary.last_encryption_algorithm_id
+                    ELSE trunked_radio_group_summary.last_encryption_algorithm_id
                 END,
                 last_encryption_key_id = CASE
                     WHEN excluded.last_encryption_key_id IS NOT NULL
-                         AND excluded.last_seen_ms >= trunked_radio_talkgroup_summary.last_seen_ms
+                         AND excluded.last_seen_ms >= trunked_radio_group_summary.last_seen_ms
                     THEN excluded.last_encryption_key_id
-                    ELSE trunked_radio_talkgroup_summary.last_encryption_key_id
+                    ELSE trunked_radio_group_summary.last_encryption_key_id
                 END
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
-            actionUpdateSql("trunked_radio_talkgroup_summary"))))
+            actionUpdateSql("trunked_radio_group_summary"))))
         {
             int index = 1;
             statement.setInt(index++, radioSystemId);
@@ -1884,8 +1888,8 @@ final class RadioSystemSchema
                                               Identity destination) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT 1 FROM trunked_radio_talkgroup_summary
-            WHERE radio_system_id = ? AND radio_id = ? AND talkgroup_id = ? AND target_kind_code = ?
+            SELECT 1 FROM trunked_radio_group_summary
+            WHERE radio_system_id = ? AND radio_id = ? AND group_id = ? AND group_kind_code = ?
             """))
         {
             statement.setInt(1, radioSystemId);
@@ -1909,7 +1913,7 @@ final class RadioSystemSchema
     {
         if(maximumRows <= 0 || (!"radio_system_identity_summary".equals(table) &&
             !"p25_zero_local_fq_talkgroup_summary".equals(table) &&
-            !"trunked_radio_talkgroup_summary".equals(table)))
+            !"trunked_radio_group_summary".equals(table)))
         {
             throw new IllegalArgumentException("Invalid trunked identity admission bound");
         }
@@ -2110,15 +2114,15 @@ final class RadioSystemSchema
                 )
                 """.formatted(DELETE_BATCH_SIZE);
         }
-        else if("trunked_radio_talkgroup_summary".equals(table))
+        else if("trunked_radio_group_summary".equals(table))
         {
             sql = """
-                DELETE FROM trunked_radio_talkgroup_summary
-                WHERE (radio_system_id, radio_id, talkgroup_id, target_kind_code) IN (
-                    SELECT radio_system_id, radio_id, talkgroup_id, target_kind_code
-                    FROM trunked_radio_talkgroup_summary INDEXED BY idx_trunked_radio_talkgroup_retention
+                DELETE FROM trunked_radio_group_summary
+                WHERE (radio_system_id, radio_id, group_id, group_kind_code) IN (
+                    SELECT radio_system_id, radio_id, group_id, group_kind_code
+                    FROM trunked_radio_group_summary INDEXED BY idx_trunked_radio_group_retention
                     WHERE last_seen_ms < ?
-                    ORDER BY last_seen_ms, radio_system_id, radio_id, talkgroup_id, target_kind_code
+                    ORDER BY last_seen_ms, radio_system_id, radio_id, group_id, group_kind_code
                     LIMIT %d
                 )
                 """.formatted(DELETE_BATCH_SIZE);

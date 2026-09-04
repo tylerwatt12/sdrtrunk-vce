@@ -195,7 +195,7 @@ class TrunkedSiteSchemaTest
             assertEquals(1, cleanup.sitesDeleted());
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
 
-            assertEquals(1, TrunkedSiteSchema.clearSiteStats(connection, NXDN_CHANNEL));
+            assertEquals(1, TrunkedSiteSchema.clearChannelStats(connection, NXDN_CHANNEL));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
             TrunkedSiteSchema.upsert(connection, nxdn(NXDN_CHANNEL, 11_000, HASH_B, 4,
                 List.of(), List.of()));
@@ -301,7 +301,7 @@ class TrunkedSiteSchemaTest
                                                     List<TrunkedSiteSchema.Channel> channels,
                                                     List<TrunkedSiteSchema.Neighbor> neighbors)
     {
-        //Offline capture characterization observed NXDN RAN 1 / System 303 / Site 1.
+        //Representative NXDN values exercise the complete persisted identity tuple.
         return new TrunkedSiteSchema.Snapshot(observedAt, configurationId, hash,
             TrunkedSiteSchema.PROTOCOL_NXDN, 2, locationCategory, 1, 303, 1, 1,
             null, null, 2, null, null, null, 12, 16, 60,

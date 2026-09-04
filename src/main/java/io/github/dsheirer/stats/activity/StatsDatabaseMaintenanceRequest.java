@@ -28,14 +28,14 @@ public final class StatsDatabaseMaintenanceRequest
         mOperation = Objects.requireNonNull(operation, "Maintenance operation is required");
         mConfigurationId = configurationId;
 
-        if(operation == ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS &&
+        if(operation == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS &&
             (configurationId == null || configurationId.isBlank()))
         {
             throw new IllegalArgumentException("Channel configuration ID is required");
         }
-        else if(operation != ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS && configurationId != null)
+        else if(operation != ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS && configurationId != null)
         {
-            throw new IllegalArgumentException("Channel configuration ID is only valid for CLEAR_SITE_STATS");
+            throw new IllegalArgumentException("Channel configuration ID is only valid for CLEAR_CHANNEL_STATS");
         }
     }
 
@@ -44,9 +44,9 @@ public final class StatsDatabaseMaintenanceRequest
         return new StatsDatabaseMaintenanceRequest(operation, null);
     }
 
-    public static StatsDatabaseMaintenanceRequest clearSite(String configurationId)
+    public static StatsDatabaseMaintenanceRequest clearChannel(String configurationId)
     {
-        return new StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation.CLEAR_SITE_STATS,
+        return new StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS,
             configurationId);
     }
 
