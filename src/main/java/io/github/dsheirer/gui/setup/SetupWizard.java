@@ -1,6 +1,10 @@
 package io.github.dsheirer.gui.setup;
 
 import com.formdev.flatlaf.FlatLightLaf;
+import com.formdev.flatlaf.FlatDarkLaf;
+import io.github.dsheirer.gui.theme.Theme;
+import jiconfont.icons.font_awesome.FontAwesome;
+import jiconfont.swing.IconFontSwing;
 import io.github.dsheirer.database.*;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.upgrade.*;
@@ -58,6 +62,8 @@ public final class SetupWizard extends JDialog
     private final JButton back = new JButton("Back");
     private final JButton next = new JButton("Continue");
     private final JButton exit = new JButton("Exit setup");
+    private final JButton themeToggle = new JButton();
+    private Theme selectedTheme;
     private final JButton cancel = new JButton("Cancel operation");
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "setup preparation"); thread.setDaemon(true); return thread;
@@ -199,7 +205,13 @@ public final class SetupWizard extends JDialog
         JPanel body = new JPanel(new BorderLayout(8, 22));
         body.setBorder(new EmptyBorder(30, 0, 22, 30));
         title.setFont(title.getFont().deriveFont(Font.BOLD, 27f));
-        body.add(title, BorderLayout.NORTH);
+        JPanel heading = new JPanel(new BorderLayout(16,0));
+        heading.add(title, BorderLayout.CENTER);
+        IconFontSwing.register(FontAwesome.getIconFont());
+        WizardStyles.secondary(themeToggle);
+        themeToggle.addActionListener(e -> attempt(this::toggleTheme));
+        heading.add(themeToggle, BorderLayout.EAST);
+        body.add(heading, BorderLayout.NORTH);
         page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
         page.setBorder(new EmptyBorder(0,0,8,8));
         JScrollPane scroll = new JScrollPane(page);
@@ -278,6 +290,7 @@ public final class SetupWizard extends JDialog
         limitedVisit = progress.isComplete() && !forced;
         if(newPreferences) preferences.getApplicationPreference().setStatsLoggingEnabled(true);
         var app = preferences.getApplicationPreference();
+        if(selectedTheme != null) app.setTheme(selectedTheme);
         if(!app.isStatsWebServerEnabled())
         {
             app.setStatsWebServerNetworkAccessEnabled(false);
@@ -578,7 +591,7 @@ public final class SetupWizard extends JDialog
         JPanel createDetails=stack();
         addTo(createDetails,text("JMBE source is provided for educational use. Voice-codec algorithms may be subject to patents or other restrictions in your jurisdiction. Review the project’s licensing and applicable restrictions before proceeding. Setup downloads and runs build tools on this computer."));
         JCheckBox consent = new JCheckBox("I agree to download and build JMBE on this computer.");
-        consent.setFont(text("").getFont()); addTo(createDetails,consent); create.setDetails(createDetails);
+        WizardStyles.bodyFont(consent, Font.PLAIN); addTo(createDetails,consent); create.setDetails(createDetails);
         WizardChoiceCard existing=choice(group,"Use a JMBE file I already have", "Choose a compatible JMBE .jar file. We’ll check it and copy it into this installation.",false);
         JPanel existingDetails=stack();
         JTextField selectedFile=sourceField(existingDetails,"JMBE library file",false); existing.setDetails(existingDetails);
@@ -946,12 +959,36 @@ public final class SetupWizard extends JDialog
         themeRefreshPending=true;
         SwingUtilities.invokeLater(() -> { themeRefreshPending=false; updateNavigation(); });
     }
+    private void toggleTheme()
+    {
+        if(busy) return;
+        boolean dark = preferences != null ? preferences.getApplicationPreference().getTheme().isDark() : selectedTheme == Theme.DARK;
+        selectedTheme = dark ? Theme.LIGHT : Theme.DARK;
+        if(preferences == null)
+        {
+            //Preview before choosing a source must not create a database or initialize portable preferences.
+            if(selectedTheme.isDark()) FlatDarkLaf.setup(); else FlatLightLaf.setup();
+            SwingUtilities.updateComponentTreeUI(this);
+        }
+        else
+        {
+            preferences.getApplicationPreference().setTheme(selectedTheme);
+            persist();
+        }
+        updateNavigation();
+    }
     private void updateNavigation()
     {
         enableTree(page,!busy);
         back.setEnabled(!busy && preferences!=null && step.ordinal()>0);
         next.setEnabled(!busy && canContinue.getAsBoolean());
         exit.setEnabled(!busy);
+        boolean dark = preferences != null ? preferences.getApplicationPreference().getTheme().isDark() : selectedTheme == Theme.DARK;
+        themeToggle.setEnabled(!busy);
+        themeToggle.setText(dark ? "Light mode" : "Dark mode");
+        themeToggle.setToolTipText(dark ? "Switch to light mode" : "Switch to dark mode");
+        themeToggle.getAccessibleContext().setAccessibleName(themeToggle.getToolTipText());
+        themeToggle.setIcon(IconFontSwing.buildIcon(dark ? FontAwesome.SUN_O : FontAwesome.MOON_O,18,WizardStyles.foreground()));
         for(var entry:steps.entrySet())
         {
             SetupStep id=entry.getKey(); JButton button=entry.getValue();
@@ -1000,10 +1037,10 @@ public final class SetupWizard extends JDialog
     private JPasswordField password(String caption) { JPasswordField field=new JPasswordField(28); labelled(caption,field); return field; }
     private void labelled(String caption,JComponent field)
     {
-        JLabel label=new JLabel(caption); label.setLabelFor(field); label.setFont(text("").getFont().deriveFont(Font.BOLD));
+        JLabel label=new JLabel(caption); label.setLabelFor(field); WizardStyles.bodyFont(label,Font.BOLD);
         append(label); append(Box.createVerticalStrut(8));
         field.getAccessibleContext().setAccessibleName(caption);
-        if(!(field instanceof JSpinner)) { field.setFont(text("").getFont()); field.setMaximumSize(new Dimension(560,40)); }
+        if(!(field instanceof JSpinner)) { WizardStyles.bodyFont(field,Font.PLAIN); field.setMaximumSize(new Dimension(560,40)); }
         append(field); append(Box.createVerticalStrut(20));
     }
     private JRadioButton card(ButtonGroup group,String caption,String description,boolean selected)
@@ -1026,7 +1063,7 @@ public final class SetupWizard extends JDialog
     }
     private JTextField sourceField(JPanel panel,String caption,boolean directory)
     {
-        JTextField field=new JTextField(28); field.setFont(text("").getFont());
+        JTextField field=new JTextField(28); WizardStyles.bodyFont(field,Font.PLAIN);
         field.setMaximumSize(new Dimension(Integer.MAX_VALUE,40));
         field.getAccessibleContext().setAccessibleName(caption);
         JLabel label=new JLabel(caption); label.setLabelFor(field); addTo(panel,label); addTo(panel,field);

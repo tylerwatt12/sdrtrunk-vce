@@ -18,8 +18,7 @@ final class WizardNotice extends JPanel
     {
         super(new BorderLayout(0, 12));
         setAlignmentX(Component.LEFT_ALIGNMENT);
-        JTextArea title = WizardStyles.prose((tone == Tone.SUCCESS ? "✓  " : "") + heading);
-        title.setFont(title.getFont().deriveFont(Font.BOLD, 16f));
+        JTextArea title = WizardStyles.prose((tone == Tone.SUCCESS ? "✓  " : "") + heading, Font.BOLD, 16f);
         JTextArea body = WizardStyles.prose(message);
         add(title, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);

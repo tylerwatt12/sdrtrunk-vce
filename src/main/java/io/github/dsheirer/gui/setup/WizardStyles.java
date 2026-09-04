@@ -52,17 +52,32 @@ final class WizardStyles
 
     static JTextArea prose(String value)
     {
+        return prose(value, Font.PLAIN, 14f);
+    }
+
+    static JTextArea prose(String value, int style, float minimumSize)
+    {
         JTextArea area = new SetupText(value);
         area.setEditable(false);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
         area.setOpaque(false);
-        area.setFont(bodyFont());
+        Runnable font = () -> area.setFont(new FontUIResource(bodyFont().deriveFont(style,
+            Math.max(bodyFont().getSize2D(), UIScale.scale(minimumSize)))));
+        area.addPropertyChangeListener("UI", event -> font.run());
+        font.run();
         area.setForeground(foreground());
         area.setBorder(null);
         area.setMargin(new Insets(0, 0, 0, 0));
         area.setAlignmentX(Component.LEFT_ALIGNMENT);
         return area;
+    }
+
+    static void bodyFont(javax.swing.JComponent component, int style)
+    {
+        Runnable font = () -> component.setFont(new FontUIResource(bodyFont().deriveFont(style)));
+        component.addPropertyChangeListener("UI", event -> font.run());
+        font.run();
     }
 
     static JButton primary(JButton button)
@@ -150,7 +165,8 @@ final class WizardStyles
         JFormattedTextField field = editor.getTextField();
         field.setColumns(7);
         field.setHorizontalAlignment(SwingConstants.LEFT);
-        field.setFont(bodyFont());
+        field.addPropertyChangeListener("UI", event -> field.setHorizontalAlignment(SwingConstants.LEFT));
+        bodyFont(field, Font.PLAIN);
         spinner.setEditor(editor);
         spinner.putClientProperty(FlatClientProperties.STYLE, "minimumWidth: 132; padding: 6,8,6,8");
         Dimension size = new Dimension(UIScale.scale(140), Math.max(UIScale.scale(38), spinner.getPreferredSize().height));

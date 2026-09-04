@@ -43,6 +43,29 @@ class WizardComponentsTest
         });
     }
 
+    @Test void wizardTypographySurvivesThemeSwitches() throws Exception
+    {
+        SwingUtilities.invokeAndWait(() -> {
+            FlatLightLaf.setup();
+            var body=WizardStyles.prose("Readable instructions");
+            var heading=WizardStyles.prose("Status heading",java.awt.Font.BOLD,16f);
+            var field=new JTextField("8090"); WizardStyles.bodyFont(field,java.awt.Font.PLAIN);
+            var bodySize=body.getFont().getSize2D();
+            var headingSize=heading.getFont().getSize2D();
+            for(boolean dark:new boolean[]{true,false,true})
+            {
+                if(dark) FlatDarkLaf.setup(); else FlatLightLaf.setup();
+                SwingUtilities.updateComponentTreeUI(body);
+                SwingUtilities.updateComponentTreeUI(heading);
+                SwingUtilities.updateComponentTreeUI(field);
+                assertEquals(bodySize,body.getFont().getSize2D());
+                assertEquals(headingSize,heading.getFont().getSize2D());
+                assertTrue(heading.getFont().isBold());
+                assertEquals(bodySize,field.getFont().getSize2D());
+            }
+        });
+    }
+
     @Test void fullCardSelectionHonorsDisabledState() throws Exception
     {
         SwingUtilities.invokeAndWait(() -> {

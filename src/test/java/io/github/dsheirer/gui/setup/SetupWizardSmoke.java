@@ -53,6 +53,12 @@ public final class SetupWizardSmoke
             return;
         }
         capture(target,root,"01-source");
+        if(mode.equals("theme") || mode.equals("import-theme"))
+        {
+            click(target,"Dark mode");
+            if(Files.exists(root.resolve("database/sdrtrunk.sqlite"))) throw new AssertionError("Theme preview created a database before source selection");
+            capture(target,root,"01b-dark-source");
+        }
         if(!mode.equals("resume")) assertSourceChoices(target);
         if(mode.startsWith("import"))
         {
@@ -63,6 +69,8 @@ public final class SetupWizardSmoke
             });
             click(target,"Continue"); await(target,SetupStep.SOURCE);
             click(target,"Confirm import"); await(target,SetupStep.SOURCE);
+            if(mode.equals("import-theme") && preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
+                throw new AssertionError("Explicit theme choice was not retained after importing");
             var imported=SetupProgress.read(root.resolve("database/sdrtrunk.sqlite"));
             if(!imported.isImported() || imported.get(SetupStep.ADMINISTRATOR)!=SetupProgress.State.CARRIED_OVER || imported.get(SetupStep.WEB)!=SetupProgress.State.CARRIED_OVER || imported.get(SetupStep.ACTIVITY)!=SetupProgress.State.CARRIED_OVER)
                 throw new AssertionError("Imported valid settings were not carried over");
@@ -79,6 +87,14 @@ public final class SetupWizardSmoke
             if(mode.equals("interrupt")) { click(target,"Exit setup"); return; }
             click(target,"Continue"); await(target,SetupStep.WEB);
             assertAndTypePort(target);
+            if(mode.equals("theme"))
+            {
+                if(preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
+                    throw new AssertionError("Pre-database theme choice was not saved");
+                click(target,"Light mode");
+                if(preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.LIGHT)
+                    throw new AssertionError("Theme choice was not updated");
+            }
             capture(target,root,"03-web");
             if(mode.equals("feedback"))
             {

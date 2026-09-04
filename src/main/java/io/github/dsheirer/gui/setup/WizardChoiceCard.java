@@ -25,7 +25,6 @@ import javax.swing.JRadioButton;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.border.AbstractBorder;
-import javax.swing.plaf.FontUIResource;
 
 /** A single radio choice with readable copy and fields belonging only to the selected choice. */
 final class WizardChoiceCard extends JPanel
@@ -57,9 +56,8 @@ final class WizardChoiceCard extends JPanel
 
         content.setOpaque(false);
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        heading = WizardStyles.prose(title);
+        heading = WizardStyles.prose(title, Font.BOLD, 14f);
         heading.setFocusable(false);
-        heading.setFont(new FontUIResource(WizardStyles.bodyFont().deriveFont(Font.BOLD)));
         description = WizardStyles.prose(explanation);
         description.setFocusable(false);
         content.add(heading);
