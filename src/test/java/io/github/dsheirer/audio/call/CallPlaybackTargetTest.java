@@ -12,9 +12,11 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.am.AMTalkgroup;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
@@ -39,6 +41,27 @@ class CallPlaybackTargetTest
         assertEquals("channel:" + CHANNEL_A, first.key());
         assertEquals("channel:" + CHANNEL_B, second.key());
         assertNotEquals(first, second);
+    }
+
+    @Test
+    void everyConventionalProtocolUsesTheSavedChannelInsteadOfItsDecodedTarget()
+    {
+        for(ConventionalCase testCase: List.of(
+            new ConventionalCase(DecoderType.AM, new AMTalkgroup(1)),
+            new ConventionalCase(DecoderType.NBFM, new NBFMTalkgroup(1)),
+            new ConventionalCase(DecoderType.P25_CONVENTIONAL, APCO25Talkgroup.create(3101)),
+            new ConventionalCase(DecoderType.NXDN, NXDNTalkgroupIdentifier.createTo(4201))))
+        {
+            CallPlaybackTarget first = target(source(testCase.decoderType(), CHANNEL_A, null,
+                ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL), testCase.target(), 0);
+            CallPlaybackTarget second = target(source(testCase.decoderType(), CHANNEL_B, null,
+                ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL), testCase.target(), 0);
+
+            assertEquals(CallPlaybackTarget.Kind.CHANNEL, first.kind(), testCase.decoderType().name());
+            assertEquals("channel:" + CHANNEL_A, first.key(), testCase.decoderType().name());
+            assertEquals("channel:" + CHANNEL_B, second.key(), testCase.decoderType().name());
+            assertNotEquals(first, second, testCase.decoderType().name());
+        }
     }
 
     @Test
@@ -91,6 +114,20 @@ class CallPlaybackTargetTest
         assertNotEquals(first, second);
     }
 
+    @Test
+    void trunkedNxdnScopesStaySeparateUntilNativeGroupingIsProven()
+    {
+        Identifier<?> talkgroup = NXDNTalkgroupIdentifier.createTo(9001);
+        CallPlaybackTarget first = target(source(DecoderType.NXDN, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED), talkgroup, 0);
+        CallPlaybackTarget second = target(source(DecoderType.NXDN, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED), talkgroup, 0);
+
+        assertEquals("system:nxdn:channel:" + CHANNEL_A + ":talkgroup:9001", first.key());
+        assertEquals("system:nxdn:channel:" + CHANNEL_B + ":talkgroup:9001", second.key());
+        assertNotEquals(first, second);
+    }
+
     private static CallLegSource source(DecoderType decoderType, String configurationId, P25SiteIdentity p25,
                                         ChannelConfigurationPolicy.ChannelKind channelKind)
     {
@@ -106,5 +143,9 @@ class CallPlaybackTargetTest
             false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), source, null);
         return CallPlaybackTarget.from(snapshot, target);
+    }
+
+    private record ConventionalCase(DecoderType decoderType, Identifier<?> target)
+    {
     }
 }
