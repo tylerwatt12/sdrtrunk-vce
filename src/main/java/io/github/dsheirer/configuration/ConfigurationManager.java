@@ -428,6 +428,14 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
+            //Alias routes have foreign keys to broadcast configurations. Persist any pending channel/stream edit
+            //before the Alias-only transaction so a newly configured destination is durable before it is referenced.
+            saveNow();
+            if(hasDirtyConfiguration())
+            {
+                throw new IllegalStateException(
+                    "Unable to save channel and broadcast configuration before committing Alias configuration");
+            }
             return mConfigurationRepository.commitAliasConfiguration(proposed,
                 publication.clearedChannelAliasListIds());
         }

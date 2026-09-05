@@ -160,7 +160,7 @@ class ConfigurationDatabaseStoreTest
             {
                 assertTrue(resultSet.next());
                 assertEquals(stream.getConfigurationId(), resultSet.getString("configuration_id"));
-                assertEquals("RADIORESOLVE", resultSet.getString("server_type"));
+                assertEquals("RadioResolveConfiguration", resultSet.getString("server_type"));
                 assertEquals(1, resultSet.getInt("enabled"));
                 assertEquals("https://example.invalid/upload", resultSet.getString("host"));
                 assertEquals(80, resultSet.getInt("port"));
@@ -215,6 +215,7 @@ class ConfigurationDatabaseStoreTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement pragma = connection.createStatement();
             PreparedStatement channelStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
                     id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
@@ -233,8 +234,10 @@ class ConfigurationDatabaseStoreTest
                     '{"type":"retired-sound-card","payload":"must be dropped without decoding"}')
                 """))
         {
+            pragma.execute("PRAGMA ignore_check_constraints=ON");
             channelStatement.executeUpdate();
             soundCardStatement.executeUpdate();
+            pragma.execute("PRAGMA ignore_check_constraints=OFF");
         }
 
         Channel active = new Channel("Supported DMR");
@@ -434,6 +437,7 @@ class ConfigurationDatabaseStoreTest
             new ProjectionTamper("auto_start_order", "auto_start_order=1.5"),
             new ProjectionTamper("auto_start_order", "auto_start_order=2147483648"),
             new ProjectionTamper("decoder_type", "decoder_type='NBFM'"),
+            new ProjectionTamper("address_domain_code", "address_domain_code=2"),
             new ProjectionTamper("primary_frequency_hz", "primary_frequency_hz=121900001"));
 
         for(int index = 0; index < tampers.size(); index++)

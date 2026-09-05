@@ -277,7 +277,7 @@ class StatsApiV1HttpContractTest
         assertStructuredError(retiredNumericIdentity, 400, "unknown_parameter", "radio_id");
 
         HttpResponse<String> invalidIdentityKey = get(StatsApiV1.ACTIVITY +
-            "?group_identity_key=patch");
+            "?radio_system_key=p25%3A00001%3A047&group_identity_key=patch");
         assertStructuredError(invalidIdentityKey, 400, "invalid_parameter", "group_identity_key");
 
         HttpResponse<String> missingRadioAction = get(StatsApiV1.ACTIVITY_RADIOS + "?range=24h");
@@ -659,9 +659,10 @@ class StatsApiV1HttpContractTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_channel (
-                    id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id
-                ) VALUES (1, '00000000-0000-0000-0000-000000000071', 1000, 2000, 1),
-                         (2, '4b75217f-2555-4c38-aafc-5d17bc0faf71', 1000, 2000, 2)
+                    id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                    radio_system_assigned_at_ms
+                ) VALUES (1, '00000000-0000-0000-0000-000000000071', 1000, 2000, 1, 1000),
+                         (2, '4b75217f-2555-4c38-aafc-5d17bc0faf71', 1000, 2000, 2, 1000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (

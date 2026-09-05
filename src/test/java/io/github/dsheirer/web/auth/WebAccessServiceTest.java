@@ -162,7 +162,7 @@ class WebAccessServiceTest
                 UPDATE web_user SET preferences_revision=? WHERE username='admin'
                 """))
         {
-            update.setLong(1, Long.MAX_VALUE);
+            update.setLong(1, Long.MAX_VALUE - 1);
             assertEquals(1, update.executeUpdate());
         }
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -179,7 +179,7 @@ class WebAccessServiceTest
 
         WebUserPreferencesService preferences = new WebUserPreferencesService(database);
         assertThrows(IOException.class,
-            () -> preferences.update(primary, Long.MAX_VALUE, WebUserPreferences.defaults()));
+            () -> preferences.update(primary, Long.MAX_VALUE - 1, WebUserPreferences.defaults()));
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement query = connection.prepareStatement("""
@@ -191,7 +191,7 @@ class WebAccessServiceTest
             {
                 assertTrue(resultSet.next());
                 assertEquals("integer", resultSet.getString(1));
-                assertEquals(Long.MAX_VALUE, resultSet.getLong(2));
+                assertEquals(Long.MAX_VALUE - 1, resultSet.getLong(2));
                 assertEquals(originalJson, resultSet.getString(3));
             }
         }

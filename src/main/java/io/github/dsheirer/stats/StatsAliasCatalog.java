@@ -49,8 +49,6 @@ final class StatsAliasCatalog
         Math.min(MAX_ENRICH_ALIASES, Math.min(MAX_TARGET_ALIAS_LISTS, MAX_TARGET_RANGES));
     static final int MAX_SOURCE_TARGET_RANGES = 10_000;
     static final int MAX_BROADCAST_CHANNELS_PER_ALIAS = AliasAdministrationService.MAX_BROADCAST_CHANNELS;
-    static final int MAX_BROADCAST_CHANNEL_NAME_CHARACTERS =
-        AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH;
     static final int MAX_BROADCAST_CHANNEL_ROWS = StatsSqlRows.MAXIMUM_MATERIALIZED_ROWS;
     static final int MAX_SCAN_LISTS_PER_ALIAS = AliasAdministrationService.MAX_SCAN_LISTS;
     static final int MAX_SCAN_LIST_MEMBERSHIP_ROWS = StatsSqlRows.MAXIMUM_MATERIALIZED_ROWS;

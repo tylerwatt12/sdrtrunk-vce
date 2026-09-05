@@ -60,7 +60,6 @@ public final class AliasAdministrationService
     public static final int MAX_BULK_ALIASES = 10_000;
     public static final int MAX_ALIAS_LIST_NAME_LENGTH = 25;
     public static final int MAX_BROADCAST_CHANNELS = 64;
-    public static final int MAX_BROADCAST_CHANNEL_NAME_LENGTH = 256;
     public static final int MAX_SCAN_LISTS = 100;
     public static final int MAX_SCAN_LIST_COVERAGE_ALIASES = 5_000;
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;

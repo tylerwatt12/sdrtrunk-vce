@@ -150,7 +150,8 @@ class ConfigurationRepositorySnapshotTest
                 AFTER INSERT ON configuration_broadcast_stream
                 WHEN json_extract(NEW.config_json, '$.name') = 'Corrupted Stream'
                 BEGIN
-                    UPDATE configuration_broadcast_stream SET config_json = '{' WHERE id = NEW.id;
+                    UPDATE configuration_broadcast_stream
+                    SET config_json = '{"type":"UnknownBroadcastConfiguration"}' WHERE id = NEW.id;
                 END
                 """);
         }
@@ -259,9 +260,11 @@ class ConfigurationRepositorySnapshotTest
                                                    long frequency, String streamName)
     {
         AliasListDefinition definition = new AliasListDefinition(listName, AliasListFamily.P25);
+        definition.setId(100);
         RadioResolveConfiguration stream = new RadioResolveConfiguration();
         stream.setName(streamName);
         Alias alias = new Alias("Dispatch " + talkgroup);
+        alias.setId(100);
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
         alias.addBroadcastChannel(new BroadcastChannel(stream.getConfigurationId(), streamName));

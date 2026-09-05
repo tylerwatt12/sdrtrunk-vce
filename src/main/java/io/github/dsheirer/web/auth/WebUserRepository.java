@@ -199,6 +199,12 @@ final class WebUserRepository
     PreferenceUpdate updatePreferences(long userId, long expectedRevision, String preferencesJson)
         throws IOException, SQLException
     {
+        //The schema reserves Long.MAX_VALUE so every stored revision has one valid successor.
+        if(expectedRevision >= Long.MAX_VALUE - 1)
+        {
+            throw new IOException("Web preference revision is exhausted");
+        }
+
         final long nextRevision;
         try
         {

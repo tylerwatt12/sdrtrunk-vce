@@ -358,7 +358,7 @@ class AliasAdministrationServiceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             long aliasId = service.createAlias(alias("Dispatch", aliasListId, 101)).aliasIds().getFirst();
-            List<String> routes = new ArrayList<>();
+            List<String> routeIds = new ArrayList<>();
 
             for(int index = 0; index <= AliasAdministrationService.MAX_BROADCAST_CHANNELS; index++)
             {
@@ -366,30 +366,27 @@ class AliasAdministrationServiceTest
                 BroadcastifyCallConfiguration route = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
                 route.setName(name);
                 manager.getBroadcastModel().addBroadcastConfiguration(route);
-                routes.add(name);
+                routeIds.add(route.getConfigurationId());
             }
 
             Alias bounded = service.getAlias(aliasId).alias();
-            bounded.setBroadcastChannels(routes.subList(0, AliasAdministrationService.MAX_BROADCAST_CHANNELS)
-                .stream().map(BroadcastChannel::new).toList());
+            bounded.setBroadcastChannels(manager.getBroadcastModel().getBroadcastConfigurations().stream()
+                .limit(AliasAdministrationService.MAX_BROADCAST_CHANNELS)
+                .map(configuration -> new BroadcastChannel(configuration.getConfigurationId(),
+                    configuration.getName())).toList());
             AliasAdministrationService.MutationResult configured = service.replaceAlias(aliasId, bounded);
             int commitsBeforeOverflow = manager.commitCount();
 
             IllegalArgumentException overflow = assertThrows(IllegalArgumentException.class,
                 () -> service.bulkEdit(new AliasAdministrationService.BulkEdit(List.of(aliasId), null, null,
                     null, null, null, null, AliasAdministrationService.StreamOperation.ADD,
-                    List.of(routes.getLast()), false), configured.revision()));
+                    List.of(routeIds.getLast()), false), configured.revision()));
             assertTrue(overflow.getMessage().contains("more than " +
                 AliasAdministrationService.MAX_BROADCAST_CHANNELS));
             assertEquals(commitsBeforeOverflow, manager.commitCount());
             assertEquals(AliasAdministrationService.MAX_BROADCAST_CHANNELS,
                 service.getAlias(aliasId).alias().getBroadcastChannels().size());
 
-            Alias longName = service.getAlias(aliasId).alias();
-            longName.setBroadcastChannels(List.of(new BroadcastChannel(
-                "x".repeat(AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH + 1))));
-            assertThrows(IllegalArgumentException.class, () -> service.replaceAlias(aliasId, longName));
-            assertEquals(commitsBeforeOverflow, manager.commitCount());
         }
         finally
         {
@@ -834,7 +831,7 @@ class AliasAdministrationServiceTest
             assertTrue(storedAliases.stream().anyMatch(alias -> alias.getId() == secondAliasId));
 
             Channel channel = new Channel("County Control");
-            channel.setAliasListName("County P25");
+            channel.setAliasListDefinition(manager.getAliasModel().getAliasListDefinition(aliasListId));
             channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
             long beforeChannelAssignment = service.catalog().revision();
             manager.getChannelModel().addChannel(channel);

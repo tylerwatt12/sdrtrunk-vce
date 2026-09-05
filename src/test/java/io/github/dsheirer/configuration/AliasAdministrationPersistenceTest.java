@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
@@ -470,6 +471,8 @@ class AliasAdministrationPersistenceTest
 
             assertEquals("Old Stream", stream.getName());
             stream.setName("New Stream");
+            manager.getBroadcastModel().process(new BroadcastEvent(stream,
+                BroadcastEvent.Event.CONFIGURATION_CHANGE));
             manager.flushConfiguration();
 
             assertEquals("New Stream", stream.getName());

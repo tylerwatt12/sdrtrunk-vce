@@ -105,9 +105,18 @@ public record ConfigurationChannelProjection(String decoderType, int addressDoma
 
     public void requireMatches(ConfigurationChannelProjection persisted, String context) throws IOException
     {
-        if(!equals(Objects.requireNonNull(persisted, "Persisted projection cannot be null")))
+        Objects.requireNonNull(persisted, "Persisted projection cannot be null");
+        if(!Objects.equals(decoderType, persisted.decoderType))
         {
-            throw new IOException(context + " query projection does not match config_json");
+            throw new IOException(context + " decoder_type projection does not match config_json");
+        }
+        if(addressDomainCode != persisted.addressDomainCode)
+        {
+            throw new IOException(context + " address_domain_code projection does not match config_json");
+        }
+        if(!Objects.equals(primaryFrequencyHz, persisted.primaryFrequencyHz))
+        {
+            throw new IOException(context + " primary_frequency_hz projection does not match config_json");
         }
     }
 
@@ -115,7 +124,8 @@ public record ConfigurationChannelProjection(String decoderType, int addressDoma
     {
         if(configuration instanceof SourceConfigTuner tuner)
         {
-            return tuner.getFrequency();
+            long frequency = tuner.getFrequency();
+            return frequency > 0 ? frequency : null;
         }
         else if(configuration instanceof SourceConfigTunerMultipleFrequency multiple)
         {
@@ -124,7 +134,8 @@ public record ConfigurationChannelProjection(String decoderType, int addressDoma
         }
         else if(configuration instanceof SourceConfigRecording recording)
         {
-            return recording.getFrequency();
+            long frequency = recording.getFrequency();
+            return frequency > 0 ? frequency : null;
         }
 
         return null;
