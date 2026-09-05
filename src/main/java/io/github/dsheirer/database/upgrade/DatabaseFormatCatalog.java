@@ -32,6 +32,11 @@ public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
     public static final int CURRENT_VERSION = 15;
+    static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
+    static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
+        "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
+        "p25_activity_schema_version", "trunked_site_schema_version", "dmr_activity_schema_version");
+    private static final List<String> RETIRED_FORMAT_15_METADATA_KEYS = retiredFormat15MetadataKeys();
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -446,6 +451,25 @@ public final class DatabaseFormatCatalog
                     "; the database is mixed or partially migrated");
             }
         }
+
+        if(descriptor.version() >= 15)
+        {
+            for(String retiredKey: RETIRED_FORMAT_15_METADATA_KEYS)
+            {
+                if(metadata(connection, retiredKey) != null)
+                {
+                    throw new FormatRejectionException("SQLite schema format [" + descriptor.id() +
+                        "] contains retired metadata [" + retiredKey + "]; the database is mixed or partially migrated");
+                }
+            }
+        }
+    }
+
+    private static List<String> retiredFormat15MetadataKeys()
+    {
+        List<String> keys = new ArrayList<>(RETIRED_SUBSYSTEM_VERSION_KEYS);
+        keys.add(RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY);
+        return List.copyOf(keys);
     }
 
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor) throws SQLException

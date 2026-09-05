@@ -23,6 +23,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -176,6 +177,31 @@ class DatabaseFormatCatalogTest
                     'dmr_activity_schema_version'
                 )
                 """));
+        }
+    }
+
+    @Test
+    void currentFormatRejectsRetiredMetadataFromAPartialMigration() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("current-with-retired-metadata.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        List<String> retiredKeys = new java.util.ArrayList<>(DatabaseFormatCatalog.RETIRED_SUBSYSTEM_VERSION_KEYS);
+        retiredKeys.add(DatabaseFormatCatalog.RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            for(String retiredKey: retiredKeys)
+            {
+                statement.executeUpdate("""
+                    INSERT INTO database_metadata(key, value, updated_at_ms)
+                    VALUES ('%s', '1', 1)
+                    """.formatted(retiredKey));
+                assertThrows(SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection), retiredKey);
+                statement.executeUpdate("DELETE FROM database_metadata WHERE key='" + retiredKey + "'");
+            }
+
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

@@ -74,7 +74,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static final String SYSTEMS_POLICY_ID = "systems";
     private static final String CONVENTIONAL_POLICY_ID = "conventional";
     private static final String RADIO_POLICY_ID = "radio";
-    private static final String OLD_IDENTITY_BOUNDARY = "trunked_identity_metrics_started_at_ms";
+    private static final String OLD_IDENTITY_BOUNDARY =
+        DatabaseFormatCatalog.RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY;
     private static final String RADIO_SYSTEM_BOUNDARY = "radio_system_metrics_started_at_ms";
     private static final String CONVENTIONAL_CALL_BOUNDARY = "conventional_call_output_metrics_started_at_ms";
     private static final String TRUNKED_CALL_BOUNDARY = "trunked_logical_call_metrics_started_at_ms";
@@ -83,9 +84,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         "alias_list", "alias", "scan_list", "alias_broadcast_channel",
         "alias_list_unmatched_talkgroup_stream", "configuration_channel",
         "configuration_broadcast_stream", "web_user");
-    private static final List<String> SUBSYSTEM_VERSION_KEYS = List.of(
-        "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
-        "p25_activity_schema_version", "trunked_site_schema_version", "dmr_activity_schema_version");
+    private static final List<String> SUBSYSTEM_VERSION_KEYS =
+        DatabaseFormatCatalog.RETIRED_SUBSYSTEM_VERSION_KEYS;
     private static final List<String> REPLACED_METADATA_KEYS = replacedMetadataKeys();
     private static final List<String> ACTIVITY_VIEWS = List.of("p25_activity_event_resolved");
     private static final List<String> CALL_HISTORY_TABLES = List.of(
