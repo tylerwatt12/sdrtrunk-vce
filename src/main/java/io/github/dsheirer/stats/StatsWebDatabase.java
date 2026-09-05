@@ -1920,7 +1920,7 @@ class StatsWebDatabase
 
     Map<String,Object> radioSystemGroupIdentity(String radioSystemKey, String identityKey)
     {
-        RadioSystemIdentityKey.Identity identity = parseIdentityKey(identityKey, Set.of(
+        RadioSystemIdentityKey.Identity identity = parsePathIdentityKey(identityKey, Set.of(
             IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP), "identity_key");
         int identityKind = identity.kindCode();
         int groupIdentity = identity.identityId();
@@ -2025,7 +2025,7 @@ class StatsWebDatabase
     Map<String,Object> radioSystemGroupIdentityActivity(String radioSystemKey, String identityKey,
                                                          StatsRequest request)
     {
-        RadioSystemIdentityKey.Identity identity = parseIdentityKey(identityKey, Set.of(
+        RadioSystemIdentityKey.Identity identity = parsePathIdentityKey(identityKey, Set.of(
             IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP), "identity_key");
         int identityKind = identity.kindCode();
         ActivityRange requestedRange = activityRange(request);
@@ -2130,7 +2130,7 @@ class StatsWebDatabase
 
     Map<String,Object> radio(String radioSystemKey, String identityKey)
     {
-        RadioSystemIdentityKey.Identity identity = parseIdentityKey(identityKey,
+        RadioSystemIdentityKey.Identity identity = parsePathIdentityKey(identityKey,
             Set.of(IDENTITY_KIND_RADIO), "identity_key");
         int radio = identity.identityId();
         return readSnapshot(connection -> {
@@ -2199,10 +2199,10 @@ class StatsWebDatabase
         }
 
         RadioSystemIdentityKey.Identity groupIdentity = groupIdentityKey != null ?
-            parseIdentityKey(groupIdentityKey, Set.of(IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP),
+            parseQueryIdentityKey(groupIdentityKey, Set.of(IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP),
                 "group_identity_key") : null;
         RadioSystemIdentityKey.Identity radio = radioIdentityKey != null ?
-            parseIdentityKey(radioIdentityKey, Set.of(IDENTITY_KIND_RADIO), "radio_identity_key") : null;
+            parseQueryIdentityKey(radioIdentityKey, Set.of(IDENTITY_KIND_RADIO), "radio_identity_key") : null;
 
         return readSnapshot(connection -> {
             Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
@@ -3571,10 +3571,10 @@ class StatsWebDatabase
                 "radio_system_key is required with an identity key", "radio_system_key");
         }
 
-        RadioSystemIdentityKey.Identity groupIdentity = groupIdentityKey != null ? parseIdentityKey(
+        RadioSystemIdentityKey.Identity groupIdentity = groupIdentityKey != null ? parseQueryIdentityKey(
             groupIdentityKey, Set.of(IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP),
             "group_identity_key") : null;
-        RadioSystemIdentityKey.Identity radioIdentity = radioIdentityKey != null ? parseIdentityKey(
+        RadioSystemIdentityKey.Identity radioIdentity = radioIdentityKey != null ? parseQueryIdentityKey(
             radioIdentityKey, Set.of(IDENTITY_KIND_RADIO), "radio_identity_key") : null;
         int limit = request.limit();
 
@@ -5294,8 +5294,20 @@ class StatsWebDatabase
             """, ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY);
     }
 
+    private static RadioSystemIdentityKey.Identity parsePathIdentityKey(String value, Set<Integer> allowedKinds,
+                                                                         String field)
+    {
+        return parseIdentityKey(value, allowedKinds, field, "invalid_path");
+    }
+
+    private static RadioSystemIdentityKey.Identity parseQueryIdentityKey(String value, Set<Integer> allowedKinds,
+                                                                          String field)
+    {
+        return parseIdentityKey(value, allowedKinds, field, "invalid_parameter");
+    }
+
     private static RadioSystemIdentityKey.Identity parseIdentityKey(String value, Set<Integer> allowedKinds,
-                                                                     String field)
+                                                                     String field, String errorCode)
     {
         try
         {
@@ -5308,7 +5320,7 @@ class StatsWebDatabase
         }
         catch(IllegalArgumentException exception)
         {
-            throw new StatsApiException(400, "invalid_path", "identity_key is not valid", field);
+            throw new StatsApiException(400, errorCode, "identity_key is not valid", field);
         }
     }
 

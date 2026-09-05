@@ -308,7 +308,7 @@ class StatsApiV1HttpContractTest
 
         HttpResponse<String> missingCursor = get(StatsApiV1.ACTIVITY +
             "?before_id=999&group_identity_key=v1-p-bee00-49f-1&radio_identity_key=v1-r-bee00-49f-2" +
-            "&radio_system_key=p25:test&hide_grants=true&limit=1");
+            "&radio_system_key=p25%3Abee00%3A49f&hide_grants=true&limit=1");
         assertEquals(200, missingCursor.statusCode(), missingCursor.body());
         JsonNode emptyPage = OBJECT_MAPPER.readTree(missingCursor.body());
         assertEquals(0, emptyPage.get("data").size(), missingCursor.body());
