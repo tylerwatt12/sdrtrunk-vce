@@ -1917,8 +1917,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_6C_UNIT_REGISTRATION_RESPONSE_ABBREVIATED:
                 if(mac instanceof UnitRegistrationResponseAbbreviated response)
                 {
-                    var stableSite = mNetworkConfigurationStabilizer.getStableSiteIdentity();
-                    Identifier target = response.getTargetAddress(stableSite != null ? stableSite.wacn() : null);
+                    Identifier target = response.getTargetAddress(
+                        mNetworkConfigurationStabilizer.getStableNetworkWacn());
                     broadcastAffiliation(message, List.of(target), DecodeEventType.REGISTER,
                         "UNIT REGISTRATION " + response.getResponse(),
                         P25AffiliationEvent.Outcome.from(response.getResponse()), target, null);

@@ -89,6 +89,30 @@ class P25P2DecoderStateRegistrationTest
         assertEquals(831_102, radio.getRadio());
     }
 
+    @Test
+    void abbreviatedRegistrationNeedsOnlyTheLearnedServingNetworkWacn()
+    {
+        Channel channel = new Channel("P25 Phase 2 Roaming Registration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_2",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x3A1, null), null,
+            List.of(), List.of(), List.of(), List.of(), List.of()), 100L);
+        P25P2DecoderState state = new P25P2DecoderState(channel, 0, new P25TrafficChannelManager(channel),
+            new PatchGroupManager(), stabilizer, new SiteMetadataPublicationRateLimiter(1_000));
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+
+        state.receive(message(1_000L, new ParsedAbbreviatedUnitRegistration()));
+
+        P25AffiliationEvent event = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        APCO25FullyQualifiedRadioIdentifier radio = assertInstanceOf(
+            APCO25FullyQualifiedRadioIdentifier.class, event.getRadioIdentifier());
+        assertEquals(0xBEE00, radio.getWacn());
+        assertEquals(0x954, radio.getSystem());
+        assertEquals(831_102, radio.getRadio());
+    }
+
     private static MacMessage message(long timestamp, MacStructure structure)
     {
         MacMessage message = new MacMessage(0, DataUnitID.UNSCRAMBLED_LCCH,

@@ -332,6 +332,17 @@ public class P25NetworkConfigurationStabilizer
         return P25SiteIdentity.from(mNetwork.getStableValue(), mCurrentSite.getStableValue());
     }
 
+    /**
+     * Stable serving-network WACN.  Some valid messages need only this network fact and must not wait for a complete
+     * RFSS/site identity.
+     */
+    public synchronized Integer getStableNetworkWacn()
+    {
+        P25NetworkConfigurationSnapshot.Network network = mNetwork.getStableValue();
+        Integer wacn = network != null ? network.wacn() : null;
+        return wacn != null && wacn >= 0 && wacn <= 0xFFFFF ? wacn : null;
+    }
+
     private <T> void observeIdentity(StableFactTracker<T,T> tracker, T value, long timestamp)
     {
         if(value != null)

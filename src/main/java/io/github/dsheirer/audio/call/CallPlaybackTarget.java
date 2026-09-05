@@ -17,6 +17,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -68,7 +69,7 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
      */
     public static CallPlaybackTarget from(AudioCallSnapshot snapshot, Identifier<?> target)
     {
-        if(snapshot == null)
+        if(snapshot == null || target instanceof IncompleteIdentifier)
         {
             return null;
         }

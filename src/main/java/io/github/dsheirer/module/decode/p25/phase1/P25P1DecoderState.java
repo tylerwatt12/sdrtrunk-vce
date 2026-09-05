@@ -1926,8 +1926,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof UnitRegistrationResponse urr)
         {
-            var stableSite = mNetworkConfigurationStabilizer.getStableSiteIdentity();
-            Identifier registeredRadio = urr.getRegisteredRadio(stableSite != null ? stableSite.wacn() : null);
+            Identifier registeredRadio = urr.getRegisteredRadio(mNetworkConfigurationStabilizer.getStableNetworkWacn());
             broadcastAffiliation(List.of(registeredRadio), tsbk.getTimestamp(), DecodeEventType.REGISTER,
                 urr.getResponse() + " UNIT REGISTRATION - UNIT ID:" + registeredRadio,
                 P25AffiliationEvent.Outcome.from(urr.getResponse()), registeredRadio, null);

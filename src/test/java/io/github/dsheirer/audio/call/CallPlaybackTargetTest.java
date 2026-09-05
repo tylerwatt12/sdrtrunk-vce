@@ -21,6 +21,7 @@ import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
@@ -128,6 +129,15 @@ class CallPlaybackTargetTest
         assertEquals(ordinary, equivalentHome);
         assertEquals("system:p25:bee00:348:v1-r-abcde-321-9001", roaming.key());
         assertNotEquals(ordinary, roaming);
+    }
+
+    @Test
+    void incompleteP25RadioCannotBecomeAPlaybackTarget()
+    {
+        CallLegSource source = source(DecoderType.P25_PHASE1, CHANNEL_A,
+            new P25SiteIdentity(0xBEE00, 0x348, 1, 1), ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+
+        assertNull(target(source, APCO25IncompleteRadioIdentifier.createTo(123), 0));
     }
 
     @Test

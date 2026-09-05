@@ -85,6 +85,30 @@ class P25P1DecoderStateRegistrationTest
     }
 
     @Test
+    void abbreviatedRegistrationNeedsOnlyTheLearnedServingNetworkWacn()
+    {
+        Channel channel = new Channel("P25 Roaming Registration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x3A1, null), null,
+            List.of(), List.of(), List.of(), List.of(), List.of()), 100L);
+        P25P1DecoderState state = new P25P1DecoderState(channel, new P25TrafficChannelManager(channel), stabilizer);
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+
+        state.receive(new UnitRegistrationResponse(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+            CorrectedBinaryMessage.loadHex(ABBREVIATED_REGISTRATION), 0x3A1, 1_000L));
+
+        P25AffiliationEvent event = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        APCO25FullyQualifiedRadioIdentifier radio = assertInstanceOf(
+            APCO25FullyQualifiedRadioIdentifier.class, event.getRadioIdentifier());
+        assertEquals(0xBEE00, radio.getWacn());
+        assertEquals(0x954, radio.getSystem());
+        assertEquals(831_102, radio.getRadio());
+    }
+
+    @Test
     void abbreviatedRegistrationRemainsIncompleteBeforeTheServingWacnIsKnown()
     {
         Channel channel = new Channel("P25 Registration", ChannelType.STANDARD);
