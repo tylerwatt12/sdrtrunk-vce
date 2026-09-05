@@ -25,6 +25,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.reference.Response;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -73,8 +74,7 @@ public class UnitRegistrationResponseAbbreviated extends MacStructure
     {
         if(mTargetAddress == null)
         {
-            int address = getSourceAddress();
-            mTargetAddress = APCO25IncompleteRadioIdentifier.createTo(address > 0 ? address : getSourceId());
+            mTargetAddress = APCO25IncompleteRadioIdentifier.createTo(getSourceAddress());
         }
 
         return mTargetAddress;
@@ -86,12 +86,13 @@ public class UnitRegistrationResponseAbbreviated extends MacStructure
      */
     public Identifier getTargetAddress(Integer servingWacn)
     {
-        if(servingWacn == null || servingWacn < 0 || servingWacn > 0xFFFFF)
+        int workingAddress = getSourceAddress();
+        if(servingWacn == null || servingWacn < 0 || servingWacn > 0xFFFFF || workingAddress < 1 ||
+            workingAddress > RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
         {
             return getTargetAddress();
         }
 
-        int workingAddress = getSourceAddress() > 0 ? getSourceAddress() : getSourceId();
         return APCO25FullyQualifiedRadioIdentifier.createTo(workingAddress, servingWacn,
             getSourceSystemId(), getSourceId());
     }

@@ -27,6 +27,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
 import io.github.dsheirer.module.decode.p25.reference.Response;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -65,9 +66,7 @@ public class UnitRegistrationResponse extends OSPMessage
     {
         if(mRegisteredRadio == null)
         {
-            int localAddress = getSourceAddress();
-            mRegisteredRadio = APCO25IncompleteRadioIdentifier.createTo(
-                localAddress > 0 ? localAddress : getSourceId());
+            mRegisteredRadio = APCO25IncompleteRadioIdentifier.createTo(getSourceAddress());
         }
 
         return mRegisteredRadio;
@@ -80,12 +79,13 @@ public class UnitRegistrationResponse extends OSPMessage
      */
     public Identifier getRegisteredRadio(Integer servingWacn)
     {
-        if(servingWacn == null || servingWacn < 0 || servingWacn > 0xFFFFF)
+        int workingAddress = getSourceAddress();
+        if(servingWacn == null || servingWacn < 0 || servingWacn > 0xFFFFF || workingAddress < 1 ||
+            workingAddress > RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
         {
             return getRegisteredRadio();
         }
 
-        int workingAddress = getSourceAddress() > 0 ? getSourceAddress() : getSourceId();
         return APCO25FullyQualifiedRadioIdentifier.createTo(workingAddress, servingWacn,
             getSourceSystemId(), getSourceId());
     }
