@@ -64,6 +64,8 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -245,6 +247,7 @@ public class LegacyXmlConfigurationImporter
                         .toList()));
                 List<Channel> channels = new ArrayList<>(nonNull(playlist.getChannels()));
                 sanitizeChannelConfigurationLists(channels);
+                normalizeLegacyChannelModes(channels);
 
                 if(playlistVersion <= 2)
                 {
@@ -322,6 +325,24 @@ public class LegacyXmlConfigurationImporter
                 {
                     eventLogConfiguration.getLoggers().removeIf(logger -> logger == null);
                 }
+            }
+        }
+    }
+
+    /**
+     * Stock playlist XML predates the explicit DMR channel-mode field. Preserve its former meaning at this import
+     * boundary, then persist an explicit current-format value so the runtime never has to infer topology.
+     */
+    private static void normalizeLegacyChannelModes(List<Channel> channels)
+    {
+        for(Channel channel: channels)
+        {
+            if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr)
+            {
+                boolean hasUsableFrequencyMap = dmr.getTimeslotMap() != null && dmr.getTimeslotMap().stream()
+                    .anyMatch(mapping -> mapping != null && mapping.getNumber() > 0 &&
+                        mapping.getDownlinkFrequency() > 0);
+                dmr.setChannelMode(hasUsableFrequencyMap ? DMRChannelMode.TRUNKED : DMRChannelMode.CONVENTIONAL);
             }
         }
     }
