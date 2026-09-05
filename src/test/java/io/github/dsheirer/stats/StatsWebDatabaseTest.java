@@ -244,6 +244,34 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void radioSystemMetricsUseTheirDedicatedStartBoundary() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement(
+                "UPDATE database_metadata SET value = ? WHERE key = ?"))
+        {
+            statement.setString(1, "111");
+            statement.setString(2, ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY);
+            statement.executeUpdate();
+            statement.setString(1, "222");
+            statement.setString(2, ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
+            statement.executeUpdate();
+            statement.setString(1, "333");
+            statement.setString(2, ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+            statement.executeUpdate();
+        }
+
+        String identityKey = p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101);
+        Map<String,Object> activity = mDatabase.radioSystemGroupIdentityActivity(
+            RADIO_SYSTEM_KEY, identityKey, request("/?range=24h"));
+        assertEquals(111, number(activity.get("logical_metric_start_ms")));
+
+        Map<String,Object> channelGroups = mDatabase.channelGroupIdentities(
+            P25_CHANNEL_A, request("/?range=24h"));
+        assertEquals(111, number(channelGroups.get("logical_metric_start_ms")));
+    }
+
+    @Test
     void identityPagesStayInsideTheirRadioSystem()
     {
         List<Map<String,Object>> radios = rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY, request("/")));

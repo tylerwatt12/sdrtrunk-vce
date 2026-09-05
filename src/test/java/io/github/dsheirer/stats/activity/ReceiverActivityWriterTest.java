@@ -251,6 +251,16 @@ class ReceiverActivityWriterTest
     {
         Path database = createDatabase(mTemporaryFolder.resolve("reset-order.sqlite"));
         insertConfiguredChannel(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE database_metadata SET value='101' WHERE key='" +
+                ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY + "'");
+            statement.executeUpdate("UPDATE database_metadata SET value='102' WHERE key='" +
+                ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY + "'");
+            statement.executeUpdate("UPDATE database_metadata SET value='103' WHERE key='" +
+                ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY + "'");
+        }
         ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 32, 1_250,
             TimeUnit.SECONDS.toMillis(10));
         writer.start();
@@ -273,6 +283,12 @@ class ReceiverActivityWriterTest
                 "SELECT coalesce(sum(denial_count),0) FROM trunked_signaling_activity_bucket"));
             assertEquals(1, scalar(connection,
                 "SELECT coalesce(sum(grant_count),0) FROM trunked_signaling_activity_bucket"));
+            assertTrue(metadataTimestamp(connection,
+                ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY) > 103);
+            assertTrue(metadataTimestamp(connection,
+                ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY) > 103);
+            assertTrue(metadataTimestamp(connection,
+                ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY) > 103);
         }
     }
 
@@ -447,6 +463,19 @@ class ReceiverActivityWriterTest
         {
             assertTrue(resultSet.next());
             return resultSet.getLong(1);
+        }
+    }
+
+    private static long metadataTimestamp(Connection connection, String key) throws Exception
+    {
+        try(java.sql.PreparedStatement statement = connection.prepareStatement(
+            "SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, key);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getLong(1) : 0;
+            }
         }
     }
 

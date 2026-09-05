@@ -1464,6 +1464,8 @@ public class ReceiverActivitySchema
         deleted += deleteAll(connection, "trunked_control_channel_quality");
         deleted += deleteAll(connection, "receiver_channel");
         deleted += deleteAll(connection, "statistics_status");
+        SdrTrunkDatabaseStartup.setMetadata(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
+            Long.toString(System.currentTimeMillis()));
         SdrTrunkDatabaseStartup.setMetadata(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,
             Long.toString(System.currentTimeMillis()));
         SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,

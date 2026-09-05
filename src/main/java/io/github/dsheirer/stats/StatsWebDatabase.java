@@ -5291,7 +5291,7 @@ class StatsWebDatabase
     {
         return scalarLong(connection, """
             SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
-            """, ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
+            """, ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY);
     }
 
     private static RadioSystemIdentityKey.Identity parseIdentityKey(String value, Set<Integer> allowedKinds,
