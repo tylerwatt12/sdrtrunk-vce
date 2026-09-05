@@ -139,7 +139,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     }
 
     /**
-     * Shared activity model used by the desktop and web Systems views.
+     * Shared activity model used by the desktop and web Live views.
      */
     public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
     {
@@ -587,7 +587,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     }
 
     /**
-     * Keeps progress snapshots bounded while ensuring that an active call is refreshed before the Systems row's
+     * Keeps progress snapshots bounded while ensuring that an active call is refreshed before the Live row's
      * configured traffic-grant age-out expires.
      */
     long getActivityProgressIntervalMilliseconds()

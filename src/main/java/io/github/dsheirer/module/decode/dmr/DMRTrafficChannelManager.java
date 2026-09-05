@@ -182,7 +182,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Shared activity model used by the desktop and web Systems views.
+     * Shared activity model used by the desktop and web Live views.
      */
     public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
     {

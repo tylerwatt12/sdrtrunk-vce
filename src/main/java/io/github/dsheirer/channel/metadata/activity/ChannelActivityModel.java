@@ -544,7 +544,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     }
 
     /**
-     * Carries transient 20 millisecond voice-frame diagnostics to the matching Systems row.  The first frame, each
+     * Carries transient 20 millisecond voice-frame diagnostics to the matching Live row.  The first frame, each
      * subsequent second, and the final result refresh the view; the per-frame audio path never writes these values to
      * the activity database.
      */
@@ -1067,7 +1067,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     }
 
     /**
-     * Applies a talker alias decoded after the initial traffic grant to the active Systems row.
+     * Applies a talker alias decoded after the initial traffic grant to the active Live row.
      */
     public void p25TrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
                                       Identifier<?> talkerAlias)

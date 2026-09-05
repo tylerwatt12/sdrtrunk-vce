@@ -76,8 +76,8 @@ public class StatsServerPreferenceEditor extends HBox
             mEditorPane.add(getLoggingCheckBox(), 0, row++, 3, 1);
             Label featureExplanation = new Label(
                 "Summary statistics power Dashboard and directory pages. Detailed history additionally powers " +
-                    "Activity pages. Retention cleanup continues when collection is off. The web server, Live " +
-                    "Systems, and web audio operate independently.");
+                    "Activity pages. Retention cleanup continues when collection is off. The web server, Live page, " +
+                    "Radio Systems and Channels, and web audio operate independently.");
             featureExplanation.setWrapText(true);
             mEditorPane.add(featureExplanation, 0, row++, 3, 1);
             mEditorPane.add(getDetailedHistoryCheckBox(), 1, row++, 2, 1);
