@@ -273,6 +273,19 @@ public final class SdrTrunkDatabaseSchema
                     AND json_type(config_json, '$.autoStartOrder') IS NULL
                     AND json_type(config_json, '$.order') IS NULL
                     AND json_type(config_json, '$.channelType') IS NULL
+                    AND CASE decoder_type
+                        WHEN 'DMR' THEN CASE
+                            WHEN json_type(config_json, '$.decodeConfiguration.channelMode') = 'text'
+                                THEN json_extract(config_json, '$.decodeConfiguration.channelMode')
+                                    IN ('CONVENTIONAL', 'TRUNKED')
+                            ELSE 0 END
+                        WHEN 'NXDN' THEN CASE
+                            WHEN json_type(config_json, '$.decodeConfiguration.channelMode') = 'text'
+                                THEN json_extract(config_json, '$.decodeConfiguration.channelMode')
+                                    IN ('CONVENTIONAL', 'TRUNKED')
+                            ELSE 0 END
+                        ELSE 1
+                    END
                 ELSE 0 END
             ),
             CHECK(
@@ -301,6 +314,7 @@ public final class SdrTrunkDatabaseSchema
                 typeof(config_json) = 'text' AND CASE WHEN json_valid(config_json) THEN
                     json_type(config_json, '$') = 'object'
                     AND json_type(config_json, '$.configurationId') IS NULL
+                    AND json_type(config_json, '$.aliasListName') IS NULL
                 ELSE 0 END
             )
         )

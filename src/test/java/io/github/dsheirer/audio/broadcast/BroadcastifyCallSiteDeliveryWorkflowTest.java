@@ -313,7 +313,6 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             BroadcastifyCallSiteConfiguration configuration = new BroadcastifyCallSiteConfiguration();
             configure(configuration, routeName);
             configuration.setAliasListId(ALIAS_LIST_ID);
-            configuration.setAliasListName(ALIAS_LIST_NAME);
             configuration.setChannelConfigurationId(channelConfigurationId);
             mBroadcastModel.addBroadcastConfiguration(configuration);
             assertNotNull(mBroadcastModel.getBroadcaster(configuration.getConfigurationId()));

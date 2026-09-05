@@ -36,13 +36,11 @@ import javafx.beans.property.StringProperty;
 
 /**
  * Broadcastify Calls configuration that restricts delivery to calls observed by one saved trunked-site channel.
- * The Alias List durable ID is authoritative. Its name is retained as display context, while the channel
- * configuration ID identifies the selected saved channel across renames and restarts.
+ * The Alias List durable ID and channel configuration ID identify the selection across renames and restarts.
  */
 public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfiguration
 {
     private final LongProperty mAliasListId = new SimpleLongProperty(AliasListDefinition.UNASSIGNED_ID);
-    private final StringProperty mAliasListName = new SimpleStringProperty();
     private final StringProperty mChannelConfigurationId = new SimpleStringProperty();
 
     /**
@@ -64,7 +62,7 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
         mValid.unbind();
         mValid.bind(Bindings.createBooleanBinding(() -> getSystemID() > 0 && getApiKey() != null &&
                 getHost() != null && hasSiteSelection(), systemIDProperty(), apiKeyProperty(), hostProperty(),
-            mAliasListId, mAliasListName, mChannelConfigurationId));
+            mAliasListId, mChannelConfigurationId));
     }
 
     public LongProperty aliasListIdProperty()
@@ -81,21 +79,6 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
     {
         mAliasListId.set(aliasListId > AliasListDefinition.UNASSIGNED_ID ? aliasListId :
             AliasListDefinition.UNASSIGNED_ID);
-    }
-
-    public StringProperty aliasListNameProperty()
-    {
-        return mAliasListName;
-    }
-
-    public String getAliasListName()
-    {
-        return mAliasListName.get();
-    }
-
-    public void setAliasListName(String aliasListName)
-    {
-        mAliasListName.set(normalize(aliasListName));
     }
 
     public StringProperty channelConfigurationIdProperty()
@@ -136,8 +119,7 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
     }
 
     /**
-     * Resolves the authoritative Alias List identity. The stored name is deliberately not compared so a rename of
-     * the same durable Alias List remains valid.
+     * Resolves the authoritative Alias List identity.
      */
     @JsonIgnore
     public Optional<AliasListDefinition> resolveAliasList(AliasModel aliasModel)
@@ -247,7 +229,6 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
         BroadcastifyCallSiteConfiguration copy = new BroadcastifyCallSiteConfiguration();
         copy.setSystemID(getSystemID());
         copy.setAliasListId(getAliasListId());
-        copy.setAliasListName(getAliasListName());
         copy.setChannelConfigurationId(getChannelConfigurationId());
         return copy;
     }

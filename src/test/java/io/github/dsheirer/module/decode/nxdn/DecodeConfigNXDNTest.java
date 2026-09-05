@@ -18,7 +18,7 @@ class DecodeConfigNXDNTest
     private final ObjectMapper mObjectMapper = new ObjectMapper();
 
     @Test
-    void defaultsLegacyConfigurationToTrunked() throws Exception
+    void missingModeUsesTheExplicitTrunkedDefault() throws Exception
     {
         DecodeConfigNXDN configuration = new DecodeConfigNXDN();
         ObjectNode legacyJson = mObjectMapper.valueToTree(configuration);
@@ -29,7 +29,9 @@ class DecodeConfigNXDNTest
         assertEquals(NXDNChannelMode.TRUNKED, restored.getChannelMode());
         assertTrue(restored.isTrunked());
         assertFalse(restored.isConventional());
-        assertFalse(restored.hasExplicitChannelMode());
+
+        restored.setChannelMode(null);
+        assertEquals(NXDNChannelMode.TRUNKED, restored.getChannelMode());
     }
 
     @Test
@@ -45,6 +47,5 @@ class DecodeConfigNXDNTest
         assertEquals(NXDNChannelMode.CONVENTIONAL, restored.getChannelMode());
         assertTrue(restored.isConventional());
         assertFalse(restored.isTrunked());
-        assertTrue(restored.hasExplicitChannelMode());
     }
 }

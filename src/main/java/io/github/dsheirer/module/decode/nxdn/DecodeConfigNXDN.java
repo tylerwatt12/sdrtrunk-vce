@@ -41,7 +41,7 @@ public class DecodeConfigNXDN extends DecodeConfiguration
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
     private boolean mIgnoreEncryptedCalls = false;
-    private NXDNChannelMode mChannelMode;
+    private NXDNChannelMode mChannelMode = NXDNChannelMode.TRUNKED;
 
     private static final ChannelSpecification CHANNEL_4800 = new ChannelSpecification(12000.0, 6250, 3000.0, 3125.0);
     private static final ChannelSpecification CHANNEL_9600 = new ChannelSpecification(24000.0, 12500, 5200.0, 6250.0);
@@ -75,13 +75,12 @@ public class DecodeConfigNXDN extends DecodeConfiguration
     }
 
     /**
-     * Configured NXDN channel mode. Legacy configurations that do not contain this setting remain trunked, matching
-     * the behavior before an explicit mode was available.
+     * Configured NXDN channel mode.
      */
     @JacksonXmlProperty(isAttribute = true, localName = "channel_mode")
     public NXDNChannelMode getChannelMode()
     {
-        return mChannelMode != null ? mChannelMode : NXDNChannelMode.TRUNKED;
+        return mChannelMode;
     }
 
     /**
@@ -89,18 +88,7 @@ public class DecodeConfigNXDN extends DecodeConfiguration
      */
     public void setChannelMode(NXDNChannelMode channelMode)
     {
-        mChannelMode = channelMode;
-    }
-
-    /**
-     * Indicates whether this configuration explicitly selected conventional or trunked operation. Legacy
-     * configurations without the field still use the historical trunked default, but callers can require additional
-     * decoded evidence before presenting system-only features.
-     */
-    @JsonIgnore
-    public boolean hasExplicitChannelMode()
-    {
-        return mChannelMode != null;
+        mChannelMode = channelMode != null ? channelMode : NXDNChannelMode.TRUNKED;
     }
 
     /**

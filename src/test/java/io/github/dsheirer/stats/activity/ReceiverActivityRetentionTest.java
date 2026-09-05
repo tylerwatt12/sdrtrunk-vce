@@ -210,7 +210,8 @@ class ReceiverActivityRetentionTest
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
                 radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
-            VALUES ('%s', 'CONVENTIONAL', 0, 'Test', 'Test', 'Test', NULL, 0, 'DMR', 460000000, '{}')
+            VALUES ('%s', 'CONVENTIONAL', 0, 'Test', 'Test', 'Test', NULL, 0, 'DMR', 460000000,
+                    '{"decodeConfiguration":{"channelMode":"CONVENTIONAL"}}')
             """.formatted(CONFIGURATION_ID));
         execute(connection, """
             INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)

@@ -241,7 +241,8 @@ class RadioSystemSchemaTest
                 radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
             ) VALUES (
                 '%s', 'TRUNKED', 0, 'DMR system', 'DMR site', 'Control',
-                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 'DMR', 461125000, '{}'
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 'DMR', 461125000,
+                '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'
             )
             """.formatted(CONFIGURATION_ID));
         return connection;

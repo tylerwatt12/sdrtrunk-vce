@@ -13,13 +13,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
@@ -45,6 +50,11 @@ class Format14To15DatabaseMigrationTest
         Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("format14.sqlite"));
         try(Connection connection = open(database))
         {
+            execute(connection, """
+                UPDATE configuration_broadcast_stream
+                SET config_json=json_set(config_json, '$.aliasListName', 'Stale display name')
+                WHERE name='Primary Migration Feed'
+                """);
             List<DatabaseMigrationEffect> preflight = new Format14To15DatabaseMigration().validateSource(connection);
             assertEquals(6, effect(preflight, DatabaseMigrationEffect.Kind.RESET,
                 "receiver activity and call history").affectedRows());
@@ -139,6 +149,15 @@ class Format14To15DatabaseMigrationTest
             assertEquals(0, number(connection, """
                 SELECT COUNT(*) FROM configuration_broadcast_stream
                 WHERE json_type(config_json, '$.configurationId') IS NOT NULL
+                """));
+            assertEquals(0, number(connection, """
+                SELECT COUNT(*) FROM configuration_broadcast_stream
+                WHERE json_type(config_json, '$.aliasListName') IS NOT NULL
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                UPDATE configuration_broadcast_stream
+                SET config_json=json_set(config_json, '$.aliasListName', 'Duplicate display name')
+                WHERE json_extract(config_json, '$.name')='Primary Migration Feed'
                 """));
             assertEquals(1, number(connection, """
                 SELECT COUNT(*) FROM alias_broadcast_channel route
@@ -273,6 +292,47 @@ class Format14To15DatabaseMigrationTest
                 SELECT radioresolve_id FROM configuration_channel WHERE configuration_id='%s'
                 """.formatted(CONVENTIONAL_CHANNEL)));
             connection.rollback();
+        }
+    }
+
+    @Test
+    void makesLegacyDmrAndNxdnChannelModesExplicit() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("format14-legacy-channel-modes.sqlite"));
+        try(Connection connection = open(database))
+        {
+            String mappedDmr = "10000000-0000-4000-8000-000000000001";
+            String conventionalDmr = "10000000-0000-4000-8000-000000000002";
+            String nxdn = "10000000-0000-4000-8000-000000000003";
+            String explicitConventionalDmr = "10000000-0000-4000-8000-000000000004";
+            insertLegacyModeChannel(connection, mappedDmr, "Legacy mapped DMR", "DMR", "TRUNKED",
+                "20000000-0000-4000-8000-000000000001", 20, dmrDecoder(false, 451_012_500L));
+            insertLegacyModeChannel(connection, conventionalDmr, "Legacy conventional DMR", "DMR",
+                "CONVENTIONAL", null, 21, dmrDecoder(false, 0));
+            insertLegacyModeChannel(connection, nxdn, "Legacy NXDN", "NXDN", "TRUNKED",
+                "20000000-0000-4000-8000-000000000003", 22, nxdnDecoderWithoutMode());
+            insertLegacyModeChannel(connection, explicitConventionalDmr, "Explicit conventional DMR", "DMR",
+                "CONVENTIONAL", null, 23, dmrDecoder(true, 451_012_500L));
+
+            connection.setAutoCommit(false);
+            try
+            {
+                new Format14To15DatabaseMigration().migrate(connection);
+                assertEquals("TRUNKED", channelMode(connection, mappedDmr));
+                assertEquals("CONVENTIONAL", channelMode(connection, conventionalDmr));
+                assertEquals("TRUNKED", channelMode(connection, nxdn));
+                assertEquals("CONVENTIONAL", channelMode(connection, explicitConventionalDmr));
+                assertThrows(SQLException.class, () -> execute(connection, """
+                    UPDATE configuration_channel
+                    SET config_json=json_remove(config_json, '$.decodeConfiguration.channelMode')
+                    WHERE configuration_id='%s'
+                    """.formatted(mappedDmr)));
+                connection.rollback();
+            }
+            finally
+            {
+                connection.setAutoCommit(true);
+            }
         }
     }
 
@@ -652,6 +712,81 @@ class Format14To15DatabaseMigrationTest
             connection.rollback();
             return result;
         }
+    }
+
+    private static void insertLegacyModeChannel(Connection connection, String configurationId, String name,
+                                                String decoderType, String channelKind, String radioResolveId,
+                                                int sortOrder, JsonNode decoderJson) throws Exception
+    {
+        ObjectNode payload = (ObjectNode)MAPPER.readTree(scalar(connection, """
+            SELECT config_json FROM configuration_channel WHERE configuration_id='%s'
+            """.formatted(CONVENTIONAL_CHANNEL)));
+        payload.put("configurationId", configurationId);
+        payload.put("system", name + " System");
+        payload.put("site", name + " Site");
+        payload.put("name", name);
+        payload.remove(List.of("aliasListId", "aliasListName", "radioResolveId", "radresGuid", "radres_guid"));
+        if(radioResolveId != null)
+        {
+            payload.put("radresGuid", radioResolveId);
+        }
+        payload.set("decodeConfiguration", decoderJson);
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO configuration_channel(
+                configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
+                radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
+                frequency_count, recording_enabled, event_logging_enabled, config_json
+            )
+            SELECT ?, ?, ?, ?, ?, ?, NULL, ?, auto_start, auto_start_order, ?, source_type,
+                   primary_frequency_hz, frequency_count, recording_enabled, event_logging_enabled, ?
+            FROM configuration_channel
+            WHERE configuration_id=?
+            """))
+        {
+            statement.setString(1, configurationId);
+            statement.setString(2, channelKind);
+            statement.setInt(3, sortOrder);
+            statement.setString(4, name + " System");
+            statement.setString(5, name + " Site");
+            statement.setString(6, name);
+            statement.setString(7, radioResolveId);
+            statement.setString(8, decoderType);
+            statement.setString(9, MAPPER.writeValueAsString(payload));
+            statement.setString(10, CONVENTIONAL_CHANNEL);
+            assertEquals(1, statement.executeUpdate());
+        }
+    }
+
+    private static JsonNode dmrDecoder(boolean keepExplicitMode, long downlinkFrequency)
+    {
+        DecodeConfigDMR decoder = new DecodeConfigDMR();
+        TimeslotFrequency mapping = new TimeslotFrequency();
+        mapping.setNumber(12);
+        mapping.setDownlinkFrequency(downlinkFrequency);
+        decoder.setTimeslotMap(List.of(mapping));
+        ObjectNode json = MAPPER.valueToTree(decoder);
+        if(!keepExplicitMode)
+        {
+            json.remove("channelMode");
+        }
+        return json;
+    }
+
+    private static JsonNode nxdnDecoderWithoutMode()
+    {
+        ObjectNode json = MAPPER.valueToTree(new DecodeConfigNXDN());
+        json.remove("channelMode");
+        return json;
+    }
+
+    private static String channelMode(Connection connection, String configurationId) throws Exception
+    {
+        return scalar(connection, """
+            SELECT json_extract(config_json, '$.decodeConfiguration.channelMode')
+            FROM configuration_channel
+            WHERE configuration_id='%s'
+            """.formatted(configurationId));
     }
 
     private static void assertCanonicalUniqueProviderIds(Map<String,String> providerIds)

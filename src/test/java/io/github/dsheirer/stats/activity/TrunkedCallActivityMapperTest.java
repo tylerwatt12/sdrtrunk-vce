@@ -231,7 +231,8 @@ class TrunkedCallActivityMapperTest
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
                     radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('%s', 'TRUNKED', 0, 'Metro', 'Downtown', 'DMR Site',
-                    '%s', 0, 'DMR', 451012500, '{}')
+                    '%s', 0, 'DMR', 451012500,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
                 """.formatted(channel.getConfigurationId(), DMR_RADIORESOLVE_ID));
         }
     }

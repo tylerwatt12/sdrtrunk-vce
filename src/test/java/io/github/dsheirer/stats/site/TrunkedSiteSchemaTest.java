@@ -277,7 +277,8 @@ class TrunkedSiteSchemaTest
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
                 radioresolve_id, auto_start, decoder_type, address_domain_code,
                 primary_frequency_hz, config_json)
-            VALUES ('%s', 'TRUNKED', 0, 'System', 'Site', 'Control', '%s', 0, '%s', %d, 451000000, '{}')
+            VALUES ('%s', 'TRUNKED', 0, 'System', 'Site', 'Control', '%s', 0, '%s', %d, 451000000,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
             """.formatted(configurationId, configurationId, decoder, "NXDN".equals(decoder) ? 1 : 0));
         execute(connection, """
             INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)

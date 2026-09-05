@@ -511,7 +511,8 @@ class StatsWebDatabaseTest
                     ('%1$s', 'CONVENTIONAL', 75, 'County P25', '', 'P25 Dispatch',
                         75, 'P25_PHASE1', 0, 154875000, '{}'),
                     ('%2$s', 'CONVENTIONAL', 76, 'County NXDN', '', 'NXDN Dispatch',
-                        76, 'NXDN', 1, 452125000, '{}')
+                        76, 'NXDN', 1, 452125000,
+                        '{"decodeConfiguration":{"channelMode":"CONVENTIONAL"}}')
                 """.formatted(CONVENTIONAL_P25_CHANNEL, CONVENTIONAL_NXDN_CHANNEL));
             statement.executeUpdate("""
                 INSERT INTO receiver_channel (
@@ -1019,9 +1020,11 @@ class StatsWebDatabaseTest
                 alias_list_id, decoder_type, address_domain_code, primary_frequency_hz, config_json
             ) VALUES
                 ('%1$s', 'TRUNKED', 78, 'Metro DMR', 'Central', 'DMR Control',
-                    78, 'DMR', 0, 451012500, '{}'),
+                    78, 'DMR', 0, 451012500,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'),
                 ('%2$s', 'TRUNKED', 79, 'Regional NXDN', 'West', 'NXDN Control',
-                    79, 'NXDN', 1, 155012500, '{}')
+                    79, 'NXDN', 1, 155012500,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
             """.formatted(DMR_TRUNKED_CHANNEL, NXDN_TRUNKED_CHANNEL));
         statement.executeUpdate("""
             INSERT INTO radio_system (
@@ -1086,7 +1089,8 @@ class StatsWebDatabaseTest
                     ('%3$s', 'CONVENTIONAL', 73, 'County Fire', '', 'County Fire Dispatch', 73,
                      '10000000-0000-0000-0000-000000000073', 'NBFM', 154310000, '{}'),
                     ('%4$s', 'CONVENTIONAL', 74, 'DMR County', '', 'DMR Dispatch Repeater', 74,
-                     '10000000-0000-0000-0000-000000000074', 'DMR', 460012500, '{}')
+                     '10000000-0000-0000-0000-000000000074', 'DMR', 460012500,
+                     '{"decodeConfiguration":{"channelMode":"CONVENTIONAL"}}')
                 """.formatted(P25_CHANNEL_A, P25_CHANNEL_B, ANALOG_CHANNEL, DMR_CHANNEL));
             statement.executeUpdate("""
                 INSERT INTO radio_system (

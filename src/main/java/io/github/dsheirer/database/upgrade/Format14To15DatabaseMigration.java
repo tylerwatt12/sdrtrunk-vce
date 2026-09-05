@@ -176,10 +176,10 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "Preserve channels, Alias Lists, stream providers, users, credentials, settings, icons, and decoder channel maps"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "saved channel relationships", DatabaseMigrationEffect.UNKNOWN_COUNT,
-                "Use the saved channel UUID and Alias List ID as the only durable internal relationships"),
+                "Use the saved channel UUID and Alias List ID as the only durable internal relationships and make DMR/NXDN channel type explicit"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "broadcast provider relationships", DatabaseMigrationEffect.UNKNOWN_COUNT,
-                "Assign each provider a stable UUID and replace name-based Alias routes with that UUID"),
+                "Assign each provider a stable UUID, replace name-based Alias routes, and keep site selections ID-only"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "browser playback preferences", DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Rename conversation playback fields for stable targets and increment each user preference revision"),
@@ -284,10 +284,10 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "Preserve channels, Alias Lists, stream providers, users, credentials, settings, icons, and decoder channel maps"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "saved channel relationships", input.channels().size(),
-                "Use the saved channel UUID and Alias List ID as the only durable internal relationships"),
+                "Use the saved channel UUID and Alias List ID as the only durable internal relationships and make DMR/NXDN channel type explicit"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "broadcast provider relationships", broadcastRelationships,
-                "Assign each provider a stable UUID and replace name-based Alias routes with that UUID"),
+                "Assign each provider a stable UUID, replace name-based Alias routes, and keep site selections ID-only"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "browser playback preferences", input.preferences().size(),
                 "Rename conversation playback fields for stable targets and increment each user preference revision"),
@@ -751,6 +751,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 }
 
                 ObjectNode payload = parseObject(text(rows, "config_json"), label);
+                normalizeLegacyChannelMode(payload, nullableText(rows, "decoder_type"), label);
                 requireJsonText(payload, "configurationId", configurationId, label, false, true);
                 boolean autoStart = booleanFlag(rows, "auto_start", label);
                 Integer autoStartOrder = nullableInteger(rows, "auto_start_order", label);
@@ -924,7 +925,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 }
 
                 JsonNode storedId = payload.get("configurationId");
-                payload.remove("configurationId");
+                payload.remove(List.of("configurationId", "aliasListName"));
                 candidates.add(new BroadcastCandidate(rowId, tryCanonicalUuid(storedId), sortOrder, name,
                     MAPPER.writeValueAsString(payload)));
             }
@@ -1789,6 +1790,90 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             throw new IOException(label + " JSON is not an object");
         }
         return object;
+    }
+
+    /**
+     * Makes the last implicit DMR/NXDN mode rules explicit at the format boundary. Format 14 could retain JSON from
+     * before the mode field existed, so this frozen conversion must not depend on current decoder defaults.
+     */
+    private static void normalizeLegacyChannelMode(ObjectNode payload, String decoderType, String label)
+        throws IOException
+    {
+        if(!"DMR".equals(decoderType) && !"NXDN".equals(decoderType))
+        {
+            return;
+        }
+
+        if(!(payload.get("decodeConfiguration") instanceof ObjectNode decoder))
+        {
+            throw new IOException(label + " has no decoder configuration object");
+        }
+
+        JsonNode storedMode = decoder.get("channelMode");
+        if(storedMode == null || storedMode.isNull())
+        {
+            String mode = "NXDN".equals(decoderType) || hasUsableLegacyDmrChannelMap(decoder) ?
+                "TRUNKED" : "CONVENTIONAL";
+            decoder.put("channelMode", mode);
+            return;
+        }
+
+        if(!storedMode.isTextual() || !Set.of("CONVENTIONAL", "TRUNKED").contains(storedMode.textValue()))
+        {
+            throw new IOException(label + " has an invalid explicit channel mode");
+        }
+    }
+
+    /** Exact legacy DMR rule: any positive channel number paired with a positive downlink frequency meant trunked. */
+    private static boolean hasUsableLegacyDmrChannelMap(ObjectNode decoder)
+    {
+        JsonNode map = decoder.get("timeslotMap");
+        if(map == null || !map.isArray())
+        {
+            return false;
+        }
+
+        for(JsonNode entry: map)
+        {
+            if(entry != null && entry.isObject() && positiveFormat14WholeNumber(entry.get("number"), true) &&
+                positiveFormat14WholeNumber(entry.get("downlinkFrequency"), false))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Matches Jackson's format-14 integer/string scalar acceptance without accepting fractional values. */
+    private static boolean positiveFormat14WholeNumber(JsonNode value, boolean requireIntRange)
+    {
+        if(value == null || value.isNull())
+        {
+            return false;
+        }
+
+        try
+        {
+            long parsed;
+            if(value.isIntegralNumber() && value.canConvertToLong())
+            {
+                parsed = value.longValue();
+            }
+            else if(value.isTextual())
+            {
+                parsed = Long.parseLong(value.textValue().strip());
+            }
+            else
+            {
+                return false;
+            }
+            return parsed > 0 && (!requireIntRange || parsed <= Integer.MAX_VALUE);
+        }
+        catch(NumberFormatException exception)
+        {
+            return false;
+        }
     }
 
     private static Channel decodeChannel(ObjectNode payload, String label) throws IOException

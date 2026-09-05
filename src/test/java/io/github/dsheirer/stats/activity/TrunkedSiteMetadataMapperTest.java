@@ -342,7 +342,8 @@ class TrunkedSiteMetadataMapperTest
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
                     radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('%s', 'TRUNKED', 0, 'Metro Radio', 'Downtown', 'Control',
-                    '00000000-0000-0000-0000-000000000123', 0, 'DMR', 451000000, '{}')
+                    '00000000-0000-0000-0000-000000000123', 0, 'DMR', 451000000,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
                 """.formatted(channel.getConfigurationId()));
         }
     }

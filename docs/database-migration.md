@@ -204,11 +204,13 @@ The format 14-to-15 step makes saved channel UUIDs, radio-system keys, Alias Lis
 the durable internal identities. It preserves administrator-owned channels, Alias Lists, stream providers, routes,
 accounts, credentials, settings, icons, and decoder-specific channel maps stored with saved channels. Channel rows
 replace the duplicated Alias List name with a foreign key and rename the RadioResolve upload-correlation field so it
-is no longer mistaken for channel or system identity. Broadcast providers receive a canonical stable UUID; an
-existing canonical unique UUID is preserved and a missing one is generated deterministically. Alias streaming routes
-are converted from provider names to provider UUIDs, so a later provider rename cannot break routing. Unresolved or
-ambiguous names, mismatched scalar and JSON state, and malformed or duplicate identities are refused rather than
-guessed.
+is no longer mistaken for channel or system identity. DMR and NXDN rows that predate an explicit channel type are
+converted once using the exact former defaults: a DMR row is trunked only when it has a usable channel-to-frequency
+map, while an NXDN row is trunked. Broadcast providers receive a canonical stable UUID; an existing canonical unique
+UUID is preserved and a missing one is generated deterministically. Site-bound Broadcastify providers keep only the
+Alias List ID, not a duplicate display name. Alias streaming routes are converted from provider names to provider
+UUIDs, so a later provider rename cannot break routing. Unresolved or ambiguous names, mismatched scalar and JSON
+state, and malformed or duplicate identities are refused rather than guessed.
 
 The same step removes the unused legacy named Channel Maps table and reports how many of those retired rows were
 dropped. These are not the decoder channel maps stored inside saved DMR or NXDN channel configuration, which remain

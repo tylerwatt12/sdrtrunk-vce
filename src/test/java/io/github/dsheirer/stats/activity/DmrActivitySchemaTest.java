@@ -237,7 +237,8 @@ class DmrActivitySchemaTest
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
                 radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
-            VALUES ('%s', 'CONVENTIONAL', 0, 'DMR', 'Repeater', '%s', NULL, 0, 'DMR', 461125000, '{}')
+            VALUES ('%s', 'CONVENTIONAL', 0, 'DMR', 'Repeater', '%s', NULL, 0, 'DMR', 461125000,
+                    '{"decodeConfiguration":{"channelMode":"CONVENTIONAL"}}')
             """.formatted(configurationId(fixture), fixture));
     }
 

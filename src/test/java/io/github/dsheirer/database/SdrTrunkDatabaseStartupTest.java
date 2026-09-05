@@ -127,6 +127,11 @@ class SdrTrunkDatabaseStartupTest
                     "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'  ','{}')",
                 "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,config_json) " +
                     "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'MPT1327','{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'DMR','{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'NXDN'," +
+                    "'{\"decodeConfiguration\":{\"channelMode\":\"UNKNOWN\"}}')",
                 "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,primary_frequency_hz," +
                     "config_json) VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,0,'{}')",
                 "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,primary_frequency_hz," +
@@ -214,6 +219,10 @@ class SdrTrunkDatabaseStartupTest
                 UPDATE configuration_broadcast_stream
                 SET config_json=json_set(config_json, '$.configurationId',
                     '33333333-3333-4333-8333-333333333333')
+                """));
+            assertThrows(java.sql.SQLException.class, () -> statement.executeUpdate("""
+                UPDATE configuration_broadcast_stream
+                SET config_json=json_set(config_json, '$.aliasListName', 'Duplicate display name')
                 """));
         }
     }

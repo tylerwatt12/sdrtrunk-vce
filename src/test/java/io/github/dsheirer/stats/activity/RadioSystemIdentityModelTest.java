@@ -795,7 +795,7 @@ class RadioSystemIdentityModelTest
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                 radioresolve_id, auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
-            ) VALUES (?, ?, 0, 'Configured system', 'Configured site', ?, ?, ?, 0, ?, ?, 851012500, '{}')
+            ) VALUES (?, ?, 0, 'Configured system', 'Configured site', ?, ?, ?, 0, ?, ?, 851012500, ?)
             """))
         {
             statement.setString(1, configurationId);
@@ -805,6 +805,11 @@ class RadioSystemIdentityModelTest
             statement.setString(5, radioResolveId);
             statement.setString(6, decoder);
             statement.setInt(7, "NXDN".equals(decoder) ? 1 : 0);
+            statement.setString(8, switch(decoder)
+            {
+                case "DMR", "NXDN" -> "{\"decodeConfiguration\":{\"channelMode\":\"" + kind + "\"}}";
+                default -> "{}";
+            });
             statement.executeUpdate();
         }
     }

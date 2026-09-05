@@ -67,8 +67,8 @@ class BroadcastifyCallSiteConfigurationTest
             assertInstanceOf(BroadcastifyCallSiteConfiguration.class, restoredBase);
 
         assertEquals("broadcastifyCallSiteConfiguration", tree.path("type").asText());
+        assertFalse(tree.has("aliasListName"));
         assertEquals(ALIAS_LIST_ID, restored.getAliasListId());
-        assertEquals("Regional P25", restored.getAliasListName());
         assertEquals(CHANNEL_ID, restored.getChannelConfigurationId());
         assertEquals(BroadcastServerType.BROADCASTIFY_CALL_SITE, restored.getBroadcastServerType());
         assertTrue(restored.isValid());
@@ -97,7 +97,6 @@ class BroadcastifyCallSiteConfigurationTest
         BroadcastifyCallSiteConfiguration restored = assertInstanceOf(BroadcastifyCallSiteConfiguration.class,
             store.load().broadcastConfigurations().getFirst());
         assertEquals(ALIAS_LIST_ID, restored.getAliasListId());
-        assertEquals("Regional P25", restored.getAliasListName());
         assertEquals(CHANNEL_ID, restored.getChannelConfigurationId());
         assertEquals("West site calls", restored.getName());
         assertTrue(restored.isEnabled());
@@ -107,15 +106,15 @@ class BroadcastifyCallSiteConfigurationTest
     void selectorOffersOnlySavedSupportedTrunkedChannelsForTheAliasList()
     {
         AliasListDefinition p25 = definition(ALIAS_LIST_ID, "Regional P25", AliasListFamily.P25);
-        Channel phase1 = channel("Phase 1", Channel.ChannelType.STANDARD, "Regional P25",
+        Channel phase1 = channel("Phase 1", Channel.ChannelType.STANDARD, p25.getId(), "Regional P25",
             new DecodeConfigP25Phase1());
-        Channel phase2 = channel("Phase 2", Channel.ChannelType.STANDARD, "regional p25",
+        Channel phase2 = channel("Phase 2", Channel.ChannelType.STANDARD, p25.getId(), "regional p25",
             new DecodeConfigP25Phase2());
-        Channel conventional = channel("Conventional", Channel.ChannelType.STANDARD, "Regional P25",
+        Channel conventional = channel("Conventional", Channel.ChannelType.STANDARD, p25.getId(), "Regional P25",
             new DecodeConfigP25Conventional());
-        Channel traffic = channel("Traffic", Channel.ChannelType.TRAFFIC, "Regional P25",
+        Channel traffic = channel("Traffic", Channel.ChannelType.TRAFFIC, p25.getId(), "Regional P25",
             new DecodeConfigP25Phase1());
-        Channel reassigned = channel("Other list", Channel.ChannelType.STANDARD, "Other P25",
+        Channel reassigned = channel("Other list", Channel.ChannelType.STANDARD, 99L, "Other P25",
             new DecodeConfigP25Phase1());
 
         assertEquals(List.of(phase1, phase2), BroadcastifyCallSiteConfiguration.eligibleChannels(
@@ -127,9 +126,10 @@ class BroadcastifyCallSiteConfigurationTest
         DecodeConfigDMR conventionalDmr = new DecodeConfigDMR();
         conventionalDmr.setChannelMode(DMRChannelMode.CONVENTIONAL);
         assertTrue(BroadcastifyCallSiteConfiguration.isEligibleChannel(
-            channel("DMR trunked", Channel.ChannelType.STANDARD, "Regional DMR", trunkedDmr), dmr));
+            channel("DMR trunked", Channel.ChannelType.STANDARD, dmr.getId(), "Regional DMR", trunkedDmr), dmr));
         assertFalse(BroadcastifyCallSiteConfiguration.isEligibleChannel(
-            channel("DMR conventional", Channel.ChannelType.STANDARD, "Regional DMR", conventionalDmr), dmr));
+            channel("DMR conventional", Channel.ChannelType.STANDARD, dmr.getId(), "Regional DMR",
+                conventionalDmr), dmr));
 
         AliasListDefinition nxdn = definition(43L, "Regional NXDN", AliasListFamily.NXDN);
         DecodeConfigNXDN trunkedNxdn = new DecodeConfigNXDN();
@@ -137,9 +137,11 @@ class BroadcastifyCallSiteConfigurationTest
         DecodeConfigNXDN conventionalNxdn = new DecodeConfigNXDN();
         conventionalNxdn.setChannelMode(NXDNChannelMode.CONVENTIONAL);
         assertTrue(BroadcastifyCallSiteConfiguration.isEligibleChannel(
-            channel("NXDN trunked", Channel.ChannelType.STANDARD, "Regional NXDN", trunkedNxdn), nxdn));
+            channel("NXDN trunked", Channel.ChannelType.STANDARD, nxdn.getId(), "Regional NXDN", trunkedNxdn),
+            nxdn));
         assertFalse(BroadcastifyCallSiteConfiguration.isEligibleChannel(
-            channel("NXDN conventional", Channel.ChannelType.STANDARD, "Regional NXDN", conventionalNxdn), nxdn));
+            channel("NXDN conventional", Channel.ChannelType.STANDARD, nxdn.getId(), "Regional NXDN",
+                conventionalNxdn), nxdn));
     }
 
     @Test
@@ -149,7 +151,7 @@ class BroadcastifyCallSiteConfigurationTest
         AliasModel aliasModel = new AliasModel();
         aliasModel.replaceCommittedConfiguration(List.of(renamed), List.of());
         BroadcastifyCallSiteConfiguration configuration = configuredSiteProvider();
-        Channel selected = channel("West", Channel.ChannelType.STANDARD, renamed.getName(),
+        Channel selected = channel("West", Channel.ChannelType.STANDARD, renamed.getId(), renamed.getName(),
             new DecodeConfigP25Phase1());
         selected.setConfigurationId(CHANNEL_ID);
 
@@ -161,17 +163,17 @@ class BroadcastifyCallSiteConfigurationTest
         assertFalse(configuration.hasValidSiteSelection(aliasModel, List.of()),
             "A deleted selected channel must not be rebound");
 
-        Channel reassigned = channel("West", Channel.ChannelType.STANDARD, "A different Alias List",
+        Channel reassigned = channel("West", Channel.ChannelType.STANDARD, 99L, "A different Alias List",
             new DecodeConfigP25Phase1());
         reassigned.setConfigurationId(CHANNEL_ID);
         assertFalse(configuration.hasValidSiteSelection(aliasModel, List.of(reassigned)));
 
-        Channel conventional = channel("West", Channel.ChannelType.STANDARD, renamed.getName(),
+        Channel conventional = channel("West", Channel.ChannelType.STANDARD, renamed.getId(), renamed.getName(),
             new DecodeConfigP25Conventional());
         conventional.setConfigurationId(CHANNEL_ID);
         assertFalse(configuration.hasValidSiteSelection(aliasModel, List.of(conventional)));
 
-        Channel traffic = channel("West", Channel.ChannelType.TRAFFIC, renamed.getName(),
+        Channel traffic = channel("West", Channel.ChannelType.TRAFFIC, renamed.getId(), renamed.getName(),
             new DecodeConfigP25Phase1());
         traffic.setConfigurationId(CHANNEL_ID);
         assertFalse(configuration.hasValidSiteSelection(aliasModel, List.of(traffic)));
@@ -191,7 +193,6 @@ class BroadcastifyCallSiteConfigurationTest
         configuration.setSystemID(1);
         configuration.setApiKey("test-key");
         configuration.setAliasListId(ALIAS_LIST_ID);
-        configuration.setAliasListName("Regional P25");
         configuration.setChannelConfigurationId(CHANNEL_ID);
         return configuration;
     }
@@ -203,11 +204,12 @@ class BroadcastifyCallSiteConfigurationTest
         return definition;
     }
 
-    private static Channel channel(String name, Channel.ChannelType type, String aliasListName,
+    private static Channel channel(String name, Channel.ChannelType type, long aliasListId, String aliasListName,
                                    io.github.dsheirer.module.decode.config.DecodeConfiguration decoder)
     {
         Channel channel = new Channel(name, type);
         channel.setAliasListName(aliasListName);
+        channel.setAliasListId(aliasListId);
         channel.setDecodeConfiguration(decoder);
         return channel;
     }
