@@ -358,7 +358,7 @@ class Format4To5DatabaseMigrationTest
     }
 
     @Test
-    void refusesPersonalSettingsWithoutAnAccountOwnerAndLeavesSourceUnchanged() throws Exception
+    void retainsPersonalSettingsWithoutAnAccountForInitialAdministratorSetup() throws Exception
     {
         Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("settings-without-owner.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -368,20 +368,45 @@ class Format4To5DatabaseMigrationTest
                 SET settings_json='{"formatVersion":1,"primaryAdmin":null,"users":[],"policyOverrides":{}}'
                 WHERE key='web.access.v1'
                 """);
-            String displayBefore = scalar(connection, """
-                SELECT settings_json FROM application_settings WHERE key='web.display.v1'
-                """);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-            assertTrue(exception.getMessage().contains(
-                "Personal web settings exist without an account to own them"), exception::getMessage);
-            assertTrue(exception.getMessage().contains(
-                "create the primary administrator in the old build before migrating"), exception::getMessage);
-            assertEquals("4", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals(displayBefore, scalar(connection, """
-                SELECT settings_json FROM application_settings WHERE key='web.display.v1'
+            DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
+                DatabaseFormatCatalog.inspect(connection));
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.PRESERVE,
+                "initial administrator browser preferences", 5);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "superseded settings storage", 1);
+
+            connection.setAutoCommit(false);
+            try
+            {
+                DatabaseMigrationChain.migrate(connection);
+                connection.commit();
+            }
+            catch(Exception exception)
+            {
+                connection.rollback();
+                throw exception;
+            }
+            finally
+            {
+                connection.setAutoCommit(true);
+            }
+
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+                metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals("1", scalar(connection, """
+                SELECT COUNT(*) FROM application_settings WHERE key='web.display.v1'
                 """));
-            assertFalse(tableExists(connection, "web_user"));
+            assertEquals("false:true:DETAILED:125", scalar(connection, """
+                SELECT json_extract(settings_json,
+                           '$."user/io/github/dsheirer/preference/nowplaying"."show.control.decode.quality"') || ':' ||
+                       json_extract(settings_json,
+                           '$."user/io/github/dsheirer/preference/nowplaying"."show.voice.decode.quality"') || ':' ||
+                       json_extract(settings_json,
+                           '$."user/io/github/dsheirer/preference/nowplaying"."decode.quality.display.mode"') || ':' ||
+                       json_extract(settings_json,
+                           '$."user/io/github/dsheirer/preference/nowplaying"."live.detail.matching.row.limit"')
+                FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
         }
     }
 

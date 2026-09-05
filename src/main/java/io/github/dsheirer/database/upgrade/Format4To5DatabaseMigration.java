@@ -116,6 +116,9 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "per-user browser preferences",
                 DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Seed every migrated account from the former shared browser presentation values"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
+                "initial administrator browser preferences", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Retain ownerless Alpha presentation values until setup creates the primary administrator"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "site-settings revision",
                 1, "Seed the optimistic concurrency revision for receiver-wide settings"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP, "retired web policy overrides",
@@ -157,7 +160,10 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
         insertPolicies(connection, input.policies());
         updatePortablePreferences(connection, input.portablePreferences());
         deleteSetting(connection, ACCESS_KEY);
-        deleteSetting(connection, DISPLAY_KEY);
+        if(!input.pendingInitialAdminPreferences())
+        {
+            deleteSetting(connection, DISPLAY_KEY);
+        }
         setMetadata(connection, "configuration_schema_version", "3");
         setMetadata(connection, "settings_schema_version", "3");
     }
@@ -176,12 +182,9 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
             ChannelInspection channelInspection = inspectChannels(connection);
             LegacyAccess access = parseAccess(setting(connection, ACCESS_KEY));
             LegacyPresentation presentation = parsePresentation(setting(connection, DISPLAY_KEY),
-                setting(connection, PORTABLE_PREFERENCES_KEY));
-            if(access.accounts().isEmpty() && presentation.hasPersonalState())
-            {
-                throw new IOException("Personal web settings exist without an account to own them; " +
-                    "create the primary administrator in the old build before migrating");
-            }
+                setting(connection, PORTABLE_PREFERENCES_KEY), access.accounts().isEmpty());
+            boolean pendingInitialAdminPreferences =
+                access.accounts().isEmpty() && presentation.hasPersonalState();
             String preferencesJson = Format6WebUserPreferencesCodec.defaults(
                 presentation.showEncryptionDetails(), presentation.showControlDecodeQuality(),
                 presentation.showVoiceDecodeQuality(), presentation.decodeQualityDisplayMode(),
@@ -191,7 +194,7 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                 access.accounts(), access.policies(), preferencesJson, presentation.portablePreferences(),
                 access.retiredOverrideCount(), presentation.movedPreferenceCount(),
                 setting(connection, ACCESS_KEY).isPresent() ? 1 : 0,
-                setting(connection, DISPLAY_KEY).isPresent() ? 1 : 0);
+                setting(connection, DISPLAY_KEY).isPresent() ? 1 : 0, pendingInitialAdminPreferences);
         }
         catch(IOException | IllegalArgumentException exception)
         {
@@ -415,7 +418,8 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
     }
 
     private static LegacyPresentation parsePresentation(Optional<String> displayStored,
-                                                         Optional<String> portableStored) throws IOException
+                                                         Optional<String> portableStored,
+                                                         boolean retainForInitialAdministrator) throws IOException
     {
         boolean encryption = true;
         if(displayStored.isPresent())
@@ -490,7 +494,10 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                     moved++;
                 }
 
-                MOVED_NOW_PLAYING_KEYS.forEach(nowPlaying::remove);
+                if(!retainForInitialAdministrator)
+                {
+                    MOVED_NOW_PLAYING_KEYS.forEach(nowPlaying::remove);
+                }
             }
         }
 
@@ -665,12 +672,17 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                 input.policies().size(), "Preserve active non-default configurable overrides"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "per-user browser preferences",
                 input.accounts().size(), "Seed the typed version-1 preference document for each migrated account"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
+                "initial administrator browser preferences",
+                input.pendingInitialAdminPreferences() ? input.displayRows() + input.movedPreferenceCount() : 0,
+                "Retain ownerless Alpha presentation values until setup creates the primary administrator"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "site-settings revision",
                 1, "Seed the optimistic concurrency revision for receiver-wide settings"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP, "retired web policy overrides",
                 input.retiredOverrideCount(), "Drop recognized aliases and tuner-spectrum legacy overrides"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP, "superseded settings storage",
-                input.accessRows() + input.displayRows() + input.movedPreferenceCount(),
+                input.accessRows() + (input.pendingInitialAdminPreferences() ? 0 :
+                    input.displayRows() + input.movedPreferenceCount()),
                 "Remove the two legacy web documents and moved per-user Java preference fields"));
     }
 
@@ -874,7 +886,8 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
     private record MigrationInput(List<ActiveChannelRow> channels, Set<Long> retiredChannelIds,
                                   List<AccountInput> accounts, Map<String,AccessTier> policies, String preferencesJson,
                                   Optional<String> portablePreferences, int retiredOverrideCount,
-                                  int movedPreferenceCount, int accessRows, int displayRows)
+                                  int movedPreferenceCount, int accessRows, int displayRows,
+                                  boolean pendingInitialAdminPreferences)
     {
     }
 }

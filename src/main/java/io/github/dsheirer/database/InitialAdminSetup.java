@@ -6,6 +6,7 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.settings.WebUserPreferences;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -94,6 +95,7 @@ public final class InitialAdminSetup
 
         if(new WebAccessService(databasePath).isPrimaryAdminConfigured())
         {
+            InitialAdminPreferenceHandoff.clear(databasePath);
             writeState(databasePath, COMPLETE);
             return false;
         }
@@ -103,7 +105,10 @@ public final class InitialAdminSetup
 
     public static void provision(Path databasePath, char[] password) throws IOException, SQLException
     {
-        new WebAccessService(databasePath).provisionOrResetPrimaryAdmin(password);
+        WebUserPreferences initialPreferences = InitialAdminPreferenceHandoff.read(databasePath)
+            .orElseGet(WebUserPreferences::defaults);
+        new WebAccessService(databasePath).provisionOrResetPrimaryAdmin(password, initialPreferences);
+        InitialAdminPreferenceHandoff.clear(databasePath);
         writeState(databasePath, COMPLETE);
     }
 

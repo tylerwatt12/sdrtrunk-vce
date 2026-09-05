@@ -140,6 +140,17 @@ public final class WebAccessService
     /** Local-only primary-administrator bootstrap and recovery. */
     public WebAccessAccount provisionOrResetPrimaryAdmin(char[] password) throws IOException, SQLException
     {
+        return provisionOrResetPrimaryAdmin(password, WebUserPreferences.defaults());
+    }
+
+    /**
+     * Local-only primary-administrator bootstrap with explicit preferences for a newly created account. Existing
+     * administrators keep their stored preferences when their password is reset.
+     */
+    public WebAccessAccount provisionOrResetPrimaryAdmin(char[] password, WebUserPreferences initialPreferences)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(initialPreferences, "Initial administrator preferences cannot be null");
         char[] copy = copyPassword(password);
         mMutationLock.lock();
         try
@@ -153,7 +164,7 @@ public final class WebAccessService
             if(existing == null)
             {
                 long id = mUsers.insert(verifier, AccessTier.ADMIN, true,
-                    WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
+                    WebUserPreferencesCodec.encode(initialPreferences));
                 replacement = storedAccount(id, verifier, AccessTier.ADMIN, true);
             }
             else

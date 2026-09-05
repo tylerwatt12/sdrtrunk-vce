@@ -111,6 +111,9 @@ authoritative channel document even when the old derived columns are stale; move
 account; and drops and counts recognized retired MPT-1327 and sound-card rows, retired web-policy overrides, and
 superseded personal setting storage. Malformed or ambiguous administrator-owned channel documents, identities,
 credentials, access policy, and shared preferences are refused rather than repaired or guessed.
+An Alpha profile with no account may still contain the older shared presentation choices. Those values are retained
+through migration and assigned to the primary administrator when setup creates it; their legacy storage is removed
+only after that account safely owns the converted preferences.
 
 Global database format 6 rekeys existing configured conventional
 receiver contexts from the former RadioResolve GUID key to the saved channel configuration UUID key. The same context

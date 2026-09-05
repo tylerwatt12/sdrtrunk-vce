@@ -97,7 +97,10 @@ MPT-1327 and sound-card channel rows, retired web-policy overrides, and supersed
 refuses a malformed or ambiguous authoritative channel document, identity, kind, RadioResolve GUID, account,
 credential, access policy, or shared preference instead of guessing. Password verifier material, roles,
 authentication revisions, supported access overrides, shared receiver preferences, and active supported channels are
-preserved exactly or converted deterministically.
+preserved exactly or converted deterministically. Published Alpha profiles can contain the former shared browser
+presentation values without any web account because those builds did not support administrator accounts. In that
+valid case the migration retains the bounded legacy values until setup creates the primary administrator, assigns the
+converted preferences to that account, and only then removes the superseded storage.
 
 The format 5-to-6 step changes configured conventional activity identity from the old RadioResolve GUID key to the
 saved channel's configuration UUID key. It updates the existing `receiver_context` row in place, so its stable row ID

@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -118,6 +119,72 @@ class ApplicationDatabaseMigratorTest
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
+    }
+
+    @Test
+    void migratesPublishedAlphaPreferencesWithoutAnAdministratorAndAssignsThemDuringSetup() throws Exception
+    {
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms) VALUES
+                    ('web.display.v1',
+                     '{"format_version":1,"show_encryption_details":false}', 1),
+                    ('portable_java_preferences_v1',
+                     '{"user/io/github/dsheirer/preference/nowplaying":{' ||
+                     '"show.control.decode.quality":"false",' ||
+                     '"show.voice.decode.quality":"true",' ||
+                     '"decode.quality.display.mode":"DETAILED",' ||
+                     '"live.detail.matching.row.limit":"125"},' ||
+                     '"user/example":{"sentinel":"preserve-me"}}', 1)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "PRESERVE initial administrator browser preferences: 5 row(s)"), result.output());
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM web_user"));
+        assertEquals("1", scalar(database,
+            "SELECT COUNT(*) FROM application_settings WHERE key='web.display.v1'"));
+
+        InitialAdminSetup.initializeNewProfile(database);
+        assertTrue(InitialAdminSetup.isPasswordRequired(database));
+        char[] password = "migrated alpha administrator".toCharArray();
+        InitialAdminSetup.provision(database, password);
+
+        assertEquals("complete", scalar(database, """
+            SELECT value FROM database_metadata WHERE key='initial_admin_setup'
+            """));
+        assertTrue(new WebAccessService(database).authenticate("admin", password).isPresent());
+        assertEquals("0:0:1:detailed:125", scalar(database, """
+            SELECT json_extract(preferences_json, '$.presentation.show_encryption_details') || ':' ||
+                   json_extract(preferences_json, '$.presentation.show_control_decode_quality') || ':' ||
+                   json_extract(preferences_json, '$.presentation.show_voice_decode_quality') || ':' ||
+                   json_extract(preferences_json, '$.presentation.decode_quality_display_mode') || ':' ||
+                   json_extract(preferences_json, '$.presentation.live_detail_row_limit')
+            FROM web_user WHERE username='admin'
+            """));
+        assertEquals("0", scalar(database,
+            "SELECT COUNT(*) FROM application_settings WHERE key='web.display.v1'"));
+        assertEquals("preserve-me", scalar(database, """
+            SELECT json_extract(settings_json, '$."user/example".sentinel')
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM application_settings
+            WHERE key='portable_java_preferences_v1' AND (
+                json_type(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying"."show.control.decode.quality"') IS NOT NULL
+                OR json_type(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying"."show.voice.decode.quality"') IS NOT NULL
+                OR json_type(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying"."decode.quality.display.mode"') IS NOT NULL
+                OR json_type(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying"."live.detail.matching.row.limit"') IS NOT NULL)
+            """));
     }
 
     @Test

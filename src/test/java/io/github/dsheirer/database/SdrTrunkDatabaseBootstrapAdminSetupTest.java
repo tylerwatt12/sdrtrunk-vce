@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebUserPreferencesService;
+import io.github.dsheirer.web.settings.WebUserPreferences;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -98,5 +100,59 @@ class SdrTrunkDatabaseBootstrapAdminSetupTest
         assertFalse(InitialAdminSetup.isPasswordRequired(database));
         assertEquals("complete", InitialAdminSetup.readState(database));
         assertTrue(new WebAccessService(database).authenticate("admin", password).isPresent());
+    }
+
+    @Test
+    void credentialPersistedBeforePreferenceHandoffCleanupCompletesRecovery() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("interrupted-handoff"));
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms) VALUES
+                    ('web.display.v1', '{"format_version":1,"show_encryption_details":false}', 1),
+                    ('portable_java_preferences_v1',
+                     '{"user/io/github/dsheirer/preference/nowplaying":{' ||
+                     '"show.control.decode.quality":"false",' ||
+                     '"show.voice.decode.quality":"true",' ||
+                     '"decode.quality.display.mode":"DETAILED",' ||
+                     '"live.detail.matching.row.limit":"125"}}', 1)
+                """))
+        {
+            statement.executeUpdate();
+        }
+
+        WebUserPreferences migrated = WebUserPreferences.defaults(false, false, true, "detailed", 125);
+        char[] password = "persisted handoff password".toCharArray();
+        var primary = new WebAccessService(database).provisionOrResetPrimaryAdmin(password, migrated);
+
+        assertFalse(InitialAdminSetup.isPasswordRequired(database));
+        assertEquals("complete", InitialAdminSetup.readState(database));
+        assertEquals(migrated, new WebUserPreferencesService(database).get(primary).preferences());
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT COUNT(*) FROM application_settings
+                WHERE key='web.display.v1' OR
+                      (key='portable_java_preferences_v1' AND (
+                          json_type(settings_json,
+                              '$."user/io/github/dsheirer/preference/nowplaying"."show.control.decode.quality"')
+                              IS NOT NULL OR
+                          json_type(settings_json,
+                              '$."user/io/github/dsheirer/preference/nowplaying"."show.voice.decode.quality"')
+                              IS NOT NULL OR
+                          json_type(settings_json,
+                              '$."user/io/github/dsheirer/preference/nowplaying"."decode.quality.display.mode"')
+                              IS NOT NULL OR
+                          json_type(settings_json,
+                              '$."user/io/github/dsheirer/preference/nowplaying"."live.detail.matching.row.limit"')
+                              IS NOT NULL))
+                """))
+        {
+            try(var resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                assertEquals(0, resultSet.getLong(1));
+            }
+        }
     }
 }
