@@ -80,10 +80,12 @@ Each step owns exactly one `N -> N+1` transformation. The runner repeatedly appl
 reaches the target. There is no release graph, alpha/nightly branch, path-cost planner, or second migration-history
 table. A target build retains every step back to the Alpha 8 baseline.
 
-The format 2-to-3 step creates a missing canonical factory Alias List and its Default scan-list routing only when no
-case-insensitive name match exists. An existing same-family match keeps its stored spelling and administrator-owned
-routing; blank compatible channels use that stored spelling. A canonical name owned by the wrong family is refused
-during preflight rather than renamed or repurposed.
+The format 2-to-3 step creates missing canonical factory Alias Lists and their Default scan-list routing. An existing
+same-family match keeps its stored spelling and administrator-owned routing; blank compatible channels use that
+stored spelling. If a custom list from the source uses a factory name for a different family, the migrator moves that
+custom list to a unique name such as `Default P25 (DMR)`, preserves its ID, aliases, policy, routing, and historical
+references, and then creates the correct factory list. The exact rename and reference counts appear in preflight and
+the completion report.
 
 The format 3-to-4 step establishes separate logical-call and P25 site-observation summaries at an explicit collection
 boundary. It does not invent those new metrics from older physical receiver-leg activity.
@@ -139,8 +141,9 @@ The format 10-to-11 step restores missing factory Alias Lists once, including fa
 administrator. The factory names are `Default P25`, `Default DMR`, `Default NXDN`, and `Default Analog` (AM/NBFM).
 A case-insensitive `Default NBFM` list in the analog family is renamed in place only when `Default Analog` is free;
 its ID, aliases, recording policy, routing, and channel assignments are retained. If both names exist, neither list
-is merged or removed. Other custom names are preserved. A factory target name owned by an incompatible family, or
-contradictory saved channel Alias List references, is refused rather than guessed.
+is merged or removed. Other custom names are preserved. A factory target name owned by an incompatible family is
+moved to a unique custom name with its ID and saved references retained. If a channel's Alias List scalar and JSON
+disagree, the JSON is repaired from the scalar used by the previous runtime.
 Only newly created lists get Default scan-list routing with unmatched recording disabled. Existing lists keep their
 routing and recording policy. Compatible channels with a blank Alias List selection get their factory list; existing
 selections stay unchanged except references to the renamed analog list. Preflight and completion report the affected
@@ -165,8 +168,12 @@ Retain the existing launcher, child-process isolation, source backup, staged-cop
 validation, and atomic promotion where they already meet this contract. Graphical setup, headless setup, and direct
 SQLite-file selection are entry points to the same engine, not separate implementations.
 
-The Swing Setup Wizard owns first-run graphical presentation. Migration preflight, progress, and completion stay on
-its Starting point page; completion offers Copy Message and a ten-second continuation countdown. After promotion,
+The Swing Setup Wizard owns first-run graphical presentation. Migration preflight runs the complete chain on a
+disposable SQLite snapshot so a later-step refusal is shown before approval; the selected source remains unchanged.
+Preflight, progress, and completion stay on its Starting point page; completion offers Copy Message and a ten-second
+continuation countdown. Errors remain compact and inline with expandable details and a Copy error action. Database
+replacement and startup errors use the same bounded, expandable, copyable presentation instead of message-sized
+dialogs. After promotion,
 Back can review the installed source/results but cannot replace the database. The separately confirmed post-setup
 SQLite replacement workflow is reached through **Help > Setup Wizard…** on that same Starting point page. It retains
 its existing service-stop, backup, validation, restart, and quit-blocking rules. Its source confirmation and completion

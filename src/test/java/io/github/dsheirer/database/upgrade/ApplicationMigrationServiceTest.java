@@ -99,6 +99,28 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    void migrationPlanRunsEveryLaterStepOnADisposableSnapshot() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("later-step-preflight.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('setup_wizard', '{"format_version":1,"complete":false}', 1)
+                """);
+        }
+
+        SQLException failure = assertThrows(SQLException.class,
+            () -> ApplicationMigrationService.readMigrationPlan(database));
+
+        assertTrue(failure.getMessage().contains("Unexpected setup progress"), failure::getMessage);
+        assertEquals("4", scalar(database, "SELECT value FROM database_metadata " +
+            "WHERE key='database_format_version'"));
+        assertEquals("1", scalar(database,
+            "SELECT COUNT(*) FROM application_settings WHERE key='setup_wizard'"));
+    }
+
+    @Test
     void migratesExactFormat1ProfileWithSafetyBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("format-1-data");

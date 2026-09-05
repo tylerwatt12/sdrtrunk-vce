@@ -553,15 +553,79 @@ public final class ApplicationMigrationService
             throw new IOException("SDRTrunk SQLite database does not exist: " + normalized);
         }
 
+        DatabaseFormatCatalog.DetectedFormat source;
+        DatabaseMigrationChain.PreflightReport sourceOnly;
         try(Connection connection = openReadOnly(normalized))
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-            DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspect(connection);
-            DatabaseMigrationChain.PreflightReport report =
-                DatabaseMigrationChain.validateSource(connection, source);
+            source = DatabaseFormatCatalog.inspect(connection);
+            sourceOnly = DatabaseMigrationChain.validateSource(connection, source);
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
-            return report;
+        }
+
+        if(!source.requiresMigration())
+        {
+            return sourceOnly;
+        }
+
+        Path previewDirectory = Files.createTempDirectory("sdrtrunk-migration-preview-");
+        Path previewDatabase = previewDirectory.resolve(SdrTrunkDatabasePath.DATABASE_FILENAME);
+        Throwable failure = null;
+        try
+        {
+            SqliteDatabaseSnapshot.createForInspection(normalized, previewDatabase);
+            try(Connection connection = SdrTrunkDatabase.open(previewDatabase))
+            {
+                connection.setAutoCommit(false);
+                try
+                {
+                    DatabaseMigrationChain.PreflightReport complete =
+                        DatabaseMigrationChain.simulate(connection, source);
+                    requireIntegrity(connection);
+                    requireForeignKeysValid(connection);
+                    connection.rollback();
+                    return complete;
+                }
+                catch(SQLException | RuntimeException | Error e)
+                {
+                    connection.rollback();
+                    throw e;
+                }
+                finally
+                {
+                    connection.setAutoCommit(true);
+                }
+            }
+        }
+        catch(IOException | SQLException | RuntimeException | Error e)
+        {
+            failure = e;
+            throw e;
+        }
+        finally
+        {
+            IOException cleanupFailure = null;
+            try
+            {
+                deleteDatabaseAndSidecarsIfExists(previewDatabase);
+                Files.deleteIfExists(previewDirectory);
+            }
+            catch(IOException e)
+            {
+                cleanupFailure = e;
+            }
+            if(cleanupFailure != null)
+            {
+                if(failure != null)
+                {
+                    failure.addSuppressed(cleanupFailure);
+                }
+                else
+                {
+                    throw cleanupFailure;
+                }
+            }
         }
     }
 

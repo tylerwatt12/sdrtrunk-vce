@@ -124,6 +124,22 @@ public final class DatabaseMigrationChain
         return new MigrationReport(source, detected, List.copyOf(reports));
     }
 
+    /** Runs the complete chain on a caller-owned disposable copy and returns its exact, data-aware plan. */
+    static PreflightReport simulate(Connection connection,
+                                    DatabaseFormatCatalog.DetectedFormat expected) throws SQLException
+    {
+        DatabaseFormatCatalog.DetectedFormat actual = DatabaseFormatCatalog.inspect(connection);
+        if(actual.version() != expected.version() || !actual.id().equals(expected.id()) ||
+            actual.markerPresent() != expected.markerPresent())
+        {
+            throw new SQLException("SQLite database changed while creating its migration preview");
+        }
+        MigrationReport report = migrate(connection);
+        List<StepPreflight> steps = report.steps().stream().map(step -> new StepPreflight(step.id(),
+            step.description(), step.sourceVersion(), step.targetVersion(), step.effects())).toList();
+        return new PreflightReport(report.source(), DatabaseFormatCatalog.current(), steps);
+    }
+
     private static DatabaseMigrationStep requireStep(int sourceVersion) throws SQLException
     {
         DatabaseMigrationStep step = STEPS.get(sourceVersion);

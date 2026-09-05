@@ -195,6 +195,9 @@ public final class SetupWizardSmoke
                 var danger=(javax.swing.JTextArea)field.get(target);
                 if(!danger.isVisible() || !danger.isOpaque() || !danger.getBackground().equals(WizardNotice.background(WizardNotice.Tone.ERROR)))
                     throw new AssertionError("Failure is not a persistent red notice");
+                if(descendants(target).stream().noneMatch(component -> component instanceof javax.swing.JButton button &&
+                    button.isShowing() && button.getText().equals("Copy error")))
+                    throw new AssertionError("Failure does not offer a copyable error message");
             } catch(Exception e) { throw new RuntimeException(e); }
         });
         capture(target,root,"05d-connection-failure");

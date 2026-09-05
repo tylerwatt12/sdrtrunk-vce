@@ -72,8 +72,9 @@ public final class DatabaseFormatCatalog
         List.of(
             "Preserve administrator-owned configuration and bounded activity data",
             "Add recoverable P25 site projection fields",
-            "Create missing factory Alias Lists and Default routing only where canonical names are unambiguous",
-            "Preserve same-family canonical list spelling and routing; refuse wrong-family collisions"));
+            "Create missing factory Alias Lists and Default routing",
+            "Preserve same-family canonical list spelling and routing; move wrong-family custom-name collisions " +
+                "to unique names without changing their IDs or references"));
     private static final FormatDescriptor FORMAT_3 = descriptor(3, "p25-site-projection-v27",
         "P25 site-projection database format", FORMAT_3_FINGERPRINT,
         new SubsystemVersions(6, 2, 2, 2, 27, 2, 1),
@@ -157,8 +158,9 @@ public final class DatabaseFormatCatalog
             "Rename a same-family Default NBFM list to Default Analog only when the target name is free",
             "Restore missing factory Alias Lists and route only newly created lists to the Default scan list",
             "Assign compatible defaults only to channels without an Alias List",
-            "Preserve custom names, list IDs, aliases, existing routing, recording settings, and assigned channels",
-            "Refuse current factory names owned by an incompatible family; never merge colliding lists"));
+            "Preserve custom lists, IDs, aliases, existing routing, recording settings, and assigned channels",
+            "Move incompatible factory-name collisions to unique custom names and repair saved channel Alias List " +
+                "JSON from the projection used by the previous runtime"));
 
     private static final FormatDescriptor FORMAT_12 = descriptor(12, "idle-fft-channel-markers-v1",
         "Per-user idle FFT channel marker preference format",

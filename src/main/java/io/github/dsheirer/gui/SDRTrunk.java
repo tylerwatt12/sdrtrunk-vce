@@ -655,9 +655,9 @@ public class SDRTrunk
             {
                 mDatabaseReplacementInProgress = false;
                 mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-                JOptionPane.showMessageDialog(mMainGui,
+                CopyableErrorDialog.show(mMainGui, "Restart Required",
                     "Automatic restart failed. Close this process and start again with --setup-wizard.",
-                    "Restart required", JOptionPane.ERROR_MESSAGE);
+                    exceptionMessage(e));
             }
         });
         helpMenu.add(setupWizardItem);
@@ -856,11 +856,9 @@ public class SDRTrunk
         }
         catch(Exception | LinkageError e)
         {
-            JOptionPane.showMessageDialog(null,
-                "The SQLite import could not finish safely. The application will close without starting reception. " +
-                    "If a safety backup was completed, it remains in the database/backups folder. " +
-                    "Review the error before restarting manually.\n\n" + exceptionMessage(e),
-                "SQLite Database Import Failed", JOptionPane.ERROR_MESSAGE);
+            CopyableErrorDialog.show(null, "SQLite Database Import Failed",
+                "The import could not finish safely. SDRTrunk will close without starting reception. Any completed " +
+                    "safety backup remains available in database/backups.", exceptionMessage(e));
             //Do not release the lock or reopen stale preferences after an uncertain failure. The caller exits.
             return 1;
         }
@@ -872,10 +870,9 @@ public class SDRTrunk
         }
         catch(IOException e)
         {
-            JOptionPane.showMessageDialog(null,
-                "Your database was imported, but the application could not restart. Start it manually to review " +
-                    "your imported settings before receiving.\n\n" + exceptionMessage(e),
-                "Restart Required", JOptionPane.ERROR_MESSAGE);
+            CopyableErrorDialog.show(null, "Restart Required",
+                "Your database was imported, but SDRTrunk could not restart. Start it manually to review the " +
+                    "imported settings before receiving.", exceptionMessage(e));
         }
         return 0;
     }
@@ -1451,8 +1448,8 @@ public class SDRTrunk
 
             if(!GraphicsEnvironment.isHeadless())
             {
-                JOptionPane.showMessageDialog(null, message, "sdrtrunk-vce Startup Error",
-                    JOptionPane.ERROR_MESSAGE);
+                CopyableErrorDialog.show(null, "sdrtrunk-vce Startup Error",
+                    "sdrtrunk-vce could not start. Receiver services were not started.", exceptionMessage(e));
             }
 
             System.exit(1);

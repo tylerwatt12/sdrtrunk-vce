@@ -14,6 +14,7 @@ package io.github.dsheirer.gui.configuration;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
+import io.github.dsheirer.gui.CopyableErrorDialog;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
@@ -79,9 +80,8 @@ public final class SqliteDatabaseImportDialog
         }
         catch(Exception e)
         {
-            JOptionPane.showMessageDialog(parent,
-                "The selected SQLite database cannot be imported.\n\n" + message(e),
-                "SQLite Database Import Refused", JOptionPane.ERROR_MESSAGE);
+            CopyableErrorDialog.show(parent, "SQLite Database Import Refused",
+                "The selected SQLite database cannot be imported. No changes were made.", message(e));
             return null;
         }
     }

@@ -163,9 +163,6 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
               AND (wacn IS NOT NULL OR p25_system_id IS NOT NULL)
             """, "non-fully-qualified aliases with legacy P25 qualifier values that the current Alias schema " +
                 "cannot represent");
-        //Step 1 preserves Alias List names and families, so a collision visible here would deterministically make
-        //step 2 fail. Surface it during source preflight, before the staged child announces mutation.
-        Format2To3DatabaseMigration.validateDefaultAliasListState(connection);
         requireZero(connection, "SELECT COUNT(*) FROM configuration_channel WHERE json_valid(config_json) = 0",
             "configuration channels with invalid JSON that a later adjacent step cannot update safely");
     }

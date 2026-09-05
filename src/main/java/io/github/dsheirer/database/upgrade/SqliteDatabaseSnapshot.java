@@ -38,10 +38,29 @@ public final class SqliteDatabaseSnapshot
      */
     public static void create(Path source, Path destination) throws IOException, SQLException
     {
+        create(source, destination, true);
+    }
+
+    /** Creates a disposable inspection copy without requiring the selected source or its folder to be writable. */
+    static void createForInspection(Path source, Path destination) throws IOException, SQLException
+    {
+        create(source, destination, false);
+    }
+
+    private static void create(Path source, Path destination, boolean requireWritableSource)
+        throws IOException, SQLException
+    {
         Path normalizedSource = source.toAbsolutePath().normalize();
         Path normalizedDestination = destination.toAbsolutePath().normalize();
 
-        requireSourceUsable(normalizedSource);
+        if(requireWritableSource)
+        {
+            requireSourceUsable(normalizedSource);
+        }
+        else
+        {
+            requireReadableSource(normalizedSource);
+        }
 
         if(Files.exists(normalizedDestination))
         {
@@ -116,6 +135,27 @@ public final class SqliteDatabaseSnapshot
             if(Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS) && !Files.isWritable(sidecar))
             {
                 throw new IOException("SQLite sidecar is not writable for a safe locked snapshot: " + sidecar);
+            }
+        }
+    }
+
+    private static void requireReadableSource(Path source) throws IOException
+    {
+        Path normalized = source.toAbsolutePath().normalize();
+        if(Files.isSymbolicLink(normalized))
+        {
+            throw new IOException("Refusing to inspect a symbolic-link SQLite database: " + normalized);
+        }
+        if(!Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(normalized))
+        {
+            throw new IOException("SQLite database is not a readable regular file: " + normalized);
+        }
+        for(String suffix: java.util.List.of("-journal", "-wal", "-shm"))
+        {
+            if(Files.isSymbolicLink(Path.of(normalized + suffix)))
+            {
+                throw new IOException("Refusing to inspect a SQLite database with a symbolic-link sidecar: " +
+                    normalized + suffix);
             }
         }
     }

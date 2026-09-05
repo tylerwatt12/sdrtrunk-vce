@@ -6,7 +6,6 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -176,37 +175,112 @@ class Format10To11DatabaseMigrationTest
     }
 
     @Test
-    void refusesWrongFamilyFactoryTargetsWithoutChangingData() throws Exception
+    void preservesWrongFamilyFactoryTargetsUnderUniqueNames() throws Exception
     {
         for(String mapping: new String[]{"Default P25,DMR", "Default DMR,P25", "Default NXDN,NBFM", "Default Analog,P25"})
         {
             String[] values = mapping.split(",");
-            assertWrongFamily(values[0], values[1]);
-        }
-    }
-
-    private void assertWrongFamily(String name, String family) throws Exception
-    {
-        try(Connection connection = fixture(name))
-        {
-            addList(connection, name, family);
-            SQLException error = assertThrows(SQLException.class,
-                () -> new Format10To11DatabaseMigration().validateSource(connection));
-            assertTrue(error.getMessage().contains("incompatible family"));
-            assertEquals("1", scalar(connection, "SELECT count(*) FROM alias_list"));
-            assertEquals(10, DatabaseFormatCatalog.inspect(connection).version());
+            assertWrongFamilyRepair(values[0], values[1]);
         }
     }
 
     @Test
-    void refusesContradictoryChannelReferencesBeforeWriting() throws Exception
+    void collisionRepairUsesAUniqueNameAndUpdatesEverySavedNameReference() throws Exception
+    {
+        try(Connection connection = fixture("collision-references"))
+        {
+            addList(connection, "Default P25 (DMR)", "DMR");
+            addList(connection, "Default P25", "DMR");
+            String customId = scalar(connection, "SELECT id FROM alias_list WHERE name='Default P25'");
+            execute(connection, "UPDATE alias_list SET unmatched_talkgroup_record_enabled=1 WHERE id=" + customId);
+            execute(connection, "INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) VALUES (" +
+                customId + ",'Preserved','TALKGROUP','DMR',101)");
+            execute(connection, "INSERT INTO alias_list_unmatched_talkgroup_scan_list_membership " +
+                "SELECT " + customId + ",id FROM scan_list WHERE is_default=1");
+            assign(connection, 1, "Default P25");
+            execute(connection, "INSERT INTO receiver_context(context_key,kind_code,protocol_code,alias_list_name," +
+                "first_seen_ms,last_seen_ms) VALUES ('collision-context',1,1,'Default P25',1,1)");
+            execute(connection, "INSERT INTO p25_site_snapshot(guid,alias_list_name,first_seen_ms,last_seen_ms) " +
+                "VALUES ('collision-p25','Default P25',1,1)");
+            execute(connection, "INSERT INTO trunked_site_snapshot(guid,snapshot_hash,protocol_code," +
+                "alias_list_name,first_seen_ms,last_seen_ms) " +
+                "VALUES ('collision-trunked','collision-hash',3,'Default P25',1,1)");
+
+            migrate(connection);
+
+            String replacement = "Default P25 (DMR) 2";
+            assertEquals(replacement, scalar(connection, "SELECT name FROM alias_list WHERE id=" + customId));
+            assertEquals("1", scalar(connection,
+                "SELECT unmatched_talkgroup_record_enabled FROM alias_list WHERE id=" + customId));
+            assertEquals("Preserved", scalar(connection, "SELECT name FROM alias WHERE alias_list_id=" + customId));
+            assertEquals("1", scalar(connection, "SELECT count(*) FROM " +
+                "alias_list_unmatched_talkgroup_scan_list_membership WHERE alias_list_id=" + customId));
+            assertEquals(replacement, scalar(connection,
+                "SELECT alias_list_name FROM configuration_channel WHERE id=1"));
+            assertEquals(replacement, scalar(connection,
+                "SELECT json_extract(config_json, '$.aliasListName') FROM configuration_channel WHERE id=1"));
+            for(String table: new String[]{"receiver_context", "p25_site_snapshot", "trunked_site_snapshot"})
+            {
+                assertEquals("0", scalar(connection,
+                    "SELECT count(*) FROM " + table + " WHERE alias_list_name='Default P25'"));
+                assertTrue(Integer.parseInt(scalar(connection,
+                    "SELECT count(*) FROM " + table + " WHERE alias_list_name='" + replacement + "'")) > 0);
+            }
+        }
+    }
+
+    private void assertWrongFamilyRepair(String name, String family) throws Exception
+    {
+        try(Connection connection = fixture(name))
+        {
+            addList(connection, name, family);
+            String customId = scalar(connection, "SELECT id FROM alias_list WHERE name='" + name + "'");
+            var effects = new Format10To11DatabaseMigration().validateSource(connection);
+            assertEquals(1, effects.stream().filter(effect ->
+                effect.subject().equals("custom Alias Lists using factory names")).findFirst().orElseThrow()
+                .affectedRows());
+
+            migrate(connection);
+
+            assertEquals(family, scalar(connection,
+                "SELECT family FROM alias_list WHERE id=" + customId));
+            assertEquals(name + " (" + family + ")", scalar(connection,
+                "SELECT name FROM alias_list WHERE id=" + customId));
+            assertEquals(expectedFactoryFamily(name), scalar(connection,
+                "SELECT family FROM alias_list WHERE name='" + name + "'"));
+        }
+    }
+
+    @Test
+    void repairsChannelJsonFromTheAliasListProjectionUsedByThePreviousRuntime() throws Exception
     {
         try(Connection connection = fixture())
         {
-            execute(connection, "UPDATE configuration_channel SET alias_list_name='Conflicting list' WHERE id=2");
-            assertThrows(SQLException.class, () -> new Format10To11DatabaseMigration().migrate(connection));
-            assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list"));
+            addList(connection, "Local Analog", "NBFM");
+            execute(connection, "UPDATE configuration_channel SET alias_list_name='Local Analog' WHERE id=2");
+            assertEquals(1, new Format10To11DatabaseMigration().validateSource(connection).stream()
+                .filter(effect -> effect.subject().equals("saved channel Alias List projections"))
+                .findFirst().orElseThrow().affectedRows());
+
+            migrate(connection);
+
+            assertEquals("Local Analog", scalar(connection,
+                "SELECT alias_list_name FROM configuration_channel WHERE id=2"));
+            assertEquals("Local Analog", scalar(connection,
+                "SELECT json_extract(config_json, '$.aliasListName') FROM configuration_channel WHERE id=2"));
         }
+    }
+
+    private static String expectedFactoryFamily(String name)
+    {
+        return switch(name)
+        {
+            case "Default P25" -> "P25";
+            case "Default DMR" -> "DMR";
+            case "Default NXDN" -> "NXDN";
+            case "Default Analog" -> "NBFM";
+            default -> throw new IllegalArgumentException(name);
+        };
     }
 
     @Test

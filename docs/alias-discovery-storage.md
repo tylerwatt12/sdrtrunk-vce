@@ -166,7 +166,8 @@ priority is not `-1` to the same list, and removes the retired priority columns.
 validation-only; the backed-up staged Application Migrator runs this and every later registered step. See
 [Database Migration Contract](database-migration.md).
 
-The following v26-to-v27 step creates a missing canonical factory Alias List and its unmatched-talkgroup Default
-scan-list route only when that name is absent. A case-insensitive existing list in the correct family keeps its stored
-spelling and existing routing, and compatible blank channels are assigned to that spelling. A canonical name already
-owned by the wrong family is an explicit preflight refusal.
+The following v26-to-v27 step creates missing canonical factory Alias Lists and their unmatched-talkgroup Default
+scan-list routes. A case-insensitive existing list in the correct family keeps its stored spelling and existing
+routing, and compatible blank channels are assigned to that spelling. A custom list using a canonical name for the
+wrong family is moved to a unique custom name with its ID, aliases, policy, routing, and saved references preserved;
+the correct factory list is then created.

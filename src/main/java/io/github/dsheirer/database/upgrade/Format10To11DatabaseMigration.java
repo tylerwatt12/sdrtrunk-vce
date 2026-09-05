@@ -21,6 +21,8 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
         new FactoryList("Default DMR", "DMR", List.of("DMR")),
         new FactoryList("Default NXDN", "NXDN", List.of("NXDN")),
         new FactoryList(ANALOG_NAME, "NBFM", List.of("AM", "NBFM")));
+    private static final List<FactoryAliasListCollisionRepair.Target> FACTORY_TARGETS = LISTS.stream()
+        .map(list -> new FactoryAliasListCollisionRepair.Target(list.name(), list.family())).toList();
 
     @Override
     public String id()
@@ -49,7 +51,7 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return effects(-1, -1, -1, -1);
+        return effects(-1, -1, -1, -1, -1, -1, -1);
     }
 
     @Override
@@ -58,16 +60,14 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
         requireSource(connection);
         long missing = 0;
         long unassigned = 0;
-        StoredList rename = renameCandidate(connection);
+        List<FactoryAliasListCollisionRepair.Collision> collisions =
+            FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
+        StoredList rename = renameCandidate(connection, collisions);
         for(FactoryList factory: LISTS)
         {
             StoredList stored = lookup(connection, factory.name());
-            if(stored != null && !factory.family().equals(stored.family()))
-            {
-                throw new SQLException("Factory Alias List [" + factory.name() +
-                    "] belongs to an incompatible family. Rename that custom list in the previous build first.");
-            }
-            if(stored == null && !(factory.name().equals(ANALOG_NAME) && rename != null))
+            boolean missingOrMoved = stored == null || !factory.family().equals(stored.family());
+            if(missingOrMoved && !(factory.name().equals(ANALOG_NAME) && rename != null))
             {
                 missing++;
             }
@@ -79,30 +79,23 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
                     """, decoder);
             }
         }
-        // Never choose between contradictory administrator-facing list references.
-        try(var statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
-            SELECT COUNT(*) FROM configuration_channel
-            WHERE coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
-                  coalesce(trim(json_extract(config_json, '$.aliasListName')), '')
-            """))
-        {
-            if(rows.next() && rows.getLong(1) != 0)
-            {
-                throw new SQLException("Saved channel Alias List references disagree with their configuration. " +
-                    "Resave the affected channels in the previous build before migrating.");
-            }
-        }
+        long projectionRepairs = channelAliasListProjectionRepairCount(connection);
         long references = rename == null ? 0 : count(connection, """
             SELECT COUNT(*) FROM configuration_channel WHERE alias_list_name = ? COLLATE NOCASE
             """, rename.name());
-        return effects(rename == null ? 0 : 1, references, missing, unassigned);
+        return effects(rename == null ? 0 : 1, references, collisions.size(),
+            FactoryAliasListCollisionRepair.referenceCount(collisions), projectionRepairs, missing, unassigned);
     }
 
     @Override
     public void migrate(Connection connection) throws SQLException
     {
         validateSource(connection);
-        StoredList rename = renameCandidate(connection);
+        List<FactoryAliasListCollisionRepair.Collision> collisions =
+            FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
+        FactoryAliasListCollisionRepair.apply(connection, collisions);
+        repairChannelAliasListProjection(connection);
+        StoredList rename = renameCandidate(connection, List.of());
         if(rename != null)
         {
             try(var update = connection.prepareStatement("UPDATE alias_list SET name = ? WHERE id = ?"))
@@ -165,10 +158,43 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static StoredList renameCandidate(Connection connection) throws SQLException
+    private static StoredList renameCandidate(Connection connection,
+                                              List<FactoryAliasListCollisionRepair.Collision> collisions)
+        throws SQLException
     {
         StoredList old = lookup(connection, OLD_ANALOG_NAME);
-        return old != null && "NBFM".equals(old.family()) && lookup(connection, ANALOG_NAME) == null ? old : null;
+        StoredList target = lookup(connection, ANALOG_NAME);
+        boolean targetAvailable = target == null || collisions.stream().anyMatch(collision -> collision.id() == target.id());
+        return old != null && "NBFM".equals(old.family()) && targetAvailable ? old : null;
+    }
+
+    private static long channelAliasListProjectionRepairCount(Connection connection) throws SQLException
+    {
+        try(var statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+            SELECT COUNT(*) FROM configuration_channel
+            WHERE coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
+                  coalesce(trim(json_extract(config_json, '$.aliasListName')), '')
+            """))
+        {
+            return rows.next() ? rows.getLong(1) : 0;
+        }
+    }
+
+    private static void repairChannelAliasListProjection(Connection connection) throws SQLException
+    {
+        try(var statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET config_json = CASE
+                    WHEN alias_list_name IS NULL OR trim(alias_list_name) = ''
+                        THEN json_remove(config_json, '$.aliasListName')
+                    ELSE json_set(config_json, '$.aliasListName', alias_list_name)
+                END
+                WHERE coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
+                      coalesce(trim(json_extract(config_json, '$.aliasListName')), '')
+                """);
+        }
     }
 
     private static StoredList lookup(Connection connection, String name) throws SQLException
@@ -203,9 +229,18 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static List<DatabaseMigrationEffect> effects(long renamed, long references, long created, long assigned)
+    private static List<DatabaseMigrationEffect> effects(long renamed, long references, long collisionLists,
+                                                          long collisionReferences, long projectionRepairs,
+                                                          long created, long assigned)
     {
         return List.of(
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "custom Alias Lists using factory names", collisionLists,
+                "Move wrong-family custom lists to unique names and preserve " + collisionReferences +
+                    " saved reference(s)"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "saved channel Alias List projections", projectionRepairs,
+                "Make each channel JSON document match the Alias List used by the previous runtime"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "factory analog Alias List name",
                 renamed, "Rename same-family Default NBFM to Default Analog only when the target name is free; " +
                     "preserve both lists if Default Analog already exists"),

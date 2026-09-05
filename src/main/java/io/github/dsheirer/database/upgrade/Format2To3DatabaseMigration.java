@@ -26,6 +26,8 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         new DefaultAliasList("Default DMR", "DMR"),
         new DefaultAliasList("Default NXDN", "NXDN"),
         new DefaultAliasList("Default NBFM", "NBFM"));
+    private static final List<FactoryAliasListCollisionRepair.Target> FACTORY_TARGETS = DEFAULT_ALIAS_LISTS.stream()
+        .map(list -> new FactoryAliasListCollisionRepair.Target(list.name(), list.family())).toList();
 
     /** Pinned mappings for the decoder enum values persisted by format 2. */
     private static final List<DecoderAliasList> DECODER_ALIAS_LISTS = List.of(
@@ -68,6 +70,9 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE, "P25 activity", unknown,
                 "Preserve site snapshots and channel summaries while adding nullable projections"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "custom Alias Lists using factory names", unknown,
+                "Move wrong-family custom lists to unique names while preserving their IDs and references"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "P25 channel callsigns", unknown,
                 "Recover current callsigns into matching historical summaries"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "factory Alias Lists", unknown,
@@ -84,9 +89,11 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
-        validateDefaultAliasListState(connection);
         requireZero(connection, "SELECT COUNT(*) FROM configuration_channel WHERE json_valid(config_json) = 0",
             "configuration channels with invalid JSON that cannot be updated safely");
+
+        List<FactoryAliasListCollisionRepair.Collision> collisions =
+            FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
 
         long snapshots = scalarLong(connection, "SELECT COUNT(*) FROM p25_site_snapshot");
         long summaries = scalarLong(connection, "SELECT COUNT(*) FROM p25_site_channel_summary");
@@ -114,6 +121,10 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE, "P25 activity", snapshots + summaries,
                 "Preserve every existing site snapshot and channel summary while adding nullable projections"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "custom Alias Lists using factory names", collisions.size(),
+                "Move wrong-family custom lists to unique names and update " +
+                    FactoryAliasListCollisionRepair.referenceCount(collisions) + " saved reference(s)"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "P25 channel callsigns", callsigns,
                 "Recover the current callsign into matching historical channel summaries"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "factory Alias Lists", defaultLists,
@@ -129,6 +140,8 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     public void migrate(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
+        List<FactoryAliasListCollisionRepair.Collision> collisions =
+            FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
 
         try(Statement statement = connection.createStatement())
         {
@@ -156,6 +169,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
             statement.executeUpdate(resolvedActivityViewSql());
         }
 
+        FactoryAliasListCollisionRepair.apply(connection, collisions);
         seedDefaultAliasLists(connection);
         assignDefaultAliasListsToUnassignedChannels(connection);
         setMetadata(connection, "p25_activity_schema_version", "27");
@@ -172,39 +186,6 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    static void validateDefaultAliasListState(Connection connection) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT family
-            FROM alias_list
-            WHERE name = ? COLLATE NOCASE
-            """))
-        {
-            for(DefaultAliasList defaultList: DEFAULT_ALIAS_LISTS)
-            {
-                statement.setString(1, defaultList.name());
-
-                try(ResultSet resultSet = statement.executeQuery())
-                {
-                    if(!resultSet.next())
-                    {
-                        continue;
-                    }
-
-                    String persistedFamily = resultSet.getString("family");
-
-                    if(!defaultList.family().equals(persistedFamily))
-                    {
-                        throw new SQLException("Refusing migration: canonical Alias List name [" +
-                            defaultList.name() + "] belongs to family [" + persistedFamily +
-                            "]; expected [" + defaultList.family() + "]");
-                    }
-
-                }
-            }
-        }
-    }
-
     private static long missingDefaultAliasListCount(Connection connection) throws SQLException
     {
         long count = 0;
@@ -218,7 +199,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
 
                 try(ResultSet resultSet = statement.executeQuery())
                 {
-                    if(resultSet.next() && resultSet.getLong(1) == 0)
+                    if(resultSet.next() && (resultSet.getLong(1) == 0 || wrongFamily(connection, defaultList)))
                     {
                         count++;
                     }
@@ -238,7 +219,6 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
 
     private static void seedDefaultAliasLists(Connection connection) throws SQLException
     {
-        validateDefaultAliasListState(connection);
         long defaultScanListId = defaultScanListId(connection);
 
         try(PreparedStatement lookup = connection.prepareStatement("""
@@ -281,6 +261,19 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
                     membership.setLong(2, defaultScanListId);
                     membership.executeUpdate();
                 }
+            }
+        }
+    }
+
+    private static boolean wrongFamily(Connection connection, DefaultAliasList target) throws SQLException
+    {
+        try(PreparedStatement query = connection.prepareStatement(
+            "SELECT family FROM alias_list WHERE name=? COLLATE NOCASE"))
+        {
+            query.setString(1, target.name());
+            try(ResultSet row = query.executeQuery())
+            {
+                return row.next() && !target.family().equals(row.getString(1));
             }
         }
     }

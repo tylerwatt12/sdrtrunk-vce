@@ -533,7 +533,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void alpha9MigrationRejectsWrongFamilyFactoryNameCollisionWithoutChangingTheSource() throws Exception
+    void alpha9MigrationPreservesWrongFamilyFactoryNameCollisionUnderAUniqueName() throws Exception
     {
         Path database = Format1TestDatabase.create(newStagedDatabase());
 
@@ -547,12 +547,14 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("Default P25"));
-        assertTrue(result.error().contains("expected [P25]"));
-        assertEquals("4", metadata(database, "alias_schema_version"));
-        assertEquals("DMR", scalar(database, "SELECT family FROM alias_list WHERE name='Default P25'"));
-        assertFalse(result.output().contains("Updating the staged database"));
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
+            metadata(database, "alias_schema_version"));
+        assertEquals("Default P25 (DMR):DMR|Default P25:P25", scalar(database, """
+            SELECT group_concat(name || ':' || family, '|')
+            FROM (SELECT name, family FROM alias_list WHERE name LIKE 'Default P25%' ORDER BY id)
+            """));
+        assertTrue(result.output().contains("custom Alias Lists using factory names"));
     }
 
     @Test

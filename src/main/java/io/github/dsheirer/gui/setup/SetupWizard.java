@@ -10,6 +10,7 @@ import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService;
 import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
 import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog;
+import io.github.dsheirer.gui.CopyableErrorDialog;
 import io.github.dsheirer.database.upgrade.*;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
@@ -66,6 +67,7 @@ public final class SetupWizard extends JDialog
     private final JTextArea console = text("");
     private JScrollPane diagnostics;
     private final JButton detailsToggle = new JButton("Show details");
+    private final JButton copyError = new JButton("Copy error");
     private final JProgressBar meter = new JProgressBar();
     private final JButton back = new JButton("Back");
     private final JButton next = new JButton("Continue");
@@ -95,6 +97,7 @@ public final class SetupWizard extends JDialog
     private Runnable cancellation;
     private long generation;
     private String migrationReport = "";
+    private String errorReport = "";
     private String selectedScope = "";
     private volatile String operation = "";
     private volatile int completed;
@@ -145,11 +148,11 @@ public final class SetupWizard extends JDialog
         {
             //A valid completed profile does not display a window unless required preparation changed.
             boolean current = false;
-            boolean inspectionFailed = false;
+            Throwable inspectionFailure = null;
             if(Files.isRegularFile(wizard.database))
             {
                 try { current = !ApplicationMigrationService.readMigrationPlan(wizard.database).source().requiresMigration(); }
-                catch(java.io.IOException | java.sql.SQLException e) { inspectionFailed = true; }
+                catch(java.io.IOException | java.sql.SQLException e) { inspectionFailure = e; }
             }
             if(current)
             {
@@ -158,7 +161,7 @@ public final class SetupWizard extends JDialog
                 wizard.progress.setComplete(false);
                 wizard.save();
             }
-            boolean showInspectionFailure = inspectionFailed;
+            Throwable showInspectionFailure = inspectionFailure;
             SwingUtilities.invokeAndWait(() -> {
                 if(wizard.preferences != null)
                 {
@@ -167,7 +170,9 @@ public final class SetupWizard extends JDialog
                     wizard.showPage(wizard.initialStep());
                 }
                 else wizard.showPage(SetupStep.SOURCE);
-                if(showInspectionFailure) wizard.fail("We couldn’t check your saved settings. Choose Check my settings to try again. No files have been changed.");
+                if(showInspectionFailure != null) wizard.fail(
+                    "We couldn’t check your saved settings. Choose Check my settings to try again. No files have been changed.",
+                    CopyableErrorDialog.message(showInspectionFailure));
                 wizard.setVisible(true);
             });
             return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels, wizard.replacement) : null;
@@ -250,15 +255,30 @@ public final class SetupWizard extends JDialog
         log.setPreferredSize(new Dimension(450, 80));
         log.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
         footer.add(log);
-        WizardStyles.quiet(detailsToggle);
-        detailsToggle.setAlignmentX(Component.LEFT_ALIGNMENT);
+        WizardStyles.quiet(detailsToggle); WizardStyles.quiet(copyError);
         detailsToggle.setVisible(false);
         detailsToggle.addActionListener(e -> {
             diagnostics.setVisible(!diagnostics.isVisible());
             detailsToggle.setText(diagnostics.isVisible() ? "Hide details" : "Show details");
             footer.revalidate();
         });
-        footer.add(detailsToggle);
+        copyError.setVisible(false);
+        copyError.addActionListener(e -> {
+            try
+            {
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(errorReport), null);
+                copyError.setText("Copied");
+            }
+            catch(RuntimeException failure)
+            {
+                Toolkit.getDefaultToolkit().beep();
+                copyError.setText("Copy error");
+            }
+        });
+        JPanel diagnosticActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        diagnosticActions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        diagnosticActions.add(detailsToggle); diagnosticActions.add(copyError);
+        footer.add(diagnosticActions);
         JPanel navigation = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         navigation.setAlignmentX(Component.LEFT_ALIGNMENT);
         exit.addActionListener(e -> leave());
@@ -388,7 +408,8 @@ public final class SetupWizard extends JDialog
         if(busy) return;
         stopCountdown();
         step = id; generation++;
-        page.removeAll(); danger.setVisible(false);
+        page.removeAll(); danger.setVisible(false); errorReport = ""; copyError.setVisible(false);
+        copyError.setText("Copy error");
         diagnostics.setVisible(false);
         detailsToggle.setVisible(false); detailsToggle.setText("Show details");
         title.setText(id.title());
@@ -961,7 +982,8 @@ public final class SetupWizard extends JDialog
         SetupProgress.State previous = progress == null ? PENDING : progress.get(step);
         busy=true; cancellation=cancelAction; long attempt=++generation;
         if(progress != null) { progress.set(step,RUNNING); persist(); }
-        danger.setVisible(false); operation=description; completed=0; total=0; output.clear(); output.accept(description);
+        danger.setVisible(false); errorReport=""; copyError.setVisible(false); copyError.setText("Copy error");
+        operation=description; completed=0; total=0; output.clear(); output.accept(description);
         meter.setVisible(true); cancel.setVisible(cancelAction!=null); cancel.setEnabled(true); updateNavigation();
         cancel.setText(step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation");
         diagnostics.setVisible(false); detailsToggle.setVisible(true); detailsToggle.setText("Show details");
@@ -980,10 +1002,16 @@ public final class SetupWizard extends JDialog
                     {
                         restartRequired = true;
                         showPage(SetupStep.SOURCE);
-                        fail("Your import completed, but setup couldn’t refresh the review. Exit setup and reopen it to load your imported settings. Do not import the playlist again.");
+                        fail("Your import completed, but setup couldn’t refresh the review. Exit setup and reopen it " +
+                            "to load your imported settings. Do not import the playlist again.",
+                            CopyableErrorDialog.message(problem));
                         return;
                     }
-                    fail(stopped ? "Stopped safely. You can try again or set this up later." : safeFailure(problem));
+                    String summary = stopped ? "Stopped safely. You can try again or set this up later." :
+                        safeFailure(problem);
+                    String detail = stopped ? summary : safeFailureDetail(problem, summary);
+                    output.accept("Error: " + detail);
+                    fail(summary, detail);
                 }
                 else
                 {
@@ -1003,6 +1031,13 @@ public final class SetupWizard extends JDialog
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
         if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
         return "We couldn’t finish this step. Check the file or folder you selected and make sure there is enough free space, then try again. Your original data has not been replaced by an incomplete import.";
+    }
+
+    private String safeFailureDetail(Throwable failure, String summary)
+    {
+        //Source inspection and migration errors contain local database diagnostics. Other setup jobs can contain
+        //credentials, provider responses, or request URLs and retain their deliberately value-free summary.
+        return step == SetupStep.SOURCE ? CopyableErrorDialog.message(failure) : summary;
     }
 
     private void completeAndContinue()
@@ -1099,8 +1134,23 @@ public final class SetupWizard extends JDialog
     private void attempt(Runnable action) { try { action.run(); } catch(Exception e) { fail(e instanceof IllegalArgumentException ? e.getMessage() : "This action failed. Check settings and retry."); } }
     private void fail(String message)
     {
+        fail(message, message);
+    }
+    private void fail(String message, String details)
+    {
         WizardNotice.styleError(danger);
         danger.setText(message); danger.setVisible(true); danger.requestFocusInWindow();
+        boolean hasTechnicalDetails = details != null && !details.isBlank() && !details.equals(message);
+        errorReport = message + (hasTechnicalDetails ? "\n\nTechnical details:\n" + details : "");
+        if(hasTechnicalDetails && !output.snapshot().contains(details))
+        {
+            output.accept("Error: " + details);
+        }
+        if(hasTechnicalDetails)
+        {
+            detailsToggle.setVisible(true);
+        }
+        copyError.setText("Copy error"); copyError.setVisible(true);
         if(step == SetupStep.REVIEW) next.setText("Retry launch");
         else if(step == SetupStep.JMBE) next.setText("Try again");
         updateNavigation();

@@ -17,6 +17,7 @@ import io.github.dsheirer.database.importer.LegacyPlaylistImportService.Prepared
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Summary;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
+import io.github.dsheirer.gui.CopyableErrorDialog;
 import java.awt.Component;
 import java.nio.file.Path;
 import javax.swing.JFileChooser;
@@ -54,8 +55,8 @@ public final class LegacyPlaylistImportDialog
         }
         catch(Exception e)
         {
-            JOptionPane.showMessageDialog(parent, "The playlist could not be checked. No changes were made.\n\n" +
-                message(rootCause(e)), "Playlist Import Refused", JOptionPane.ERROR_MESSAGE);
+            CopyableErrorDialog.show(parent, "Playlist Import Refused",
+                "The playlist could not be checked. No changes were made.", message(rootCause(e)));
             return null;
         }
     }

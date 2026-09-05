@@ -93,7 +93,8 @@ A fresh setup contains:
 
 Upgrading a database older than format 11 restores missing factory Alias Lists once, including previously deleted
 defaults. An analog-family list named `Default NBFM` becomes `Default Analog` if the new name is available. Existing
-custom lists and routing stay intact; only channels without a selected Alias List receive a compatible default.
+custom lists and routing stay intact. A custom list occupying a factory name for another protocol is preserved under
+a unique name, and only channels without a selected Alias List receive a compatible default.
 Later startups do not recreate lists you delete after the upgrade.
 
 New channels created in the Channel editor and new RadioReference trunked-site imports initially use the matching
