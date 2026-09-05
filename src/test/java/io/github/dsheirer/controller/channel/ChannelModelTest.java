@@ -13,11 +13,13 @@ package io.github.dsheirer.controller.channel;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelModelTest
@@ -53,7 +55,7 @@ public class ChannelModelTest
     }
 
     @Test
-    public void currentJsonUsesRadioResolveIdAndReadsTheLegacyName() throws Exception
+    public void currentJsonUsesOnlyTheCanonicalRadioResolveId() throws Exception
     {
         String radioResolveId = "11111111-2222-4333-8444-555555555555";
         ObjectMapper objectMapper = new ObjectMapper();
@@ -63,9 +65,12 @@ public class ChannelModelTest
         JsonNode json = objectMapper.valueToTree(channel);
         assertEquals(radioResolveId, json.path("radioResolveId").textValue());
         assertFalse(json.has("radresGuid"));
+        assertFalse(json.has("radres_guid"));
 
-        Channel legacy = objectMapper.readValue("{\"radresGuid\":\"" + radioResolveId + "\"}",
-            Channel.class);
-        assertEquals(radioResolveId, legacy.getRadioResolveId());
+        for(String retiredProperty: new String[]{"radresGuid", "radres_guid"})
+        {
+            assertThrows(UnrecognizedPropertyException.class, () -> objectMapper.readValue(
+                "{\"" + retiredProperty + "\":\"" + radioResolveId + "\"}", Channel.class));
+        }
     }
 }

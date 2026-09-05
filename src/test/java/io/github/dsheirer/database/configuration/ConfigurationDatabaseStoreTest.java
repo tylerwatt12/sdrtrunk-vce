@@ -565,10 +565,22 @@ class ConfigurationDatabaseStoreTest
     @Test
     void unknownCurrentSchemaStreamFailsLoadWithoutDeletingItsRawRow() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("unknown-stream.sqlite");
+        assertCurrentStreamRejectedAndPreserved("unknown-stream.sqlite",
+            "{\"type\":\"retiredUnknownStream\",\"payload\":\"preserve exactly\"}");
+    }
+
+    @Test
+    void legacyRadioResolveSubtypeFailsCurrentLoadWithoutDeletingItsRawRow() throws Exception
+    {
+        assertCurrentStreamRejectedAndPreserved("legacy-radioresolve-stream.sqlite",
+            "{\"type\":\"RADIORESOLVE\",\"payload\":\"preserve exactly\"}");
+    }
+
+    private void assertCurrentStreamRejectedAndPreserved(String filename, String rawJson) throws Exception
+    {
+        Path database = mTemporaryFolder.resolve(filename);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
-        String rawJson = "{\"type\":\"retiredUnknownStream\",\"payload\":\"preserve exactly\"}";
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement statement = connection.prepareStatement("""

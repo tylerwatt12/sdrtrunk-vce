@@ -539,10 +539,7 @@ public class Channel extends Configuration
         return mRadioResolveId.get();
     }
 
-    /**
-     * Restores the stable RadioResolve correlation identifier. Legacy JSON may still use the former property name.
-     */
-    @JsonAlias({"radresGuid", "radres_guid"})
+    /** Restores the stable RadioResolve correlation identifier. */
     public void setRadioResolveId(String radioResolveId)
     {
         if(radioResolveId != null && !radioResolveId.isBlank())

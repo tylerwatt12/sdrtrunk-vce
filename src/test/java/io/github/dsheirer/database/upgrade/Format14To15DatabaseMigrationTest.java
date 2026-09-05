@@ -627,6 +627,41 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
+    void canonicalizesTheExactLegacyRadioResolveSubtype() throws Exception
+    {
+        Path database = Format14TestDatabase.create(
+            mTemporaryFolder.resolve("legacy-radioresolve-provider.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_broadcast_stream
+                SET server_type='RADIORESOLVE',
+                    config_json=json_set(config_json, '$.type', 'RADIORESOLVE')
+                WHERE name='Primary Migration Feed'
+                """);
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertEquals("RadioResolveConfiguration", scalar(connection, """
+                SELECT json_extract(config_json, '$.type')
+                FROM configuration_broadcast_stream
+                WHERE json_extract(config_json, '$.name')='Primary Migration Feed'
+                """));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void refusesCaseFoldedLegacyRadioResolveSubtype() throws Exception
+    {
+        assertRefused("case-folded-radioresolve-provider.sqlite", """
+            UPDATE configuration_broadcast_stream
+            SET server_type='RADIORESOLVE',
+                config_json=json_set(config_json, '$.type', 'radioresolve')
+            WHERE name='Primary Migration Feed'
+            """, "not a supported broadcast provider document");
+    }
+
+    @Test
     void preservesUniqueProviderIdentityWhenItCollidesWithGeneratedCandidate() throws Exception
     {
         String generatedForSecondRow = UUID.nameUUIDFromBytes(

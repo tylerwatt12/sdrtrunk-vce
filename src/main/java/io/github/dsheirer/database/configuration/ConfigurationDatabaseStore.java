@@ -44,8 +44,8 @@ import java.util.UUID;
 public class ConfigurationDatabaseStore
 {
     /**
-     * Channel fields whose sole persisted authority is the relational row. Legacy JSON aliases are included so a
-     * nonstandard writer cannot bypass the same one-fact/one-owner rule.
+     * Channel fields whose sole persisted authority is the relational row. Retired spellings remain on the rejection
+     * list so a nonstandard current writer cannot bypass the same one-fact/one-owner rule.
      */
     private static final List<String> CHANNEL_ROW_OWNED_JSON_FIELDS = List.of(
         "configurationId", "system", "site", "name", "aliasListId", "aliasListName", "radioResolveId",

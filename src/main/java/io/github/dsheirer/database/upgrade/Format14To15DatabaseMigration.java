@@ -909,6 +909,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     throw new IOException(label + " has a negative sort_order");
                 }
                 ObjectNode payload = parseObject(text(rows, "config_json"), label);
+                normalizeLegacyBroadcastType(payload);
                 BroadcastConfiguration configuration = decodeBroadcast(payload, label);
                 String serverType = nullableText(rows, "server_type");
                 String expectedServerType = configuration.getBroadcastServerType() != null ?
@@ -1898,6 +1899,16 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         {
             //Do not attach the source exception: provider documents can hold API keys and passwords.
             throw new IOException(label + " is not a supported broadcast provider document");
+        }
+    }
+
+    /** Normalizes the one legacy RadioResolve discriminator admitted by the format-14 schema. */
+    private static void normalizeLegacyBroadcastType(ObjectNode payload)
+    {
+        JsonNode type = payload.get("type");
+        if(type != null && type.isTextual() && "RADIORESOLVE".equals(type.textValue()))
+        {
+            payload.put("type", "RadioResolveConfiguration");
         }
     }
 
