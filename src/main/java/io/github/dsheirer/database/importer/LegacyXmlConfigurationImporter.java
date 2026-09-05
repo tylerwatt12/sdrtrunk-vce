@@ -11,11 +11,13 @@
 
 package io.github.dsheirer.database.importer;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.deser.DeserializationProblemHandler;
+import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.jsontype.TypeIdResolver;
 import com.fasterxml.jackson.dataformat.xml.JacksonXmlModule;
 import com.fasterxml.jackson.dataformat.xml.XmlFactory;
@@ -47,6 +49,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
+import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationSnapshot;
@@ -61,6 +64,8 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -242,6 +247,7 @@ public class LegacyXmlConfigurationImporter
                         .toList()));
                 List<Channel> channels = new ArrayList<>(nonNull(playlist.getChannels()));
                 sanitizeChannelConfigurationLists(channels);
+                normalizeLegacyChannelModes(channels);
 
                 if(playlistVersion <= 2)
                 {
@@ -319,6 +325,24 @@ public class LegacyXmlConfigurationImporter
                 {
                     eventLogConfiguration.getLoggers().removeIf(logger -> logger == null);
                 }
+            }
+        }
+    }
+
+    /**
+     * Stock playlist XML predates the explicit DMR channel-mode field. Preserve its former meaning at this import
+     * boundary, then persist an explicit current-format value so the runtime never has to infer topology.
+     */
+    private static void normalizeLegacyChannelModes(List<Channel> channels)
+    {
+        for(Channel channel: channels)
+        {
+            if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr)
+            {
+                boolean hasUsableFrequencyMap = dmr.getTimeslotMap() != null && dmr.getTimeslotMap().stream()
+                    .anyMatch(mapping -> mapping != null && mapping.getNumber() > 0 &&
+                        mapping.getDownlinkFrequency() > 0);
+                dmr.setChannelMode(hasUsableFrequencyMap ? DMRChannelMode.TRUNKED : DMRChannelMode.CONVENTIONAL);
             }
         }
     }
@@ -429,6 +453,7 @@ public class LegacyXmlConfigurationImporter
         objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         objectMapper.configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true);
         objectMapper.configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+        objectMapper.registerSubtypes(new NamedType(RadioResolveConfiguration.class, "RADIORESOLVE"));
         objectMapper.addMixIn(AuxDecodeConfiguration.class, LegacyAuxDecodeConfigurationMixin.class);
         objectMapper.addMixIn(DecodeConfigNBFM.class, LegacyNbfmConfigurationMixin.class);
         objectMapper.addMixIn(RadioRange.class, LegacyRadioRangeMixin.class);
@@ -436,6 +461,7 @@ public class LegacyXmlConfigurationImporter
         objectMapper.addMixIn(TonesID.class, LegacyTonesIdMixin.class);
         objectMapper.addMixIn(ToneSequence.class, LegacyToneSequenceMixin.class);
         objectMapper.addMixIn(Tone.class, LegacyToneMixin.class);
+        objectMapper.addMixIn(Channel.class, LegacyChannelMixin.class);
         objectMapper.addMixIn(BroadcastConfiguration.class, LegacyBroadcastConfigurationMixin.class);
         objectMapper.addMixIn(IcecastConfiguration.class, LegacyIcecastConfigurationMixin.class);
         objectMapper.addMixIn(ShoutcastV1Configuration.class, LegacyShoutcastV1ConfigurationMixin.class);
@@ -943,6 +969,13 @@ public class LegacyXmlConfigurationImporter
     {
         @JacksonXmlProperty(isAttribute = true, localName = "value")
         abstract AmbeTone getAmbeTone();
+    }
+
+    /** Import-only recognition for the legacy RadioResolve channel attribute. */
+    private abstract static class LegacyChannelMixin
+    {
+        @JsonAlias({"radresGuid", "radres_guid"})
+        abstract void setRadioResolveId(String radioResolveId);
     }
 
     private abstract static class LegacyBroadcastConfigurationMixin

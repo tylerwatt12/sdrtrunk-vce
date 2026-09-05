@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.alias;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -124,6 +126,35 @@ class AliasAdministrationServiceTest
             AliasDatabaseStore store = new AliasDatabaseStore(database);
             List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
             assertEquals(1, store.loadAliases(definitions).size());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void aliasListDisplayNameDoesNotEstablishAServiceRelationship() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("name-only-alias-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            service.createAliasList("County P25", AliasListFamily.P25);
+            Alias nameOnly = new Alias("Dispatch");
+            nameOnly.setAliasListName("County P25");
+            nameOnly.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
+
+            assertThrows(AliasAdministrationService.NotFoundException.class,
+                () -> service.createAlias(nameOnly));
+            assertTrue(manager.getAliasModel().getAliases().isEmpty());
         }
         finally
         {
@@ -356,7 +387,7 @@ class AliasAdministrationServiceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             long aliasId = service.createAlias(alias("Dispatch", aliasListId, 101)).aliasIds().getFirst();
-            List<String> routes = new ArrayList<>();
+            List<String> routeIds = new ArrayList<>();
 
             for(int index = 0; index <= AliasAdministrationService.MAX_BROADCAST_CHANNELS; index++)
             {
@@ -364,30 +395,27 @@ class AliasAdministrationServiceTest
                 BroadcastifyCallConfiguration route = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
                 route.setName(name);
                 manager.getBroadcastModel().addBroadcastConfiguration(route);
-                routes.add(name);
+                routeIds.add(route.getConfigurationId());
             }
 
             Alias bounded = service.getAlias(aliasId).alias();
-            bounded.setBroadcastChannels(routes.subList(0, AliasAdministrationService.MAX_BROADCAST_CHANNELS)
-                .stream().map(BroadcastChannel::new).toList());
+            bounded.setBroadcastChannels(manager.getBroadcastModel().getBroadcastConfigurations().stream()
+                .limit(AliasAdministrationService.MAX_BROADCAST_CHANNELS)
+                .map(configuration -> new BroadcastChannel(configuration.getConfigurationId(),
+                    configuration.getName())).toList());
             AliasAdministrationService.MutationResult configured = service.replaceAlias(aliasId, bounded);
             int commitsBeforeOverflow = manager.commitCount();
 
             IllegalArgumentException overflow = assertThrows(IllegalArgumentException.class,
                 () -> service.bulkEdit(new AliasAdministrationService.BulkEdit(List.of(aliasId), null, null,
                     null, null, null, null, AliasAdministrationService.StreamOperation.ADD,
-                    List.of(routes.getLast()), false), configured.revision()));
+                    List.of(routeIds.getLast()), false), configured.revision()));
             assertTrue(overflow.getMessage().contains("more than " +
                 AliasAdministrationService.MAX_BROADCAST_CHANNELS));
             assertEquals(commitsBeforeOverflow, manager.commitCount());
             assertEquals(AliasAdministrationService.MAX_BROADCAST_CHANNELS,
                 service.getAlias(aliasId).alias().getBroadcastChannels().size());
 
-            Alias longName = service.getAlias(aliasId).alias();
-            longName.setBroadcastChannels(List.of(new BroadcastChannel(
-                "x".repeat(AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH + 1))));
-            assertThrows(IllegalArgumentException.class, () -> service.replaceAlias(aliasId, longName));
-            assertEquals(commitsBeforeOverflow, manager.commitCount());
         }
         finally
         {
@@ -615,7 +643,7 @@ class AliasAdministrationServiceTest
             manager.getBroadcastModel().addBroadcastConfiguration(primary);
             AliasAdministrationService.MutationResult configured = service.updateAliasListDefaults(
                 list.aliasListId(), new AliasListDefaults(
-                    new UnmatchedTalkgroupPolicy(true, List.of("Primary")), Set.of(defaultScanListId)),
+                    new UnmatchedTalkgroupPolicy(true, List.of(route(primary))), Set.of(defaultScanListId)),
                 list.revision());
 
             Alias talkgroup = alias("Dispatch", list.aliasListId(), "County P25", 101);
@@ -746,29 +774,32 @@ class AliasAdministrationServiceTest
             manager.getBroadcastModel().addBroadcastConfiguration(archive);
 
             AliasAdministrationService.MutationResult policyChanged = service.updateUnmatchedTalkgroupPolicy(
-                aliasListId, new UnmatchedTalkgroupPolicy(true, List.of("Primary")),
+                aliasListId, new UnmatchedTalkgroupPolicy(true, List.of(route(primary))),
                 service.catalog().revision());
             UnmatchedTalkgroupPolicy livePolicy = manager.getAliasModel()
                 .getAliasListDefinition(aliasListId).getUnmatchedTalkgroupPolicy();
             assertTrue(livePolicy.isRecordEnabled());
-            assertEquals(List.of("Primary"), livePolicy.getStreamDestinationNames());
+            assertEquals(List.of("Primary"), routeNames(livePolicy));
             assertEquals(livePolicy, service.catalog().aliasLists().stream()
                 .filter(definition -> definition.getId() == aliasListId)
                 .findFirst().orElseThrow().getUnmatchedTalkgroupPolicy());
             assertThrows(IllegalArgumentException.class, () -> service.updateUnmatchedTalkgroupPolicy(aliasListId,
-                new UnmatchedTalkgroupPolicy(false, List.of("Missing")), policyChanged.revision()));
+                new UnmatchedTalkgroupPolicy(false, List.of(route("Missing"))), policyChanged.revision()));
 
             long bulkRevision = service.catalog().revision();
             AliasAdministrationService.MutationResult configured = service.bulkEdit(
                 new AliasAdministrationService.BulkEdit(List.of(firstAliasId, secondAliasId), null, null, null,
                     null, AliasAdministrationService.GroupOperation.SET, "Fire Dispatch",
-                    AliasAdministrationService.StreamOperation.ADD, List.of("Primary"), false), bulkRevision);
+                    AliasAdministrationService.StreamOperation.ADD, List.of(primary.getConfigurationId()), false),
+                bulkRevision);
             configured = service.bulkEdit(new AliasAdministrationService.BulkEdit(
                 List.of(firstAliasId, secondAliasId), null, null, null, null, null, null,
-                AliasAdministrationService.StreamOperation.ADD, List.of("Archive"), false), configured.revision());
+                AliasAdministrationService.StreamOperation.ADD, List.of(archive.getConfigurationId()), false),
+                configured.revision());
             configured = service.bulkEdit(new AliasAdministrationService.BulkEdit(
                 List.of(firstAliasId, secondAliasId), null, null, null, null, null, null,
-                AliasAdministrationService.StreamOperation.REMOVE, List.of("Primary"), false), configured.revision());
+                AliasAdministrationService.StreamOperation.REMOVE, List.of(primary.getConfigurationId()), false),
+                configured.revision());
 
             for(long aliasId: List.of(firstAliasId, secondAliasId))
             {
@@ -781,7 +812,7 @@ class AliasAdministrationServiceTest
             configured = service.bulkEdit(new AliasAdministrationService.BulkEdit(
                 List.of(firstAliasId, secondAliasId), null, null, null, null,
                 AliasAdministrationService.GroupOperation.CLEAR, null,
-                AliasAdministrationService.StreamOperation.REPLACE, List.of("Primary"), false),
+                AliasAdministrationService.StreamOperation.REPLACE, List.of(primary.getConfigurationId()), false),
                 configured.revision());
             configured = service.bulkEdit(new AliasAdministrationService.BulkEdit(
                 List.of(firstAliasId, secondAliasId), null, null, null, null, null, null,
@@ -796,7 +827,7 @@ class AliasAdministrationServiceTest
             assertEquals("Unrelated edit", service.getAlias(firstAliasId).alias().getDescription());
 
             Alias invalidReference = service.getAlias(firstAliasId).alias();
-            invalidReference.addBroadcastChannel("Never configured");
+            invalidReference.addBroadcastChannel(route("Never configured"));
             assertThrows(IllegalArgumentException.class, () ->
                 service.replaceAlias(firstAliasId, invalidReference, preserved.revision()));
 
@@ -829,7 +860,7 @@ class AliasAdministrationServiceTest
             assertTrue(storedAliases.stream().anyMatch(alias -> alias.getId() == secondAliasId));
 
             Channel channel = new Channel("County Control");
-            channel.setAliasListName("County P25");
+            channel.setAliasListDefinition(manager.getAliasModel().getAliasListDefinition(aliasListId));
             channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
             long beforeChannelAssignment = service.catalog().revision();
             manager.getChannelModel().addChannel(channel);
@@ -885,7 +916,7 @@ class AliasAdministrationServiceTest
                 .load().channels();
             assertEquals(1, storedChannels.size());
             assertNull(storedChannels.getFirst().getAliasListName());
-            assertTrue(storedChannels.getFirst().hasRadresGuid());
+            assertTrue(storedChannels.getFirst().hasRadioResolveId());
         }
         finally
         {
@@ -948,10 +979,10 @@ class AliasAdministrationServiceTest
 
         @Override
         protected AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-            AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
+            AliasConfigurationPublication publication)
         {
             mCommitCount.incrementAndGet();
-            return super.commitAliasConfiguration(proposed, publication, broadcastRename);
+            return super.commitAliasConfiguration(proposed, publication);
         }
 
         private int commitCount()

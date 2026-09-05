@@ -72,7 +72,7 @@ class WebAccessServiceTest
         assertEquals(reset, service.authenticate("user.one", replacementPassword).orElseThrow());
 
         service.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.USER);
-        service.setCapabilityTier(WebCapability.SITE_ACCESS, AccessTier.USER);
+        service.setCapabilityTier(WebCapability.WEB_ACCESS, AccessTier.USER);
         assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW));
         assertTrue(service.isAllowed(AccessTier.USER, WebCapability.CREDITS_VIEW));
         assertFalse(service.isAllowed(AccessTier.USER, WebCapability.ADMIN_ACCESS));
@@ -82,7 +82,7 @@ class WebAccessServiceTest
         WebAccessService restarted = new WebAccessService(database);
         assertEquals(2, restarted.accounts().size());
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.DASHBOARD_VIEW));
-        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.SITE_ACCESS));
+        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.WEB_ACCESS));
         assertEquals(reset, restarted.authenticate("user.one", replacementPassword).orElseThrow());
         assertFalse(databaseText(database).contains(new String(replacementPassword)));
 
@@ -162,7 +162,7 @@ class WebAccessServiceTest
                 UPDATE web_user SET preferences_revision=? WHERE username='admin'
                 """))
         {
-            update.setLong(1, Long.MAX_VALUE);
+            update.setLong(1, Long.MAX_VALUE - 1);
             assertEquals(1, update.executeUpdate());
         }
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -179,7 +179,7 @@ class WebAccessServiceTest
 
         WebUserPreferencesService preferences = new WebUserPreferencesService(database);
         assertThrows(IOException.class,
-            () -> preferences.update(primary, Long.MAX_VALUE, WebUserPreferences.defaults()));
+            () -> preferences.update(primary, Long.MAX_VALUE - 1, WebUserPreferences.defaults()));
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement query = connection.prepareStatement("""
@@ -191,7 +191,7 @@ class WebAccessServiceTest
             {
                 assertTrue(resultSet.next());
                 assertEquals("integer", resultSet.getString(1));
-                assertEquals(Long.MAX_VALUE, resultSet.getLong(2));
+                assertEquals(Long.MAX_VALUE - 1, resultSet.getLong(2));
                 assertEquals(originalJson, resultSet.getString(3));
             }
         }
@@ -200,9 +200,9 @@ class WebAccessServiceTest
     @Test
     void definesEveryCapabilityAndLocksFixedPolicies()
     {
-        assertEquals(15, WebCapability.registry().size());
-        for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems",
-            "conventional", "credits", "csv-export", "call-audio", "user-settings", "admin-users",
+        assertEquals(14, WebCapability.registry().size());
+        for(String id: new String[]{"web-access", "dashboard", "live", "tuner-spectrum", "radio",
+            "credits", "csv-export", "call-audio", "user-settings", "admin-users",
             "admin-access", "admin-aliases", "admin-settings", "receiver-health"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);

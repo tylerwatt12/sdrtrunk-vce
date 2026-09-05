@@ -130,16 +130,6 @@ enum StatsApiProtocol
         };
     }
 
-    String scopeKind(long code)
-    {
-        return switch((int)code)
-        {
-            case 1 -> "linked_system";
-            case 2 -> "receiver_context";
-            default -> "unknown";
-        };
-    }
-
     String addressDomain(long code)
     {
         if(this != NXDN)
@@ -296,22 +286,22 @@ enum StatsApiProtocol
             .map(Map.Entry::getValue).toList();
     }
 
-    Map<String,Boolean> systemCapabilities()
+    Map<String,Boolean> radioSystemCapabilities()
     {
         boolean trunked = this == P25 || this == DMR || this == NXDN;
         Map<String,Boolean> capabilities = new LinkedHashMap<>();
-        capabilities.put("sites", trunked);
+        capabilities.put("channels", trunked);
         capabilities.put("group_identities", trunked);
         capabilities.put("radios", trunked);
         capabilities.put("activity", trunked);
         capabilities.put("talker_aliases", trunked);
         capabilities.put("current_affiliations", this == P25);
-        capabilities.put("radio_site_presence", this == P25);
+        capabilities.put("radio_channel_presence", this == P25);
         capabilities.put("patch_groups", this == P25);
         return Map.copyOf(capabilities);
     }
 
-    Map<String,Boolean> siteCapabilities()
+    Map<String,Boolean> trunkedChannelCapabilities()
     {
         boolean trunked = this == P25 || this == DMR || this == NXDN;
         Map<String,Boolean> capabilities = new LinkedHashMap<>();
@@ -321,7 +311,7 @@ enum StatsApiProtocol
         capabilities.put("quality", trunked);
         capabilities.put("activity", trunked);
         capabilities.put("current_affiliations", this == P25);
-        capabilities.put("radio_site_presence", this == P25);
+        capabilities.put("radio_channel_presence", this == P25);
         capabilities.put("frequency_bands", this == P25);
         capabilities.put("patch_groups", this == P25);
         return Map.copyOf(capabilities);
@@ -329,16 +319,17 @@ enum StatsApiProtocol
 
     Map<String,Boolean> groupIdentityCapabilities(boolean patchGroup)
     {
-        Map<String,Boolean> capabilities = new LinkedHashMap<>(systemCapabilities());
+        Map<String,Boolean> capabilities = new LinkedHashMap<>(radioSystemCapabilities());
         capabilities.put("current_affiliations", this == P25 && !patchGroup);
         return Map.copyOf(capabilities);
     }
 
-    Map<String,Boolean> conventionalCapabilities()
+    Map<String,Boolean> conventionalChannelCapabilities()
     {
+        boolean digital = this == P25 || this == DMR || this == NXDN;
         Map<String,Boolean> capabilities = new LinkedHashMap<>();
-        capabilities.put("group_identities", this == DMR);
-        capabilities.put("radios", this == DMR);
+        capabilities.put("group_identities", digital);
+        capabilities.put("radios", digital);
         capabilities.put("activity", true);
         return Map.copyOf(capabilities);
     }

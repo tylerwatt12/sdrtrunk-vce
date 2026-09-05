@@ -85,10 +85,7 @@ public enum DecodeEventType
     UNKNOWN_PACKET("Unknown Packet"),
     XCMP("Motorola XCMP"),
     UNKNOWN("Unknown"),
-    /*
-     * Keep new values at the end.  Activity history stores ordinal + 1, so inserting a value above an existing one
-     * would reinterpret retained event rows.
-     */
+    //Receiver activity persistence assigns explicit stable codes outside this enum.
     DENIAL("Denial");
 
     private final String mLabel;

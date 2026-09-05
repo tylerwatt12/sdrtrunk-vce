@@ -105,9 +105,12 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
 
     private static List<CallLegSummary> singleLegSummary(AudioCallSnapshot snapshot, List<float[]> audioBuffers)
     {
+        io.github.dsheirer.identifier.IdentifierCollection identifiers = snapshot.identifierCollection();
         return List.of(new CallLegSummary(snapshot.callLegId(), snapshot.callLegSource(),
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.voiceCallQuality(),
-            sampleCount(audioBuffers), false, false, true, snapshot.callEncryptionEvidence()));
+            sampleCount(audioBuffers), false, false, true, snapshot.callEncryptionEvidence(),
+            identifiers != null ? identifiers.getFromIdentifier() : null,
+            identifiers != null ? identifiers.getToIdentifier() : null));
     }
 
     private static long sampleCount(List<float[]> audioBuffers)

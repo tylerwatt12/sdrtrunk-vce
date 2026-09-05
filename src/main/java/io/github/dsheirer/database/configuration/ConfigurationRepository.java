@@ -131,35 +131,7 @@ public final class ConfigurationRepository
 
     /** Commits Alias-owned state without rewriting unrelated channel or broadcast rows. */
     public synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-                                                                             Collection<String> removedAliasListNames)
-        throws IOException, SQLException
-    {
-        return commitAliasConfiguration(proposed, removedAliasListNames, null, null, null);
-    }
-
-    /** Commits Alias-owned state and one referenced broadcast-stream rename in the same transaction. */
-    public synchronized AliasConfigurationSnapshot commitAliasConfigurationWithBroadcastRename(
-        AliasConfigurationSnapshot proposed, Collection<String> removedAliasListNames,
-        List<BroadcastConfiguration> broadcastConfigurations, String previousName, String updatedName)
-        throws IOException, SQLException
-    {
-        if(broadcastConfigurations == null)
-        {
-            throw new IllegalArgumentException("Broadcast configurations cannot be null");
-        }
-        if(previousName == null || previousName.isBlank() || updatedName == null || updatedName.isBlank())
-        {
-            throw new IllegalArgumentException("Broadcast rename names must be nonblank");
-        }
-        return commitAliasConfiguration(proposed, removedAliasListNames, List.copyOf(broadcastConfigurations),
-            previousName, updatedName);
-    }
-
-    private AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-                                                                 Collection<String> removedAliasListNames,
-                                                                 List<BroadcastConfiguration> broadcastConfigurations,
-                                                                 String previousBroadcastName,
-                                                                 String updatedBroadcastName)
+                                                                             Collection<Long> removedAliasListIds)
         throws IOException, SQLException
     {
         AliasConfigurationSnapshot detached = AliasConfigurationSnapshot.detachedCopyOf(proposed);
@@ -167,12 +139,7 @@ public final class ConfigurationRepository
         {
             mAliasStore.replaceAliases(connection, detached.aliases(), detached.definitions());
             mScanListStore.replaceConfiguration(connection, detached.scanLists());
-            mChannelAndBroadcastStore.clearAliasListAssignments(connection, removedAliasListNames);
-            if(broadcastConfigurations != null)
-            {
-                mChannelAndBroadcastStore.replaceBroadcastConfigurationsWithRename(connection,
-                    broadcastConfigurations, previousBroadcastName, updatedBroadcastName);
-            }
+            mChannelAndBroadcastStore.clearAliasListAssignments(connection, removedAliasListIds);
             return loadAliasConfiguration(connection);
         });
     }
@@ -187,8 +154,9 @@ public final class ConfigurationRepository
         inTransaction(connection ->
         {
             List<AliasListDefinition> definitions = mAliasStore.loadAliasListDefinitions(connection);
-            ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(definitions, proposed.channels(),
-                proposed.broadcastConfigurations());
+            List<Alias> aliases = mAliasStore.loadAliases(connection, definitions);
+            ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
+                proposed.channels(), proposed.broadcastConfigurations());
             mChannelAndBroadcastStore.replace(connection, proposed);
             return null;
         });
@@ -285,13 +253,12 @@ public final class ConfigurationRepository
 
     private <T> T inTransaction(TransactionOperation<T> operation) throws IOException, SQLException
     {
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        try(Connection connection = SdrTrunkDatabase.openWriteTransaction(mDatabasePath))
         {
-            connection.setAutoCommit(false);
             try
             {
                 T result = operation.apply(connection);
-                connection.commit();
+                SdrTrunkDatabase.commitWriteTransaction(connection);
                 return result;
             }
             catch(IOException | SQLException | RuntimeException | Error exception)

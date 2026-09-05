@@ -15,6 +15,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.LinkedHashMap;
@@ -28,7 +29,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Periodically refreshed immutable bridge between configured channels, learned scopes, and live web navigation.
+ * Periodically refreshed immutable bridge between configured channels, learned radio systems, and live web navigation.
  * Database loading is confined to one low-priority worker. Receiver and channel-activity paths perform only atomic
  * snapshot reads and bounded map lookups.
  */
@@ -208,8 +209,9 @@ final class WebEntityNavigationCatalog implements AutoCloseable
         Snapshot load() throws Exception;
     }
 
-    record Channel(String configurationId, String guid, WebEntityRef.KeyRef entityRef,
-                   WebEntityRef.KeyRef systemRef, int protocolCode, int identityDomainCode)
+    record Channel(String configurationId, WebEntityRef.KeyRef entityRef,
+                   WebEntityRef.KeyRef radioSystemRef, int protocolCode, int addressDomainCode,
+                   Integer p25Wacn, Integer p25SystemId)
     {
         Channel
         {
@@ -217,26 +219,19 @@ final class WebEntityNavigationCatalog implements AutoCloseable
             {
                 throw new IllegalArgumentException("Channel navigation requires configured identity");
             }
-            boolean referenceMatches = switch(entityRef.kind())
-            {
-                case SITE -> guid != null && guid.equals(entityRef.key());
-                case CONVENTIONAL -> configurationId.equals(entityRef.key());
-                default -> false;
-            };
-
-            if(!referenceMatches)
+            if(entityRef.kind() != WebEntityRef.Kind.CHANNEL || !configurationId.equals(entityRef.key()))
             {
                 throw new IllegalArgumentException("Channel navigation reference does not match its canonical identity");
             }
-            if(systemRef != null && systemRef.kind() != WebEntityRef.Kind.SYSTEM)
+            if(radioSystemRef != null && radioSystemRef.kind() != WebEntityRef.Kind.RADIO_SYSTEM)
             {
-                throw new IllegalArgumentException("Channel system reference must identify a learned system scope");
+                throw new IllegalArgumentException("Channel radio-system reference must identify a learned system");
             }
         }
 
         WebEntityRef identity(ChannelActivitySnapshot.MatcherReference matcher)
         {
-            if(systemRef == null || matcher == null || !protocolMatches(matcher.protocol()))
+            if(radioSystemRef == null || matcher == null || !protocolMatches(matcher.protocol()))
             {
                 return null;
             }
@@ -248,19 +243,56 @@ final class WebEntityNavigationCatalog implements AutoCloseable
                 case "radio" -> Form.RADIO;
                 default -> null;
             };
+            if(form == null)
+            {
+                return null;
+            }
+            if(matcher.identityKey() != null)
+            {
+                try
+                {
+                    RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(matcher.identityKey());
+                    int expectedKind = switch(form)
+                    {
+                        case TALKGROUP -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                        case PATCH_GROUP -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+                        case RADIO -> RadioSystemIdentityKey.KIND_RADIO;
+                        default -> -1;
+                    };
+                    if(identity.kindCode() != expectedKind)
+                    {
+                        return null;
+                    }
+                    return identity(form, protocol(), identity.identityId(), identity.homeWacn(),
+                        identity.homeSystemId());
+                }
+                catch(IllegalArgumentException exception)
+                {
+                    return null;
+                }
+            }
             return identity(form, protocol(), matcher.value());
         }
 
         WebEntityRef identity(Form form, Protocol identifierProtocol, int identifier)
         {
+            int homeWacn = protocolCode == 1 && p25Wacn != null ? p25Wacn : RadioSystemIdentityKey.NO_HOME;
+            int homeSystemId = protocolCode == 1 && p25SystemId != null ? p25SystemId :
+                RadioSystemIdentityKey.NO_HOME;
+            return identity(form, identifierProtocol, identifier, homeWacn, homeSystemId);
+        }
+
+        WebEntityRef identity(Form form, Protocol identifierProtocol, int identifier, int homeWacn,
+                              int homeSystemId)
+        {
             Protocol protocol = protocol();
 
-            if(systemRef == null || identifierProtocol == null || !sameProtocol(protocol, identifierProtocol))
+            if(radioSystemRef == null || identifierProtocol == null || !sameProtocol(protocol, identifierProtocol))
             {
                 return null;
             }
 
-            TrunkedIdentityDomain domain = switch(identityDomainCode)
+            TrunkedIdentityDomain domain = switch(addressDomainCode)
             {
                 case 1 -> TrunkedIdentityDomain.NXDN_TYPE_C;
                 case 2 -> TrunkedIdentityDomain.NXDN_TYPE_D;
@@ -272,11 +304,26 @@ final class WebEntityNavigationCatalog implements AutoCloseable
                 return null;
             }
 
+            if(protocolCode == 1 && (homeWacn < 0 || homeSystemId < 0) ||
+                protocolCode != 1 && (homeWacn != RadioSystemIdentityKey.NO_HOME ||
+                    homeSystemId != RadioSystemIdentityKey.NO_HOME))
+            {
+                return null;
+            }
+
+            String identityKey = RadioSystemIdentityKey.format(switch(form)
+            {
+                case TALKGROUP -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                case PATCH_GROUP -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+                case RADIO -> RadioSystemIdentityKey.KIND_RADIO;
+                default -> throw new IllegalArgumentException("Unsupported identity form");
+            }, homeWacn, homeSystemId, identifier);
+
             return switch(form)
             {
-                case TALKGROUP -> WebEntityRef.talkgroup(systemRef.key(), identifier);
-                case PATCH_GROUP -> WebEntityRef.patchGroup(systemRef.key(), identifier);
-                case RADIO -> WebEntityRef.radio(systemRef.key(), identifier);
+                case TALKGROUP -> WebEntityRef.talkgroup(radioSystemRef.key(), identityKey);
+                case PATCH_GROUP -> WebEntityRef.patchGroup(radioSystemRef.key(), identityKey);
+                case RADIO -> WebEntityRef.radio(radioSystemRef.key(), identityKey);
                 default -> null;
             };
         }
@@ -309,14 +356,13 @@ final class WebEntityNavigationCatalog implements AutoCloseable
         }
     }
 
-    record Snapshot(Map<String,Channel> byConfigurationId, Map<String,Channel> byGuid)
+    record Snapshot(Map<String,Channel> byConfigurationId)
     {
-        private static final Snapshot EMPTY = new Snapshot(Map.of(), Map.of());
+        private static final Snapshot EMPTY = new Snapshot(Map.of());
 
         Snapshot
         {
             byConfigurationId = Map.copyOf(byConfigurationId != null ? byConfigurationId : Map.of());
-            byGuid = Map.copyOf(byGuid != null ? byGuid : Map.of());
         }
 
         static Snapshot empty()
@@ -327,33 +373,20 @@ final class WebEntityNavigationCatalog implements AutoCloseable
         static Snapshot of(List<Channel> channels)
         {
             Map<String,Channel> configurations = new LinkedHashMap<>();
-            Map<String,Channel> sites = new LinkedHashMap<>();
-
             for(Channel channel: channels != null ? channels : List.<Channel>of())
             {
                 if(configurations.putIfAbsent(channel.configurationId(), channel) != null)
                 {
                     throw new IllegalArgumentException("Duplicate configured-channel navigation identity");
                 }
-                if(channel.entityRef().kind() == WebEntityRef.Kind.SITE &&
-                    channel.guid() != null && !channel.guid().isBlank() &&
-                    sites.putIfAbsent(channel.guid(), channel) != null)
-                {
-                    throw new IllegalArgumentException("Duplicate site navigation identity");
-                }
             }
 
-            return new Snapshot(configurations, sites);
+            return new Snapshot(configurations);
         }
 
-        Channel channel(String configurationId, String guid)
+        Channel channel(String configurationId)
         {
-            if(configurationId != null)
-            {
-                return byConfigurationId.get(configurationId);
-            }
-
-            return guid != null ? byGuid.get(guid) : null;
+            return configurationId != null ? byConfigurationId.get(configurationId) : null;
         }
     }
 }

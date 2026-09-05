@@ -31,7 +31,12 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 14;
+    public static final int CURRENT_VERSION = 15;
+    static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
+    static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
+        "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
+        "p25_activity_schema_version", "trunked_site_schema_version", "dmr_activity_schema_version");
+    private static final List<String> RETIRED_FORMAT_15_METADATA_KEYS = retiredFormat15MetadataKeys();
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -51,6 +56,9 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_11_FINGERPRINT = FORMAT_10_FINGERPRINT;
     private static final String FORMAT_12_FINGERPRINT = FORMAT_11_FINGERPRINT;
     private static final String FORMAT_13_FINGERPRINT = FORMAT_12_FINGERPRINT;
+    private static final String FORMAT_14_FINGERPRINT = FORMAT_13_FINGERPRINT;
+    private static final String FORMAT_15_FINGERPRINT =
+        "ea94d75d85937561e38e1cc58560a37f46969cd6af1e9bc6a1efdff1dc9c3896";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -178,14 +186,27 @@ public final class DatabaseFormatCatalog
         List.of("Preserve existing configuration and add a single bounded setup progress record"));
 
     private static final FormatDescriptor FORMAT_14 = descriptor(14, "country-spectrum-frequency-scopes-v1",
-        "Receiver-wide country selection for code-owned frequency scopes and snap rules", FORMAT_13_FINGERPRINT,
+        "Receiver-wide country selection for code-owned frequency scopes and snap rules", FORMAT_14_FINGERPRINT,
         new SubsystemVersions(6, 3, 3, 2, 29, 2, 1), List.of("main format 14"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format14TestDatabase.java",
         List.of("Preserve all existing configuration and select the United States frequency-scope catalog"));
 
+    private static final FormatDescriptor FORMAT_15 = new FormatDescriptor(15, "stable-radio-system-identity-v1",
+        "Stable radio-system, saved-channel, Alias List, and broadcast-provider identities",
+        FORMAT_15_FINGERPRINT, Map.of(), List.of("main format 15"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format15TestDatabase.java", List.of(
+            "Preserve administrator-owned channels, aliases, stream providers, accounts, credentials, settings, icons, and decoder channel maps",
+            "Replace name-based configuration relationships with stable database or UUID identities and store explicit DMR/NXDN channel types",
+            "Group P25 by WACN and System ID, standard DMR Tier III by model and Network ID, and NXDN Type-C by location category and System ID",
+            "Keep unsupported or incomplete DMR/NXDN native identity scoped to the exact saved channel until complete supported evidence is observed",
+            "Rename stable-target browser playback preferences and simplify web access policies",
+            "Reset derived receiver, system, site, activity, and quality observations whose old identity cannot be converted exactly",
+            "Drop retired named Channel Maps while preserving decoder channel maps stored with saved channels",
+            "Remove redundant subsystem schema versions and keep one authoritative whole-database format"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
-            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14);
+            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -301,7 +322,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_14;
+        return FORMAT_15;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -432,6 +453,25 @@ public final class DatabaseFormatCatalog
                     "; the database is mixed or partially migrated");
             }
         }
+
+        if(descriptor.version() >= 15)
+        {
+            for(String retiredKey: RETIRED_FORMAT_15_METADATA_KEYS)
+            {
+                if(metadata(connection, retiredKey) != null)
+                {
+                    throw new FormatRejectionException("SQLite schema format [" + descriptor.id() +
+                        "] contains retired metadata [" + retiredKey + "]; the database is mixed or partially migrated");
+                }
+            }
+        }
+    }
+
+    private static List<String> retiredFormat15MetadataKeys()
+    {
+        List<String> keys = new ArrayList<>(RETIRED_SUBSYSTEM_VERSION_KEYS);
+        keys.add(RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY);
+        return List.copyOf(keys);
     }
 
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor) throws SQLException
@@ -457,7 +497,8 @@ public final class DatabaseFormatCatalog
             requirePositiveMetadata(connection, "trunked_logical_call_metrics_started_at_ms", descriptor);
         }
 
-        requirePositiveMetadata(connection, "trunked_identity_metrics_started_at_ms", descriptor);
+        requirePositiveMetadata(connection, descriptor.version() >= 15 ?
+            "radio_system_metrics_started_at_ms" : "trunked_identity_metrics_started_at_ms", descriptor);
 
         if(descriptor.version() >= 2)
         {
@@ -475,7 +516,14 @@ public final class DatabaseFormatCatalog
         {
             try
             {
-                Format5WebStateValidator.validate(connection, webPreferenceVersion(descriptor));
+                if(descriptor.version() >= 15)
+                {
+                    Format5WebStateValidator.validate(connection);
+                }
+                else
+                {
+                    Format5WebStateValidator.validate(connection, webPreferenceVersion(descriptor));
+                }
             }
             catch(SQLException exception)
             {
@@ -484,7 +532,7 @@ public final class DatabaseFormatCatalog
             }
         }
 
-        if(descriptor.version() >= 6)
+        if(descriptor.version() >= 6 && descriptor.version() <= 14)
         {
             try
             {

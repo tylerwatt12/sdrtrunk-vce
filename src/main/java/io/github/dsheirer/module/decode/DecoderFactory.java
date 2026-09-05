@@ -25,8 +25,10 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.filter.AllPassFilter;
 import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.filter.IFilter;
@@ -93,6 +95,7 @@ import io.github.dsheirer.module.decode.tait.Tait1200Decoder;
 import io.github.dsheirer.module.decode.tait.Tait1200DecoderState;
 import io.github.dsheirer.module.decode.tait.Tait1200MessageFilter;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
@@ -202,7 +205,7 @@ public class DecoderFactory
 
         modules.add(new AMDecoder(config));
         modules.add(new AMDecoderState(channel.getName(), config));
-        modules.add(new AudioModule(aliasList, 0, 60000, false));
+        modules.add(new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList)));
     }
 
     /**
@@ -367,12 +370,18 @@ public class DecoderFactory
     static CallLegSource createCallLegSource(Channel channel, AliasList aliasList)
     {
         DecodeConfiguration decodeConfiguration = channel != null ? channel.getDecodeConfiguration() : null;
+        TrunkedIdentityDomain identityDomain = decodeConfiguration instanceof DecodeConfigNXDN nxdn &&
+            nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
+            TrunkedIdentityDomain.NXDN_TYPE_D : decodeConfiguration instanceof DecodeConfigNXDN ?
+                TrunkedIdentityDomain.NXDN_TYPE_C : TrunkedIdentityDomain.STANDARD;
         return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
-            channel != null ? channel.getConfigurationId() : null,
+            ChannelConfigurationKey.configured(channel),
             channel != null ? channel.getName() : null,
-            channel != null ? channel.getRadresGuid() : null,
+            channel != null ? channel.getRadioResolveId() : null,
             aliasList != null ? aliasList.getId() : 0L,
             channel != null ? channel.getP25SiteIdentity() : null,
+            identityDomain,
+            channel != null ? ChannelConfigurationPolicy.requireChannelKind(channel) : null,
             channel != null && channel.getChannelType() == ChannelType.TRAFFIC);
     }
 
@@ -402,7 +411,6 @@ public class DecoderFactory
             }
 
             modules.add(new NXDNDecoder(configNXDN));
-            modules.add(new NXDNAudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
 
             if(channel.getChannelType() == ChannelType.STANDARD)
             {
@@ -422,6 +430,9 @@ public class DecoderFactory
             {
                 mLog.warn("Expected non-null NXDN traffic channel manager for channel " + channel.getName());
             }
+
+            //Construct the standard-channel identity publisher before audio; both remain scoped to this one chain.
+            modules.add(new NXDNAudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
         }
         else
         {
@@ -453,7 +464,7 @@ public class DecoderFactory
         DecodeConfigNBFM decodeConfigNBFM = (DecodeConfigNBFM)decodeConfig;
         modules.add(new NBFMDecoder(decodeConfigNBFM));
         modules.add(new NBFMDecoderState(channel.getName(), decodeConfigNBFM));
-        modules.add(new AudioModule(aliasList, 0, 60000, false));
+        modules.add(new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList)));
     }
 
     /**

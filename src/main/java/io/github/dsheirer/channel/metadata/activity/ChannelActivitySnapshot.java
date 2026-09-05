@@ -8,11 +8,13 @@ package io.github.dsheirer.channel.metadata.activity;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelContextKey;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,10 +23,10 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * Immutable snapshot of one browser Live Systems activity table.
+ * Immutable snapshot of one browser live channel activity table.
  */
 public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
-                                      String channelName, String configurationId, String guid, boolean controlActive,
+                                      String channelName, String configurationId, boolean controlActive,
                                       boolean channelRunning, List<IdentifierField> identifiers, List<Row> rows)
 {
     public ChannelActivitySnapshot
@@ -42,14 +44,31 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     public static ChannelActivitySnapshot from(ChannelActivityTableState table)
     {
         Channel owner = table != null ? table.getOwnerChannel() : null;
-        String tableId = owner != null ? "channel-" + owner.getChannelID() : "conventional";
-        String guid = owner != null && owner.hasRadresGuid() ? owner.getRadresGuid() : null;
+        String tableId = tableId(owner);
         List<Row> rows = table != null ? table.getRows().stream().map(row -> Row.from(row, owner)).toList() : List.of();
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
             owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
-            owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
-            guid, table != null && table.isControlActive(), table != null && table.isChannelRunning(),
+            owner != null ? owner.getName() : "Conventional", persistedConfigurationId(owner),
+            table != null && table.isControlActive(), table != null && table.isChannelRunning(),
             table != null ? table.getIdentifiers() : List.of(), rows);
+    }
+
+    /** Stable browser-table identity for a saved channel; conventional rows share one aggregate table. */
+    static String tableId(Channel owner)
+    {
+        if(owner == null)
+        {
+            return "conventional";
+        }
+
+        String configurationId = persistedConfigurationId(owner);
+        return configurationId != null ? "channel:" + configurationId :
+            "transient-channel:" + owner.getChannelID();
+    }
+
+    private static String persistedConfigurationId(Channel channel)
+    {
+        return channel != null ? ChannelConfigurationKey.canonical(channel.getPersistedConfigurationId()) : null;
     }
 
     /**
@@ -80,7 +99,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         private static Row from(ChannelActivityRow row, Channel owner)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
-            String configurationId = row.getChannel() != null ? row.getChannel().getConfigurationId() : null;
+            String configurationId = persistedConfigurationId(row.getChannel());
             Channel channel = owner != null ? owner : row.getChannel();
             ChannelActivityDecodeQuality quality = row.getDecodeQuality();
             return new Row(row.getKey(), channelName, configurationId, row.getState().name(),
@@ -98,7 +117,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 aliasDescriptions(row.getSourceAliases()), value(row.getTalkerAlias()), row.getSourceAliasDisplay(),
                 value(row.getTarget()), form(row.getTarget()), aliases(row.getTargetAliases()),
                 aliasDescriptions(row.getTargetAliases()),
-                row.getDecoder(), row.getEncryptionDetails(), new Navigation(ChannelContextKey.configured(channel),
+                row.getDecoder(), row.getEncryptionDetails(), new Navigation(persistedConfigurationId(channel),
+                channel != null && channel.getAliasListId() > 0 ? channel.getAliasListId() : null,
                 channel != null ? channel.getAliasListName() : null, protocol(row.getSource(), row.getTarget()),
                 aliasReferences(row.getSourceAliases()), matcher(row.getSource()),
                 aliasReferences(row.getTargetAliases()), matcher(row.getTarget())), row.getRole().name());
@@ -127,26 +147,48 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
 
         private static MatcherReference matcher(Identifier<?> identifier)
         {
-            if(identifier == null || !identifier.isValid() ||
-                identifier instanceof FullyQualifiedRadioIdentifier ||
-                identifier instanceof FullyQualifiedTalkgroupIdentifier || !(identifier.getValue() instanceof Number value))
+            if(identifier == null || !identifier.isValid())
             {
                 return null;
             }
 
-            String type = identifier.getForm() == Form.RADIO ? "radio" :
-                identifier.getForm() == Form.TALKGROUP ? "talkgroup" :
-                    identifier.getForm() == Form.PATCH_GROUP ? "patch_group" : null;
-            String protocol = protocol(identifier.getProtocol());
+            boolean patchGroup = false;
+            Identifier<?> primary = identifier;
+            if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+            {
+                patchGroup = true;
+                primary = patch.getValue().getPatchGroup();
+            }
+
+            if(primary == null || !primary.isValid() || !(primary.getValue() instanceof Number value))
+            {
+                return null;
+            }
+
+            String type = patchGroup ? "patch_group" : primary.getForm() == Form.RADIO ? "radio" :
+                primary.getForm() == Form.TALKGROUP ? "talkgroup" : null;
+            String protocol = protocol(primary.getProtocol());
 
             if(type == null || protocol == null)
             {
                 return null;
             }
 
-            String variant = identifier.getProtocol() == Protocol.APCO25_PHASE2 ? "phase_2" :
-                identifier.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
-            return new MatcherReference(type, protocol, variant, value.intValue());
+            String variant = primary.getProtocol() == Protocol.APCO25_PHASE2 ? "phase_2" :
+                primary.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
+            String identityKey = null;
+            if(primary instanceof FullyQualifiedRadioIdentifier radio)
+            {
+                identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_RADIO, radio.getWacn(),
+                    radio.getSystem(), radio.getRadio());
+            }
+            else if(primary instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+            {
+                identityKey = RadioSystemIdentityKey.format(patchGroup ? RadioSystemIdentityKey.KIND_PATCH_GROUP :
+                        RadioSystemIdentityKey.KIND_TALKGROUP,
+                    talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup());
+            }
+            return new MatcherReference(type, protocol, variant, value.intValue(), identityKey);
         }
 
         private static List<AliasReference> aliasReferences(List<Alias> aliases)
@@ -207,7 +249,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     }
 
     /** Browser navigation metadata detached from mutable receiver and Alias objects. */
-    public record Navigation(String contextKey, String aliasListName, String protocol,
+    public record Navigation(String channelConfigurationId, Long aliasListId, String aliasListName, String protocol,
                              List<AliasReference> sourceAliases, MatcherReference sourceMatcher,
                              List<AliasReference> targetAliases, MatcherReference targetMatcher)
     {
@@ -226,7 +268,11 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         }
     }
 
-    public record MatcherReference(String type, String protocol, String variant, int value)
+    public record MatcherReference(String type, String protocol, String variant, int value, String identityKey)
     {
+        public MatcherReference(String type, String protocol, String variant, int value)
+        {
+            this(type, protocol, variant, value, null);
+        }
     }
 }

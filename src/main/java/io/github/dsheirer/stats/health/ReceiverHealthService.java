@@ -22,8 +22,8 @@ import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
-import io.github.dsheirer.stats.activity.P25ActivityLogService;
-import io.github.dsheirer.stats.activity.P25ActivityLogStatus;
+import io.github.dsheirer.stats.activity.ReceiverActivityService;
+import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.file.FileStore;
@@ -64,7 +64,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final UserPreferences mUserPreferences;
     private final TunerManager mTunerManager;
     private final ChannelActivityModel mChannelActivityModel;
-    private final P25ActivityLogService mActivityLogService;
+    private final ReceiverActivityService mActivityLogService;
     private final LongSupplier mClock;
     private final long mStartedAtMs;
     private final ScheduledExecutorService mExecutor;
@@ -91,7 +91,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
     public ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                                  ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService)
+                                 ReceiverActivityService activityLogService)
     {
         this(userPreferences, tunerManager, channelProcessingManager, activityLogService,
             System::currentTimeMillis, snapshotWriter(userPreferences));
@@ -99,14 +99,14 @@ public final class ReceiverHealthService implements AutoCloseable
 
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                           ChannelProcessingManager channelProcessingManager,
-                          P25ActivityLogService activityLogService, LongSupplier clock)
+                          ReceiverActivityService activityLogService, LongSupplier clock)
     {
         this(userPreferences, tunerManager, channelProcessingManager, activityLogService, clock, null);
     }
 
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                           ChannelProcessingManager channelProcessingManager,
-                          P25ActivityLogService activityLogService, LongSupplier clock,
+                          ReceiverActivityService activityLogService, LongSupplier clock,
                           ReceiverHealthSnapshotWriter snapshotWriter)
     {
         mUserPreferences = userPreferences;
@@ -776,7 +776,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(mActivityLogService != null)
         {
-            P25ActivityLogStatus status = mActivityLogService.getStatus();
+            ReceiverActivityStatus status = mActivityLogService.getStatus();
             delta("observer:statistics", status.recordsDropped(), now);
             rows.add(row("statistics", "Statistics database writer", status.state().name().toLowerCase(Locale.ROOT),
                 "", status.recordsDropped() > 0 ? "info" : "healthy",
@@ -799,17 +799,17 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         Map<String,Object> server = map(webStatus.get("server"));
-        Map<String,Object> transport = map(server.get("liveTransport"));
-        long rejected = number(transport.get("rejectedClients"));
-        long slow = number(transport.get("slowDisconnects"));
-        long dropped = number(transport.get("eventDrops"));
+        Map<String,Object> transport = map(server.get("live_transport"));
+        long rejected = number(transport.get("rejected_clients"));
+        long slow = number(transport.get("slow_disconnects"));
+        long dropped = number(transport.get("event_drops"));
         long observerTotal = rejected + slow + dropped;
         delta("observer:web", observerTotal, now);
-        rows.add(row("web", "Web live transport", number(transport.get("activeClients")), "clients",
+        rows.add(row("web", "Web live transport", number(transport.get("active_clients")), "clients",
             observerTotal > 0 ? "info" : "healthy", "rejected=" + rejected +
                 "; slow_disconnects=" + slow + "; observer_event_drops=" + dropped));
 
-        Map<String,Object> webPlayer = map(webStatus.get("webPlayer"));
+        Map<String,Object> webPlayer = map(webStatus.get("web_player"));
         long webCapacityDrops = number(webPlayer.get("dropped_encoder_capacity"));
         long webEncoderFailures = number(webPlayer.get("encoder_failures"));
         long webAudioLosses = webCapacityDrops + webEncoderFailures;

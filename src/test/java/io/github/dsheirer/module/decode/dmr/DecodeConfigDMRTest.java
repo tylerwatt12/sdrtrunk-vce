@@ -32,10 +32,13 @@ class DecodeConfigDMRTest
         incompleteMapping.setNumber(12);
         configuration.setTimeslotMap(List.of(incompleteMapping));
         assertEquals(DMRChannelMode.CONVENTIONAL, configuration.getChannelMode());
+
+        configuration.setChannelMode(null);
+        assertEquals(DMRChannelMode.CONVENTIONAL, configuration.getChannelMode());
     }
 
     @Test
-    void infersMappedLegacyConfigurationAsTrunked() throws Exception
+    void missingModeUsesTheExplicitConventionalDefaultWithoutInspectingTheChannelMap() throws Exception
     {
         DecodeConfigDMR configuration = new DecodeConfigDMR();
         configuration.setTimeslotMap(List.of(mapping(12, 451_012_500L)));
@@ -44,8 +47,9 @@ class DecodeConfigDMRTest
 
         DecodeConfigDMR restored = mObjectMapper.treeToValue(legacyJson, DecodeConfigDMR.class);
 
-        assertEquals(DMRChannelMode.TRUNKED, restored.getChannelMode());
-        assertTrue(restored.isTrunked());
+        assertEquals(DMRChannelMode.CONVENTIONAL, restored.getChannelMode());
+        assertTrue(restored.isConventional());
+        assertFalse(restored.isTrunked());
     }
 
     @Test

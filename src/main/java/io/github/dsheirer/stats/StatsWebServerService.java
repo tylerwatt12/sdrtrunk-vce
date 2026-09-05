@@ -45,9 +45,9 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.stats.activity.P25ActivityLogPath;
-import io.github.dsheirer.stats.activity.P25ActivityLogService;
-import io.github.dsheirer.stats.activity.P25ActivityLogStatus;
+import io.github.dsheirer.stats.activity.ReceiverActivityPath;
+import io.github.dsheirer.stats.activity.ReceiverActivityService;
+import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.stats.health.ReceiverHealthService;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialException;
@@ -65,14 +65,14 @@ import io.github.dsheirer.web.http.RadioReferenceHttpController;
 import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.http.WebSessionHttpController;
-import io.github.dsheirer.web.http.WebSiteSettingsHttpController;
+import io.github.dsheirer.web.http.WebReceiverSettingsHttpController;
 import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
 import io.github.dsheirer.web.http.SpectrumSnapPresetHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
-import io.github.dsheirer.web.settings.WebSiteSettingsService;
 import io.github.dsheirer.web.settings.SpectrumSnapSettingsService;
+import io.github.dsheirer.web.settings.WebReceiverSettingsService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -173,13 +173,13 @@ public class StatsWebServerService implements AutoCloseable
     private final AtomicLong mMultiplexSlowDisconnects = new AtomicLong();
     private final AtomicLong mMultiplexEventDrops = new AtomicLong();
     private final ChannelProcessingManager mChannelProcessingManager;
-    private final P25ActivityLogService mActivityLogService;
+    private final ReceiverActivityService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final Path mWebAccessDatabasePath;
-    private final WebSiteSettingsService mWebSiteSettingsService;
     private final SpectrumSnapSettingsService mSpectrumSnapSettingsService;
+    private final WebReceiverSettingsService mWebReceiverSettingsService;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
     private volatile ListenerRuntime mListener;
@@ -201,20 +201,20 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService)
+                                 ReceiverActivityService activityLogService)
     {
         this(userPreferences, channelProcessingManager, activityLogService, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService)
     {
         this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService)
     {
@@ -223,7 +223,7 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager)
     {
@@ -232,7 +232,7 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
                                  ScanListModel scanListModel)
@@ -258,8 +258,8 @@ public class StatsWebServerService implements AutoCloseable
             new TunerDiagnosticService(tunerManager, mDiagnosticFftScheduler) : null;
         mLiveService = new StatsLiveService(channelProcessingManager, entityCatalog);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
-        mWebSiteSettingsService = new WebSiteSettingsService(mUserPreferences.getNowPlayingPreference());
         mSpectrumSnapSettingsService = new SpectrumSnapSettingsService(mWebAccessDatabasePath);
+        mWebReceiverSettingsService = new WebReceiverSettingsService(mUserPreferences.getNowPlayingPreference());
         mTlsMaterialService = new WebTlsMaterialService(
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
         mTlsMaintenanceExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -689,10 +689,10 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext(RadioReferenceHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 
-        WebSiteSettingsHttpController siteSettingsController =
-            new WebSiteSettingsHttpController(mWebSiteSettingsService);
-        server.createContext(WebSiteSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
-            WebCapability.ADMIN_SETTINGS, siteSettingsController::handle));
+        WebReceiverSettingsHttpController receiverSettingsController =
+            new WebReceiverSettingsHttpController(mWebReceiverSettingsService);
+        server.createContext(WebReceiverSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, receiverSettingsController::handle));
 
         SpectrumSnapPresetHttpController spectrumSnapController =
             new SpectrumSnapPresetHttpController(mSpectrumSnapSettingsService);
@@ -890,22 +890,22 @@ public class StatsWebServerService implements AutoCloseable
         server.put("enabled", runtimeState.running());
         server.put("port", runtimeState.port());
         server.put("https", runtimeState.https());
-        server.put("accessMode", runtimeState.anyIpEnabled() ? "any_ip" : "local_only");
-        server.put("certificateFingerprint", runtimeState.certificateFingerprint());
-        server.put("statusMessage", runtimeState.statusMessage());
-        server.put("assetsAvailable", listener != null &&
+        server.put("access_mode", runtimeState.anyIpEnabled() ? "any_ip" : "local_only");
+        server.put("certificate_fingerprint", runtimeState.certificateFingerprint());
+        server.put("status_message", runtimeState.statusMessage());
+        server.put("assets_available", listener != null &&
             Files.isRegularFile(listener.configuration().requested().assetRoot().resolve("index.html")));
-        server.put("liveTransport", Map.of(
+        server.put("live_transport", Map.of(
             "stream", StatsApiV1.LIVE_MULTIPLEX,
             "control", StatsApiV1.LIVE_MULTIPLEX_CONTROL,
-            "maximumClients", MAXIMUM_MULTIPLEX_CLIENTS,
-            "activeClients", mMultiplexClients.size(),
-            "rejectedClients", mMultiplexRejectedClients.get(),
-            "slowDisconnects", mMultiplexSlowDisconnects.get(),
-            "eventDrops", mMultiplexEventDrops.get()));
+            "maximum_clients", MAXIMUM_MULTIPLEX_CLIENTS,
+            "active_clients", mMultiplexClients.size(),
+            "rejected_clients", mMultiplexRejectedClients.get(),
+            "slow_disconnects", mMultiplexSlowDisconnects.get(),
+            "event_drops", mMultiplexEventDrops.get()));
         status.put("server", server);
         status.put("database", mDatabase.status());
-        status.put("statsLogging", statsLoggingStatusResponse());
+        status.put("stats_logging", statsLoggingStatusResponse());
         return status;
     }
 
@@ -917,13 +917,13 @@ public class StatsWebServerService implements AutoCloseable
     {
         mWebCallService.maintain();
         Map<String,Object> transport = Map.of(
-            "activeClients", mMultiplexClients.size(),
-            "rejectedClients", mMultiplexRejectedClients.get(),
-            "slowDisconnects", mMultiplexSlowDisconnects.get(),
-            "eventDrops", mMultiplexEventDrops.get());
+            "active_clients", mMultiplexClients.size(),
+            "rejected_clients", mMultiplexRejectedClients.get(),
+            "slow_disconnects", mMultiplexSlowDisconnects.get(),
+            "event_drops", mMultiplexEventDrops.get());
         return Map.of(
-            "server", Map.of("liveTransport", transport),
-            "webPlayer", mWebCallService.observerStatus(),
+            "server", Map.of("live_transport", transport),
+            "web_player", mWebCallService.observerStatus(),
             "diagnostics", Map.of(
             "channel_sessions", mChannelDiagnosticService != null ? mChannelDiagnosticService.activeSessionCount() : 0,
             "channel_producers", mChannelDiagnosticService != null ? mChannelDiagnosticService.activeProducerCount() : 0,
@@ -933,23 +933,23 @@ public class StatsWebServerService implements AutoCloseable
 
     private Map<String,Object> statsLoggingStatusResponse()
     {
-        P25ActivityLogStatus current = statsLoggingStatus();
+        ReceiverActivityStatus current = statsLoggingStatus();
         Map<String,Object> response = new LinkedHashMap<>();
-        response.put("summaryConfigured", current.summaryConfigured());
-        response.put("detailedHistoryConfigured", current.detailedHistoryConfigured());
-        response.put("summaryActive", current.summaryActive());
-        response.put("detailedHistoryActive", current.detailedHistoryActive());
-        response.put("retentionDays", current.retentionDays());
+        response.put("summary_configured", current.summaryConfigured());
+        response.put("detailed_history_configured", current.detailedHistoryConfigured());
+        response.put("summary_active", current.summaryActive());
+        response.put("detailed_history_active", current.detailedHistoryActive());
+        response.put("retention_days", current.retentionDays());
         response.put("state", current.state());
-        response.put("lastSuccessfulWriteMs", current.lastSuccessfulWriteMs());
-        response.put("recordsWritten", current.recordsWritten());
-        response.put("recordsDropped", current.recordsDropped());
-        response.put("lastError", current.lastError() == null || current.lastError().isBlank() ? "" :
+        response.put("last_successful_write_ms", current.lastSuccessfulWriteMs());
+        response.put("records_written", current.recordsWritten());
+        response.put("records_dropped", current.recordsDropped());
+        response.put("last_error", current.lastError() == null || current.lastError().isBlank() ? "" :
             "Statistics logging failed; check the application log.");
         return response;
     }
 
-    private P25ActivityLogStatus statsLoggingStatus()
+    private ReceiverActivityStatus statsLoggingStatus()
     {
         if(mActivityLogService != null)
         {
@@ -958,9 +958,9 @@ public class StatsWebServerService implements AutoCloseable
 
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
         boolean summaryConfigured = preference.isStatsLoggingEnabled();
-        return new P25ActivityLogStatus(summaryConfigured, preference.isStatsDetailedHistoryEnabled(), false, false,
-            preference.getStatsLoggingRetentionDays(), summaryConfigured ? P25ActivityLogStatus.State.STOPPED :
-            P25ActivityLogStatus.State.DISABLED, P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(),
+        return new ReceiverActivityStatus(summaryConfigured, preference.isStatsDetailedHistoryEnabled(), false, false,
+            preference.getStatsLoggingRetentionDays(), summaryConfigured ? ReceiverActivityStatus.State.STOPPED :
+            ReceiverActivityStatus.State.DISABLED, ReceiverActivityPath.getDatabasePath(mUserPreferences).toString(),
             0, 0, 0, null);
     }
 
@@ -969,7 +969,7 @@ public class StatsWebServerService implements AutoCloseable
      */
     public synchronized StatsWebNavigationState getNavigationState()
     {
-        P25ActivityLogStatus loggingStatus = statsLoggingStatus();
+        ReceiverActivityStatus loggingStatus = statsLoggingStatus();
         WebServerRuntimeState runtimeState = mRuntimeState;
         return new StatsWebNavigationState(runtimeState.running(), runtimeState.port(), runtimeState.https(),
             loggingStatus.summaryActive(),
@@ -1024,9 +1024,10 @@ public class StatsWebServerService implements AutoCloseable
      * Arms the one-use local administrator sign-in and opens a site-scoped P25 bandplan override draft.
      */
     public synchronized URI createDesktopAdministratorP25BandplanOverrideHandoffUri(P25SiteIdentity identity,
-                                                                                     String siteGuid)
+                                                                                     String configurationId)
     {
-        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity, siteGuid);
+        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity,
+            configurationId);
         StatsWebNavigationState navigation = getNavigationState();
 
         if(!navigation.running() || mWebAuthenticationService == null ||
@@ -1162,7 +1163,7 @@ public class StatsWebServerService implements AutoCloseable
             try(connectedOutput)
             {
                 connectedOutput.start();
-                writeMultiplexJson(connectedOutput, TOPIC_CONTROL, "ready", Map.of("clientId", clientId));
+                writeMultiplexJson(connectedOutput, TOPIC_CONTROL, "ready", Map.of("client_id", clientId));
                 long lastHeartbeat = System.nanoTime();
                 long lastAuthorizationCheck = 0;
 
@@ -3090,7 +3091,7 @@ public class StatsWebServerService implements AutoCloseable
             switch(topic)
             {
                 case "channel_activity" -> {
-                    mChannelActivity = requiredSubscription(mLiveService.subscribeSystems(), topic);
+                    mChannelActivity = requiredSubscription(mLiveService.subscribeChannelActivity(), topic);
                     long dropBaseline = mChannelActivity.droppedCount();
                     byte[] snapshot = mLiveService.encodedSnapshot();
                     var recovery = new RecoveryCapture<>(dropBaseline, snapshot);

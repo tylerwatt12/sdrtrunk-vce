@@ -59,6 +59,24 @@ class StableFactTrackerTest
     }
 
     @Test
+    void olderDifferentKeyCannotBecomeAChallengerOrRewindTheStableTimestamp()
+    {
+        StableFactTracker<Value,Integer> tracker = new StableFactTracker<>(Value::key);
+        FactConfirmationPolicy immediate = new FactConfirmationPolicy(1, 0, 100, true);
+        tracker.observe(new Value(1, "stable"), 200, immediate, ignored -> true);
+
+        assertEquals(StableFactTracker.Result.NONE,
+            tracker.observe(new Value(2, "stale challenger"), 150, GUARDED, ignored -> true));
+        assertNull(tracker.getCandidateKey());
+        assertEquals(1, tracker.getStableValue().key());
+
+        assertEquals(StableFactTracker.Result.NONE,
+            tracker.observe(new Value(2, "new challenger"), 201, GUARDED, ignored -> true));
+        assertEquals(2, tracker.getCandidateKey());
+        assertEquals(1, tracker.getCandidateObservationCount());
+    }
+
+    @Test
     void candidateResetRetainsStableValue()
     {
         StableFactTracker<Value,Integer> tracker = new StableFactTracker<>(Value::key);

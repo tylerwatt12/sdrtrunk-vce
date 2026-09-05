@@ -111,7 +111,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
 
         return audioRecording != null && mAliasModel != null &&
             siteConfiguration.resolveAliasList(mAliasModel).isPresent() &&
-            audioRecording.getDeliveryEvidence().matches(siteConfiguration.getName(),
+            audioRecording.getDeliveryEvidence().matches(siteConfiguration.getConfigurationId(),
                 siteConfiguration.getAliasListId(), siteConfiguration.getChannelConfigurationId());
     }
 

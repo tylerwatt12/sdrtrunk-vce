@@ -96,23 +96,6 @@ final class StatsRequest
         return new StatsRequest(parameters);
     }
 
-    StatsRequest withPathParameter(String key, Object value)
-    {
-        if(key == null || key.isBlank() || value == null)
-        {
-            throw new IllegalArgumentException("Path parameter name and value are required");
-        }
-
-        if(mParameters.containsKey(key))
-        {
-            throw invalid(key, key + " must be supplied in the path only");
-        }
-
-        Map<String,String> combined = new LinkedHashMap<>(mParameters);
-        combined.put(key, String.valueOf(value));
-        return new StatsRequest(combined, mConsumed);
-    }
-
     String text(String key)
     {
         mConsumed.add(key);

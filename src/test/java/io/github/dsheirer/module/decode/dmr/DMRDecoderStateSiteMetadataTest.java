@@ -76,6 +76,7 @@ class DMRDecoderStateSiteMetadataTest
     {
         Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
         DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
         TimeslotFrequency mapping = new TimeslotFrequency();
         mapping.setNumber(802);
         mapping.setDownlinkFrequency(139_518_750L);
@@ -109,6 +110,44 @@ class DMRDecoderStateSiteMetadataTest
             snapshot.channels().getFirst().role());
         assertEquals(DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP,
             snapshot.channels().getFirst().frequencySource());
+    }
+
+    @Test
+    void fullResetClearsLearnedSystemBeforeTheSameStateIsReused()
+    {
+        Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        channel.setDecodeConfiguration(configuration);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(channel);
+        DMRDecoderState decoderState = new DMRDecoderState(channel, 1, manager);
+        EventBus eventBus = new EventBus();
+        EventCollector collector = new EventCollector();
+        eventBus.register(collector);
+        decoderState.setInterModuleEventBus(eventBus);
+        CorrectedBinaryMessage identity = new CorrectedBinaryMessage(32);
+        identity.load(0, 4, 2);
+        identity.load(6, 9, 257);
+        identity.load(15, 3, 5);
+
+        decoderState.receive(new ControlChannelSystemParameters(identity, 1_000, 1));
+
+        assertEquals("dmr:tier3:tiny:257", manager.getNativeRadioSystemKey());
+        assertEquals(257, ((DMRNetworkConfigurationSnapshot)collector.event.snapshot()).network());
+
+        decoderState.reset();
+        collector.event = null;
+        CorrectedBinaryMessage grantBits = new CorrectedBinaryMessage(80);
+        grantBits.load(16, 12, 802);
+        grantBits.set(28);
+        CorrectedBinaryMessage slotBits = new CorrectedBinaryMessage(24);
+        slotBits.load(8, 4, 3);
+        decoderState.receive(new TalkgroupVoiceChannelGrant(DMRSyncPattern.BASE_STATION_DATA,
+            grantBits, null, new SlotType(slotBits), 7_000L, 2));
+
+        assertNull(manager.getNativeRadioSystemKey());
+        assertNull(collector.event,
+            "reset must not bypass the bounded site-metadata publication interval");
     }
 
     private static class EventCollector

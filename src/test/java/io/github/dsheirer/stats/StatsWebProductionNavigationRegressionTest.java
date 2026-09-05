@@ -1,7 +1,7 @@
 /*
  * *****************************************************************************
  * Copyright (C) 2026 Dennis Sheirer
- * *****************************************************************************
+ * ****************************************************************************
  */
 package io.github.dsheirer.stats;
 
@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
 import java.net.URI;
 import java.nio.file.Path;
@@ -23,19 +24,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * Production-shaped navigation regressions for configured entities whose retained activity is empty or optional.
- */
+/** Production-shaped navigation regressions for configured entities with optional retained activity. */
 class StatsWebProductionNavigationRegressionTest
 {
-    private static final String P25_SCOPE = "p25:BEE00:49F:alias-list:1";
+    private static final String RADIO_SYSTEM_KEY = "p25:bee00:49f";
     private static final String P25_CONFIGURATION_ID = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
-    private static final String P25_SITE_GUID = "4b75217f-2555-4c38-aafc-5d17bc0faf72";
     private static final int ALIAS_ONLY_TALKGROUP = 56_735;
-    private static final String CONVENTIONAL_CONFIGURATION_ID =
-        "dcc948ac-6812-444c-a257-b9b350bb6f8f";
-    private static final String CONVENTIONAL_RADIORESOLVE_GUID =
-        "728d2d66-de4e-476b-a696-919f32dd4d12";
+    private static final String CONVENTIONAL_CONFIGURATION_ID = "dcc948ac-6812-444c-a257-b9b350bb6f8f";
+    private static final String RADIORESOLVE_ID = "728d2d66-de4e-476b-a696-919f32dd4d12";
 
     @TempDir
     Path mTemporaryFolder;
@@ -52,96 +48,79 @@ class StatsWebProductionNavigationRegressionTest
     }
 
     @Test
-    void preservesTheFullP25ScopeAndReturnsAnAliasOnlyTalkgroupWithZeroActivity()
+    void returnsAliasOnlyTalkgroupWithZeroActivity()
     {
-        Map<String,Object> system = map(mDatabase.system(request("/api/system?scope=" + P25_SCOPE)), "system");
-        assertEquals(P25_SCOPE, system.get("scope_token"));
-        assertEquals(Map.of("kind", "system", "key", P25_SCOPE), system.get("entity_ref"));
+        Map<String,Object> system = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
+        assertEquals(RADIO_SYSTEM_KEY, system.get("radio_system_key"));
+        assertEquals(Map.of("kind", "radio_system", "key", RADIO_SYSTEM_KEY), system.get("entity_ref"));
 
-        Map<String,Object> talkgroup = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=" + P25_SCOPE + "&talkgroup_id=" + ALIAS_ONLY_TALKGROUP)),
-            "group_identity");
-        assertEquals(P25_SCOPE, talkgroup.get("scope_token"));
-        assertEquals(ALIAS_ONLY_TALKGROUP, number(talkgroup.get("talkgroup_id")));
-        assertEquals("CuyCO Jail 35", talkgroup.get("alias_name"));
-        assertEquals(Map.of("kind", "talkgroup", "scope", P25_SCOPE, "id", ALIAS_ONLY_TALKGROUP),
-            talkgroup.get("entity_ref"));
-        assertEquals(Map.of("kind", "system", "key", P25_SCOPE), talkgroup.get("system_entity_ref"));
+        String identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_TALKGROUP,
+            0xBEE00, 0x49F, ALIAS_ONLY_TALKGROUP);
+        Map<String,Object> groupIdentity = map(mDatabase.radioSystemGroupIdentity(
+            RADIO_SYSTEM_KEY, identityKey), "group_identity");
+        assertEquals(RADIO_SYSTEM_KEY, groupIdentity.get("radio_system_key"));
+        assertEquals(ALIAS_ONLY_TALKGROUP, number(groupIdentity.get("native_id")));
+        assertEquals("CuyCO Jail 35", groupIdentity.get("alias_name"));
+        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY,
+            "identity_key", identityKey), groupIdentity.get("entity_ref"));
 
         for(String counter: List.of("logical_call_count", "source_logical_call_count",
             "target_logical_call_count", "encrypted_logical_call_count", "recorded_logical_call_count",
             "stream_submitted_logical_call_count", "signaling_observation_count", "radios",
-            "affiliated_radios", "affiliated_sites", "site_observation_count"))
+            "affiliated_radios", "affiliated_channels", "channel_observation_count"))
         {
-            assertEquals(0, number(talkgroup.get(counter)), counter);
+            assertEquals(0, number(groupIdentity.get(counter)), counter);
         }
     }
 
     @Test
-    void usesConfigurationIdentityForAConventionalChannelWithNoReceiverContext() throws Exception
+    void configuredConventionalChannelNeedsNoObservationRow() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (2, 'Lake County', 'NBFM')");
+            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (92, 'Lake County', 'NBFM')");
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
-                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_name,
-                    radres_guid, decoder_type, primary_frequency_hz, config_json
-                ) VALUES ('%1$s', 'CONVENTIONAL', 2, 'Lake County', 'LCSO TAC3', 'Lake County',
+                    configuration_id, channel_kind, sort_order, system_name, name, alias_list_id,
+                    radioresolve_id, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%1$s', 'CONVENTIONAL', 92, 'Lake County', 'LCSO TAC3', 92,
                     '%2$s', 'NBFM', 155730000, '{}')
-                """.formatted(CONVENTIONAL_CONFIGURATION_ID, CONVENTIONAL_RADIORESOLVE_GUID));
+                """.formatted(CONVENTIONAL_CONFIGURATION_ID, RADIORESOLVE_ID));
         }
 
-        List<Map<String,Object>> channels = rows(mDatabase.conventional(request("/api/conventional")));
-        assertEquals(1, channels.size());
-        Map<String,Object> listed = channels.getFirst();
+        Map<String,Object> listed = rows(mDatabase.channelDirectory(request("/?type=conventional"))).getFirst();
         assertEquals(CONVENTIONAL_CONFIGURATION_ID, listed.get("configuration_id"));
-        assertEquals(CONVENTIONAL_RADIORESOLVE_GUID, listed.get("guid"));
-        assertEquals(Map.of("kind", "conventional", "key", CONVENTIONAL_CONFIGURATION_ID),
+        assertEquals(Map.of("kind", "channel", "key", CONVENTIONAL_CONFIGURATION_ID),
             listed.get("entity_ref"));
-        assertNull(listed.get("context_key"));
 
-        Map<String,Object> detail = mDatabase.conventionalDetail(request(
-            "/api/conventional/detail?configuration_id=" + CONVENTIONAL_CONFIGURATION_ID));
+        Map<String,Object> detail = mDatabase.channelDetail(CONVENTIONAL_CONFIGURATION_ID, request("/"));
         Map<String,Object> channel = map(detail, "channel");
-        assertEquals("LCSO TAC3", channel.get("channel_name"));
+        assertEquals("LCSO TAC3", channel.get("name"));
         assertEquals(CONVENTIONAL_CONFIGURATION_ID, channel.get("configuration_id"));
-        assertEquals(CONVENTIONAL_RADIORESOLVE_GUID, channel.get("guid"));
-        assertEquals(Map.of("kind", "conventional", "key", CONVENTIONAL_CONFIGURATION_ID),
-            channel.get("entity_ref"));
-        assertNull(channel.get("context_key"));
         assertTrue(rowsFrom(detail, "summaries").isEmpty());
 
         WebEntityNavigationCatalog.Snapshot navigation = mDatabase.webEntityNavigationSnapshot();
         assertEquals(CONVENTIONAL_CONFIGURATION_ID,
-            navigation.channel(CONVENTIONAL_CONFIGURATION_ID, null).entityRef().key());
-        assertNull(navigation.channel(null, CONVENTIONAL_RADIORESOLVE_GUID),
-            "RadioResolve correlation GUIDs must never become conventional navigation identities");
+            navigation.channel(CONVENTIONAL_CONFIGURATION_ID).entityRef().key());
+        assertNull(navigation.channel(RADIORESOLVE_ID));
     }
 
     @Test
-    void exposesConfiguredP25SiteLabelsWithoutAppendingTheAliasListDatabaseId()
+    void namesNeverIncludeDatabaseIds()
     {
-        Map<String,Object> system = map(mDatabase.system(request("/api/system?scope=" + P25_SCOPE)), "system");
-        assertEquals("GCRCN", system.get("configured_system"));
-        assertEquals("GCRCN", system.get("alias_list_name"));
-        assertEquals(1, number(system.get("alias_list_id")));
-        assertEquals("GCRCNSimul", system.get("site_names"));
+        Map<String,Object> system = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
+        assertEquals("GCRCN", system.get("system_name"));
+        assertEquals(List.of("GCRCN"), aliasListNames(system));
+        assertEquals("GCRCNSimul", system.get("channel_names"));
 
-        List<Map<String,Object>> sites = rows(mDatabase.systemSites(request(
-            "/api/system/sites?scope=" + P25_SCOPE)));
-        assertEquals(1, sites.size());
-        Map<String,Object> site = sites.getFirst();
-        assertEquals("GCRCNSimul", site.get("configured_site"));
-        assertEquals("GCRCN Control", site.get("configured_name"));
-        assertEquals("GCRCN Control", site.get("channel_name"));
-        assertEquals(1, number(site.get("site_id")));
-        assertEquals(Map.of("kind", "site", "key", P25_SITE_GUID), site.get("entity_ref"));
+        Map<String,Object> channel = rows(mDatabase.radioSystemChannels(RADIO_SYSTEM_KEY, request("/"))).getFirst();
+        assertEquals("GCRCNSimul", channel.get("site_name"));
+        assertEquals("GCRCN Control", channel.get("name"));
+        assertEquals(Map.of("kind", "channel", "key", P25_CONFIGURATION_ID), channel.get("entity_ref"));
 
-        for(Object label: List.of(system.get("configured_system"), system.get("alias_list_name"),
-            system.get("site_names"), site.get("configured_site"), site.get("configured_name"),
-            site.get("channel_name")))
+        for(Object label: List.of(system.get("system_name"), system.get("channel_names"),
+            channel.get("site_name"), channel.get("name")))
         {
             assertFalse(String.valueOf(label).contains("(#"), String.valueOf(label));
         }
@@ -152,46 +131,35 @@ class StatsWebProductionNavigationRegressionTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
-            statement.executeUpdate("DELETE FROM alias_list");
-            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (1, 'GCRCN', 'P25')");
+            statement.executeUpdate("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (91, 'GCRCN', 'P25')");
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_name, radres_guid, decoder_type, primary_frequency_hz, config_json
-                ) VALUES ('%1$s', 'TRUNKED', 1, 'GCRCN', 'GCRCNSimul', 'GCRCN Control',
-                    'GCRCN', '%2$s', 'P25_PHASE1', 856137500, '{}')
-                """.formatted(P25_CONFIGURATION_ID, P25_SITE_GUID));
-            statement.executeUpdate("INSERT INTO p25_system VALUES (1, 0xBEE00, 0x49F, 1000, 2000)");
+                    alias_list_id, radioresolve_id, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%1$s', 'TRUNKED', 91, 'GCRCN', 'GCRCNSimul', 'GCRCN Control',
+                    91, '4b75217f-2555-4c38-aafc-5d17bc0faf72', 'P25_PHASE1', 856137500, '{}')
+                """.formatted(P25_CONFIGURATION_ID));
             statement.executeUpdate("""
-                INSERT INTO receiver_context (
-                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
-                    decoder, first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
-                    primary_frequency_hz, current_control_hz
-                ) VALUES (1, 'GUID:%1$s', '%1$s', 1, 1, 'GCRCN Control', 'GCRCN',
-                    'P25-1', 1000, 2000, 1, 0x49F, 1, 1, 856137500, 856137500)
-                """.formatted(P25_SITE_GUID));
+                INSERT INTO radio_system (
+                    id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (91, '%s', 1, 0, 0xBEE00, 0x49F, 1000, 2000)
+                """.formatted(RADIO_SYSTEM_KEY));
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                    radio_system_assigned_at_ms)
+                VALUES (91, '%s', 1000, 2000, 91, 1000)
+                """.formatted(P25_CONFIGURATION_ID));
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
-                    guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, protocol,
-                    channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
-                    primary_frequency_hz, current_control_hz
-                ) VALUES ('%1$s', 'gcrcn-hash', 1000, 2000, 10, 'APCO25', 'GCRCN Control',
-                    'GCRCN', 'P25-1', 1, 0x49F, 1, 1, 856137500, 856137500)
-                """.formatted(P25_SITE_GUID));
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope (
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (1, '%s', 1, 1, 0, 1, 1, 1000, 2000)
-                """.formatted(P25_SCOPE));
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope_context (context_id, scope_id, first_seen_ms, last_seen_ms)
-                VALUES (1, 1, 1000, 2000)
+                    channel_id, first_seen_ms, last_seen_ms, observation_count, protocol,
+                    nac, rfss, site, primary_frequency_hz, current_control_hz
+                ) VALUES (91, 1000, 2000, 10, 'APCO25', 0x49F, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (id, alias_list_id, name, group_name, matcher_type, protocol, value)
-                VALUES (1, 1, 'CuyCO Jail 35', 'Corrections', 'TALKGROUP', 'APCO25', %d)
+                VALUES (9101, 91, 'CuyCO Jail 35', 'Corrections', 'TALKGROUP', 'APCO25', %d)
                 """.formatted(ALIAS_ONLY_TALKGROUP));
         }
     }
@@ -202,25 +170,32 @@ class StatsWebProductionNavigationRegressionTest
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String,Object> map(Map<String,Object> response, String key)
+    private static Map<String,Object> map(Map<String,Object> source, String key)
     {
-        return (Map<String,Object>)response.get(key);
+        return (Map<String,Object>)source.get(key);
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Map<String,Object>> rows(Map<String,Object> response)
+    private static List<Map<String,Object>> rows(Map<String,Object> source)
     {
-        return (List<Map<String,Object>>)response.get("rows");
+        return (List<Map<String,Object>>)source.get("rows");
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Map<String,Object>> rowsFrom(Map<String,Object> response, String key)
+    private static List<Map<String,Object>> rowsFrom(Map<String,Object> source, String key)
     {
-        return (List<Map<String,Object>>)response.get(key);
+        return (List<Map<String,Object>>)source.get(key);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> aliasListNames(Map<String,Object> radioSystem)
+    {
+        return ((List<Map<String,Object>>)radioSystem.get("alias_lists")).stream()
+            .map(row -> String.valueOf(row.get("name"))).toList();
     }
 
     private static long number(Object value)
     {
-        return ((Number)value).longValue();
+        return value instanceof Number number ? number.longValue() : 0;
     }
 }

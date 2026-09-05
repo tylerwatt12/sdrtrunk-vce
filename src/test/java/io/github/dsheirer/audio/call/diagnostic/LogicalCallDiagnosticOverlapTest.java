@@ -69,7 +69,7 @@ class LogicalCallDiagnosticOverlapTest
 
     private static LogicalCallDiagnosticLeg leg(String id, long start, long end, boolean selected)
     {
-        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, "Friendly Site", "site-guid", 42L,
+        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, "Friendly Site", "radioresolve-id", 42L,
             0xBEE00, 0x123, 1, 2, start, end, Math.max(0L, end - start), 0L, 0L, 0L, 0L, 0L, 0L, 0L,
             0L, 0L, 0.0d, 0.0d, 0.0d, 0.0d, 0L, false, false, selected);
     }

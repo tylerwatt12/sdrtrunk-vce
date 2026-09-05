@@ -158,6 +158,20 @@ class StatsApiV1HttpContractTest
         assertTrue(dashboard.has("source_activity_24h"), dashboardResponse.body());
         assertFalse(dashboard.has("source_activity24h"), dashboardResponse.body());
 
+        HttpResponse<String> activityResponse = get(StatsApiV1.ACTIVITY + "?limit=1");
+        assertEquals(200, activityResponse.statusCode(), activityResponse.body());
+        JsonNode activity = OBJECT_MAPPER.readTree(activityResponse.body()).at("/data/0");
+        assertTrue(activity.path("source_identity_key").isTextual(), activityResponse.body());
+        assertTrue(activity.path("target_identity_key").isTextual(), activityResponse.body());
+        assertEquals("radio", activity.at("/source_entity_ref/kind").textValue(),
+            activityResponse.body());
+        assertEquals("talkgroup", activity.at("/target_entity_ref/kind").textValue(),
+            activityResponse.body());
+        assertEquals("talkgroup", activity.path("target_kind").textValue(), activityResponse.body());
+        assertFalse(activity.has("source_identity_kind_code"), activityResponse.body());
+        assertFalse(activity.has("target_identity_kind_code"), activityResponse.body());
+        assertFalse(activity.has("target_kind_code"), activityResponse.body());
+
         HttpResponse<String> actionsResponse = get(StatsApiV1.ACTIVITY_ACTIONS + "?range=24h");
         assertEquals(200, actionsResponse.statusCode(), actionsResponse.body());
         JsonNode actions = OBJECT_MAPPER.readTree(actionsResponse.body());
@@ -200,7 +214,7 @@ class StatsApiV1HttpContractTest
         assertTrue(radios.at("/meta/has_more").isBoolean(), radiosResponse.body());
         assertTrue(radios.path("meta").has("next_offset"), radiosResponse.body());
 
-        HttpResponse<String> systemsResponse = get(StatsApiV1.SYSTEMS + "?limit=1");
+        HttpResponse<String> systemsResponse = get(StatsApiV1.RADIO_SYSTEMS + "?limit=1");
         assertEquals(200, systemsResponse.statusCode(), systemsResponse.body());
         JsonNode systems = OBJECT_MAPPER.readTree(systemsResponse.body());
         assertTrue(systems.get("data").isArray(), systemsResponse.body());
@@ -208,32 +222,33 @@ class StatsApiV1HttpContractTest
         assertEquals(0, systems.at("/meta/offset").intValue(), systemsResponse.body());
         assertTrue(systems.at("/meta/has_more").isBoolean(), systemsResponse.body());
         assertFalse(systems.at("/meta").has("hasMore"), systemsResponse.body());
-        assertFalse(systems.at("/data/0").has("site_preview"), systemsResponse.body());
-        assertEquals(71, systems.at("/data/0/alias_list_id").intValue(), systemsResponse.body());
-        assertEquals("HTTP Aliases", systems.at("/data/0/alias_list_name").textValue(),
+        assertFalse(systems.at("/data/0").has("channel_preview"), systemsResponse.body());
+        assertEquals(1, systems.at("/data/0/alias_lists").size(), systemsResponse.body());
+        assertEquals(71, systems.at("/data/0/alias_lists/0/id").intValue(), systemsResponse.body());
+        assertEquals("HTTP Aliases", systems.at("/data/0/alias_lists/0/name").textValue(),
             systemsResponse.body());
-        assertEquals("linked_system", systems.at("/data/0/scope_kind").textValue(),
+        assertEquals("p25:00001:047", systems.at("/data/0/radio_system_key").textValue(),
             systemsResponse.body());
 
-        HttpResponse<String> systemPreviewResponse = get(StatsApiV1.SYSTEMS +
-            "?include_site_preview=true&limit=25");
+        HttpResponse<String> systemPreviewResponse = get(StatsApiV1.RADIO_SYSTEMS +
+            "?include_channel_preview=true&limit=25");
         assertEquals(200, systemPreviewResponse.statusCode(), systemPreviewResponse.body());
         JsonNode systemPreview = OBJECT_MAPPER.readTree(systemPreviewResponse.body());
         assertTrue(systemPreview.get("data").isArray(), systemPreviewResponse.body());
-        assertEquals(StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW,
-            systemPreview.at("/meta/site_preview_limit_per_system").intValue(),
+        assertEquals(StatsWebDatabase.MAXIMUM_RADIO_SYSTEM_DIRECTORY_CHANNEL_PREVIEW,
+            systemPreview.at("/meta/channel_preview_limit_per_system").intValue(),
             systemPreviewResponse.body());
-        assertTrue(systemPreview.at("/data/0/site_preview").isArray(), systemPreviewResponse.body());
-        assertEquals(1, systemPreview.at("/data/0/site_preview").size(), systemPreviewResponse.body());
-        assertFalse(systemPreview.at("/data/0/site_preview_truncated").booleanValue(),
+        assertTrue(systemPreview.at("/data/0/channel_preview").isArray(), systemPreviewResponse.body());
+        assertEquals(1, systemPreview.at("/data/0/channel_preview").size(), systemPreviewResponse.body());
+        assertFalse(systemPreview.at("/data/0/channel_preview_truncated").booleanValue(),
             systemPreviewResponse.body());
-        JsonNode previewSite = systemPreview.at("/data/0/site_preview/0");
-        assertEquals("p25", previewSite.path("protocol").textValue(), systemPreviewResponse.body());
-        assertEquals("trunked", previewSite.path("site_kind").textValue(), systemPreviewResponse.body());
-        assertEquals(2, previewSite.path("site_id").intValue(), systemPreviewResponse.body());
-        assertEquals(71, previewSite.path("alias_list_id").intValue(), systemPreviewResponse.body());
-        assertFalse(previewSite.has("scope_id"), systemPreviewResponse.body());
-        assertFalse(previewSite.has("protocol_code"), systemPreviewResponse.body());
+        JsonNode previewChannel = systemPreview.at("/data/0/channel_preview/0");
+        assertEquals("p25", previewChannel.path("protocol").textValue(), systemPreviewResponse.body());
+        assertEquals("00000000-0000-0000-0000-000000000071",
+            previewChannel.path("configuration_id").textValue(), systemPreviewResponse.body());
+        assertEquals(2, previewChannel.path("site_id").intValue(), systemPreviewResponse.body());
+        assertEquals(71, previewChannel.path("alias_list_id").intValue(), systemPreviewResponse.body());
+        assertFalse(previewChannel.has("protocol_code"), systemPreviewResponse.body());
 
         HttpResponse<String> aliasesResponse = get(StatsApiV1.ALIAS_LISTS + "?limit=1");
         assertStructuredError(aliasesResponse, 401, "authentication_required", null);
@@ -257,27 +272,27 @@ class StatsApiV1HttpContractTest
         HttpResponse<String> unknown = get(StatsApiV1.STATUS + "?surprise=true");
         assertStructuredError(unknown, 400, "unknown_parameter", "surprise");
 
-        HttpResponse<String> unbounded = get(StatsApiV1.SYSTEMS + "?limit=501");
+        HttpResponse<String> unbounded = get(StatsApiV1.RADIO_SYSTEMS + "?limit=501");
         assertStructuredError(unbounded, 400, "invalid_parameter", "limit");
 
-        HttpResponse<String> invalidPreview = get(StatsApiV1.SYSTEMS + "?include_site_preview=maybe");
-        assertStructuredError(invalidPreview, 400, "invalid_parameter", "include_site_preview");
+        HttpResponse<String> invalidPreview = get(StatsApiV1.RADIO_SYSTEMS + "?include_channel_preview=maybe");
+        assertStructuredError(invalidPreview, 400, "invalid_parameter", "include_channel_preview");
 
-        HttpResponse<String> oversizedPreviewPage = get(StatsApiV1.SYSTEMS +
-            "?include_site_preview=true&limit=26");
+        HttpResponse<String> oversizedPreviewPage = get(StatsApiV1.RADIO_SYSTEMS +
+            "?include_channel_preview=true&limit=26");
         assertStructuredError(oversizedPreviewPage, 400, "invalid_parameter", "limit");
 
-        HttpResponse<String> invalidAffiliated = get(StatsApiV1.SYSTEMS +
+        HttpResponse<String> invalidAffiliated = get(StatsApiV1.RADIO_SYSTEMS +
             "/p25%3A00001%3A047/radios?affiliated=maybe");
         assertStructuredError(invalidAffiliated, 400, "invalid_parameter", "affiliated");
 
-        HttpResponse<String> kindWithoutTalkgroup = get(StatsApiV1.SYSTEMS +
-            "/p25%3A00001%3A047/relationships?radio_id=1&kind=patch_group");
-        assertStructuredError(kindWithoutTalkgroup, 400, "invalid_parameter", "kind");
+        HttpResponse<String> retiredNumericIdentity = get(StatsApiV1.RADIO_SYSTEMS +
+            "/p25%3A00001%3A047/relationships?radio_id=1");
+        assertStructuredError(retiredNumericIdentity, 400, "unknown_parameter", "radio_id");
 
-        HttpResponse<String> removedPatchSpelling = get(StatsApiV1.ACTIVITY +
-            "?talkgroup_id=1&kind=patch");
-        assertStructuredError(removedPatchSpelling, 400, "invalid_parameter", "kind");
+        HttpResponse<String> invalidIdentityKey = get(StatsApiV1.ACTIVITY +
+            "?radio_system_key=p25%3A00001%3A047&group_identity_key=patch");
+        assertStructuredError(invalidIdentityKey, 400, "invalid_parameter", "group_identity_key");
 
         HttpResponse<String> missingRadioAction = get(StatsApiV1.ACTIVITY_RADIOS + "?range=24h");
         assertStructuredError(missingRadioAction, 400, "invalid_parameter", "action");
@@ -302,12 +317,12 @@ class StatsApiV1HttpContractTest
             "?range=24h&action=GRANT&group_by=radio");
         assertStructuredError(legacyRadiosGroupBy, 400, "unknown_parameter", "group_by");
 
-        HttpResponse<String> doubleEncodedPath = get(StatsApiV1.SYSTEMS + "/p25%253Atest");
+        HttpResponse<String> doubleEncodedPath = get(StatsApiV1.RADIO_SYSTEMS + "/p25%253Atest");
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
 
         HttpResponse<String> missingCursor = get(StatsApiV1.ACTIVITY +
-            "?before_id=999&talkgroup_id=1&kind=patch_group&radio_id=2&scope=p25:test" +
-            "&guid=test-guid&context=test-context&hide_grants=true&limit=1");
+            "?before_id=999&group_identity_key=v1-g-bee00-49f-56735&radio_identity_key=v1-r-bee00-49f-2" +
+            "&radio_system_key=p25%3Abee00%3A49f&hide_grants=true&limit=1");
         assertEquals(200, missingCursor.statusCode(), missingCursor.body());
         JsonNode emptyPage = OBJECT_MAPPER.readTree(missingCursor.body());
         assertEquals(0, emptyPage.get("data").size(), missingCursor.body());
@@ -325,23 +340,23 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void conventionalCsvExportsAcceptOnlyCanonicalConfigurationIdentity() throws Exception
+    void channelCsvExportsAcceptOnlyCanonicalConfigurationIdentity() throws Exception
     {
         String configurationId = "00000000-0000-0000-0000-000000000072";
         HttpResponse<String> canonical = get(StatsApiV1.EXPORTS +
-            "/conventional-talkgroups.csv?configuration_id=" + configurationId);
+            "/channel-group-identities.csv?configuration_id=" + configurationId);
         assertEquals(200, canonical.statusCode(), canonical.body());
         assertTrue(canonical.headers().firstValue("Content-Type").orElse("").startsWith("text/csv"));
 
         HttpResponse<String> removedContext = get(StatsApiV1.EXPORTS +
-            "/conventional-talkgroups.csv?context=retired-context");
+            "/channel-group-identities.csv?context=retired-context");
         assertStructuredError(removedContext, 400, "unknown_parameter", "context");
     }
 
     @Test
-    void systemGroupIdentityCollectionAcceptsItsPathScope() throws Exception
+    void radioSystemGroupIdentityCollectionAcceptsItsPathKey() throws Exception
     {
-        HttpResponse<String> response = get(StatsApiV1.SYSTEMS +
+        HttpResponse<String> response = get(StatsApiV1.RADIO_SYSTEMS +
             "/p25%3A00001%3A047/group-identities?limit=1");
         assertEquals(200, response.statusCode(), response.body());
         JsonNode page = OBJECT_MAPPER.readTree(response.body());
@@ -350,45 +365,45 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void groupIdentityDetailRequiresTheExactFullP25Scope() throws Exception
+    void groupIdentityDetailUsesTheP25RadioSystemKey() throws Exception
     {
-        String scope = "p25:BEE00:49F:alias-list:1";
-        HttpResponse<String> canonical = get(StatsApiV1.SYSTEMS +
-            "/p25%3ABEE00%3A49F%3Aalias-list%3A1/group-identities/talkgroup/56735");
+        String radioSystemKey = "p25:bee00:49f";
+        String identityKey = "v1-g-bee00-49f-56735";
+        HttpResponse<String> canonical = get(StatsApiV1.RADIO_SYSTEMS +
+            "/p25%3Abee00%3A49f/group-identities/" + identityKey);
         assertEquals(200, canonical.statusCode(), canonical.body());
         JsonNode identity = OBJECT_MAPPER.readTree(canonical.body()).at("/data");
-        assertEquals(scope, identity.at("/scope_token").textValue(), canonical.body());
-        assertEquals(56_735, identity.at("/talkgroup_id").intValue(), canonical.body());
+        assertEquals(radioSystemKey, identity.at("/radio_system_key").textValue(), canonical.body());
+        assertEquals(56_735, identity.at("/native_id").intValue(), canonical.body());
+        assertEquals("talkgroup", identity.at("/group_identity_kind").textValue(), canonical.body());
         assertEquals("talkgroup", identity.at("/entity_ref/kind").textValue(), canonical.body());
-        assertEquals(scope, identity.at("/entity_ref/scope").textValue(), canonical.body());
+        assertEquals(radioSystemKey, identity.at("/entity_ref/radio_system_key").textValue(), canonical.body());
+        assertEquals(identityKey, identity.at("/entity_ref/identity_key").textValue(), canonical.body());
         assertEquals(0, identity.at("/logical_call_count").longValue(), canonical.body());
         assertEquals(0, identity.at("/recorded_logical_call_count").longValue(), canonical.body());
         assertEquals(0, identity.at("/stream_submitted_logical_call_count").longValue(), canonical.body());
 
-        HttpResponse<String> staleShortScope = get(StatsApiV1.SYSTEMS +
-            "/p25%3ABEE00%3A49F/group-identities/talkgroup/56735");
-        assertStructuredError(staleShortScope, 404, "not_found", null);
+        HttpResponse<String> removedAliasListQualifiedKey = get(StatsApiV1.RADIO_SYSTEMS +
+            "/p25%3Abee00%3A49f%3Aalias-list%3A1/group-identities/" + identityKey);
+        assertStructuredError(removedAliasListQualifiedKey, 404, "not_found", null);
     }
 
     @Test
     void conventionalDetailUsesOnlyCanonicalConfigurationNavigation() throws Exception
     {
         String configurationId = "00000000-0000-0000-0000-000000000072";
-        String radioResolveGuid = "728d2d66-de4e-476b-a696-919f32dd4d12";
-        HttpResponse<String> canonical = get(StatsApiV1.CONVENTIONAL_CHANNELS + "/" + configurationId);
+        HttpResponse<String> canonical = get(StatsApiV1.CHANNELS + "/" + configurationId);
         assertEquals(200, canonical.statusCode(), canonical.body());
         JsonNode response = OBJECT_MAPPER.readTree(canonical.body());
         JsonNode channel = response.at("/data/channel");
         assertEquals(configurationId, channel.at("/configuration_id").textValue(), canonical.body());
-        assertEquals(radioResolveGuid, channel.at("/guid").textValue(), canonical.body());
-        assertEquals("conventional", channel.at("/entity_ref/kind").textValue(), canonical.body());
+        assertEquals("channel", channel.at("/entity_ref/kind").textValue(), canonical.body());
         assertEquals(configurationId, channel.at("/entity_ref/key").textValue(), canonical.body());
         assertTrue(response.at("/data/summaries").isEmpty(), canonical.body());
         assertFalse(canonical.body().contains("\"context_key\""), canonical.body());
         assertFalse(channel.has("context"), canonical.body());
 
-        HttpResponse<String> legacyContext = get(StatsApiV1.CONVENTIONAL_CHANNELS +
-            "?context=GUID%3A" + radioResolveGuid);
+        HttpResponse<String> legacyContext = get(StatsApiV1.CHANNELS + "?context=retired-context");
         assertStructuredError(legacyContext, 400, "unknown_parameter", "context");
     }
 
@@ -399,7 +414,7 @@ class StatsApiV1HttpContractTest
             "/api/status",
             "/api/talkgroup?scope=p25%3ABEE00%3A348&id=51900",
             "/api/system-directory",
-            "/api/alias-list/observed-talkgroups?list=1",
+            "/api/alias-list/observed-group-identities?list=1",
             "/api/export.csv?dataset=system-talkgroups",
             "/api/tuner-diagnostics/targets",
             "/live/systems",
@@ -415,7 +430,10 @@ class StatsApiV1HttpContractTest
             "/api/v1/live/activity",
             "/api/v1/activity-analytics?range=24h&group_by=action",
             "/api/web-player/calls/1/audio",
-            "/api/v1/systems/p25%3Atest/affiliations",
+            "/api/v1/systems",
+            "/api/v1/sites/00000000-0000-0000-0000-000000000001",
+            "/api/v1/conventional-channels",
+            "/api/v1/radio-systems/p25%3Atest/affiliations",
             "/api/v1/not-a-resource"))
         {
             HttpResponse<String> response = get(path);
@@ -434,12 +452,11 @@ class StatsApiV1HttpContractTest
             Map.entry("ALIAS_LISTS", "/api/v1/alias-lists"),
             Map.entry("ALIASES", "/api/v1/aliases"),
             Map.entry("SCAN_LISTS", "/api/v1/scan-lists"),
-            Map.entry("SYSTEMS", "/api/v1/systems"),
-            Map.entry("SITES", "/api/v1/sites"),
+            Map.entry("RADIO_SYSTEMS", "/api/v1/radio-systems"),
+            Map.entry("CHANNELS", "/api/v1/channels"),
             Map.entry("ACTIVITY", "/api/v1/activity"),
             Map.entry("ACTIVITY_ACTIONS", "/api/v1/activity/actions"),
             Map.entry("ACTIVITY_RADIOS", "/api/v1/activity/radios"),
-            Map.entry("CONVENTIONAL_CHANNELS", "/api/v1/conventional-channels"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),
             Map.entry("RECEIVER_HEALTH", "/api/v1/receiver-health"),
@@ -621,14 +638,12 @@ class StatsApiV1HttpContractTest
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) " +
                 "VALUES (71, 'HTTP Aliases', 'P25')");
             statement.executeUpdate("UPDATE alias_list SET name='GCRCN' WHERE id=1");
-            statement.executeUpdate("INSERT INTO p25_system VALUES (1, 1, 71, 1000, 2000)");
-            statement.executeUpdate("INSERT INTO p25_system VALUES (2, 0xBEE00, 0x49F, 1000, 2000)");
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_name, radres_guid, decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, radioresolve_id, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('00000000-0000-0000-0000-000000000071', 'TRUNKED', 71,
-                    'HTTP System', 'HTTP Site', 'HTTP Site', 'HTTP Aliases',
+                    'HTTP System', 'HTTP Site', 'HTTP Site', 71,
                     '00000000-0000-0000-0000-000000000071', 'P25_PHASE1', 851012500, '{}')
                 """);
             statement.executeUpdate("""
@@ -639,54 +654,50 @@ class StatsApiV1HttpContractTest
                     'HTTP Conventional', 'HTTP County', 'HTTP Fire', 'NBFM', 154310000, '{}')
                 """);
             statement.executeUpdate("UPDATE configuration_channel SET " +
-                "radres_guid = '728d2d66-de4e-476b-a696-919f32dd4d12' " +
+                "radioresolve_id = '728d2d66-de4e-476b-a696-919f32dd4d12' " +
                 "WHERE configuration_id = '00000000-0000-0000-0000-000000000072'");
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_name, radres_guid, decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, radioresolve_id, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('4b75217f-2555-4c38-aafc-5d17bc0faf71', 'TRUNKED', 1,
-                    'GCRCN', 'GCRCNSimul', 'GCRCN Control', 'GCRCN',
+                    'GCRCN', 'GCRCNSimul', 'GCRCN Control', 1,
                     '4b75217f-2555-4c38-aafc-5d17bc0faf72', 'P25_PHASE1', 856137500, '{}')
                 """);
             statement.executeUpdate("""
-                INSERT INTO receiver_context (
-                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
-                    first_seen_ms, last_seen_ms, system_key, rfss, site, current_control_hz
-                ) VALUES (1, 'GUID:00000000-0000-0000-0000-000000000071',
-                    '00000000-0000-0000-0000-000000000071', 1, 1,
-                    'HTTP Site', 'HTTP Aliases', 'P25-1',
-                    1000, 2000, 1, 1, 2, 851012500)
+                INSERT INTO radio_system (
+                    id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (1, 'p25:00001:047', 1, 0, 1, 0x047, 1000, 2000),
+                         (2, 'p25:bee00:49f', 1, 0, 0xBEE00, 0x49F, 1000, 2000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO receiver_context (
-                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
-                    first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
-                    primary_frequency_hz, current_control_hz
-                ) VALUES (2, 'GUID:4b75217f-2555-4c38-aafc-5d17bc0faf72',
-                    '4b75217f-2555-4c38-aafc-5d17bc0faf72', 1, 1,
-                    'GCRCN Control', 'GCRCN', 'P25-1',
-                    1000, 2000, 2, 0x49F, 1, 1, 856137500, 856137500)
+                INSERT INTO receiver_channel (
+                    id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                    radio_system_assigned_at_ms
+                ) VALUES (1, '00000000-0000-0000-0000-000000000071', 1000, 2000, 1, 1000),
+                         (2, '4b75217f-2555-4c38-aafc-5d17bc0faf71', 1000, 2000, 2, 1000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope (
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (1, 'p25:00001:047', 1, 1, 0, 71, 1, 1000, 2000)
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (21, 2, 1, 0xBEE00, 0x49F, 56735, 1000, 2000),
+                         (22, 2, 2, 0xBEE00, 0x49F, 2, 1000, 2000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope (
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    alias_list_id, p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (2, 'p25:BEE00:49F:alias-list:1', 1, 1, 0, 1, 2, 1000, 2000)
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id
+                ) VALUES (2, 2, 2000, 12, 2, 56735, 1, 22, 2, 21)
                 """);
             statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
-                VALUES (1, 1, 1000, 2000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
-                VALUES (2, 2, 1000, 2000)
+                INSERT INTO p25_site_snapshot (
+                    channel_id, first_seen_ms, last_seen_ms, observation_count, protocol,
+                    nac, rfss, site, primary_frequency_hz, current_control_hz
+                ) VALUES (1, 1000, 2000, 1, 'APCO25', 0x047, 1, 2, 851012500, 851012500),
+                         (2, 1000, 2000, 1, 'APCO25', 0x49F, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (id, alias_list_id, name, group_name, matcher_type, protocol, value)

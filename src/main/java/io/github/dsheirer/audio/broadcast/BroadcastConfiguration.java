@@ -48,7 +48,6 @@ import java.util.UUID;
     @JsonSubTypes.Type(value = BroadcastifyCallConfiguration.class, name="broadcastifyCallConfiguration"),
     @JsonSubTypes.Type(value = BroadcastifyCallSiteConfiguration.class, name="broadcastifyCallSiteConfiguration"),
     @JsonSubTypes.Type(value = RadioResolveConfiguration.class, name="RadioResolveConfiguration"),
-    @JsonSubTypes.Type(value = RadioResolveConfiguration.class, name="RADIORESOLVE"),
     @JsonSubTypes.Type(value = RdioScannerConfiguration.class, name="RdioScannerConfiguration"),
     @JsonSubTypes.Type(value = OpenMHzConfiguration.class, name="OpenMHzConfiguration"),
     @JsonSubTypes.Type(value = IcecastConfiguration.class, name="icecastConfiguration"),

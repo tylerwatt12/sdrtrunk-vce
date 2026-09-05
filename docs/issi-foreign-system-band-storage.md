@@ -2,50 +2,74 @@
 
 ## User-visible purpose
 
-P25 Phase 1 control channels can broadcast an extended `IDEN_UP_TDMA` message containing a band plan for a foreign
-WACN and System ID. The Stats Server uses these facts for two bounded website queries:
+A P25 Phase 1 control channel can advertise a band plan for a different WACN and System ID. The website uses these
+facts in two bounded channel resources:
 
-- `/api/v1/sites/{guid}/neighbors` shows one aggregated `ISSI System` row per advertised foreign WACN/System.
-- `/api/v1/sites/{guid}/frequency-bands` shows the individual foreign-system band definitions separately from
-  home-system bands.
+- `/api/v1/channels/{configuration_id}/neighbors` summarizes each advertised foreign radio system as an
+  `ISSI System` row.
+- `/api/v1/channels/{configuration_id}/frequency-bands` lists foreign-system band definitions separately from the
+  monitored channel's home bandplan.
 
-The existing `p25_site_frequency_band` tables cannot safely store these facts because their key is only `(guid, band)`.
-Home and foreign systems can reuse the same four-bit band ID, and multiple foreign systems can also reuse it.
+The ordinary home band table cannot own these facts because home and foreign systems can reuse the same four-bit band
+ID. Several foreign systems can also reuse it.
 
-## Compact schema and cardinality
+## Compact schema and storage budget
 
-`p25_foreign_system_band` holds current stabilized facts. `p25_foreign_system_band_summary` retains first/last seen and
-an observation counter. Both use the natural key `(guid, foreign_wacn, foreign_system_id, band)` and `WITHOUT ROWID`.
-The payload is numeric: channel type, base frequency, spacing, offset, and timestamps. Mode, bandwidth, timeslots, and
-voice rate are derived from the channel-type code at presentation time; no repeated labels or decoded messages are
-stored.
+`p25_foreign_system_band` holds current stabilized facts.
+`p25_foreign_system_band_summary` retains first/last-seen timestamps and an observation count. Both are
+`WITHOUT ROWID` tables with the natural key:
 
-Repeated broadcasts upsert the same rows, so the expected retained-row growth rate is zero after a band is first
-observed. A foreign system can advertise at most 16 band IDs, producing at most 16 current plus 16 summary rows per
-home-site/foreign-system pair. A typical site advertising two foreign systems with one or two bands uses four to eight
-rows total. The absolute protocol-space ceiling is 4,096 foreign System IDs times 16 bands per table per home site,
-although real networks are expected to remain several orders of magnitude below that ceiling. Each row contains four
-key integers, four value/timestamp integers, and SQLite B-tree overhead, with no secondary index.
+```text
+(channel_id, foreign_wacn, foreign_system_id, band)
+```
+
+`channel_id` is an internal foreign key to `p25_site_snapshot(channel_id)` with cascading deletion. The web and API
+identify the owner with the saved channel's `configuration_id` instead of exposing the numeric row ID.
+
+The payload is numeric: channel type, base frequency, spacing, transmit offset, and timestamps. Mode, bandwidth,
+timeslots, and voice rate are derived at presentation time. No labels, decoder messages, JSON payloads, or immutable
+per-call rows are copied into these tables.
+
+Repeated broadcasts update the same rows, so retained-row growth stops after a band is learned. One foreign system
+can advertise at most 16 band IDs, producing at most 16 current and 16 summary rows per monitored-channel/foreign-
+system pair. A typical channel advertising two foreign systems with one or two bands uses four to eight rows total.
+
+P25 site snapshots are published at most once every five seconds per monitored channel, or 12 snapshots per minute.
+A repeated snapshot updates existing natural keys; it does not create another history row. A newly observed foreign
+system/band pair creates one row in each table. The tables do not have a separate admission limit because every key is
+protocol evidence used by the two website views. Their hard growth boundary is the configured time retention window,
+and their write path is also protected by the receiver's bounded statistics queue.
+
+A dense SQLite fixture with 65,536 distinct one-band foreign-system pairs measured approximately 58.4 bytes per
+current row including its retention index and 68.4 bytes per summary row including its retention index. Both tables
+together used about 8.3 MB for that fixture. This is a sizing estimate rather than a file-size guarantee: page fill,
+SQLite version, and surrounding tables affect the actual database size.
 
 ## Retention and write path
 
-The decoder publishes message-scoped facts through the existing bounded statistics queue and single background writer.
-Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
-path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables.
+The decoder publishes typed facts through the bounded statistics queue. The background statistics writer owns all
+SQLite work. Current rows use `confirmed_at_ms` retention; summaries use `last_seen_ms`. Clearing one channel or all
+Statistics removes both tables through the same channel-owned lifecycle. The normal fresh-profile retention setting
+is 30 days and existing validated profile settings are preserved; the maintenance path enforces at least one day.
 
-In the bundled chain, Alpha 8, Alpha 9, and Alpha 10 share the same P25 activity schema v24 signature. The Alpha
-8-family baseline step preserves these foreign-band tables unchanged while later adjacent steps add qualifier-safe P25
-talkgroup facts and bounded protocol-neutral current-affiliation and authoritative-site-presence state. Every verified
-later format follows the same global chain; pre-Alpha 8, unknown, and mixed layouts are rejected. Older binaries
-retain the boundary documented by their version-matched release notes. See
-[Database Migration Contract](database-migration.md).
+New databases create the exact current definitions in the global startup schema routine. Existing supported
+databases change only through the backed-up Application Migrator. Normal application startup validates and never
+creates or repairs these tables.
 
 ## Query access path
 
-Both website queries constrain `guid`. Because `guid` is the leading primary-key column, SQLite uses the table primary
-key directly and no additional index is needed. Representative-volume tests assert plans equivalent to:
+Both website queries resolve `configuration_id` to its internal `channel_id`, then constrain the leading primary-key
+column. The primary key serves those reads. Separate time-first indexes serve bounded retention deletes:
 
 ```text
-SEARCH p25_foreign_system_band_summary USING PRIMARY KEY (guid=?)
-SEARCH p25_foreign_system_band USING PRIMARY KEY (guid=? AND foreign_wacn=? AND foreign_system_id=? AND band=?)
+SEARCH p25_foreign_system_band_summary USING PRIMARY KEY (channel_id=?)
+SEARCH p25_foreign_system_band USING PRIMARY KEY
+  (channel_id=? AND foreign_wacn=? AND foreign_system_id=? AND band=?)
+SEARCH p25_foreign_system_band USING INDEX idx_p25_foreign_system_band_retention
+  (confirmed_at_ms<?)
+SEARCH p25_foreign_system_band_summary USING INDEX idx_p25_foreign_system_band_summary_retention
+  (last_seen_ms<?)
 ```
+
+Representative-volume query-plan tests cover the detailed frequency-band read and both retention paths. Both website
+responses remain independently limited, so a large retained set cannot produce an unbounded response.

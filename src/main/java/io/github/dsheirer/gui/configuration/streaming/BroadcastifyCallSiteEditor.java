@@ -124,12 +124,10 @@ public class BroadcastifyCallSiteEditor extends BroadcastifyCallEditor
             if(aliasList != null)
             {
                 siteConfiguration.setAliasListId(aliasList.getId());
-                siteConfiguration.setAliasListName(aliasList.getName());
             }
             else
             {
                 siteConfiguration.setAliasListId(AliasListDefinition.UNASSIGNED_ID);
-                siteConfiguration.setAliasListName(null);
             }
 
             if(channel != null && BroadcastifyCallSiteConfiguration.isEligibleChannel(channel, aliasList))

@@ -12,6 +12,8 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -66,13 +68,14 @@ class StatsLiveServiceBoundsTest
             List.of("VOICE"), 1L, "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 4_321L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
             "Engine 1 · TA: Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
-            "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation("GUID:site-guid", "County",
+            "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation(
+            "728d2d66-de4e-476b-a696-919f32dd4d12", 41L, "County",
             "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1")),
             new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
             List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch")),
             new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)), "TRAFFIC");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", null, null, true, true,
+            "Primary", null, true, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
                 new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")), List.of(row));
 
@@ -92,7 +95,9 @@ class StatsLiveServiceBoundsTest
             assertEquals("Primary dispatch", projected.get("target_alias_description"));
             assertEquals(4_321L, projected.get("cc_last_valid_decode_ms"));
             assertEquals(true, table.get("channel_running"));
-            assertEquals("GUID:site-guid", projected.get("context_key"));
+            assertEquals("728d2d66-de4e-476b-a696-919f32dd4d12", projected.get("configuration_id"));
+            assertEquals(41L, projected.get("alias_list_id"));
+            assertFalse(projected.containsKey("context_key"));
             assertEquals("County", projected.get("alias_list_name"));
             assertEquals("p25", projected.get("protocol"));
             List<Map<String,Object>> sourceAliases =
@@ -124,7 +129,7 @@ class StatsLiveServiceBoundsTest
                 source.publish(activity(tableId, List.of(activityRow("row-" + index))));
             }
 
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 source.publish(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
                     List.of(activityRow("omitted"))));
@@ -175,7 +180,7 @@ class StatsLiveServiceBoundsTest
         List<ChannelActivitySnapshot.AliasReference> aliases = IntStream.range(0, 20)
             .mapToObj(index -> new ChannelActivitySnapshot.AliasReference(index + 1L, 41L,
                 "Alias " + index)).toList();
-        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, "County",
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
             "dmr", aliases, new ChannelActivitySnapshot.MatcherReference("radio", "dmr", null, 1201),
             aliases, new ChannelActivitySnapshot.MatcherReference("talkgroup", "dmr", null, 4400));
 
@@ -196,20 +201,20 @@ class StatsLiveServiceBoundsTest
     void projectsOnlyCatalogOwnedCanonicalNavigation()
     {
         String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
-        String guid = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
             WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
-                configurationId, guid, WebEntityRef.site(guid),
-                WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))), 60_000L);
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0, 0xBEE00, 0x49F))), 60_000L);
         catalog.refreshNow();
         TestChannelActivitySource source = new TestChannelActivitySource();
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
-        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, "County",
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
             "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
-            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
+            List.of(), new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", null, 4400,
+                "v1-p-bee00-49f-4400"));
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row));
 
         try
         {
@@ -217,12 +222,55 @@ class StatsLiveServiceBoundsTest
             source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
             Map<String,Object> table = tables(service).getFirst();
             Map<String,Object> projected = rows(table).getFirst();
-            assertEquals(Map.of("kind", "site", "key", guid), table.get("entity_ref"));
-            assertEquals(Map.of("kind", "site", "key", guid), projected.get("entity_ref"));
-            assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:49F:alias-list:1", "id", 1201),
+            assertEquals(Map.of("kind", "channel", "key", configurationId), table.get("entity_ref"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId), projected.get("entity_ref"));
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-r-bee00-49f-1201"),
                 projected.get("source_entity_ref"));
-            assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:49F:alias-list:1", "id", 4400),
+            assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-p-bee00-49f-4400"),
                 projected.get("target_entity_ref"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void retainedLiveRowCannotRebindToAnotherRadioSystemUntilItsNextActivation()
+    {
+        String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+        AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded = new AtomicReference<>(
+            navigationSnapshot(configurationId, "p25:bee00:49f", 0x49F));
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
+        catalog.refreshNow();
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
+            "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
+            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
+
+        try
+        {
+            source.publish(activity("site", List.of(activityRow("call", configurationId,
+                List.of("VOICE"), navigation, 1L))));
+            Map<String,Object> onSystemA = rows(tables(service).getFirst()).getFirst();
+            assertEquals("p25:bee00:49f", map(onSystemA, "source_entity_ref").get("radio_system_key"));
+
+            loaded.set(navigationSnapshot(configurationId, "p25:bee00:4a0", 0x4A0));
+            catalog.refreshNow();
+            Map<String,Object> retainedAfterRebind = rows(tables(service).getFirst()).getFirst();
+            assertFalse(retainedAfterRebind.containsKey("source_entity_ref"));
+            assertFalse(retainedAfterRebind.containsKey("target_entity_ref"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId),
+                retainedAfterRebind.get("entity_ref"));
+
+            source.publish(activity("site", List.of(activityRow("call", configurationId,
+                List.of("VOICE"), navigation, 2L))));
+            Map<String,Object> nextActivation = rows(tables(service).getFirst()).getFirst();
+            assertEquals("p25:bee00:4a0", map(nextActivation, "source_entity_ref").get("radio_system_key"));
+            assertEquals("p25:bee00:4a0", map(nextActivation, "target_entity_ref").get("radio_system_key"));
         }
         finally
         {
@@ -234,7 +282,6 @@ class StatsLiveServiceBoundsTest
     void rebuiltCatalogInvalidatesTheEncodedLiveSnapshot() throws Exception
     {
         String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
-        String guid = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
         AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded =
             new AtomicReference<>(WebEntityNavigationCatalog.Snapshot.empty());
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
@@ -243,7 +290,7 @@ class StatsLiveServiceBoundsTest
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("CONTROL"), null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row));
 
         try
         {
@@ -253,11 +300,11 @@ class StatsLiveServiceBoundsTest
             assertFalse(new String(withoutNavigation, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
 
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
-                    configurationId, guid, WebEntityRef.site(guid),
-                    WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))));
+                    configurationId, WebEntityRef.channel(configurationId),
+                    WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0, 0xBEE00, 0x49F))));
                 catalog.refreshNow();
 
                 boolean resynchronized = false;
@@ -323,10 +370,10 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("blocked", "Live", "System", "Site",
-                    "Control", null, null, true, true, List.of(),
+                    "Control", null, true, true, List.of(),
                     List.of(activityRow("blocked", null, blockingTags, null)));
                 service.receiveChannelActivity(
                     new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, blocked, 1));
@@ -358,6 +405,112 @@ class StatsLiveServiceBoundsTest
         finally
         {
             releaseProjection.countDown();
+            service.close();
+        }
+    }
+
+    @Test
+    void stoppedProjectionGenerationCannotPublishOrOverwriteStateAfterRestart() throws Exception
+    {
+        CountDownLatch oldProjectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseOldProjection = new CountDownLatch(1);
+        AtomicReference<Thread> oldProjectionThread = new AtomicReference<>();
+        List<String> blockingTags = new AbstractList<>()
+        {
+            @Override
+            public String get(int index)
+            {
+                oldProjectionThread.set(Thread.currentThread());
+                oldProjectionEntered.countDown();
+                boolean interrupted = false;
+
+                while(true)
+                {
+                    try
+                    {
+                        releaseOldProjection.await();
+                        break;
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        //Deliberately hold the retired worker beyond stop's bounded join. Production projections do
+                        //not normally ignore interruption, but the lifecycle must remain safe if optional work does.
+                        interrupted = true;
+                    }
+                }
+
+                if(interrupted)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return "VOICE";
+            }
+
+            @Override
+            public int size()
+            {
+                return 1;
+            }
+        };
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        StatsLiveEventHub.Subscription oldSubscription = null;
+
+        try
+        {
+            service.start();
+            assertEquals(1, source.listenerCount());
+            var oldListener = source.listeners().getFirst();
+            oldSubscription = service.subscribeChannelActivity();
+            assertNotNull(oldSubscription);
+
+            ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("old-generation", "Old", "System",
+                "Site", "Control", null, true, true, List.of(),
+                List.of(activityRow("old-row", null, blockingTags, null)));
+            service.receiveChannelActivity(
+                new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, blocked, 1));
+            assertTrue(oldProjectionEntered.await(1, TimeUnit.SECONDS));
+
+            service.stop();
+            assertTrue(oldProjectionThread.get().isAlive(),
+                "the test must exercise a worker that outlives stop's bounded join");
+            assertTrue(oldSubscription.isClosed());
+            assertEquals(0, source.listenerCount());
+
+            service.start();
+            assertEquals(1, source.listenerCount());
+            try(StatsLiveEventHub.Subscription currentSubscription = service.subscribeChannelActivity())
+            {
+                assertNotNull(currentSubscription);
+                source.publish(activity("current-generation", List.of(activityRow("current-row"))));
+                StatsLiveEventHub.LiveEvent current = currentSubscription.poll(1, TimeUnit.SECONDS);
+                assertNotNull(current);
+                assertEquals("current-generation", tableId(current));
+                byte[] encodedCurrent = service.encodedSnapshot();
+
+                oldListener.receive(activity("stale-callback", List.of(activityRow("stale-row"))));
+                assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
+                    "a callback retained from the stopped registration must not enter the new generation");
+
+                releaseOldProjection.countDown();
+                waitUntil(() -> !oldProjectionThread.get().isAlive());
+                assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
+                    "the retired projection must not publish into the restarted event hub");
+                assertSame(encodedCurrent, service.encodedSnapshot(),
+                    "retired work must not invalidate or replace the current encoded snapshot");
+            }
+
+            service.stop();
+            assertEquals(0, source.listenerCount());
+        }
+        finally
+        {
+            releaseOldProjection.countDown();
+            if(oldSubscription != null)
+            {
+                oldSubscription.close();
+            }
             service.close();
         }
     }
@@ -402,7 +555,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
-            "Control", null, null, true, true, List.of(), rows);
+            "Control", null, true, true, List.of(), rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 
@@ -420,9 +573,49 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
                                                             ChannelActivitySnapshot.Navigation navigation)
     {
-        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, 1L, "1",
+        return activityRow(key, configurationId, tags, navigation, 1L);
+    }
+
+    private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
+                                                            ChannelActivitySnapshot.Navigation navigation,
+                                                            long activationOrder)
+    {
+        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, activationOrder, "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
             null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL");
+    }
+
+    private static WebEntityNavigationCatalog.Snapshot navigationSnapshot(String configurationId,
+                                                                           String radioSystemKey,
+                                                                           int p25SystemId)
+    {
+        return WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+            configurationId, WebEntityRef.channel(configurationId), WebEntityRef.radioSystem(radioSystemKey),
+            1, 0, 0xBEE00, p25SystemId)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> map(Map<String,Object> value, String key)
+    {
+        return (Map<String,Object>)value.get(key);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String tableId(StatsLiveEventHub.LiveEvent event)
+    {
+        return String.valueOf(((Map<String,Object>)event.data()).get("table_id"));
+    }
+
+    private static void waitUntil(java.util.function.BooleanSupplier condition) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5L);
+        }
+
+        assertTrue(condition.getAsBoolean());
     }
 
     @SuppressWarnings("unchecked")

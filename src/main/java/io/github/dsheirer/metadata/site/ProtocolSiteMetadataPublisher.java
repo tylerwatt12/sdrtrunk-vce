@@ -14,6 +14,7 @@ package io.github.dsheirer.metadata.site;
 import io.github.dsheirer.controller.channel.Channel;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -27,6 +28,7 @@ public class ProtocolSiteMetadataPublisher
     private final BooleanSupplier mHasInterModuleEventBus;
     private final Consumer<ProtocolSiteMetadataEvent> mEventPublisher;
     private final SiteMetadataPublicationRateLimiter mRateLimiter;
+    private final LongSupplier mSourceFrequencySupplier;
 
     public ProtocolSiteMetadataPublisher(Channel channel,
                                          Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
@@ -34,7 +36,17 @@ public class ProtocolSiteMetadataPublisher
                                          Consumer<ProtocolSiteMetadataEvent> eventPublisher)
     {
         this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
-            new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS));
+            new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS), () -> 0);
+    }
+
+    public ProtocolSiteMetadataPublisher(Channel channel,
+                                         Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
+                                         BooleanSupplier hasInterModuleEventBus,
+                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher,
+                                         LongSupplier sourceFrequencySupplier)
+    {
+        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
+            new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS), sourceFrequencySupplier);
     }
 
     public ProtocolSiteMetadataPublisher(Channel channel, Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
@@ -42,11 +54,21 @@ public class ProtocolSiteMetadataPublisher
                                          Consumer<ProtocolSiteMetadataEvent> eventPublisher,
                                          SiteMetadataPublicationRateLimiter rateLimiter)
     {
+        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher, rateLimiter, () -> 0);
+    }
+
+    public ProtocolSiteMetadataPublisher(Channel channel, Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
+                                         BooleanSupplier hasInterModuleEventBus,
+                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher,
+                                         SiteMetadataPublicationRateLimiter rateLimiter,
+                                         LongSupplier sourceFrequencySupplier)
+    {
         mChannel = channel;
         mSnapshotSupplier = snapshotSupplier;
         mHasInterModuleEventBus = hasInterModuleEventBus;
         mEventPublisher = eventPublisher;
         mRateLimiter = rateLimiter;
+        mSourceFrequencySupplier = sourceFrequencySupplier != null ? sourceFrequencySupplier : () -> 0;
     }
 
     /**
@@ -72,7 +94,8 @@ public class ProtocolSiteMetadataPublisher
             if(mEventPublisher != null)
             {
                 long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
-                mEventPublisher.accept(new ProtocolSiteMetadataEvent(mChannel, snapshot, eventTimestamp));
+                mEventPublisher.accept(new ProtocolSiteMetadataEvent(mChannel, snapshot, eventTimestamp,
+                    mSourceFrequencySupplier.getAsLong()));
             }
         }
     }

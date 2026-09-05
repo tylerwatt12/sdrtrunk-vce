@@ -12,7 +12,7 @@ is still being produced.
 
 ## The Short Version
 
-1. A configured channel or trunked site can be assigned one compatible Alias List.
+1. Each saved channel can be assigned one compatible Alias List.
 2. A matching Alias, or the Alias List Defaults when no destination Alias matches, assigns the call to Scan Lists.
 3. While at least one browser is playing or has just finished a feed request, the receiver places one browser copy of
    each eligible completed call in a shared bounded feed. Each playing browser fetches that announcement and either
@@ -22,7 +22,7 @@ is still being produced.
 
 ```mermaid
 flowchart TD
-    call[Received voice call] --> channel[Configured channel or trunked site]
+    call[Received voice call] --> channel[Saved receiver channel]
     channel --> list[Assigned Alias List]
     list --> match{Exact or range destination Alias?}
     match -- Yes --> alias[Use the matching Alias]
@@ -51,8 +51,8 @@ queue.
 
 ### Channel and Alias List
 
-Each configured channel, including a trunked site's control channel, can be assigned one Alias List. Traffic channels
-created for that site inherit the control channel's assignment. `sdrtrunk-vce` keeps Alias Lists compatible with one
+Each saved channel can be assigned one Alias List. Traffic channels created from a trunked control channel inherit
+that saved channel's assignment. `sdrtrunk-vce` keeps Alias Lists compatible with one
 protocol family:
 
 - P25
@@ -82,6 +82,33 @@ contain Aliases from different systems and Alias Lists, including Aliases used b
 A browser listener can select up to 16 published Scan Lists. If a call matches several selected lists, the feed
 returns that call once with all of its matching Scan List IDs. The browser also remembers recent call IDs so an
 overlapping selection cannot enqueue the same call twice.
+
+### What Hold and Avoid Control
+
+The call display and the Hold/Avoid target are deliberately separate. A call can show a real digital group identity
+while Hold or Avoid controls the stable channel or radio-system identity that produced it.
+
+- Conventional AM and NBFM calls use the saved channel's `configuration_id`. The browser shows the channel label as
+  the primary call identity instead of presenting the configured analog routing number as a talkgroup. Renaming the
+  channel does not change the target.
+- Conventional DMR calls use the saved channel plus timeslot, so traffic on slots 1 and 2 can be controlled
+  separately. Other conventional digital calls use the saved channel, while their real talkgroup can still appear in
+  the call details.
+- Trunked calls use `radio_system_key` plus the talkgroup, patch group, or radio identity. The same talkgroup number on
+  two radio systems therefore remains two separate Hold/Avoid targets. Native P25 systems use their WACN and System ID
+  in the stable radio-system key, so saved channels that discover the same P25 system share Hold and Avoid state.
+  Standard DMR Tier III uses its model (`tiny`, `small`, `large`, or `huge`) and Network ID, and NXDN Type-C uses its
+  location category (`global`, `regional`, or `local`) and System ID. Saved channels share Hold and Avoid state only
+  inside this receiver profile and only after the decoder has learned those complete identities. Capacity Plus,
+  Connect Plus, Capacity Max, Hytera Tier III, unknown or incomplete DMR, incomplete NXDN Type-C, and NXDN Type-D
+  remain separate for each saved channel.
+- On trunked DMR, the timeslot says which radio resource carried the call. It does not split the radio system or the
+  talkgroup Hold/Avoid target. Conventional DMR still uses the saved channel plus timeslot as described above.
+
+The API returns this exact control target in `playback_target`. Its `label` is user-facing text; its `key` is the identity used
+for selection. Channel names, Alias names, and RadioResolve IDs are never used as the key. For system-scoped targets, the
+browser Avoid List also shows the system label and stable `radio_system_key`, so identical Alias text and numeric IDs on
+different systems remain visibly distinguishable.
 
 ## The Default Setup
 

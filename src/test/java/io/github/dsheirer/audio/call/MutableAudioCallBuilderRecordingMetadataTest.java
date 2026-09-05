@@ -11,6 +11,8 @@
 package io.github.dsheirer.audio.call;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,7 +23,12 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
@@ -30,6 +37,24 @@ import org.junit.jupiter.api.Test;
 
 class MutableAudioCallBuilderRecordingMetadataTest
 {
+    @Test
+    void keepsRadioResolveIdSeparateFromDisplayNames()
+    {
+        String radioResolveId = "11111111-2222-4333-8444-555555555555";
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            SystemConfigurationIdentifier.create("County"),
+            SiteConfigurationIdentifier.create("North"),
+            RadioResolveConfigurationIdentifier.create(radioResolveId)));
+
+        AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers);
+        assertEquals(radioResolveId, metadata.radioResolveId());
+
+        AudioCallRecordingMetadata withoutRadioResolveId = AudioCallRecordingMetadata.captureAtSnapshot(null,
+            new IdentifierCollection(List.of(SystemConfigurationIdentifier.create("County"),
+                SiteConfigurationIdentifier.create("North"))));
+        assertNull(withoutRadioResolveId.radioResolveId());
+    }
+
     @Test
     void freezesAliasNamesAndRecordDecisionWhenIdentifiersJoinTheCall()
     {
@@ -67,7 +92,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals("Engine 12", metadata.sourceAlias());
         assertEquals("Station 12 engine", metadata.sourceDescription());
         assertEquals("Apparatus", metadata.sourceGroup());
-        assertTrue(metadata.destinationTalkgroupRecordEnabled());
+        assertTrue(metadata.destinationRecordEnabled());
         assertTrue(builder.isRecordAudio());
         assertSame(metadata, builder.getRecordingMetadata());
     }
@@ -110,9 +135,45 @@ class MutableAudioCallBuilderRecordingMetadataTest
 
         assertEquals("ISSI Dispatch", decision.aliasName());
         assertEquals("99", decision.value());
-        assertEquals("APCO25:fq:703710:801:1200", decision.receivedIdentity());
+        assertEquals("v1-g-abcde-321-1200", decision.receivedIdentity());
         assertEquals("exact:APCO-25:99", decision.matcherIdentity());
         assertTrue(decision.recordEnabled());
+    }
+
+    @Test
+    void privateRadioDestinationUsesItsLocalAliasPolicyAndCanonicalHomeIdentity()
+    {
+        Alias alias = new Alias("Roaming Subscriber");
+        alias.setMatchIdentifier(new Radio(Protocol.APCO25, 123));
+        alias.setRecordable(true);
+        AliasList aliasList = new AliasList(new AliasListDefinition("P25", AliasListFamily.P25));
+        aliasList.addAlias(alias);
+
+        AudioCallRecordingMetadata.DestinationDecision decision = AudioCallRecordingMetadata.captureDestination(
+            aliasList, APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 9_001));
+
+        assertEquals("Roaming Subscriber", decision.aliasName());
+        assertEquals("123", decision.value());
+        assertEquals("v1-r-abcde-321-9001", decision.receivedIdentity());
+        assertEquals("exact:APCO-25:123", decision.matcherIdentity());
+        assertTrue(decision.recordEnabled());
+    }
+
+    @Test
+    void specialP25AddressesNeverThrowWhileCanonicalDirectoryKeysStayAbsent()
+    {
+        AudioCallRecordingMetadata allCall = assertDoesNotThrow(() ->
+            AudioCallRecordingMetadata.captureAtSnapshot(null, new IdentifierCollection(List.of(
+                APCO25FullyQualifiedTalkgroupIdentifier.createTo(65_535, 0xABCDE, 0x321, 65_535)))));
+        assertNull(allCall.destinationIdentity());
+
+        for(int radio: new int[]{10_000_000, 0xFFFFFF})
+        {
+            AudioCallRecordingMetadata metadata = assertDoesNotThrow(() ->
+                AudioCallRecordingMetadata.captureAtSnapshot(null, new IdentifierCollection(List.of(
+                    APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, radio)))));
+            assertEquals("123", metadata.sourceValue());
+        }
     }
 
     @Test

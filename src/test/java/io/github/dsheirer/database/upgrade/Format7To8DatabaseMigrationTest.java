@@ -62,11 +62,11 @@ class Format7To8DatabaseMigrationTest
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=5
+                WHERE json_extract(preferences_json, '$.version')=6
                   AND json_type(preferences_json, '$.health_alerts.disabled_codes')='array'
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=5
+                  AND preferences_revision=6
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));
@@ -167,8 +167,10 @@ class Format7To8DatabaseMigrationTest
                        json_extract(preferences_json, '$.page_titles.prepend_playing_call') || ':' ||
                        json_extract(preferences_json, '$.playback.volume') || ':' ||
                        json_extract(preferences_json, '$.playback.selected_scan_list_ids') || ':' ||
-                       json_extract(preferences_json, '$.playback.conversation_grouping') || ':' ||
-                       json_extract(preferences_json, '$.playback.conversation_burst_limit') || ':' ||
+                       coalesce(json_extract(preferences_json, '$.playback.conversation_grouping'),
+                           json_extract(preferences_json, '$.playback.target_grouping')) || ':' ||
+                       coalesce(json_extract(preferences_json, '$.playback.conversation_burst_limit'),
+                           json_extract(preferences_json, '$.playback.target_burst_limit')) || ':' ||
                        json_extract(preferences_json, '$.scanner.detail_mode') || ':' ||
                        json_extract(preferences_json, '$.presentation.show_encryption_details') || ':' ||
                        json_extract(preferences_json, '$.presentation.show_control_decode_quality') || ':' ||

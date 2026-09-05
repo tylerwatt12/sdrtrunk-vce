@@ -6,15 +6,11 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -56,23 +52,7 @@ class Format11To12DatabaseMigrationTest
             assertEquals(3, effect.affectedRows());
             assertEquals(before, preferences(connection), "Preflight must not write");
 
-            connection.setAutoCommit(false);
-            try
-            {
-                var report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals(List.of(effect), report.steps().getFirst().effects());
-                connection.commit();
-            }
-            catch(Exception e)
-            {
-                connection.rollback();
-                throw e;
-            }
-            finally
-            {
-                connection.setAutoCommit(true);
-            }
+            assertEquals(List.of(effect), migrateToFormat12(connection));
 
             Map<Long, UserPreferences> after = preferences(connection);
             assertEquals(before.keySet(), after.keySet());
@@ -85,16 +65,13 @@ class Format11To12DatabaseMigrationTest
                 assertEquals(expected, MAPPER.readTree(actual.json()));
                 assertEquals(entry.getValue().revision() + 1, actual.revision());
                 assertTrue(actual.updatedAt() >= entry.getValue().updatedAt());
-                assertFalse(WebUserPreferencesCodec.decode(actual.json()).tuner().showIdleChannels());
+                Format12WebUserPreferencesCodec.validate(actual.json());
             }
             assertEquals(preserved, preservedDigest(connection));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(12, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
-            assertEquals(after, preferences(connection), "Current format is a no-op");
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
     }
 
     @Test
@@ -108,7 +85,8 @@ class Format11To12DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.migrate(connection);
+                new Format11To12DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 12);
                 connection.rollback();
             }
             finally
@@ -118,7 +96,8 @@ class Format11To12DatabaseMigrationTest
             assertEquals(11, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(connection));
             assertEquals(preserved, preservedDigest(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
+            migrateToFormat12(connection);
+            assertEquals(12, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -149,7 +128,7 @@ class Format11To12DatabaseMigrationTest
     }
 
     @Test
-    void frozenCodecRejectsMalformedDocumentsAndRuntimeRoundTripsBothSwitchValues() throws Exception
+    void frozenCodecAcceptsBothSwitchValuesAndRejectsMalformedDocuments() throws Exception
     {
         Path database = Format11TestDatabase.create(mTemporaryFolder.resolve("codec.sqlite"));
         String old;
@@ -162,9 +141,6 @@ class Format11To12DatabaseMigrationTest
         {
             String json = migrated.replace("\"show_idle_channels\":false", "\"show_idle_channels\":" + enabled);
             Format12WebUserPreferencesCodec.validate(json);
-            var runtime = WebUserPreferencesCodec.decode(json);
-            assertEquals(enabled, runtime.tuner().showIdleChannels());
-            assertEquals(runtime, WebUserPreferencesCodec.decode(WebUserPreferencesCodec.encode(runtime)));
             assertThrows(IOException.class, () -> Format9WebUserPreferencesCodec.validate(json));
         }
         for(String invalid: List.of(old, migrated + " {}", migrated.replace("\"version\":5", "\"version\":6"),
@@ -175,6 +151,29 @@ class Format11To12DatabaseMigrationTest
             migrated.replace("\"show_idle_channels\":false", "\"show_idle_channels\":false,\"unknown\":true")))
         {
             assertThrows(IOException.class, () -> Format12WebUserPreferencesCodec.validate(invalid));
+        }
+    }
+
+    private static List<DatabaseMigrationEffect> migrateToFormat12(Connection connection) throws Exception
+    {
+        connection.setAutoCommit(false);
+        try
+        {
+            Format11To12DatabaseMigration migration = new Format11To12DatabaseMigration();
+            List<DatabaseMigrationEffect> effects = migration.validateSource(connection);
+            migration.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 12);
+            connection.commit();
+            return effects;
+        }
+        catch(Exception e)
+        {
+            connection.rollback();
+            throw e;
+        }
+        finally
+        {
+            connection.setAutoCommit(true);
         }
     }
 

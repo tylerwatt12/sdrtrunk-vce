@@ -9,6 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -21,6 +24,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class Format8To9DatabaseMigrationTest
 {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
     @TempDir
     Path mTemporaryFolder;
 
@@ -64,20 +68,20 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=5
+                WHERE json_extract(preferences_json, '$.version')=6
                   AND json_extract(preferences_json,
                       '$.presentation.show_only_active_trunked_channels')=0
                   AND json_extract(preferences_json,
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=5
+                  AND preferences_revision=6
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));
             assertEquals("1:1750:preserve-application:preserve-me", scalar(connection, """
                 SELECT json_extract(settings_json,
-                           '$."user/io/github/dsheirer/preference/nowplaying"."site.settings.revision"') || ':' ||
+                           '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"') || ':' ||
                        json_extract(settings_json,
                            '$."user/io/github/dsheirer/preference/nowplaying"."traffic.grant.age.out.milliseconds"') || ':' ||
                        json_extract(settings_json,
@@ -133,10 +137,22 @@ class Format8To9DatabaseMigrationTest
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
                 """));
-            assertEquals(portableBefore, scalar(connection, """
+            assertEquals(withReceiverSettingsRevision(portableBefore), MAPPER.readTree(scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
-                """));
+                """)));
         }
+    }
+
+    private static JsonNode withReceiverSettingsRevision(String json) throws Exception
+    {
+        ObjectNode root = (ObjectNode)MAPPER.readTree(json);
+        ObjectNode nowPlaying = (ObjectNode)root.get("user/io/github/dsheirer/preference/nowplaying");
+        JsonNode revision = nowPlaying.remove("site.settings.revision");
+        if(revision != null)
+        {
+            nowPlaying.set("receiver.settings.revision", revision);
+        }
+        return root;
     }
 
     @Test
@@ -191,11 +207,20 @@ class Format8To9DatabaseMigrationTest
     {
         return scalar(connection, """
             SELECT group_concat(row_value, '|') FROM (
-                SELECT id || ':' || json_remove(json_set(preferences_json, '$.version', 3),
+                SELECT id || ':' || json_remove(json_set(
+                    json_set(preferences_json, '$.version', 3),
+                    '$.playback.conversation_grouping',
+                        coalesce(json_extract(preferences_json, '$.playback.conversation_grouping'),
+                            json_extract(preferences_json, '$.playback.target_grouping')),
+                    '$.playback.conversation_burst_limit',
+                        coalesce(json_extract(preferences_json, '$.playback.conversation_burst_limit'),
+                            json_extract(preferences_json, '$.playback.target_burst_limit'))),
                     '$.presentation.show_only_active_trunked_channels',
                     '$.presentation.retain_last_call_on_idle_rows',
                     '$.presentation.clear_voice_quality_when_idle',
-                    '$.tuner.show_idle_channels') AS row_value
+                    '$.tuner.show_idle_channels',
+                    '$.playback.target_grouping',
+                    '$.playback.target_burst_limit') AS row_value
                 FROM web_user ORDER BY id)
             """);
     }

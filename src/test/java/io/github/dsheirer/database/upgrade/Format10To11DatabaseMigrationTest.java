@@ -295,6 +295,8 @@ class Format10To11DatabaseMigrationTest
             assertEquals(10, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list"));
             migrate(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseMigrationChain.migrate(connection).target().version());
             execute(connection, "DELETE FROM alias_list WHERE name='Default DMR'");
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             DatabaseFormatCatalog.requireCurrent(connection);
@@ -330,7 +332,8 @@ class Format10To11DatabaseMigrationTest
         connection.setAutoCommit(false);
         try
         {
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
+            new Format10To11DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 11);
             connection.commit();
         }
         catch(Exception e)
@@ -342,7 +345,7 @@ class Format10To11DatabaseMigrationTest
         {
             connection.setAutoCommit(true);
         }
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+        assertEquals(11, DatabaseFormatCatalog.inspect(connection).version());
         assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
         assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
     }

@@ -11,6 +11,9 @@
 
 package io.github.dsheirer.audio.broadcast;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.configurationId;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -38,7 +41,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
@@ -82,8 +85,8 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
     private static final String EAST_CHANNEL_ID = "00000000-0000-0000-0000-000000000071";
     private static final String WEST_CHANNEL_ID = "00000000-0000-0000-0000-000000000072";
     private static final String CENTRAL_CHANNEL_ID = "00000000-0000-0000-0000-000000000073";
-    private static final String EAST_SITE_GUID = "00000000-0000-0000-0000-000000000081";
-    private static final String WEST_SITE_GUID = "00000000-0000-0000-0000-000000000082";
+    private static final String EAST_RADIORESOLVE_ID = "00000000-0000-0000-0000-000000000081";
+    private static final String WEST_RADIORESOLVE_ID = "00000000-0000-0000-0000-000000000082";
 
     @TempDir
     Path mTemporaryFolder;
@@ -94,7 +97,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         try(WorkflowHarness harness = harness("west-only"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
-            AudioCallSnapshot west = harness.snapshot(1L, 1000, 9001, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot west = harness.snapshot(1L, 1000, 9001, WEST_CHANNEL_ID, WEST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
 
             harness.submit(west);
@@ -102,7 +105,8 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             BroadcastifyCallBroadcaster broadcaster = harness.broadcaster(SITE_ROUTE);
             AudioRecording recording = harness.onlyRecording();
             assertEquals(1, broadcaster.getAudioQueueSize());
-            assertTrue(recording.getDeliveryEvidence().matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID));
+            assertTrue(recording.getDeliveryEvidence().matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID,
+                WEST_CHANNEL_ID));
             assertTrue(recording.hasPendingReplays(),
                 "An accepted provider must own one pending replay before it queues the recording");
 
@@ -118,9 +122,9 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         try(WorkflowHarness harness = harness("losing-west"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
-            AudioCallSnapshot eastWinner = harness.snapshot(11L, 1000, 9001, EAST_CHANNEL_ID, EAST_SITE_GUID,
+            AudioCallSnapshot eastWinner = harness.snapshot(11L, 1000, 9001, EAST_CHANNEL_ID, EAST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
-            AudioCallSnapshot westLoser = harness.snapshot(12L, 1000, 9001, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot westLoser = harness.snapshot(12L, 1000, 9001, WEST_CHANNEL_ID, WEST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
 
             //Equal-quality copies use the stable site identity as a deterministic final tie-breaker.
@@ -129,7 +133,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             assertEquals(EAST_CHANNEL_ID, harness.electedChannelConfigurationId(),
                 "The selected West site must genuinely be the losing receiver copy in this fixture");
             assertTrue(harness.onlyRecording().getDeliveryEvidence()
-                .matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID),
+                .matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID, WEST_CHANNEL_ID),
                 "The elected audio must retain the losing site's independent delivery observation");
             assertEquals(1, harness.broadcaster(SITE_ROUTE).getAudioQueueSize());
         }
@@ -143,19 +147,21 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             harness.addSiteProvider(EAST_ROUTE, EAST_CHANNEL_ID);
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
             harness.addSiteProvider(CENTRAL_ROUTE, CENTRAL_CHANNEL_ID);
-            AudioCallSnapshot eastWinner = harness.snapshot(15L, 1000, 9050, EAST_CHANNEL_ID, EAST_SITE_GUID,
+            AudioCallSnapshot eastWinner = harness.snapshot(15L, 1000, 9050, EAST_CHANNEL_ID, EAST_RADIORESOLVE_ID,
                 Set.of(EAST_ROUTE, CENTRAL_ROUTE));
-            AudioCallSnapshot westLoser = harness.snapshot(16L, 1000, 9050, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot westLoser = harness.snapshot(16L, 1000, 9050, WEST_CHANNEL_ID, WEST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
 
             harness.submit(eastWinner, westLoser);
 
             AudioRecording recording = harness.onlyRecording();
             assertEquals(EAST_CHANNEL_ID, harness.electedChannelConfigurationId());
-            assertTrue(recording.getDeliveryEvidence().matches(EAST_ROUTE, ALIAS_LIST_ID, EAST_CHANNEL_ID));
-            assertTrue(recording.getDeliveryEvidence().matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID));
+            assertTrue(recording.getDeliveryEvidence().matches(configurationId(EAST_ROUTE), ALIAS_LIST_ID,
+                EAST_CHANNEL_ID));
+            assertTrue(recording.getDeliveryEvidence().matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID,
+                WEST_CHANNEL_ID));
             assertFalse(recording.getDeliveryEvidence()
-                .matches(CENTRAL_ROUTE, ALIAS_LIST_ID, CENTRAL_CHANNEL_ID));
+                .matches(configurationId(CENTRAL_ROUTE), ALIAS_LIST_ID, CENTRAL_CHANNEL_ID));
             assertEquals(1, harness.broadcaster(EAST_ROUTE).getAudioQueueSize());
             assertEquals(1, harness.broadcaster(SITE_ROUTE).getAudioQueueSize());
             assertEquals(0, harness.broadcaster(CENTRAL_ROUTE).getAudioQueueSize(),
@@ -171,15 +177,16 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         try(WorkflowHarness harness = harness("cross-context"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
-            AudioCallSnapshot eastRoute = harness.snapshot(21L, 1000, 9100, EAST_CHANNEL_ID, EAST_SITE_GUID,
+            AudioCallSnapshot eastRoute = harness.snapshot(21L, 1000, 9100, EAST_CHANNEL_ID, EAST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
-            AudioCallSnapshot westWithoutRoute = harness.snapshot(22L, 1000, 9100, WEST_CHANNEL_ID, WEST_SITE_GUID,
+            AudioCallSnapshot westWithoutRoute = harness.snapshot(22L, 1000, 9100, WEST_CHANNEL_ID, WEST_RADIORESOLVE_ID,
                 Set.of());
 
             harness.submit(eastRoute, westWithoutRoute);
 
             AudioRecording recording = harness.onlyRecording();
-            assertFalse(recording.getDeliveryEvidence().matches(SITE_ROUTE, ALIAS_LIST_ID, WEST_CHANNEL_ID),
+            assertFalse(recording.getDeliveryEvidence().matches(configurationId(SITE_ROUTE), ALIAS_LIST_ID,
+                WEST_CHANNEL_ID),
                 "Delivery must not combine a route from East with a selected channel observed on West");
             assertEquals(0, harness.broadcaster(SITE_ROUTE).getAudioQueueSize());
             assertFalse(recording.hasPendingReplays(),
@@ -193,10 +200,10 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         try(WorkflowHarness harness = harness("missing-mismatch"))
         {
             harness.addSiteProvider(SITE_ROUTE, WEST_CHANNEL_ID);
-            AudioCallSnapshot mismatched = harness.snapshot(31L, 1000, 9200, EAST_CHANNEL_ID, EAST_SITE_GUID,
+            AudioCallSnapshot mismatched = harness.snapshot(31L, 1000, 9200, EAST_CHANNEL_ID, EAST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
             harness.submit(mismatched);
-            AudioCallSnapshot missing = harness.snapshot(32L, 1000, 9201, null, WEST_SITE_GUID,
+            AudioCallSnapshot missing = harness.snapshot(32L, 1000, 9201, null, WEST_RADIORESOLVE_ID,
                 Set.of(SITE_ROUTE));
             harness.submit(missing);
 
@@ -306,10 +313,9 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             BroadcastifyCallSiteConfiguration configuration = new BroadcastifyCallSiteConfiguration();
             configure(configuration, routeName);
             configuration.setAliasListId(ALIAS_LIST_ID);
-            configuration.setAliasListName(ALIAS_LIST_NAME);
             configuration.setChannelConfigurationId(channelConfigurationId);
             mBroadcastModel.addBroadcastConfiguration(configuration);
-            assertNotNull(mBroadcastModel.getBroadcaster(routeName));
+            assertNotNull(mBroadcastModel.getBroadcaster(configuration.getConfigurationId()));
         }
 
         private void addLegacyProvider(String routeName)
@@ -317,19 +323,20 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             BroadcastifyCallConfiguration configuration = new BroadcastifyCallConfiguration();
             configure(configuration, routeName);
             mBroadcastModel.addBroadcastConfiguration(configuration);
-            assertNotNull(mBroadcastModel.getBroadcaster(routeName));
+            assertNotNull(mBroadcastModel.getBroadcaster(configuration.getConfigurationId()));
         }
 
         private void configure(BroadcastifyCallConfiguration configuration, String routeName)
         {
             configuration.setName(routeName);
+            configuration.setConfigurationId(configurationId(routeName));
             configuration.setApiKey("test-key");
             configuration.setSystemID(1);
             configuration.setEnabled(true);
         }
 
         private AudioCallSnapshot snapshot(long producerId, int talkgroup, int radio,
-                                           String channelConfigurationId, String siteGuid, Set<String> routes)
+                                           String channelConfigurationId, String radioResolveId, Set<String> routes)
         {
             List<Identifier> identifiers = new ArrayList<>();
             identifiers.add(SystemConfigurationIdentifier.create("Regional System"));
@@ -340,14 +347,14 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                 identifiers.add(ChannelConfigurationIdentifier.create(channelConfigurationId));
             }
 
-            if(siteGuid != null)
+            if(radioResolveId != null)
             {
-                identifiers.add(SiteGuidConfigurationIdentifier.create(siteGuid));
+                identifiers.add(RadioResolveConfigurationIdentifier.create(radioResolveId));
             }
 
             identifiers.add(APCO25Talkgroup.create(talkgroup));
             identifiers.add(APCO25RadioIdentifier.createFrom(radio));
-            Set<BroadcastChannel> broadcastChannels = routes.stream().map(BroadcastChannel::new)
+            Set<BroadcastChannel> broadcastChannels = routes.stream().map(routeName -> route(routeName))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
             long now = System.currentTimeMillis();
             long end = now + 1_000L;
@@ -355,7 +362,9 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
             int site = EAST_CHANNEL_ID.equals(channelConfigurationId) ? 1 :
                 WEST_CHANNEL_ID.equals(channelConfigurationId) ? 2 : (int)(producerId % 200L) + 1;
             CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, channelConfigurationId,
-                "Site " + site, siteGuid, ALIAS_LIST_ID, new P25SiteIdentity(0xBEE00, 0x348, 1, site), true);
+                "Site " + site, radioResolveId, ALIAS_LIST_ID, new P25SiteIdentity(0xBEE00, 0x348, 1, site),
+                io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+                io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
             return new AudioCallSnapshot(callId, null, mAliasList, new IdentifierCollection(identifiers),
                 broadcastChannels, now, end, 1, 1, now, end, false, false, CallEncryptionState.CLEAR,
                 false, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), source, null);
@@ -412,7 +421,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
 
         private BroadcastifyCallBroadcaster broadcaster(String routeName)
         {
-            return (BroadcastifyCallBroadcaster)mBroadcastModel.getBroadcaster(routeName);
+            return (BroadcastifyCallBroadcaster)mBroadcastModel.getBroadcaster(configurationId(routeName));
         }
 
         private AudioRecording onlyRecording()

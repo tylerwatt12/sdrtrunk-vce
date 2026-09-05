@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
- * Session-only row for browser Live Systems activity.
+ * Session-only row for browser live channel activity.
  */
 public class ChannelActivityRow
 {

@@ -16,11 +16,33 @@ import io.github.dsheirer.controller.channel.Channel;
 /**
  * Protocol-neutral site metadata event for live consumers.
  */
-public record ProtocolSiteMetadataEvent(Channel channel, SiteMetadataSnapshot snapshot,
+public record ProtocolSiteMetadataEvent(Channel channel, SiteReceiverContext receiverContext,
+                                        SiteMetadataSnapshot snapshot,
                                         long observedAtEpochMilliseconds)
 {
+    public ProtocolSiteMetadataEvent(Channel channel, SiteMetadataSnapshot snapshot,
+                                     long observedAtEpochMilliseconds)
+    {
+        this(channel, snapshot, observedAtEpochMilliseconds, 0);
+    }
+
+    public ProtocolSiteMetadataEvent(Channel channel, SiteMetadataSnapshot snapshot,
+                                     long observedAtEpochMilliseconds, long sourceFrequency)
+    {
+        this(channel, SiteReceiverContext.capture(channel,
+            snapshot != null ? snapshot.protocol() : null, sourceFrequency), snapshot,
+            observedAtEpochMilliseconds);
+    }
+
     public boolean isUseful()
     {
-        return channel != null && snapshot != null && snapshot.isUseful();
+        return receiverContext != null && receiverContext.isStandardChannel() &&
+            !receiverContext.isTrafficChannel() && snapshot != null && snapshot.isUseful();
+    }
+
+    /** True only while the optional live channel still represents the captured receiver. */
+    public boolean matchesCurrentChannel()
+    {
+        return receiverContext != null && receiverContext.matchesCurrentChannel(channel);
     }
 }

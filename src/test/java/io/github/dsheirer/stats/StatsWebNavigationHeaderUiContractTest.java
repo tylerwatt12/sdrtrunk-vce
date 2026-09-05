@@ -25,7 +25,7 @@ class StatsWebNavigationHeaderUiContractTest
     {
         String html = readText(INDEX_HTML);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"110\">"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"113\">"));
         assertTrue(html.contains("/assets/app.css?v=94"));
         assertFalse(html.contains("/assets/web-call-player.js"));
         assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=134\"></script>"));
@@ -36,10 +36,10 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));
-        String conventional = fragment(html, "<symbol id=\"icon-conventional\"", "</symbol>");
-        assertTrue(conventional.contains("M4 18a8 8 0 0 1 16 0"));
-        assertTrue(conventional.contains("M12 18l4-5"));
-        assertFalse(conventional.contains("<circle cx=\"12\" cy=\"13\" r=\"7\""));
+        String channel = fragment(html, "<symbol id=\"icon-channel\"", "</symbol>");
+        assertTrue(channel.contains("M4 18a8 8 0 0 1 16 0"));
+        assertTrue(channel.contains("M12 18l4-5"));
+        assertFalse(channel.contains("<circle cx=\"12\" cy=\"13\" r=\"7\""));
     }
 
     @Test

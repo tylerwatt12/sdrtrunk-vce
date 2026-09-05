@@ -20,8 +20,8 @@ class StatsWebSettingsOwnershipUiContractTest
     void separatesSharedTrafficTimingFromPersonalLivePresentation() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String site = function(source, "async function renderAdminSiteBehaviorSettings()");
-        String request = function(source, "async function requestSiteSettings(method = 'GET', settings = null, revision = null)");
+        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings()");
+        String request = function(source, "async function requestReceiverSettings(method = 'GET', settings = null, revision = null)");
         String bandplanRequest = function(source,
             "async function requestP25BandplanOverrides(method = 'GET', profiles = null)");
         String bandplanPage = function(source, "async function renderAdminP25BandplanOverrides()");
@@ -34,10 +34,10 @@ class StatsWebSettingsOwnershipUiContractTest
         String scannerPlayback = function(source, "function openScannerSettings(returnFocusSelector = null)");
         String admin = function(source, "async function renderAdmin()");
 
-        assertTrue(admin.contains("id: 'site-settings', label: 'Site Settings'"));
+        assertTrue(admin.contains("id: 'receiver-settings', label: 'Receiver Settings'"));
         assertTrue(admin.contains("id: 'p25-bandplans', label: 'P25 Bandplan Overrides'"));
         assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
-        assertTrue(request.contains("'/api/v1/admin/site-settings'"));
+        assertTrue(request.contains("'/api/v1/admin/receiver-settings'"));
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
         assertTrue(bandplanRequest.contains("jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides'"));
         assertFalse(bandplanRequest.contains("requestJson("));
@@ -50,15 +50,16 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(bandplanPage.contains("Enter its replacement bands, then save."));
         assertTrue(bandplanPage.contains("clearP25OverrideCreateRoute()"));
         assertTrue(clearBandplanPrefill.contains("window.history.replaceState({}, '', currentHref())"));
-        assertTrue(site.contains("confirmed?.revision"));
-        assertTrue(site.contains("error?.code === 'site_settings_conflict'"));
-        assertTrue(site.contains("Current server values were reloaded"));
-        assertFalse(site.contains("retain_idle_call_details"));
-        assertFalse(site.contains("clear_voice_decode_quality_on_call_end"));
-        assertTrue(site.contains("traffic_grant_age_out_milliseconds"));
-        assertFalse(site.contains("show_encryption_details"));
-        assertFalse(site.contains("show_control_decode_quality"));
-        assertFalse(site.contains("live_detail_row_limit"));
+        assertTrue(receiver.contains("section('Receiver behavior', body)"));
+        assertTrue(receiver.contains("confirmed?.revision"));
+        assertTrue(receiver.contains("error?.code === 'receiver_settings_conflict'"));
+        assertTrue(receiver.contains("Current server values were reloaded"));
+        assertFalse(receiver.contains("retain_idle_call_details"));
+        assertFalse(receiver.contains("clear_voice_decode_quality_on_call_end"));
+        assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
+        assertFalse(receiver.contains("show_encryption_details"));
+        assertFalse(receiver.contains("show_control_decode_quality"));
+        assertFalse(receiver.contains("live_detail_row_limit"));
 
         assertTrue(personal.contains("userPreferenceController.snapshot()"));
         assertTrue(personal.contains("A read-only overview of every personal preference"));
@@ -71,8 +72,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(personalSummary.contains("page_titles.prepend_playing_call"));
         assertTrue(personalSummary.contains("playback.volume"));
         assertTrue(personalSummary.contains("selected_scan_list_ids"));
-        assertTrue(personalSummary.contains("conversation_grouping"));
-        assertTrue(personalSummary.contains("conversation_burst_limit"));
+        assertTrue(personalSummary.contains("target_grouping"));
+        assertTrue(personalSummary.contains("target_burst_limit"));
         assertTrue(personalSummary.contains("scanner.detail_mode"));
         assertTrue(personalSummary.contains("presentation.show_encryption_details"));
         assertTrue(personalSummary.contains("presentation.show_control_decode_quality"));
@@ -109,20 +110,24 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(livePresentation.contains("retain_last_call_on_idle_rows"));
         assertTrue(livePresentation.contains("clear_voice_quality_when_idle"));
         assertTrue(livePresentation.contains("preferences.presentation ="));
-        assertFalse(livePresentation.contains("conversation_grouping"));
-        assertFalse(livePresentation.contains("conversation_burst_limit"));
+        assertFalse(livePresentation.contains("target_grouping"));
+        assertFalse(livePresentation.contains("target_burst_limit"));
         assertFalse(livePresentation.contains("preferences.playback"));
         assertFalse(livePresentation.contains("preferences.page_titles"));
         assertTrue(livePresentation.contains("modal.setDirty(true)"));
         assertTrue(livePresentation.contains("void render()"));
 
         assertTrue(scannerPlayback.contains("openReadOnlyModal('Scanner settings'"));
-        assertTrue(scannerPlayback.contains("conversation_grouping"));
-        assertTrue(scannerPlayback.contains("conversation_burst_limit"));
+        assertTrue(scannerPlayback.contains("target_grouping"));
+        assertTrue(scannerPlayback.contains("target_burst_limit"));
         assertTrue(scannerPlayback.contains("page_titles.prepend_playing_call"));
-        assertTrue(scannerPlayback.contains("preferences.playback.conversation_grouping ="));
-        assertTrue(scannerPlayback.contains("preferences.playback.conversation_burst_limit ="));
+        assertTrue(scannerPlayback.contains("preferences.playback.target_grouping ="));
+        assertTrue(scannerPlayback.contains("preferences.playback.target_burst_limit ="));
         assertTrue(scannerPlayback.contains("preferences.page_titles.prepend_playing_call ="));
+        assertTrue(scannerPlayback.contains("same playback target together"));
+        assertTrue(scannerPlayback.contains("current playback target before another target"));
+        assertFalse(scannerPlayback.contains("groupIdentity"));
+        assertFalse(scannerPlayback.contains("same channel or talkgroup"));
         assertFalse(scannerPlayback.contains("preferences.presentation"));
         assertTrue(source.contains("id = 'scanner-settings'"));
         assertTrue(source.contains("openScannerSettings('#scanner-settings')"));
@@ -137,7 +142,7 @@ class StatsWebSettingsOwnershipUiContractTest
     {
         String service = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer",
             "stats", "StatsWebServerService.java"));
-        assertTrue(service.contains("WebSiteSettingsHttpController.PATH"));
+        assertTrue(service.contains("WebReceiverSettingsHttpController.PATH"));
         assertTrue(service.contains("P25BandplanOverrideHttpController.PATH"));
         assertTrue(service.contains("WebUserPreferencesHttpController.PATH"));
         assertTrue(service.contains("WebCapability.USER_SETTINGS"));

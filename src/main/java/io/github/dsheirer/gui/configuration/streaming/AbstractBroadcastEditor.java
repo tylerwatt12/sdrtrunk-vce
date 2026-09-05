@@ -23,16 +23,11 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.gui.configuration.Editor;
-import io.github.dsheirer.gui.configuration.AliasMutationUi;
 import io.github.dsheirer.configuration.ConfigurationManager;
-import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.geometry.Insets;
-import javafx.scene.Node;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -118,40 +113,7 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
         {
             configuration.setEnabled(getEnabledSwitch().isSelected());
 
-            //Detect stream name change so that we can update any aliases that might be using the previous name
-            String previousName = configuration.getName();
-            String updatedName = getNameTextField().getText();
-
-            if(previousName != null && !previousName.isEmpty() && !updatedName.contentEquals(previousName)
-                && getConfigurationManager().getAliasModel().hasBroadcastChannelReferences(previousName))
-            {
-                Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-                alert.getButtonTypes().clear();
-                alert.getButtonTypes().addAll(ButtonType.NO, ButtonType.YES);
-                alert.setTitle("Update Aliases");
-                alert.setHeaderText("Rename requires updating aliases for this stream");
-                alert.setContentText("Do you want to update aliases to new stream name?");
-                alert.initOwner(((Node)getSaveButton()).getScene().getWindow());
-
-                //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
-                alert.setResizable(true);
-                alert.onShownProperty().addListener(e ->
-                    Platform.runLater(() -> alert.setResizable(false)));
-
-                if(alert.showAndWait().filter(ButtonType.YES::equals).isPresent() &&
-                    AliasMutationUi.execute(getSaveButton(), "Update Alias Streams", () ->
-                        getConfigurationManager().getAliasAdministrationService()
-                            .renameBroadcastChannelReferences(previousName, updatedName)).isEmpty())
-                {
-                    //The live name remains unchanged until the combined broadcast and Alias transaction succeeds.
-                    getConfigurationManager().getBroadcastModel().process(new BroadcastEvent(configuration,
-                        BroadcastEvent.Event.CONFIGURATION_CHANGE));
-                    setItem(configuration);
-                    return;
-                }
-            }
-
-            configuration.setName(updatedName);
+            configuration.setName(getNameTextField().getText());
 
             //TODO: remove this after we get rid of Swing tables so that we don't have to announce these changes.
             mConfigurationManager.getBroadcastModel().process(new BroadcastEvent(configuration,

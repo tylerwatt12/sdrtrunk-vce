@@ -79,9 +79,11 @@ import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.CallSystemIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -218,7 +220,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         if(isUsableTalkerAlias(alias))
         {
-            observeTalkerAlias(radio, alias, identifiers, timestamp);
+            observeTalkerAlias(radio, alias, identifiers, timestamp,
+                activeTalkerAliasCallIdentity(frequency, TimeslotMessage.TIMESLOT_1, radio, talkgroup,
+                    timestamp));
             applyAuthoritativeTalkerAlias(frequency, TimeslotMessage.TIMESLOT_1, radio, talkgroup, alias, timestamp);
         }
     }
@@ -246,7 +250,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        observeTalkerAlias(radio, alias, identifiers, timestamp);
+        observeTalkerAlias(radio, alias, identifiers, timestamp,
+            activeTalkerAliasCallIdentity(frequency, timeslot, radio, talkgroup, timestamp));
         applyAuthoritativeTalkerAlias(frequency, timeslot, radio, talkgroup, alias, timestamp);
     }
 
@@ -298,7 +303,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
             }
 
-            observeTalkerAlias(radio, alias, identifiers, timestamp);
+            observeTalkerAlias(radio, alias, identifiers, timestamp,
+                matchesTrackedCall ? new CallSystemIdentity(tracker.getEvent().getTimeStart(),
+                    tracker.getRadioSystemKey()) : null);
 
             if(matchesTrackedCall)
             {
@@ -382,7 +389,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     private void observeTalkerAlias(RadioIdentifier radio, TalkerAliasIdentifier alias,
-                                    IdentifierCollection identifiers, long timestamp)
+                                    IdentifierCollection identifiers, long timestamp,
+                                    CallSystemIdentity callIdentity)
     {
         if(radio == null || radio.getRole() != Role.FROM)
         {
@@ -393,9 +401,46 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         IdentifierCollection context = identifiers != null ?
             new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
         context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
-        MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.APCO25, radio,
-            alias, context, TrunkedIdentityDomain.STANDARD,
-            timestamp > 0 ? timestamp : System.currentTimeMillis()));
+        if(callIdentity != null && callIdentity.radioSystemKey() != null)
+        {
+            MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.APCO25, radio,
+                alias, context, TrunkedIdentityDomain.STANDARD,
+                timestamp > 0 ? timestamp : System.currentTimeMillis(), callIdentity));
+        }
+    }
+
+    /** Returns the serving system and start time captured by the matching active physical call. */
+    private CallSystemIdentity activeTalkerAliasCallIdentity(long frequency, int timeslot, RadioIdentifier radio,
+                                                             Identifier talkgroup, long timestamp)
+    {
+        mLock.lock();
+
+        try
+        {
+            P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
+            if(tracker == null || tracker.isComplete() || tracker.isStale(timestamp) ||
+                timestamp < tracker.getEvent().getTimeStart())
+            {
+                return null;
+            }
+
+            IdentifierCollection tracked = tracker.getEvent().getIdentifierCollection();
+            Identifier trackedSource = tracked != null ? tracked.getFromIdentifier() : null;
+            Identifier trackedTarget = tracked != null ? tracked.getToIdentifier() : null;
+            boolean sourceConflict = trackedSource instanceof RadioIdentifier trackedRadio &&
+                !radioMatches(radio, trackedRadio);
+            boolean targetConflict = talkgroup != null && !talkgroupMatches(talkgroup, trackedTarget);
+            if(sourceConflict || targetConflict)
+            {
+                return null;
+            }
+
+            return new CallSystemIdentity(tracker.getEvent().getTimeStart(), tracker.getRadioSystemKey());
+        }
+        finally
+        {
+            mLock.unlock();
+        }
     }
 
     private static boolean isUsableTalkerAlias(TalkerAliasIdentifier alias)
@@ -609,10 +654,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private void syncTrafficChannelIdentity(Channel trafficChannel)
     {
         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+        trafficChannel.setAliasListId(mParentChannel.getAliasListId());
         trafficChannel.setSystem(mParentChannel.getSystem());
         trafficChannel.setSite(mParentChannel.getSite());
         trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
-        trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
+        trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
         trafficChannel.setP25SiteIdentity(mParentChannel.getP25SiteIdentity());
         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
         trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
@@ -737,7 +783,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private P25TrafficChannelEventTracker createTracker(P25ChannelGrantEvent event, long frequency, int timeslot)
     {
-        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event);
+        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event,
+            RadioSystemKey.p25(mParentChannel != null ? mParentChannel.getP25SiteIdentity() : null));
         addTracker(tracker, frequency, timeslot);
         return tracker;
     }
@@ -761,7 +808,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 event.setChannelDescriptor(new StandardChannel(frequency));
             }
 
-            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event));
+            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event,
+                tracker.getRadioSystemKey()));
         }
 
         return tracker;
@@ -778,7 +826,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(event.getEventType() != null && event.getEventType().isVoiceCallEvent())
         {
-            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event));
+            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event,
+                tracker.getRadioSystemKey()));
         }
 
         return tracker;
@@ -1534,8 +1583,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             (identifier.getRole() == Role.TO && (identifier.getForm() == Form.TALKGROUP ||
                 identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO));
 
-        return expectedRole && TrunkedIdentityEligibility.isEligible(protocol, TrunkedIdentityDomain.STANDARD,
-            identifier.getForm(), integerValue(identifier));
+        return expectedRole && TrunkedIdentityEligibility.isEligibleDecodedIdentifier(protocol,
+            TrunkedIdentityDomain.STANDARD, identifier);
     }
 
     private static Identifier getP25EndFrameSlot(IdentifierCollection identifiers, Identifier candidate)
@@ -1547,22 +1596,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return identifiers.getIdentifier(candidate.getIdentifierClass(), candidate.getForm(), candidate.getRole());
-    }
-
-    private static Integer integerValue(Identifier identifier)
-    {
-        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
-            patch.getValue().getPatchGroup() != null)
-        {
-            return patch.getValue().getPatchGroup().getValue();
-        }
-
-        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
-        {
-            return radio.getValue() != null && radio.getValue() > 0 ? radio.getValue() : radio.getRadio();
-        }
-
-        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
     }
 
     /**

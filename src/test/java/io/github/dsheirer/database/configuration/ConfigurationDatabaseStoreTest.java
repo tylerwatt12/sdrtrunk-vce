@@ -26,6 +26,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog.Bandwidth;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
@@ -59,10 +60,12 @@ class ConfigurationDatabaseStoreTest
         String configurationId = channel.getConfigurationId();
         channel.setSystem("County");
         channel.setSite("Simulcast");
+        long aliasListId = insertAliasList(database, "County Aliases", "P25");
+        channel.setAliasListId(aliasListId);
         channel.setAliasListName("County Aliases");
         channel.setAutoStart(true);
         channel.setAutoStartOrder(2);
-        channel.setRadresGuid("11111111-2222-3333-4444-555555555555");
+        channel.setRadioResolveId("11111111-2222-3333-4444-555555555555");
         channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 2));
 
         SourceConfigTuner sourceConfig = new SourceConfigTuner();
@@ -98,7 +101,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals("Control", loadedChannel.getName());
         assertEquals(configurationId, loadedChannel.getConfigurationId());
         assertEquals("County Aliases", loadedChannel.getAliasListName());
-        assertEquals("11111111-2222-3333-4444-555555555555", loadedChannel.getRadresGuid());
+        assertEquals("11111111-2222-3333-4444-555555555555", loadedChannel.getRadioResolveId());
         assertEquals(new P25SiteIdentity(0xBEE00, 0x123, 1, 2), loadedChannel.getP25SiteIdentity());
         assertTrue(loadedChannel.getAutoStart());
         assertEquals(2, loadedChannel.getAutoStartOrder());
@@ -129,33 +132,40 @@ class ConfigurationDatabaseStoreTest
             assertFalse(tableExists(connection, "playlist_broadcast_stream"));
 
             try(ResultSet resultSet = statement.executeQuery("""
-                SELECT decoder_type, source_type, primary_frequency_hz, frequency_count,
-                       recording_enabled, event_logging_enabled
+                SELECT decoder_type, primary_frequency_hz,
+                       json_type(config_json, '$.configurationId') AS configuration_id_json,
+                       json_type(config_json, '$.aliasListName') AS alias_list_name_json
                 FROM configuration_channel
                 """))
             {
                 assertTrue(resultSet.next());
                 assertEquals("P25_PHASE1", resultSet.getString("decoder_type"));
-                assertEquals("TUNER", resultSet.getString("source_type"));
                 assertEquals(853_762_500L, resultSet.getLong("primary_frequency_hz"));
-                assertEquals(1, resultSet.getInt("frequency_count"));
-                assertEquals(0, resultSet.getInt("recording_enabled"));
-                assertEquals(0, resultSet.getInt("event_logging_enabled"));
+                assertNull(resultSet.getString("configuration_id_json"));
+                assertNull(resultSet.getString("alias_list_name_json"));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
-                SELECT server_type, enabled, host, port, json_extract(config_json, '$.mode') AS mode,
+                SELECT configuration_id,
+                       json_extract(config_json, '$.type') AS server_type,
+                       json_extract(config_json, '$.enabled') AS enabled,
+                       json_extract(config_json, '$.host') AS host,
+                       json_extract(config_json, '$.port') AS port,
+                       json_extract(config_json, '$.mode') AS mode,
+                       json_type(config_json, '$.configurationId') AS configuration_id_json,
                        json_type(config_json, '$.callUploadEnabled') AS call_upload_enabled,
                        json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled
                 FROM configuration_broadcast_stream
                 """))
             {
                 assertTrue(resultSet.next());
-                assertEquals("RADIORESOLVE", resultSet.getString("server_type"));
+                assertEquals(stream.getConfigurationId(), resultSet.getString("configuration_id"));
+                assertEquals("RadioResolveConfiguration", resultSet.getString("server_type"));
                 assertEquals(1, resultSet.getInt("enabled"));
                 assertEquals("https://example.invalid/upload", resultSet.getString("host"));
                 assertEquals(80, resultSet.getInt("port"));
                 assertEquals("CALLS_ONLY", resultSet.getString("mode"));
+                assertNull(resultSet.getString("configuration_id_json"));
                 assertNull(resultSet.getString("call_upload_enabled"));
                 assertNull(resultSet.getString("site_metadata_enabled"));
             }
@@ -199,42 +209,35 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void replacementDropsOpaqueRetiredRowsAndLeavesLegacyChannelMapsUntouched() throws Exception
+    void replacementDropsOpaqueRetiredChannelRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retired-configuration.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
-        String channelMapJson = "{\"name\":\"Retired Map\",\"ranges\":[{\"first\":1,\"last\":9}]}";
-
         try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement pragma = connection.createStatement();
             PreparedStatement channelStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
-                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                    radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                    frequency_count, recording_enabled, event_logging_enabled, config_json
+                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (77, '11111111-1111-4111-8111-111111111111', 'TRUNKED', 9, 'Legacy System',
-                    'Legacy Site', 'Retired MPT', 'Legacy Aliases',
-                    '22222222-2222-4222-8222-222222222222', 1, 4, 'MPT1327', 'TUNER', 451000000, 2, 1, 1,
+                    'Legacy Site', 'Retired MPT', NULL,
+                    '22222222-2222-4222-8222-222222222222', 1, 4, 'MPT1327', 451000000,
                     '{"type":"retired-channel","payload":"must be dropped without decoding"}')
                 """);
             PreparedStatement soundCardStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
-                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                    radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                    frequency_count, recording_enabled, event_logging_enabled, config_json
+                    id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (78, '33333333-3333-4333-8333-333333333333', 'CONVENTIONAL', 10, 'Legacy System',
-                    'Audio Input', 'Retired Sound Card', 'Legacy Aliases', NULL, 1, 5, 'DMR', 'MIXER', NULL, 0, 0, 1,
+                    'Audio Input', 'Retired Sound Card', NULL, NULL, 1, 5, 'DMR', NULL,
                     '{"type":"retired-sound-card","payload":"must be dropped without decoding"}')
-                """);
-            PreparedStatement mapStatement = connection.prepareStatement("""
-                INSERT INTO configuration_channel_map (id, sort_order, name, config_json)
-                VALUES (88, 3, 'Retired Map', ?)
                 """))
         {
+            pragma.execute("PRAGMA ignore_check_constraints=ON");
             channelStatement.executeUpdate();
             soundCardStatement.executeUpdate();
-            mapStatement.setString(1, channelMapJson);
-            mapStatement.executeUpdate();
+            pragma.execute("PRAGMA ignore_check_constraints=OFF");
         }
 
         Channel active = new Channel("Supported DMR");
@@ -254,23 +257,12 @@ class ConfigurationDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement retiredQuery = connection.prepareStatement("""
                 SELECT COUNT(*) FROM configuration_channel WHERE id IN (77, 78)
-                """);
-            PreparedStatement mapQuery = connection.prepareStatement("""
-                SELECT sort_order, name, config_json FROM configuration_channel_map WHERE id = 88
                 """))
         {
             try(ResultSet resultSet = retiredQuery.executeQuery())
             {
                 assertTrue(resultSet.next());
                 assertEquals(0, resultSet.getInt(1));
-            }
-
-            try(ResultSet resultSet = mapQuery.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                assertEquals(3, resultSet.getInt("sort_order"));
-                assertEquals("Retired Map", resultSet.getString("name"));
-                assertEquals(channelMapJson, resultSet.getString("config_json"));
             }
         }
     }
@@ -324,7 +316,7 @@ class ConfigurationDatabaseStoreTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("P25 Conventional");
-        channel.setRadresGuid("22222222-3333-4444-5555-666666666666");
+        channel.setRadioResolveId("22222222-3333-4444-5555-666666666666");
         DecodeConfigP25Conventional decodeConfiguration = new DecodeConfigP25Conventional();
         decodeConfiguration.setModulation(Modulation.CQPSK);
         channel.setDecodeConfiguration(decodeConfiguration);
@@ -354,6 +346,89 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
+    void stableChannelSaveKeepsItsDatabaseRowAcrossRenameAndRetune() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("stable-channel-row.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel channel = conventionalChannel("Old Name", 155_250_000L);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+        long originalRowId = channelRowId(database, channel.getConfigurationId());
+
+        channel.setName("New Name");
+        channel.setSystem("Renamed System");
+        channel.setSite("Renamed Site");
+        ((SourceConfigTuner)channel.getSourceConfiguration()).setFrequency(155_500_000L);
+        replace(database, state);
+
+        assertEquals(originalRowId, channelRowId(database, channel.getConfigurationId()));
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT name, system_name, site_name, primary_frequency_hz
+                FROM configuration_channel WHERE configuration_id = ?
+                """))
+        {
+            statement.setString(1, channel.getConfigurationId());
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                assertEquals("New Name", resultSet.getString("name"));
+                assertEquals("Renamed System", resultSet.getString("system_name"));
+                assertEquals("Renamed Site", resultSet.getString("site_name"));
+                assertEquals(155_500_000L, resultSet.getLong("primary_frequency_hz"));
+            }
+        }
+    }
+
+    @Test
+    void decoderChangeReplacesOnlyTheChangedChannelRow() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("changed-channel-classification.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel changed = conventionalChannel("Changed", 155_250_000L);
+        Channel retained = conventionalChannel("Retained", 155_500_000L);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(changed, retained));
+        replace(database, state);
+        long changedRowId = channelRowId(database, changed.getConfigurationId());
+        long retainedRowId = channelRowId(database, retained.getConfigurationId());
+
+        changed.setDecodeConfiguration(new DecodeConfigNBFM());
+        replace(database, state);
+
+        assertTrue(channelRowId(database, changed.getConfigurationId()) > changedRowId);
+        assertEquals(retainedRowId, channelRowId(database, retained.getConfigurationId()));
+    }
+
+    @Test
+    void radioResolveIdsCanSwapWithoutReplacingStableChannelRows() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("swapped-radioresolve-ids.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel first = conventionalChannel("First", 155_250_000L);
+        Channel second = conventionalChannel("Second", 155_500_000L);
+        String firstRadioResolveId = "11111111-1111-4111-8111-111111111111";
+        String secondRadioResolveId = "22222222-2222-4222-8222-222222222222";
+        first.setRadioResolveId(firstRadioResolveId);
+        second.setRadioResolveId(secondRadioResolveId);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(first, second));
+        replace(database, state);
+        long firstRowId = channelRowId(database, first.getConfigurationId());
+        long secondRowId = channelRowId(database, second.getConfigurationId());
+
+        first.setRadioResolveId(secondRadioResolveId);
+        second.setRadioResolveId(firstRadioResolveId);
+        replace(database, state);
+
+        assertEquals(firstRowId, channelRowId(database, first.getConfigurationId()));
+        assertEquals(secondRowId, channelRowId(database, second.getConfigurationId()));
+        assertEquals(secondRadioResolveId, channelRadioResolveId(database, first.getConfigurationId()));
+        assertEquals(firstRadioResolveId, channelRadioResolveId(database, second.getConfigurationId()));
+    }
+
+    @Test
     void currentFormatLoadRefusesEveryTamperedChannelProjectionScalar() throws Exception
     {
         List<ProjectionTamper> tampers = List.of(
@@ -362,11 +437,8 @@ class ConfigurationDatabaseStoreTest
             new ProjectionTamper("auto_start_order", "auto_start_order=1.5"),
             new ProjectionTamper("auto_start_order", "auto_start_order=2147483648"),
             new ProjectionTamper("decoder_type", "decoder_type='NBFM'"),
-            new ProjectionTamper("source_type", "source_type='RECORDING'"),
-            new ProjectionTamper("primary_frequency_hz", "primary_frequency_hz=121900001"),
-            new ProjectionTamper("frequency_count", "frequency_count=2"),
-            new ProjectionTamper("recording_enabled", "recording_enabled=1"),
-            new ProjectionTamper("event_logging_enabled", "event_logging_enabled=1"));
+            new ProjectionTamper("address_domain_code", "address_domain_code=2"),
+            new ProjectionTamper("primary_frequency_hz", "primary_frequency_hz=121900001"));
 
         for(int index = 0; index < tampers.size(); index++)
         {
@@ -396,9 +468,56 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void blankConventionalUploadGuidIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
+    void currentFormatLoadRejectsEveryRowOwnedChannelFieldDuplicatedInJson() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("blank-conventional-guid.sqlite");
+        Path database = mTemporaryFolder.resolve("duplicated-row-owned-fields.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        Channel channel = new Channel("Airport Ground");
+        channel.setDecodeConfiguration(new DecodeConfigAM());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(121_900_000L);
+        channel.setSourceConfiguration(source);
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+
+        List<String> rowOwnedFields = List.of(
+            "configurationId", "system", "site", "name", "aliasListId", "aliasListName", "radioResolveId",
+            "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement pragma = connection.createStatement();
+            PreparedStatement add = connection.prepareStatement("""
+                UPDATE configuration_channel
+                SET config_json=json_set(config_json, ?, 'conflicting value')
+                """);
+            PreparedStatement remove = connection.prepareStatement("""
+                UPDATE configuration_channel
+                SET config_json=json_remove(config_json, ?)
+                """))
+        {
+            pragma.execute("PRAGMA ignore_check_constraints=ON");
+
+            for(String property: rowOwnedFields)
+            {
+                String path = "$." + property;
+                add.setString(1, path);
+                assertEquals(1, add.executeUpdate());
+                IOException exception = assertThrows(IOException.class, store::load, property);
+                assertTrue(exception.getMessage().contains(property), exception::getMessage);
+                remove.setString(1, path);
+                assertEquals(1, remove.executeUpdate());
+            }
+
+            pragma.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+    }
+
+    @Test
+    void missingConventionalRadioResolveIdIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("missing-conventional-radioresolve.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("Airport Ground");
@@ -413,48 +532,61 @@ class ConfigurationDatabaseStoreTest
         {
             statement.executeUpdate("""
                 UPDATE configuration_channel
-                SET radres_guid = NULL, config_json = json_remove(config_json, '$.radresGuid')
+                SET radioresolve_id = NULL
                 """);
         }
 
-        Channel loadedBlank = store.load().channels().getFirst();
-        assertEquals(configurationId, loadedBlank.getConfigurationId());
-        assertFalse(loadedBlank.hasRadresGuid(), "loading must preserve an explicitly blank correlation value");
+        Channel loadedMissing = store.load().channels().getFirst();
+        assertEquals(configurationId, loadedMissing.getConfigurationId());
+        assertFalse(loadedMissing.hasRadioResolveId(), "loading must preserve a missing correlation value");
 
         TestConfiguration replacement = new TestConfiguration();
-        replacement.setChannels(List.of(loadedBlank));
+        replacement.setChannels(List.of(loadedMissing));
         replace(database, replacement);
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT configuration_id, radres_guid,
-                       json_extract(config_json, '$.radresGuid') AS json_radres_guid
+                SELECT configuration_id, radioresolve_id,
+                       json_type(config_json, '$.radioResolveId') AS json_radioresolve_id,
+                       json_type(config_json, '$.radresGuid') AS json_legacy_radres_guid
                 FROM configuration_channel
                 """))
         {
             assertTrue(resultSet.next());
             assertEquals(configurationId, resultSet.getString("configuration_id"));
-            String assignedGuid = resultSet.getString("radres_guid");
-            assertEquals(assignedGuid, UUID.fromString(assignedGuid).toString());
-            assertEquals(assignedGuid, resultSet.getString("json_radres_guid"));
+            String assignedId = resultSet.getString("radioresolve_id");
+            assertEquals(assignedId, UUID.fromString(assignedId).toString());
+            assertNull(resultSet.getString("json_radioresolve_id"));
+            assertNull(resultSet.getString("json_legacy_radres_guid"));
         }
     }
 
     @Test
     void unknownCurrentSchemaStreamFailsLoadWithoutDeletingItsRawRow() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("unknown-stream.sqlite");
+        assertCurrentStreamRejectedAndPreserved("unknown-stream.sqlite",
+            "{\"type\":\"retiredUnknownStream\",\"payload\":\"preserve exactly\"}");
+    }
+
+    @Test
+    void legacyRadioResolveSubtypeFailsCurrentLoadWithoutDeletingItsRawRow() throws Exception
+    {
+        assertCurrentStreamRejectedAndPreserved("legacy-radioresolve-stream.sqlite",
+            "{\"type\":\"RADIORESOLVE\",\"payload\":\"preserve exactly\"}");
+    }
+
+    private void assertCurrentStreamRejectedAndPreserved(String filename, String rawJson) throws Exception
+    {
+        Path database = mTemporaryFolder.resolve(filename);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
-        String rawJson = "{\"type\":\"retiredUnknownStream\",\"payload\":\"preserve exactly\"}";
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_broadcast_stream (
-                    sort_order, name, server_type, enabled, host, port, delay_ms,
-                    maximum_recording_age_ms, config_json
-                ) VALUES (0, 'Unknown Stream', 'UNKNOWN', 0, NULL, NULL, NULL, NULL, ?)
+                    configuration_id, sort_order, config_json
+                ) VALUES ('44444444-4444-4444-8444-444444444444', 0, ?)
                 """))
         {
             statement.setString(1, rawJson);
@@ -485,6 +617,64 @@ class ConfigurationDatabaseStoreTest
         }
     }
 
+    private static long insertAliasList(Path database, String name, String family) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list(name, family, unmatched_talkgroup_record_enabled)
+                VALUES (?, ?, 0)
+                """, Statement.RETURN_GENERATED_KEYS))
+        {
+            statement.setString(1, name);
+            statement.setString(2, family);
+            statement.executeUpdate();
+            try(ResultSet keys = statement.getGeneratedKeys())
+            {
+                assertTrue(keys.next());
+                return keys.getLong(1);
+            }
+        }
+    }
+
+    private static Channel conventionalChannel(String name, long frequency)
+    {
+        Channel channel = new Channel(name);
+        channel.setDecodeConfiguration(new DecodeConfigAM());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(frequency);
+        channel.setSourceConfiguration(source);
+        return channel;
+    }
+
+    private static long channelRowId(Path database, String configurationId) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT id FROM configuration_channel WHERE configuration_id = ?"))
+        {
+            statement.setString(1, configurationId);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return resultSet.getLong(1);
+            }
+        }
+    }
+
+    private static String channelRadioResolveId(Path database, String configurationId) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT radioresolve_id FROM configuration_channel WHERE configuration_id = ?"))
+        {
+            statement.setString(1, configurationId);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return resultSet.getString(1);
+            }
+        }
+    }
     private static final class TestConfiguration
     {
         private List<Channel> mChannels = List.of();

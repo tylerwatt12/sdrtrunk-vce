@@ -19,16 +19,17 @@ class StatsWebPresentationUiContractTest
     private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
-    void keepsOnlyReceiverTimingInSiteSettingsAndMovesRowPresentationToLive() throws Exception
+    void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String site = function(source, "async function renderAdminSiteBehaviorSettings()");
+        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings()");
         String live = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
 
-        assertTrue(site.contains("'Traffic grant timing'"));
-        assertTrue(site.contains("traffic_grant_age_out_milliseconds"));
-        assertFalse(site.contains("retain_idle_call_details"));
-        assertFalse(site.contains("clear_voice_decode_quality_on_call_end"));
+        assertTrue(receiver.contains("section('Receiver behavior', body)"));
+        assertTrue(receiver.contains("'Traffic grant timing'"));
+        assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
+        assertFalse(receiver.contains("retain_idle_call_details"));
+        assertFalse(receiver.contains("clear_voice_decode_quality_on_call_end"));
         for(String setting: new String[]{"show_only_active_trunked_channels", "retain_last_call_on_idle_rows",
             "clear_voice_quality_when_idle"})
         {
@@ -43,14 +44,15 @@ class StatsWebPresentationUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
-        String discover = function(source, "function renderObservedTalkgroups(main, page, selectedList)");
+        String discover = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
         String scanList = function(source,
             "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
         String aliases = function(source, "async function renderAliases()");
-        String siteTalkgroups = function(source, "async function siteTopTalkgroupsSection(site)");
-        String siteChannels = function(source, "async function renderSiteChannels(site, renderContext)");
-        String siteNeighbors = function(source, "async function renderSiteNeighbors(site, renderContext)");
-        String conventional = function(source, "async function renderConventional()");
+        String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
+        String channelFrequencies = function(source,
+            "async function renderTrunkedChannelFrequencies(channel, renderContext)");
+        String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
+        String channels = function(source, "async function renderChannels()");
         String liveMessages = function(source, "function liveMessagesPane()");
         String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
 
@@ -62,18 +64,18 @@ class StatsWebPresentationUiContractTest
         assertTrue(activity.contains("section(title, activityTable, titleActions)"));
         assertTrue(activity.contains("titleActions.prepend(refreshControls)"));
         assertTrue(discover.contains("layoutMenuHost: actions"));
-        assertTrue(discover.contains("section('Observed Talkgroups', host, actions)"));
+        assertTrue(discover.contains("section('Observed Groups', host, actions)"));
         assertTrue(scanList.contains("layoutMenuHost: actions"));
         assertTrue(aliases.contains("layoutMenuHost: actions"));
         assertTrue(source.contains("const actions = sectionActionHost(action);"));
         assertTrue(source.contains("layoutMenuHost: actions }"));
-        assertTrue(siteTalkgroups.contains("const titleActions = sectionActionHost(rangeControl.controls)"));
-        assertTrue(siteTalkgroups.contains("controller: tableController, layoutMenuHost: titleActions"));
-        assertTrue(siteTalkgroups.indexOf("cleanupTableLayoutMenu(tableController)") <
-            siteTalkgroups.indexOf("host.replaceChildren(node('div', 'loading'"));
-        assertTrue(siteChannels.contains("layoutMenuHost: directory.titleActions"));
-        assertTrue(siteNeighbors.contains("layoutMenuHost: directory.titleActions"));
-        assertTrue(conventional.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(channelGroups.contains("const titleActions = sectionActionHost(rangeControl.controls)"));
+        assertTrue(channelGroups.contains("controller: tableController, layoutMenuHost: titleActions"));
+        assertTrue(channelGroups.indexOf("cleanupTableLayoutMenu(tableController)") <
+            channelGroups.indexOf("host.replaceChildren(node('div', 'loading'"));
+        assertTrue(channelFrequencies.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(channels.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(liveMessages.contains("layoutMenuHost: toolbar"));
         assertTrue(liveEvents.contains("layoutMenuHost: eventToolbar"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));
@@ -102,18 +104,18 @@ class StatsWebPresentationUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String css = readText(APP_CSS);
-        String discover = function(source, "function renderObservedTalkgroups(main, page, selectedList)");
-        String identity = function(source, "function observedTalkgroupIdentity(row)");
+        String discover = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
+        String identity = function(source, "function observedGroupIdentityValue(row)");
         String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
-        String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
+        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
-        for(String label: new String[]{"'Identity'", "'System / Sites'", "'Calls'", "'Signaling'",
+        for(String label: new String[]{"'Identity'", "'System / Channel'", "'Calls'", "'Signaling'",
             "'Last Seen'"})
         {
             assertTrue(discover.contains(label), () -> "Missing Discover column " + label);
         }
         assertFalse(discover.contains("'Alias Match'"));
-        assertFalse(source.contains("function observedTalkgroupCounts("));
+        assertFalse(source.contains("function observedGroupIdentityCounts("));
         assertTrue(discover.contains("aliasMetricValue(row, 'logical_call_count')"));
         assertTrue(discover.contains("aliasMetricValue(row, 'signaling_observation_count')"));
         assertTrue(identity.contains("Covered by range"));
@@ -133,15 +135,15 @@ class StatsWebPresentationUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String css = readText(APP_CSS);
-        String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
+        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"));
         assertTrue(css.contains("background: var(--surface-2);\n  border: 1px solid var(--line);\n" +
             "  border-radius: 4px;"));
         assertTrue(css.contains(".metric span {\n  min-height: 2.5em;"));
-        assertTrue(detail.contains("node('div', 'observed-talkgroup-detail-column')"));
+        assertTrue(detail.contains("node('div', 'observed-group-identity-detail-column')"));
         assertTrue(detail.contains("wrapper.append(identityColumn, activityColumn)"));
-        assertTrue(css.contains(".observed-talkgroup-detail-column {"));
+        assertTrue(css.contains(".observed-group-identity-detail-column {"));
         assertTrue(css.contains("flex-direction: column;"));
     }
 

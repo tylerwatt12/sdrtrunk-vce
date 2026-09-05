@@ -41,12 +41,15 @@ import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.Module;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Base audio module implementation.
@@ -60,7 +63,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private static final AtomicLong NEXT_PRODUCER_ID =
         new AtomicLong(ThreadLocalRandom.current().nextLong());
     private final int mMaxSegmentAudioSampleLength;
-    private volatile CallLegSource mCallLegSource;
+    private final AtomicReference<CallLegSource> mCallLegSourceTemplate;
     private volatile Listener<AudioCallEvent> mAudioCallEventListener;
     protected MutableIdentifierCollection mIdentifierCollection;
     private Broadcaster<IdentifierUpdateNotification> mIdentifierUpdateNotificationBroadcaster = new Broadcaster<>();
@@ -75,6 +78,10 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private AudioCallId mPreviousAudioCallId;
     private CallLegId mCurrentCallLegId;
     private CallLegId mPreviousCallLegId;
+    private final AtomicReference<CurrentCallSource> mCurrentCallSource = new AtomicReference<>();
+    private final AtomicReference<RadioSystemKeyEvent> mPendingCallSystemKey = new AtomicReference<>();
+    private final AtomicBoolean mCurrentCallClosing = new AtomicBoolean();
+    private CallLegSource mPreviousCallLegSource;
     private boolean mLinkNextAudioCallToPrevious;
     private MutableAudioCallBuilder mCurrentAudioCall;
     private AudioCallSnapshot mLastPublishedAudioCallSnapshot;
@@ -98,13 +105,16 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         mAliasList = aliasList;
         mMaxSegmentAudioSampleLength = (int)(maxSegmentAudioSampleLength * 8); //Convert milliseconds to samples
-        mCallLegSource = callLegSource != null ? callLegSource : CallLegSource.UNKNOWN;
+        mCallLegSourceTemplate = new AtomicReference<>(
+            callLegSource != null ? callLegSource : CallLegSource.UNKNOWN);
         mTimeslot = timeslot;
         mIdentifierCollection = new MutableIdentifierCollection(getTimeslot());
         mIdentifierUpdateNotificationBroadcaster.addListener(mIdentifierCollection);
         mIdentifierUpdateNotificationBroadcaster.addListener(notification -> {
             synchronized(AbstractAudioModule.this)
             {
+                applyPendingCallSystemKey();
+
                 if(mCurrentAudioCall != null)
                 {
                     //Apply this identifier and its alias policy before publishing the corresponding snapshot.
@@ -142,7 +152,46 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         if(notification != null && notification.getChannel() != null &&
             notification.getChannel().isTrafficChannel())
         {
-            mCallLegSource = mCallLegSource.asTrafficChannel();
+            mCallLegSourceTemplate.updateAndGet(CallLegSource::asTrafficChannel);
+            synchronized(this)
+            {
+                if(mPreviousCallLegSource != null)
+                {
+                    //A segment waiting to continue belongs to the same physical call carried by this chain.
+                    mPreviousCallLegSource = mPreviousCallLegSource.asTrafficChannel();
+                }
+
+                CurrentCallSource current = mCurrentCallSource.updateAndGet(source -> source != null ?
+                    source.withSource(source.source().asTrafficChannel()) : null);
+
+                if(current != null)
+                {
+                    //A Capacity Plus rest-channel handoff changes the role of the chain carrying this same call.
+                    //Already-emitted snapshots remain immutable; the completion uses the committed traffic role.
+                    mLastPublishedAudioCallSnapshot = null;
+                }
+            }
+        }
+    }
+
+    /**
+     * Applies a processing-chain-local system identity without acquiring the audio producer's monitor.  A call-scoped
+     * update is also left in a single latest-value slot so the audio thread can reconcile an activation that began
+     * while the control-channel event was in flight.
+     */
+    @Subscribe
+    public void radioSystemKeyChanged(RadioSystemKeyEvent event)
+    {
+        if(event != null)
+        {
+            mCallLegSourceTemplate.updateAndGet(source ->
+                source.withRadioSystemKey(event.radioSystemKey()));
+
+            if(event.isCallActivation() && event.appliesToTimeslot(getTimeslot()))
+            {
+                mPendingCallSystemKey.set(event);
+                tryApplyCallSystemKey(event);
+            }
         }
     }
 
@@ -161,17 +210,23 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
+            mCurrentCallClosing.set(true);
+            applyPendingCallSystemKey();
+
             if(mCurrentAudioCall != null)
             {
+                CurrentCallSource completedSource = mCurrentCallSource.get();
                 mCurrentAudioCall.complete(timestamp);
                 emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null, mLinkNextAudioCallToPrevious);
                 mCurrentAudioCall = null;
                 mLastPublishedAudioCallSnapshot = null;
                 mPreviousAudioCallId = mCurrentAudioCallId;
                 mPreviousCallLegId = mCurrentCallLegId;
+                mPreviousCallLegSource = completedSource != null ? completedSource.source() : null;
                 mCurrentAudioCallId = null;
                 mCurrentLinkedAudioCallId = null;
                 mCurrentCallLegId = null;
+                mCurrentCallSource.set(null);
             }
         }
     }
@@ -189,6 +244,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
+            applyPendingCallSystemKey();
+
             if(mCurrentAudioCall == null)
             {
                 mCurrentAudioCall = new MutableAudioCallBuilder(mAliasList, getTimeslot());
@@ -198,6 +255,12 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mCurrentLinkedAudioCallId = linkedContinuation ? mPreviousAudioCallId : null;
                 mCurrentCallLegId = linkedContinuation && mPreviousCallLegId != null ? mPreviousCallLegId :
                     new CallLegId(mProducerId, mCurrentAudioCallId.sequence(), getTimeslot());
+                CallLegSource callLegSource = linkedContinuation && mPreviousCallLegSource != null ?
+                    mPreviousCallLegSource : mCallLegSourceTemplate.get();
+                mCurrentCallClosing.set(false);
+                mCurrentCallSource.set(new CurrentCallSource(mCurrentAudioCallId,
+                    mCurrentAudioCall.getStartTimestamp(), linkedContinuation, callLegSource));
+                applyPendingCallSystemKey();
                 mLinkNextAudioCallToPrevious = false;
                 mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
                 if(mRecordAudioOverride)
@@ -239,6 +302,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
+            applyPendingCallSystemKey();
+
             if(mCurrentAudioCall != null)
             {
                 mCurrentAudioCall.touch(timestamp);
@@ -265,6 +330,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         {
             MutableAudioCallBuilder audioCall = getAudioCall();
             audioCall.begin(timestamp);
+            updateCurrentCallStartTimestamp(audioCall.getStartTimestamp());
             mLastPublishedAudioCallSnapshot = null;
             emitAudioCallEvent(AudioCallEventType.ACTIVITY, null);
             return audioCall;
@@ -308,6 +374,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
+            applyPendingCallSystemKey();
+
             if(mCurrentAudioCall != null)
             {
                 mCurrentAudioCall.endBurst(timestamp);
@@ -330,6 +398,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 
         synchronized(this)
         {
+            applyPendingCallSystemKey();
             MutableAudioCallBuilder audioCall = getAudioCall();
             boolean changed = false;
 
@@ -364,6 +433,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
+            applyPendingCallSystemKey();
             MutableAudioCallBuilder audioCall = getAudioCall();
             boolean changed = audioCall.observeEncryptionState(encryptionState);
             audioCall.touch(timestamp);
@@ -451,6 +521,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         {
             synchronized(this)
             {
+                applyPendingCallSystemKey();
+
                 if(mCurrentAudioCall != null)
                 {
                     mCurrentAudioCall.setRecordAudio(true);
@@ -531,6 +603,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             new IdentifierCollection(audioCall.getIdentifierCollection().getIdentifiers());
         identifierCollection.setTimeslot(callId.timeslot());
         Set<BroadcastChannel> broadcastChannels = Set.copyOf(audioCall.getBroadcastChannels());
+        CurrentCallSource currentSource = mCurrentCallSource.get();
+        CallLegSource callLegSource = currentSource != null && currentSource.callId().equals(callId) ?
+            currentSource.source() : null;
 
         return new AudioCallSnapshot(callId, linkedCallId, mAliasList, identifierCollection, broadcastChannels,
             audioCall.getStartTimestamp(), audioCall.getLastActivityTimestamp(), audioCall.getBurstCount(),
@@ -538,7 +613,88 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(),
             audioCall.getEncryptionState(),
             audioCall.isRecordAudio(), audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality(),
-            mCurrentCallLegId, mCallLegSource, audioCall.getCallEncryptionEvidence());
+            mCurrentCallLegId, callLegSource, audioCall.getCallEncryptionEvidence());
+    }
+
+    /** Runs only while the audio producer already owns this module's monitor. */
+    private void applyPendingCallSystemKey()
+    {
+        RadioSystemKeyEvent event = mPendingCallSystemKey.getAndSet(null);
+
+        if(event != null && tryApplyCallSystemKey(event, true))
+        {
+            //Force the next observer event to carry the corrected immutable source snapshot.
+            mLastPublishedAudioCallSnapshot = null;
+        }
+    }
+
+    /**
+     * Performs one bounded compare-and-set attempt.  The control-channel callback never waits for the audio thread;
+     * a lost race remains in the latest-value slot for the audio thread to reconcile on its next callback.
+     */
+    private boolean tryApplyCallSystemKey(RadioSystemKeyEvent event)
+    {
+        return tryApplyCallSystemKey(event, false);
+    }
+
+    private boolean tryApplyCallSystemKey(RadioSystemKeyEvent event, boolean audioThreadOwnsCall)
+    {
+        if(event == null || !event.isCallActivation() || !event.appliesToTimeslot(getTimeslot()) ||
+            !audioThreadOwnsCall && mCurrentCallClosing.get())
+        {
+            return false;
+        }
+
+        CurrentCallSource current = mCurrentCallSource.get();
+
+        if(current == null || current.linkedContinuation() ||
+            current.startEpochMilliseconds() < event.callStartEpochMilliseconds())
+        {
+            return false;
+        }
+
+        CallLegSource updatedSource = current.source().withRadioSystemKey(event.radioSystemKey());
+
+        if(updatedSource.equals(current.source()))
+        {
+            return true;
+        }
+
+        return mCurrentCallSource.compareAndSet(current, current.withSource(updatedSource));
+    }
+
+    /** Updates the immutable correlation state with a fixed number of non-blocking attempts. */
+    private void updateCurrentCallStartTimestamp(long startEpochMilliseconds)
+    {
+        for(int attempt = 0; attempt < 2; attempt++)
+        {
+            CurrentCallSource current = mCurrentCallSource.get();
+
+            if(current == null || !current.callId().equals(mCurrentAudioCallId) ||
+                current.startEpochMilliseconds() == startEpochMilliseconds)
+            {
+                return;
+            }
+
+            if(mCurrentCallSource.compareAndSet(current, current.withStartEpochMilliseconds(startEpochMilliseconds)))
+            {
+                return;
+            }
+        }
+    }
+
+    private record CurrentCallSource(AudioCallId callId, long startEpochMilliseconds, boolean linkedContinuation,
+                                     CallLegSource source)
+    {
+        private CurrentCallSource withStartEpochMilliseconds(long startEpochMilliseconds)
+        {
+            return new CurrentCallSource(callId, startEpochMilliseconds, linkedContinuation, source);
+        }
+
+        private CurrentCallSource withSource(CallLegSource source)
+        {
+            return new CurrentCallSource(callId, startEpochMilliseconds, linkedContinuation, source);
+        }
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame)

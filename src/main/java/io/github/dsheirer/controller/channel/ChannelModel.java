@@ -50,16 +50,15 @@ public class ChannelModel implements Listener<ChannelEvent>
      * Deletes any aliases that have the alias list name
      * @param aliasListName to delete
      */
-    public void deleteAliasList(String aliasListName)
+    public void deleteAliasList(long aliasListId)
     {
-        if(aliasListName == null || aliasListName.isEmpty())
+        if(aliasListId <= 0)
         {
             return;
         }
 
-        mChannels.stream().filter(channel -> channel.getAliasListName() != null &&
-                channel.getAliasListName().equalsIgnoreCase(aliasListName))
-            .forEach(channel -> channel.setAliasListName(null));
+        mChannels.stream().filter(channel -> channel.getAliasListId() == aliasListId)
+            .forEach(channel -> channel.setAliasListDefinition(null));
     }
 
     /**
@@ -180,7 +179,7 @@ public class ChannelModel implements Listener<ChannelEvent>
         switch(channel.getChannelType())
         {
             case STANDARD:
-                channel.getRadresGuid();
+                channel.getRadioResolveId();
                 mChannels.add(channel);
                 break;
             case TRAFFIC:

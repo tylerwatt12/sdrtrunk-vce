@@ -50,11 +50,11 @@ export class WebCallPlayer {
     this.preferenceWriter = null;
     this.maximumQueued = WebCallPlayer.MAXIMUM_QUEUED_CALLS;
     this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SELECTED_SCAN_LISTS;
-    this.conversationGrouping = true;
-    this.conversationBurstLimit = 4;
+    this.targetGrouping = true;
+    this.targetBurstLimit = 4;
     this.arrivalSequence = 0;
-    this.lastConversationKey = null;
-    this.consecutiveConversationCalls = 0;
+    this.lastPlaybackTargetKey = null;
+    this.consecutiveTargetCalls = 0;
     this.seenCallIds = new Set();
     this.seenCallOrder = [];
     this.scanLists = [];
@@ -108,12 +108,12 @@ export class WebCallPlayer {
         this.synchronizeSubscription();
       }
     }
-    if (typeof preferences.conversation_grouping === 'boolean') {
-      this.conversationGrouping = preferences.conversation_grouping;
+    if (typeof preferences.target_grouping === 'boolean') {
+      this.targetGrouping = preferences.target_grouping;
     }
-    const burstLimit = Number(preferences.conversation_burst_limit);
+    const burstLimit = Number(preferences.target_burst_limit);
     if (Number.isInteger(burstLimit) && burstLimit >= 1 && burstLimit <= 20) {
-      this.conversationBurstLimit = burstLimit;
+      this.targetBurstLimit = burstLimit;
     }
     this.render();
   }
@@ -125,8 +125,8 @@ export class WebCallPlayer {
     void Promise.resolve().then(() => this.preferenceWriter({
       volume: this.volume,
       selected_scan_list_ids: selectedScanListIds,
-      conversation_grouping: this.conversationGrouping,
-      conversation_burst_limit: this.conversationBurstLimit
+      target_grouping: this.targetGrouping,
+      target_burst_limit: this.targetBurstLimit
     })).catch(() => {});
   }
 
@@ -164,8 +164,8 @@ export class WebCallPlayer {
       scanListCatalogReady: this.scanListCatalogReady,
       maximumSelectedScanLists: this.maximumSelectedScanLists,
       volume: this.volume,
-      conversationGrouping: this.conversationGrouping,
-      conversationBurstLimit: this.conversationBurstLimit
+      targetGrouping: this.targetGrouping,
+      targetBurstLimit: this.targetBurstLimit
     };
   }
 
@@ -470,8 +470,12 @@ export class WebCallPlayer {
     if (!callId || !Number.isFinite(started) || started <= 0 || !Number.isFinite(completed) || completed <= 0 ||
         !Array.isArray(value.scan_list_ids)) return null;
     const scanListIds = value.scan_list_ids;
-    if (!scanListIds.length || scanListIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
-        typeof value.conversation_key !== 'string' || !value.conversation_key.trim()) return null;
+    if (!scanListIds.length || scanListIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+    const playbackTarget = value.playback_target;
+    const playbackTargetKey = typeof playbackTarget?.key === 'string' ? playbackTarget.key.trim() : '';
+    const playbackTargetKind = typeof playbackTarget?.kind === 'string' ? playbackTarget.kind.trim() : '';
+    if (!playbackTargetKey || !['channel', 'channel_timeslot', 'talkgroup', 'patch_group', 'radio']
+      .includes(playbackTargetKind)) return null;
     const call = {
       ...value,
       _callId: callId,
@@ -479,7 +483,7 @@ export class WebCallPlayer {
       _arrivalSequence: this.arrivalSequence++,
       _matchedScanListIds: [...new Set(scanListIds.map(String))]
     };
-    call._conversationKey = value.conversation_key.trim();
+    call._playbackTargetKey = playbackTargetKey;
     return call;
   }
 
@@ -505,26 +509,26 @@ export class WebCallPlayer {
   }
 
   nextQueueIndex(queue, lastKey, consecutive) {
-    if (!queue.length || !this.conversationGrouping || !lastKey) return queue.length ? 0 : -1;
-    const same = queue.findIndex((call) => call._conversationKey === lastKey);
-    const other = queue.findIndex((call) => call._conversationKey !== lastKey);
-    if (same >= 0 && (consecutive < this.conversationBurstLimit || other < 0)) return same;
+    if (!queue.length || !this.targetGrouping || !lastKey) return queue.length ? 0 : -1;
+    const same = queue.findIndex((call) => call._playbackTargetKey === lastKey);
+    const other = queue.findIndex((call) => call._playbackTargetKey !== lastKey);
+    if (same >= 0 && (consecutive < this.targetBurstLimit || other < 0)) return same;
     return other >= 0 ? other : same;
   }
 
   takeNextCall() {
-    const index = this.nextQueueIndex(this.queuedCalls, this.lastConversationKey,
-      this.consecutiveConversationCalls);
+    const index = this.nextQueueIndex(this.queuedCalls, this.lastPlaybackTargetKey,
+      this.consecutiveTargetCalls);
     if (index < 0) return null;
     const [call] = this.queuedCalls.splice(index, 1);
     this.queuedCount = this.queuedCalls.length;
-    const key = call._conversationKey;
-    if (key === this.lastConversationKey) {
-      this.consecutiveConversationCalls = Math.min(this.conversationBurstLimit,
-        this.consecutiveConversationCalls + 1);
+    const key = call._playbackTargetKey;
+    if (key === this.lastPlaybackTargetKey) {
+      this.consecutiveTargetCalls = Math.min(this.targetBurstLimit,
+        this.consecutiveTargetCalls + 1);
     } else {
-      this.lastConversationKey = key;
-      this.consecutiveConversationCalls = 1;
+      this.lastPlaybackTargetKey = key;
+      this.consecutiveTargetCalls = 1;
     }
     return call;
   }
@@ -532,15 +536,15 @@ export class WebCallPlayer {
   scheduledQueue(limit = 100) {
     const queue = this.queuedCalls.slice();
     const result = [];
-    let lastKey = this.lastConversationKey;
-    let consecutive = this.consecutiveConversationCalls;
+    let lastKey = this.lastPlaybackTargetKey;
+    let consecutive = this.consecutiveTargetCalls;
     while (result.length < limit) {
       const index = this.nextQueueIndex(queue, lastKey, consecutive);
       if (index < 0) break;
       const [call] = queue.splice(index, 1);
       result.push(call);
-      const key = call._conversationKey;
-      if (key === lastKey) consecutive = Math.min(this.conversationBurstLimit,
+      const key = call._playbackTargetKey;
+      if (key === lastKey) consecutive = Math.min(this.targetBurstLimit,
         consecutive + 1);
       else {
         lastKey = key;
@@ -622,8 +626,8 @@ export class WebCallPlayer {
       this.paused = false;
       this.stopFeed();
       this.clearQueuedCalls();
-      this.lastConversationKey = null;
-      this.consecutiveConversationCalls = 0;
+      this.lastPlaybackTargetKey = null;
+      this.consecutiveTargetCalls = 0;
       this.stopCurrent();
       this.replayingLast = false;
       this.stopAfterReplay = false;
@@ -693,8 +697,8 @@ export class WebCallPlayer {
     if (this.holdTarget) {
       this.holdTarget = null;
     } else if (this.current && this.currentBuffer) {
-      this.holdTarget = this.current._conversationKey;
-      this.filterQueuedCalls((call) => call._conversationKey === this.holdTarget);
+      this.holdTarget = this.current._playbackTargetKey;
+      this.filterQueuedCalls((call) => call._playbackTargetKey === this.holdTarget);
     }
 
     this.render();
@@ -702,17 +706,18 @@ export class WebCallPlayer {
 
   avoidCurrent() {
     if (!this.current || !this.currentBuffer || this.replayingLast) return;
-    const target = this.current._conversationKey;
+    const target = this.current._playbackTargetKey;
     this.avoids.delete(target);
     this.avoids.set(target, {
       key: target,
-      label: this.targetLabel(this.current)
+      label: this.targetLabel(this.current),
+      system_scope: this.avoidSystemScope(this.current)
     });
     while (this.avoids.size > WebCallPlayer.MAXIMUM_AVOIDS) {
       this.avoids.delete(this.avoids.keys().next().value);
     }
     if (this.holdTarget === target) this.holdTarget = null;
-    this.filterQueuedCalls((call) => call._conversationKey !== target);
+    this.filterQueuedCalls((call) => call._playbackTargetKey !== target);
     this.stopCurrent();
     if (this.stopped || this.paused) this.setStatus('Ready');
     else this.playNext();
@@ -1028,12 +1033,12 @@ export class WebCallPlayer {
   }
 
   isAllowed(call) {
-    const target = call?._conversationKey || this.targetKey(call);
+    const target = call?._playbackTargetKey || this.targetKey(call);
     return !this.avoids.has(target) && (!this.holdTarget || this.holdTarget === target);
   }
 
   targetKey(call) {
-    return String(call?._conversationKey || call?.conversation_key || '').trim();
+    return String(call?._playbackTargetKey || call?.playback_target?.key || '').trim();
   }
 
   callLabel(call) {
@@ -1041,11 +1046,17 @@ export class WebCallPlayer {
       String(call.target_id);
     const sourceId = call.source_id === null || call.source_id === undefined || call.source_id === '' ? '' :
       String(call.source_id);
-    const targetType = this.identifierType(call.target_form, 'TGID');
+    const targetType = this.identifierType(call.target_form, 'ID');
     const sourceType = this.identifierType(call.source_form, 'Radio');
-    const target = call.target_alias ?
-      `${call.target_alias}${targetId ? ` · ${targetType} ${targetId}` : ''}` :
-      (targetId ? `${targetType} ${targetId}` : call.channel || 'Unknown target');
+    const playbackLabel = typeof call.playback_target?.label === 'string' ?
+      call.playback_target.label.trim() : '';
+    const analogMode = String(call.decoder || call.protocol || '').trim().toUpperCase();
+    const analog = ['AM', 'NBFM'].includes(analogMode);
+    const target = analog ?
+      (playbackLabel || call.channel || 'Saved channel') :
+      (call.target_alias ?
+        `${call.target_alias}${targetId ? ` · ${targetType} ${targetId}` : ''}` :
+        (targetId ? `${targetType} ${targetId}` : call.channel || 'Unknown target'));
     const source = call.source_alias ?
       `${call.source_alias}${sourceId ? ` · ${sourceType} ${sourceId}` : ''}` :
       (sourceId ? `${sourceType} ${sourceId}` : '');
@@ -1054,12 +1065,22 @@ export class WebCallPlayer {
 
   targetLabel(call) {
     if (!call) return '';
+    const playbackLabel = typeof call.playback_target?.label === 'string' ? call.playback_target.label.trim() : '';
+    if (playbackLabel) return playbackLabel;
     const alias = String(call.target_alias || '').trim();
     if (alias) return alias;
     const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
       String(call.target_id);
-    if (targetId) return `${this.identifierType(call.target_form, 'TGID')} ${targetId}`;
-    return String(call.channel || '').trim() || 'Unknown target';
+    if (targetId) return `${this.identifierType(call.target_form, 'ID')} ${targetId}`;
+    return String(call.channel || '').trim() || 'Unknown identity';
+  }
+
+  avoidSystemScope(call) {
+    const kind = String(call?.playback_target?.kind || '').trim().toLowerCase();
+    if (!['talkgroup', 'patch_group', 'radio'].includes(kind)) return '';
+    const label = String(call?.system || '').trim();
+    const key = String(call?.playback_target?.radio_system_key || call?.radio_system_key || '').trim();
+    return label && key && label !== key ? `${label} · ${key}` : label || key;
   }
 
   currentTargetLabel() {

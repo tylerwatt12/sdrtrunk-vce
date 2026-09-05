@@ -110,11 +110,12 @@ class StatsWebServerServiceLifecycleTest
             assertNull(handoffUri.getQuery());
             assertNull(handoffUri.getFragment());
             P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
-            String p25SiteGuid = "00000000-0000-0000-0000-000000000001";
+            String p25ChannelConfigurationId = "00000000-0000-0000-0000-000000000001";
             URI p25HandoffUri = service.createDesktopAdministratorP25BandplanOverrideHandoffUri(p25Site,
-                p25SiteGuid);
+                p25ChannelConfigurationId);
             assertEquals(initialOrigin.resolve(
-                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, p25SiteGuid)), p25HandoffUri);
+                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
+                    p25ChannelConfigurationId)), p25HandoffUri);
             assertNull(p25HandoffUri.getQuery());
             assertNull(p25HandoffUri.getFragment());
             HttpResponse<String> handoff = client.send(HttpRequest.newBuilder(handoffUri)
@@ -370,7 +371,7 @@ class StatsWebServerServiceLifecycleTest
         assertTrue(found, "Alias-list catalog did not contain ID [" + aliasListId + "]: " + catalog.body());
 
         HttpResponse<String> observed = client.send(HttpRequest.newBuilder(origin.resolve(
-                "/api/v1/alias-lists/" + aliasListId + "/observed-talkgroups"))
+                "/api/v1/alias-lists/" + aliasListId + "/observed-group-identities"))
             .timeout(Duration.ofSeconds(10))
             .header("Cookie", cookie)
             .GET()

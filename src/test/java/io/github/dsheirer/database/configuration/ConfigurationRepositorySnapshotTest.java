@@ -12,6 +12,7 @@
 package io.github.dsheirer.database.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.configuration.ConfigurationSnapshot;
@@ -110,7 +112,7 @@ class ConfigurationRepositorySnapshotTest
             statement.executeUpdate("""
                 CREATE TRIGGER reject_replacement_stream
                 BEFORE INSERT ON configuration_broadcast_stream
-                WHEN NEW.name = 'Rejected Stream'
+                WHEN json_extract(NEW.config_json, '$.name') = 'Rejected Stream'
                 BEGIN
                     SELECT RAISE(ABORT, 'forced final snapshot write failure');
                 END
@@ -147,9 +149,10 @@ class ConfigurationRepositorySnapshotTest
             statement.executeUpdate("""
                 CREATE TRIGGER corrupt_replacement_stream
                 AFTER INSERT ON configuration_broadcast_stream
-                WHEN NEW.name = 'Corrupted Stream'
+                WHEN json_extract(NEW.config_json, '$.name') = 'Corrupted Stream'
                 BEGIN
-                    UPDATE configuration_broadcast_stream SET config_json = '{' WHERE id = NEW.id;
+                    UPDATE configuration_broadcast_stream
+                    SET config_json = '{"type":"UnknownBroadcastConfiguration"}' WHERE id = NEW.id;
                 END
                 """);
         }
@@ -229,6 +232,48 @@ class ConfigurationRepositorySnapshotTest
         }
     }
 
+    @Test
+    void configurationWriteWaitsForAnExistingWriterBeforeReadingItsSnapshot() throws Exception
+    {
+        Path database = database("snapshot-write-contention.sqlite");
+        ConfigurationRepository repository = new ConfigurationRepository(database);
+        ConfigurationSnapshot baseline = seed(repository, "County P25", 1001,
+            851_012_500L, "Primary Stream");
+        baseline.channels().getFirst().setName("Queued Control");
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch saveSubmitted = new CountDownLatch(1);
+
+        try(Connection blocker = SdrTrunkDatabase.openWriteTransaction(database);
+            Statement statement = blocker.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE database_metadata
+                SET updated_at_ms = updated_at_ms + 1
+                WHERE key = 'database_format_version'
+                """);
+            Future<?> save = executor.submit(() ->
+            {
+                saveSubmitted.countDown();
+                repository.replaceChannelAndBroadcastConfiguration(baseline.channels(),
+                    baseline.broadcastConfigurations());
+                return null;
+            });
+
+            assertTrue(saveSubmitted.await(2, TimeUnit.SECONDS));
+            Thread.sleep(100);
+            assertFalse(save.isDone(), "configuration save did not wait for the active SQLite writer");
+            //Changing back to auto-commit commits without opening the next configured IMMEDIATE transaction.
+            blocker.setAutoCommit(true);
+            save.get(5, TimeUnit.SECONDS);
+        }
+        finally
+        {
+            executor.shutdownNow();
+        }
+
+        assertEquals("Queued Control", repository.load().channels().getFirst().getName());
+    }
+
     private Path database(String name) throws Exception
     {
         Path database = mTemporaryFolder.resolve(name);
@@ -258,20 +303,22 @@ class ConfigurationRepositorySnapshotTest
                                                    long frequency, String streamName)
     {
         AliasListDefinition definition = new AliasListDefinition(listName, AliasListFamily.P25);
+        definition.setId(100);
+        RadioResolveConfiguration stream = new RadioResolveConfiguration();
+        stream.setName(streamName);
         Alias alias = new Alias("Dispatch " + talkgroup);
+        alias.setId(100);
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
-        alias.addBroadcastChannel(streamName);
+        alias.addBroadcastChannel(new BroadcastChannel(stream.getConfigurationId(), streamName));
 
         Channel channel = new Channel("Control " + talkgroup);
-        channel.setAliasListName(listName);
+        channel.setAliasListDefinition(definition);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         SourceConfigTuner source = new SourceConfigTuner();
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);
 
-        RadioResolveConfiguration stream = new RadioResolveConfiguration();
-        stream.setName(streamName);
         return new ConfigurationSnapshot(List.of(definition), List.of(alias), scanLists, List.of(channel),
             List.of(stream));
     }
@@ -300,11 +347,8 @@ class ConfigurationRepositorySnapshotTest
     {
         try(PreparedStatement updateList = connection.prepareStatement("UPDATE alias_list SET name = ?");
             PreparedStatement updateAlias = connection.prepareStatement("UPDATE alias SET name = ?");
-            PreparedStatement updateChannel = connection.prepareStatement("""
-                UPDATE configuration_channel
-                SET name = ?, alias_list_name = ?,
-                    config_json = json_set(config_json, '$.name', ?, '$.aliasListName', ?)
-                """))
+            PreparedStatement updateChannel = connection.prepareStatement(
+                "UPDATE configuration_channel SET name = ?"))
         {
             connection.setAutoCommit(false);
             updateList.setString(1, aliasListName);
@@ -312,9 +356,6 @@ class ConfigurationRepositorySnapshotTest
             updateAlias.setString(1, aliasName);
             updateAlias.executeUpdate();
             updateChannel.setString(1, channelName);
-            updateChannel.setString(2, aliasListName);
-            updateChannel.setString(3, channelName);
-            updateChannel.setString(4, aliasListName);
             updateChannel.executeUpdate();
             connection.commit();
         }

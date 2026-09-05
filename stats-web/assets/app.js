@@ -10,17 +10,17 @@ import {
   receiverHealthAlertIds,
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js';
-import * as systemsDirectory from './features/systems-directory.js';
+import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import { WebCallPlayer } from './web-call-player.js';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
 const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revision"]')?.content?.trim() || '';
 const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
-  'createAlias', 'createListName', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
+  'createAlias', 'createListId', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
 ]);
 const P25_OVERRIDE_CREATE_ROUTE_KEYS = Object.freeze([
-  'createP25Override', 'wacn', 'system', 'rfss', 'site', 'guid'
+  'createP25Override', 'wacn', 'system', 'rfss', 'site', 'configuration_id'
 ]);
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
@@ -45,12 +45,11 @@ const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
 });
 const ACCESS_CAPABILITIES = Object.freeze({
-  SITE_ACCESS: 'site-access',
+  WEB_ACCESS: 'web-access',
   DASHBOARD: 'dashboard',
   LIVE: 'live',
   TUNER_SPECTRUM: 'tuner-spectrum',
-  SYSTEMS: 'systems',
-  CONVENTIONAL: 'conventional',
+  RADIO: 'radio',
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
@@ -96,11 +95,11 @@ const DASHBOARD_CHANNEL_KIND_FILTERS = Object.freeze([
   { value: 'TRUNKED', label: 'Trunked' },
   { value: 'CONVENTIONAL', label: 'Conventional' }
 ]);
-const TALKGROUP_CALL_ACTIVITY_SERIES = Object.freeze([
+const GROUP_IDENTITY_CALL_ACTIVITY_SERIES = Object.freeze([
   ...CALL_ACTIVITY_SERIES,
   { field: 'encrypted_logical_call_count', label: 'Encrypted', color: 'var(--chart-encrypted)', visible: true }
 ]);
-const TALKGROUP_SIGNALING_SERIES = Object.freeze([
+const GROUP_IDENTITY_SIGNALING_SERIES = Object.freeze([
   { field: 'emergency_observation_count', label: 'Emergency', color: 'var(--chart-emergency)' },
   { field: 'data_observation_count', label: 'Data', color: 'var(--chart-data)' },
   { field: 'join_observation_count', label: 'Join', color: 'var(--chart-join)' },
@@ -178,7 +177,7 @@ const CHANNEL_TAG_DISPLAY = Object.freeze({
 const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'action': 82,
   'affiliation': 190,
-  'affiliated-site': 220,
+  'confirmed-channel': 220,
   'alias': 170,
   'band': 54,
   'calls': 66,
@@ -192,6 +191,9 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'first-seen': 166,
   'frequency': 94,
   'group': 135,
+  'group-identity-description': 240,
+  'group-identity-id': 90,
+  'group-identity-name': 175,
   'last-active': 166,
   'last-seen': 166,
   'lcn': 68,
@@ -211,8 +213,6 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'streamed': 82,
   'system': 106,
   'talker-alias': 160,
-  'talkgroup-description': 240,
-  'talkgroup-id': 90,
   'talkgroup-name': 175,
   'target': 82,
   'target-alias': 165,
@@ -243,18 +243,17 @@ const TABLE_DEFAULT_COLUMN_WIDTHS = Object.freeze({
   })
 });
 const SERVER_TABLE_DEFAULT_SORTS = {
-  systems: 'last_seen',
-  sites: 'last_seen',
-  talkgroups: 'calls',
-  radios: 'calls',
+  'radio-system-channels': 'last_seen',
+  'group-identities': 'logical_call_count',
+  radios: 'logical_call_count',
   'talker-aliases': 'talker_alias',
-  'talkgroup-radios': 'last_seen',
-  'radio-talkgroups': 'last_seen',
-  conventional: 'frequency',
-  'conventional-talkgroups': 'calls',
-  'conventional-radios': 'calls'
+  'group-identity-radios': 'last_seen',
+  'radio-groups': 'last_seen',
+  channels: 'name',
+  'channel-group-identities': 'logical_call_count',
+  'channel-radios': 'logical_call_count'
 };
-const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
+const CHANNEL_IDENTITY_PAGE_LIMIT = 100;
 const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
 const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
 const SERVICE_STATUS_RETRY_DELAY_MS = 500;
@@ -698,9 +697,9 @@ function updateAccessControls() {
     action.textContent = 'Sign Out';
     action.disabled = false;
   } else {
-    const signInRequired = accessSession.capabilities?.[ACCESS_CAPABILITIES.SITE_ACCESS] === false;
+    const signInRequired = accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false;
     status.textContent = signInRequired ? 'Sign in required' : 'Public';
-    status.title = signInRequired ? 'This receiver requires an account for all site features' : 'Using public access';
+    status.title = signInRequired ? 'This receiver requires an account for the web interface' : 'Using public access';
     action.textContent = 'Sign In';
     action.disabled = false;
   }
@@ -1112,27 +1111,58 @@ function aliasLabel(row, prefix = 'alias_') {
   return row[`${prefix}name`] || '';
 }
 
-function systemLabel(row) {
-  if (!isP25(row)) return trunkedSystemLabel(row);
-  const wacn = hex(row.wacn, 5);
-  const system = hex(row.system_id, 3);
-  return wacn && system ? `${wacn}-${system}` : wacn || system;
+function radioSystemLabel(row) {
+  if (isP25(row)) {
+    const wacn = hex(row.wacn, 5);
+    const system = hex(row.system_id, 3);
+    return wacn && system ? `${wacn}-${system}` : wacn || system;
+  }
+  if (isSavedChannelRadioSystem(row)) return savedChannelScopeLabel(row);
+  if (protocolFamily(row) === 'DMR') {
+    const model = semanticLabel(row.model);
+    const network = identifierNumber(row.network_id);
+    return ['DMR Tier III', model ? `${model} model` : '', network ? `Network ${network}` : '']
+      .filter(Boolean).join(' · ');
+  }
+  if (protocolFamily(row) === 'NXDN') {
+    const category = semanticLabel(row.location_category);
+    const system = identifierNumber(row.system_id);
+    return ['NXDN Type-C', category, system ? `System ${system}` : ''].filter(Boolean).join(' · ');
+  }
+  return `${protocolFamily(row) || 'Unknown'} radio system`;
 }
 
-function systemValue(row) {
-  const system = systemLabel(row);
-  const aliasList = scopeAliasListName(row);
-  return [system, aliasList].filter(Boolean).join(' · ');
+function savedChannelScopeLabel(row) {
+  const family = protocolFamily(row);
+  return `${family ? `${family} ` : ''}saved channel scope`;
 }
 
-function scopeAliasListName(row) {
-  if (!isP25(row)) return '';
-  return String(row?.alias_list_name || '').trim();
+function isSavedChannelRadioSystem(row) {
+  return /^(?:dmr|nxdn-c|nxdn-d):channel:/.test(String(row?.radio_system_key || ''));
 }
 
-function systemInfoValue(row) {
-  if (!isP25(row)) return systemValue(row);
-  const hexadecimal = systemLabel(row);
+function radioSystemOwnerLabel(row) {
+  return isSavedChannelRadioSystem(row) ? 'Saved channel scope' : 'Radio System';
+}
+
+function radioSystemValue(row) {
+  return radioSystemLabel(row);
+}
+
+function radioSystemAliasLists(row) {
+  const assigned = Array.isArray(row?.alias_lists) ? row.alias_lists : [];
+  if (!assigned.length) return '—';
+  const values = node('span', 'alias-list-values');
+  assigned.forEach((item, index) => {
+    if (index) values.append(', ');
+    values.append(aliasListLink(item?.name, item?.id));
+  });
+  return values;
+}
+
+function radioSystemInfoValue(row) {
+  if (!isP25(row)) return radioSystemValue(row);
+  const hexadecimal = radioSystemLabel(row);
   const wacn = row.wacn === null || row.wacn === undefined || row.wacn === '' ? '' : Number(row.wacn);
   const system = row.system_id === null || row.system_id === undefined || row.system_id === '' ? '' :
     Number(row.system_id);
@@ -1147,7 +1177,7 @@ function systemInfoValue(row) {
 function observedSiteLabel(row) {
   if (!isP25(row)) return trunkedSiteLabel(row);
   const identity = `${hex(row.rfss, 2)}-${hex(row.site_id, 2)}`;
-  return row.channel_name || `${systemLabel(row)} ${identity}`;
+  return row.name || `${radioSystemLabel(row)} ${identity}`;
 }
 
 function normalizedSiteText(value) {
@@ -1158,33 +1188,24 @@ function sameSiteText(left, right) {
   return Boolean(left && right) && left.localeCompare(right, undefined, { sensitivity: 'base' }) === 0;
 }
 
-function configuredSiteValue(row) {
-  return normalizedSiteText(row?.configured_site);
+function siteNameValue(row) {
+  return normalizedSiteText(row?.site_name);
 }
 
-function configuredNameValue(row) {
-  const configured = normalizedSiteText(row?.configured_name);
-  if (configured || !row || Object.prototype.hasOwnProperty.call(row, 'configured_name')) return configured;
-  return normalizedSiteText(row.configured_site) ? normalizedSiteText(row.channel_name) : '';
+function nameValue(row) {
+  return normalizedSiteText(row?.name);
 }
 
-function siteInfoSiteValue(row) {
-  const site = configuredSiteValue(row);
-  return site || (configuredNameValue(row) ? '' : normalizedSiteText(row?.channel_name));
-}
-
-function siteDisplayParts(row) {
-  const site = configuredSiteValue(row);
-  const name = configuredNameValue(row);
+function channelDisplayParts(row) {
+  const site = siteNameValue(row);
+  const name = nameValue(row);
   const primary = name || site || normalizedSiteText(row?.source_label) || observedSiteLabel(row);
   return { primary, secondary: site && !sameSiteText(site, primary) ? site : '' };
 }
 
 function neighborSiteDisplayParts(row) {
-  const site = normalizedSiteText(row?.neighbor_configured_site) ||
-    normalizedSiteText(row?.neighbor_site_name) || normalizedSiteText(row?.neighbor_channel_name) ||
-    normalizedSiteText(row?.neighbor_name);
-  const name = normalizedSiteText(row?.neighbor_configured_name);
+  const site = normalizedSiteText(row?.neighbor_site_name);
+  const name = normalizedSiteText(row?.neighbor_name);
   const primary = name || site;
   return { primary, secondary: site && !sameSiteText(site, primary) ? site : '' };
 }
@@ -1193,71 +1214,70 @@ function neighborSiteId(row) {
   return row?.site_id;
 }
 
-function siteNameSummaryValue(primary, secondary, target = '') {
+function identitySummaryValue(primary, secondary, target = '') {
   if (!primary) return '';
-  const summary = node('span', 'site-name-summary');
+  const summary = node('span', 'identity-summary');
   summary.title = [primary, secondary].filter(Boolean).join(' · ');
-  const heading = node('span', 'site-name-summary-primary');
+  const heading = node('span', 'identity-summary-primary');
   heading.append(target ? anchor(primary, target) : valueNode(primary));
   summary.append(heading);
-  if (secondary) summary.append(node('small', 'site-name-summary-context', secondary));
+  if (secondary) summary.append(node('small', 'identity-summary-context', secondary));
   return summary;
 }
 
-function siteNameSummary(row, linked = true) {
-  const labels = siteDisplayParts(row);
-  const target = linked && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityRefHref(row?.entity_ref) : '';
-  return siteNameSummaryValue(labels.primary, labels.secondary, target);
+function channelNameSummary(row, linked = true) {
+  const labels = channelDisplayParts(row);
+  const target = linked && capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
+  return identitySummaryValue(labels.primary, labels.secondary, target);
 }
 
 function authoritativePresence(row) {
   const presence = row?.presence;
   const evidence = String(presence?.evidence || '').trim().toLowerCase();
   const confirmedAt = Number(presence?.confirmed_at_ms);
-  const site = presence?.site;
+  const channel = presence?.channel;
   if (!['registration', 'affiliation'].includes(evidence) ||
-      !Number.isFinite(confirmedAt) || confirmedAt <= 0 || !site || typeof site !== 'object' ||
-      Array.isArray(site) || !normalizedSiteText(site.protocol) ||
-      (!identifierNumber(site.site_id) && !normalizedSiteText(site.guid))) return null;
-  return { evidence, confirmed_at_ms: confirmedAt, site };
+      !Number.isFinite(confirmedAt) || confirmedAt <= 0 || !channel || typeof channel !== 'object' ||
+      Array.isArray(channel) || !normalizedSiteText(channel.protocol) ||
+      (!identifierNumber(channel.site_id) && !normalizedSiteText(channel.configuration_id))) return null;
+  return { evidence, confirmed_at_ms: confirmedAt, channel };
 }
 
-function presenceSiteIdentity(site) {
-  if (!site) return '';
-  if (isP25(site)) {
+function presenceChannelIdentity(channel) {
+  if (!channel) return '';
+  if (isP25(channel)) {
     const values = [];
-    const rfss = hex(site.rfss, 2);
-    const siteId = hex(site.site_id, 2);
+    const rfss = hex(channel.rfss, 2);
+    const siteId = hex(channel.site_id, 2);
     if (rfss) values.push(`RFSS ${rfss}`);
     if (siteId) values.push(`Site ${siteId}`);
-    return values.join(' · ') || normalizedSiteText(site.guid);
+    return values.join(' · ') || normalizedSiteText(channel.configuration_id);
   }
-  const siteId = identifierNumber(site.site_id);
-  return siteId ? `Site ${siteId}` : normalizedSiteText(site.guid);
+  const siteId = identifierNumber(channel.site_id);
+  return siteId ? `Site ${siteId}` : normalizedSiteText(channel.configuration_id);
 }
 
-function presenceSiteContext(site) {
-  return normalizedSiteText(site?.configured_site) || normalizedSiteText(site?.configured_name) ||
-    normalizedSiteText(site?.channel_name);
+function presenceChannelContext(channel) {
+  return normalizedSiteText(channel?.site_name) || normalizedSiteText(channel?.name);
 }
 
-function presenceSiteSortValue(row) {
+function presenceChannelSortValue(row) {
   const presence = authoritativePresence(row);
   if (!presence) return '';
-  return `${presenceSiteIdentity(presence.site)}\u0000${presenceSiteContext(presence.site)}`;
+  return `${presenceChannelIdentity(presence.channel)}\u0000${presenceChannelContext(presence.channel)}`;
 }
 
-function sitePresenceCell(row, showConfirmation = true) {
+function channelPresenceCell(row, showConfirmation = true) {
   const presence = authoritativePresence(row);
   if (!presence) return '—';
-  const identity = presenceSiteIdentity(presence.site);
-  const configured = presenceSiteContext(presence.site);
-  const summary = node('span', 'site-name-summary');
-  const primary = node('span', 'site-name-summary-primary');
-  primary.append(siteLink(presence.site, identity));
+  const identity = presenceChannelIdentity(presence.channel);
+  const configured = presenceChannelContext(presence.channel);
+  const summary = node('span', 'identity-summary');
+  const primary = node('span', 'identity-summary-primary');
+  primary.append(channelLink(presence.channel, identity));
   summary.append(primary);
   if (configured || showConfirmation) {
-    const context = node('small', 'site-name-summary-context');
+    const context = node('small', 'identity-summary-context');
     if (configured) context.append(configured);
     if (showConfirmation) {
       if (configured) context.append(' · ');
@@ -1271,16 +1291,22 @@ function sitePresenceCell(row, showConfirmation = true) {
   return summary;
 }
 
-function siteLabel(row) {
-  return siteDisplayParts(row).primary;
+function channelLabel(row) {
+  return channelDisplayParts(row).primary;
 }
 
-function siteValue(row) {
-  return siteLabel(row);
+function channelValue(row) {
+  return channelLabel(row);
 }
 
 function protocolFamily(row) {
   return protocol(row?.protocol);
+}
+
+function isAnalogChannel(row) {
+  const family = String(protocolFamily(row) || '').toUpperCase();
+  const decoder = String(row?.decoder || '').trim().toUpperCase();
+  return ['AM', 'NBFM'].includes(family) || ['AM', 'NBFM'].includes(decoder);
 }
 
 function isP25(row) {
@@ -1308,22 +1334,12 @@ function identityNumber(row, value) {
   return identifierNumber(value);
 }
 
-function trunkedSystemLabel(row) {
-  const configured = row.configured_system || row.site_names;
-  if (configured) return configured;
-  const identities = [];
-  if (row.network_id !== null && row.network_id !== undefined) {
-    identities.push(`Network ${identifierNumber(row.network_id)}`);
-  }
-  if (row.system_id !== null && row.system_id !== undefined) {
-    identities.push(`System ${identifierNumber(row.system_id)}`);
-  }
-  return identities.length ? `${protocolFamily(row)} ${identities.join(' · ')}` : `${protocolFamily(row)} system`;
-}
-
 function trunkedSiteLabel(row) {
-  return row.channel_name || row.configured_system ||
-    `${protocolFamily(row)} site ${identifierNumber(row.site_id) || identifierNumber(row.ran) || row.guid}`;
+  const family = protocolFamily(row);
+  const site = identifierNumber(row.site_id) ||
+    (family === 'NXDN' ? identifierNumber(row.ran) : '');
+  return row.name || row.system_name ||
+    `${family} site ${site || row.configuration_id}`;
 }
 
 function trunkedVariant(row) {
@@ -1350,21 +1366,6 @@ function identityDomainLabel(row) {
   const value = row?.address_domain || row?.model || row?.location_category || '';
   return String(value).toLowerCase().replace(/^(dmr|nxdn)_/, '').replace(/_/g, ' ').replace(/\b\w/g,
     (character) => character.toUpperCase());
-}
-
-function trunkedIdentity(row) {
-  const values = [];
-  const domain = identityDomainLabel(row);
-  if (domain && domain !== trunkedVariant(row)) values.push(domain);
-  if (row.network_id !== null && row.network_id !== undefined) {
-    values.push(`Network ${identifierNumber(row.network_id)}`);
-  }
-  if (row.system_id !== null && row.system_id !== undefined) {
-    values.push(`System ${identifierNumber(row.system_id)}`);
-  }
-  if (row.site_id !== null && row.site_id !== undefined) values.push(`Site ${identifierNumber(row.site_id)}`);
-  if (row.ran !== null && row.ran !== undefined) values.push(`RAN ${identifierNumber(row.ran)}`);
-  return values.join(' · ');
 }
 
 function badge(label, className = '', title = '') {
@@ -1406,28 +1407,28 @@ function neighborModes(row) {
   return modes.join(', ');
 }
 
-function scope(row) {
-  return { scope: row?.scope_token || '' };
+function radioSystemRoute(row) {
+  return { radio_system_key: row?.radio_system_key || '' };
 }
 
-function systemApiPath(scopeToken, child = '') {
-  const base = `/api/v1/systems/${encodeURIComponent(String(scopeToken || ''))}`;
+function radioSystemApiPath(radioSystemKey, child = '') {
+  const base = `/api/v1/radio-systems/${encodeURIComponent(String(radioSystemKey || ''))}`;
   return child ? `${base}/${child}` : base;
 }
 
-function groupIdentityApiPath(scopeToken, kind, id, child = '') {
-  const identityKind = kind === 'patch_group' ? 'patch_group' : 'talkgroup';
-  const base = `${systemApiPath(scopeToken, 'group-identities')}/${identityKind}/${encodeURIComponent(String(id))}`;
+function groupIdentityApiPath(radioSystemKey, identityKey, child = '') {
+  const base = `${radioSystemApiPath(radioSystemKey, 'group-identities')}/${encodeURIComponent(String(identityKey))}`;
   return child ? `${base}/${child}` : base;
 }
 
-function siteApiPath(guid, child = '') {
-  const base = `/api/v1/sites/${encodeURIComponent(String(guid || ''))}`;
-  return child ? `${base}/${child}` : base;
+function canonicalConfigurationId(value) {
+  const configurationId = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(configurationId) ?
+    configurationId : '';
 }
 
-function conventionalApiPath(configurationId, child = '') {
-  const base = `/api/v1/conventional-channels/${encodeURIComponent(String(configurationId || ''))}`;
+function channelApiPath(configurationId, child = '') {
+  const base = `/api/v1/channels/${encodeURIComponent(String(configurationId || ''))}`;
   return child ? `${base}/${child}` : base;
 }
 
@@ -1517,21 +1518,21 @@ function callsignLink(value) {
     `https://www.radioreference.com/db/fcc/callsign/${encodeURIComponent(callsign)}`) : '';
 }
 
-function systemLink(reference, label) {
-  const target = capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityRefHref(reference) : '';
+function radioSystemLink(reference, label) {
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(reference) : '';
   return target ? anchor(label, target) : label;
 }
 
-function siteLink(row, label = siteValue(row)) {
-  const target = capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityRefHref(row?.entity_ref) : '';
+function channelLink(row, label = channelValue(row)) {
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
   return target ? anchor(label, target) : label;
 }
 
 function neighborSiteLink(row) {
   const labels = neighborSiteDisplayParts(row);
-  const target = labels.primary && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ?
+  const target = labels.primary && capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
     entityRefHref(row?.entity_ref) : '';
-  return siteNameSummaryValue(labels.primary, labels.secondary, target);
+  return identitySummaryValue(labels.primary, labels.secondary, target);
 }
 
 function identityKind(value) {
@@ -1540,33 +1541,48 @@ function identityKind(value) {
 }
 
 function rowGroupIdentityKind(row, explicitKind) {
-  return identityKind(explicitKind ?? row?.identity_kind ?? row?.target_kind) || 'talkgroup';
+  return identityKind(explicitKind ?? row?.group_identity_kind ?? row?.identity_kind ?? row?.target_kind) ||
+    'unknown';
 }
 
 function groupIdentityLabel(row, explicitKind, compact = true) {
   const kind = rowGroupIdentityKind(row, explicitKind);
   if (kind === 'patch_group') return compact ? 'Patch' : 'Patch Group';
   if (kind === 'radio') return 'Radio';
-  if (kind === 'unknown') return compact ? 'Unknown' : 'Unknown Identity';
+  if (kind === 'unknown') return compact ? 'ID' : 'Identity';
   return compact ? 'TG' : 'Talkgroup';
 }
 
-function talkgroupLink(row, id = row.talkgroup_id, label, reference = row?.entity_ref) {
+function groupIdentityDisplayId(row, id) {
+  return id ?? row?.observed_local_id ?? row?.native_id ?? row?.group_native_id ??
+    row?.group_identity_id;
+}
+
+function radioDisplayId(row, id) {
+  return id ?? row?.observed_local_id ?? row?.native_id ?? row?.radio_native_id ?? row?.radio_id;
+}
+
+function groupIdentityLink(row, id, label, reference = row?.entity_ref) {
+  id = groupIdentityDisplayId(row, id);
   const text = label || identityNumber(row, id);
-  const target = capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityRefHref(reference) : '';
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+    entityTarget(reference, { channel: 'groups' }) : '';
   return target ? anchor(text, target) : text;
 }
 
-function radioLink(row, id = row.radio_id, label, reference = row?.entity_ref) {
+function radioLink(row, id, label, reference = row?.entity_ref) {
+  id = radioDisplayId(row, id);
   const text = label || identityNumber(row, id);
-  const target = capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityRefHref(reference) : '';
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+    entityTarget(reference, { channel: 'radios' }) : '';
   return target ? anchor(text, target) : text;
 }
 
-function talkgroupAliasLink(row, id, prefix = 'alias_', reference = row?.entity_ref) {
+function groupIdentityAliasLink(row, id, prefix = 'alias_', reference = row?.entity_ref) {
+  id = groupIdentityDisplayId(row, id);
   if (id === null || id === undefined) return '';
   const name = row[`${prefix}name`];
-  return name ? talkgroupLink(row, id, name, reference) : '';
+  return name ? groupIdentityLink(row, id, name, reference) : '';
 }
 
 function affiliationTalkgroupCell(row) {
@@ -1574,11 +1590,11 @@ function affiliationTalkgroupCell(row) {
   if (id === null || id === undefined) return '—';
   const alias = String(row.affiliated_talkgroup_alias_name || '').trim();
   const identifier = `TG ${identityNumber(row, id)}`;
-  const summary = node('span', 'site-name-summary');
-  const primary = node('span', 'site-name-summary-primary');
-  primary.append(talkgroupLink(row, id, alias || identifier, row.affiliated_talkgroup_entity_ref));
+  const summary = node('span', 'identity-summary');
+  const primary = node('span', 'identity-summary-primary');
+  primary.append(groupIdentityLink(row, id, alias || identifier, row.affiliated_talkgroup_entity_ref));
   summary.append(primary);
-  if (alias) summary.append(node('small', 'site-name-summary-context', identifier));
+  if (alias) summary.append(node('small', 'identity-summary-context', identifier));
   summary.title = alias ? `${alias} · ${identifier}` : identifier;
   return summary;
 }
@@ -2903,18 +2919,18 @@ function aliasDetailMetricBand(row, definitions) {
     [label, row[field] ?? 0, aliasMetricValue(row, field)]), true);
 }
 
-function aliasEditorScopeBreakdownColumns() {
+function aliasEditorSourceBreakdownColumns() {
   return [
-    { id: 'scope', label: 'Scope', width: 230, className: 'alias-cell', render: (row) => {
-      const value = node('div', 'alias-scope-identity');
-      value.append(node('strong', '', availableValue(row.scope_label)));
+    { id: 'source', label: 'Source', width: 230, className: 'alias-cell', render: (row) => {
+      const value = node('div', 'alias-source-identity');
+      value.append(node('strong', '', availableValue(row.source_label)));
       if (row.topology) value.append(node('span', 'muted', availableValue(row.topology)));
       return value;
     } },
-    { id: 'scope-calls', label: 'Calls', width: 100, className: 'numeric',
+    { id: 'source-calls', label: 'Calls', width: 100, className: 'numeric',
       render: (row) => aliasMetricValue(row, 'logical_call_count'),
       sortValue: (row) => Number(row.logical_call_count || 0) },
-    { id: 'scope-signaling', label: 'Signaling', width: 110, className: 'numeric',
+    { id: 'source-signaling', label: 'Signaling', width: 110, className: 'numeric',
       render: (row) => aliasMetricValue(row, 'signaling_observation_count'),
       sortValue: (row) => Number(row.signaling_observation_count || 0) },
     { id: 'last-seen', label: 'Last Seen', width: 166,
@@ -3049,7 +3065,7 @@ function aliasListRail(lists, selectedList) {
 }
 
 function aliasEditorView(selectedList) {
-  const supportsDiscovery = observedTalkgroupDiscoverySupported(selectedList);
+  const supportsDiscovery = observedGroupIdentityDiscoverySupported(selectedList);
   const allowed = supportsDiscovery ? ['configure', 'discover', 'activity', 'custom'] :
     ['configure', 'activity', 'custom'];
   const requested = ['calls', 'evidence'].includes(route.get('aliasTab')) ?
@@ -3063,7 +3079,7 @@ function aliasEditorViewTabs(selectedList) {
   const entries = [
     { id: 'configure', label: 'Configure', href: href('aliases', { list: id, aliasTab: 'configure' }) }
   ];
-  if (observedTalkgroupDiscoverySupported(selectedList)) {
+  if (observedGroupIdentityDiscoverySupported(selectedList)) {
     entries.push({ id: 'discover', label: 'Discover', href: href('aliases', { list: id, aliasTab: 'discover' }) });
   }
   entries.push(
@@ -3727,7 +3743,7 @@ function aliasMatcherPayload(form, descriptor) {
 
 function aliasActivityContent(response) {
   const alias = response || {};
-  const scopeRows = response?.breakdown || [];
+  const sourceRows = response?.breakdown || [];
   const wrapper = node('div', 'alias-usage-content');
   wrapper.append(section('Calls', aliasDetailMetricBand(alias, [
     ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
@@ -3743,7 +3759,7 @@ function aliasActivityContent(response) {
     ]),
     node('p', 'metric-meaning-note',
       'The total also includes other recognized signaling actions. Calls and signaling can describe the same ' +
-      'transmission, so they should not be added together. Logout means unit deregistration, not leaving a talkgroup.')
+      'transmission, so they should not be added together. Logout means unit deregistration, not leaving a group.')
   )));
   wrapper.append(section('Related State', fragment(
     aliasDetailMetricBand(alias, [
@@ -3759,10 +3775,10 @@ function aliasActivityContent(response) {
       'included in the Signaling total. ' +
       'An em dash means unavailable; 0 means monitored with none observed.')
   )));
-  wrapper.append(tableSection('Scope Breakdown', scopeRows, aliasEditorScopeBreakdownColumns(),
-    'No compatible monitored scopes', { type: 'alias-editor-scope-breakdown' },
+  wrapper.append(tableSection('Source Breakdown', sourceRows, aliasEditorSourceBreakdownColumns(),
+    'No compatible monitored sources', { type: 'alias-editor-source-breakdown' },
     node('p', 'metric-meaning-note',
-      'Scope already includes the system and site. Calls and signaling remain separate.')));
+      'Each source is a radio system or saved channel. Calls and signaling remain separate.')));
   return wrapper;
 }
 
@@ -3818,7 +3834,7 @@ function aliasEditorPayload(form, options) {
     icon_name: form.elements.iconName.value || null,
     scan_list_ids: selectedAliasScanListIds(form),
     recordable: form.elements.recordable.checked,
-    broadcast_channels: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
+    broadcast_configuration_ids: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
       .map((checkbox) => checkbox.value),
     stream_as_talkgroup: streamValue ? Number(streamValue) : null,
     matcher
@@ -3868,7 +3884,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       const defaults = options?.alias_list?.unmatched_talkgroup_policy || {};
       const inherits = ['talkgroup', 'talkgroup_range'].includes(initialType);
       source.recordable = inherits && Boolean(defaults.recordable);
-      source.broadcast_channels = inherits ? [...(defaults.broadcast_channels || [])] : [];
+      source.broadcast_configuration_ids = inherits ? [...(defaults.broadcast_configuration_ids || [])] : [];
       source.scan_list_ids = inherits ? [...(defaults.scan_list_ids || [])] : [];
     }
     const form = node('form', 'alias-editor-form');
@@ -3963,23 +3979,25 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     audioGrid.append(aliasCheckOption('Record calls', record));
     const streams = node('fieldset', 'alias-stream-options');
     streams.append(node('legend', '', 'Streaming destinations'));
-    const selectedStreams = new Set(source.broadcast_channels || []);
-    const configuredStreams = new Set(options.stream_names || []);
-    const streamNames = [...new Set([...(options.stream_names || []), ...(source.broadcast_channels || [])])];
-    if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
-    streamNames.forEach((streamName) => {
+    const selectedStreams = new Set(source.broadcast_configuration_ids || []);
+    const configuredStreams = new Map((options.streams || []).map((entry) =>
+      [entry.configuration_id, entry.name || entry.configuration_id]));
+    const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
+    if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+    streamIds.forEach((configurationId) => {
       const label = node('label', 'alias-check-option');
       const checkbox = node('input');
       checkbox.type = 'checkbox';
       checkbox.name = 'broadcastChannel';
-      checkbox.value = streamName;
-      checkbox.checked = aliasStreamOptionSelected(selectedStreams.has(streamName),
-        configuredStreams.has(streamName), editing, options.stream_names_truncated === true);
-      const missing = !configuredStreams.has(streamName);
+      checkbox.value = configurationId;
+      checkbox.checked = aliasStreamOptionSelected(selectedStreams.has(configurationId),
+        configuredStreams.has(configurationId), editing, options.streams_truncated === true);
+      const missing = !configuredStreams.has(configurationId);
       if (missing) label.classList.add('missing');
-      const missingLabel = options.stream_names_truncated === true ?
-        `Current (outside suggestion limit): ${streamName}` : `Missing: ${streamName}`;
-      label.append(checkbox, node('span', '', missing ? missingLabel : streamName));
+      const missingLabel = options.streams_truncated === true ?
+        `Current destination outside display limit (${configurationId})` :
+        `Missing destination (${configurationId})`;
+      label.append(checkbox, node('span', '', missing ? missingLabel : configuredStreams.get(configurationId)));
       streams.append(label);
     });
     updateCreationRoutingDefaults = (changedDescriptor) => {
@@ -3991,7 +4009,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) => {
         checkbox.checked = selectedScanLists.has(Number(checkbox.value));
       });
-      const selectedDestinations = new Set(inherits ? (defaults.broadcast_channels || []) : []);
+      const selectedDestinations = new Set(inherits ? (defaults.broadcast_configuration_ids || []) : []);
       streams.querySelectorAll('[name="broadcastChannel"]').forEach((checkbox) => {
         checkbox.checked = selectedDestinations.has(checkbox.value);
       });
@@ -4001,7 +4019,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     streamAs.max = '65535';
     streamAs.step = '1';
     audio.append(scanLists, audioGrid, streams);
-    const streamLimitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+    const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
       'Destinations already saved on this alias remain visible.');
     if (streamLimitNotice) audio.append(streamLimitNotice);
     audio.append(aliasFormField('Stream as talkgroup', streamAs,
@@ -4257,17 +4275,17 @@ function aliasBulkBar(onClear) {
 function aliasBulkStreamChoices(options) {
   const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams');
   fieldset.append(node('legend', '', 'Destinations'));
-  (options?.stream_names || []).forEach((streamName) => {
+  (options?.streams || []).forEach((stream) => {
     const label = node('label', 'alias-check-option');
     const checkbox = node('input');
     checkbox.type = 'checkbox';
     checkbox.name = 'broadcastChannel';
-    checkbox.value = streamName;
-    label.append(checkbox, node('span', '', streamName));
+    checkbox.value = stream.configuration_id;
+    label.append(checkbox, node('span', '', stream.name || stream.configuration_id));
     fieldset.append(label);
   });
-  if (!(options?.stream_names || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
-  const limitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+  if (!(options?.streams || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
+  const limitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
     'Open an alias individually if its saved destination is not listed.');
   if (limitNotice) fieldset.append(limitNotice);
   return fieldset;
@@ -4367,7 +4385,7 @@ function openAliasBulkModal(kind) {
       const channels = [...choices.querySelectorAll('input:checked')].map((input) => input.value);
       if (operation.value !== 'clear' && !channels.length) throw new Error('Select at least one destination');
       return { stream_operation: operation.value,
-        broadcast_channels: operation.value === 'clear' ? null : channels };
+        broadcast_configuration_ids: operation.value === 'clear' ? null : channels };
     };
   } else if (kind === 'appearance') {
     const colorOperation = aliasSelect('colorOperation', [
@@ -4582,7 +4600,7 @@ function openFullScanListMembershipModal(scanList, operation) {
   else submit.focus();
 }
 
-function observedTalkgroupDiscoverySupported(selectedList) {
+function observedGroupIdentityDiscoverySupported(selectedList) {
   return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
 }
 
@@ -4620,23 +4638,25 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   streams.append(node('legend', '', 'Streaming'), node('p', 'muted',
     'Sends unmatched talkgroup calls to the selected external streaming destinations. New talkgroup Aliases are ' +
     'created with these defaults.'));
-  const selectedStreams = new Set(policy.broadcast_channels || []);
-  const configuredStreams = new Set(options.stream_names || []);
-  const streamNames = [...new Set([...(options.stream_names || []), ...(policy.broadcast_channels || [])])];
-  if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
-  streamNames.forEach((streamName) => {
+  const selectedStreams = new Set(policy.broadcast_configuration_ids || []);
+  const configuredStreams = new Map((options.streams || []).map((entry) =>
+    [entry.configuration_id, entry.name || entry.configuration_id]));
+  const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
+  if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+  streamIds.forEach((configurationId) => {
     const label = node('label', 'alias-check-option');
     const checkbox = node('input');
     checkbox.type = 'checkbox';
     checkbox.name = 'broadcastChannel';
-    checkbox.value = streamName;
-    checkbox.checked = selectedStreams.has(streamName);
-    const missing = !configuredStreams.has(streamName);
+    checkbox.value = configurationId;
+    checkbox.checked = selectedStreams.has(configurationId);
+    const missing = !configuredStreams.has(configurationId);
     if (missing) label.classList.add('missing');
-    label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
+    label.append(checkbox, node('span', '', missing ? `Missing destination (${configurationId})` :
+      configuredStreams.get(configurationId)));
     streams.append(label);
   });
-  const streamLimitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+  const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
     'Destinations already saved in these defaults remain visible.');
   if (streamLimitNotice) streams.append(streamLimitNotice);
 
@@ -4668,7 +4688,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
           recordable: record.checked,
-          broadcast_channels: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
+          broadcast_configuration_ids: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
             .map((checkbox) => checkbox.value),
           scan_list_ids: selectedAliasScanListIds(form)
         }
@@ -4685,125 +4705,110 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   });
 }
 
-function observedTalkgroupProtocol(row) {
+function observedGroupIdentityProtocol(row) {
   const value = String(row?.protocol || '').trim().toLowerCase();
   return ['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(value) ? value : '';
 }
 
-function observedTalkgroupVariant(row) {
-  if (observedTalkgroupProtocol(row) !== 'p25') return null;
+function observedGroupIdentityVariant(row) {
+  if (observedGroupIdentityProtocol(row) !== 'p25') return null;
   return ['phase_1', 'phase_2'].includes(row?.protocol_variant) ? row.protocol_variant : 'phase_1';
 }
 
-function observedTalkgroupMatchKind(row) {
+function observedGroupIdentityMatchKind(row) {
   const kind = String(row?.match_kind || 'none').trim().toLowerCase();
   return ['exact', 'range'].includes(kind) ? kind : 'none';
 }
 
-function observedP25IdentityState(row) {
-  const state = String(row?.qualification?.state || 'unknown').trim().toLowerCase();
-  return ['unknown', 'ordinary', 'stable_fully_qualified', 'ambiguous'].includes(state) ? state : 'unknown';
-}
-
-function observedP25HomeIdentity(row) {
-  if (observedP25IdentityState(row) !== 'stable_fully_qualified') return null;
-  const wacn = Number(row?.qualification?.home?.wacn);
-  const system = Number(row?.qualification?.home?.system_id);
-  const talkgroup = Number(row?.qualification?.home?.talkgroup_id);
-  return Number.isInteger(wacn) && wacn >= 0 && wacn <= 0xFFFFF &&
-    Number.isInteger(system) && system >= 0 && system <= 0xFFF &&
-    Number.isInteger(talkgroup) && talkgroup > 0 && talkgroup < 0xFFFF ?
-      { wacn, system, talkgroup } : null;
-}
-
-function observedTalkgroupPromotionSupported(row) {
+function observedGroupIdentityPromotionSupported(row) {
   return row?.promotion_supported === true || row?.promotion_supported === 1 ||
     String(row?.promotion_supported).toLowerCase() === 'true';
 }
 
-function observedTalkgroupPromotionReason(row) {
+function observedGroupIdentityPromotionReason(row) {
   return String(row?.promotion_reason ||
     'This observation does not contain enough identity information to create a safe alias.');
 }
 
-function observedTalkgroupIdentity(row) {
-  const wrapper = node('div', 'observed-talkgroup-identity');
-  wrapper.append(node('strong', '', identityNumber(row, row.talkgroup_id)));
-  if (observedTalkgroupMatchKind(row) === 'range') {
+function observedGroupIdentityValue(row) {
+  const wrapper = node('div', 'observed-group-identity-value');
+  wrapper.append(node('strong', '', identityNumber(row, row.group_identity_id)));
+  if (observedGroupIdentityMatchKind(row) === 'range') {
     wrapper.append(node('small', '', `Covered by range · ${row.matched_alias_name ||
       `Alias ${identifierNumber(row.matched_alias_id)}`}`));
   }
   return wrapper;
 }
 
-function observedTalkgroupSystem(row) {
-  const wrapper = node('div', 'observed-talkgroup-system');
-  const label = row.system_name || row.site_names || row.scope_key || row.context_key || 'Unknown system';
-  const details = [protocolFamily(row), row.topology, row.site_names && row.site_names !== label ? row.site_names : null]
+function observedGroupIdentitySystem(row) {
+  const wrapper = node('div', 'observed-group-identity-system');
+  const label = row.channel_names || row.system_name || row.radio_system_key || 'Unknown source';
+  const details = [protocolFamily(row), row.topology,
+    row.system_name && row.system_name !== label ? row.system_name : null]
     .filter(Boolean).join(' · ');
   wrapper.append(node('strong', '', label));
   if (details) wrapper.append(node('small', '', details));
   return wrapper;
 }
 
-function observedTalkgroupMatch(row) {
-  const kind = observedTalkgroupMatchKind(row);
+function observedGroupIdentityMatch(row) {
+  const kind = observedGroupIdentityMatchKind(row);
   if (kind === 'none') return badge('No match', 'state-stale', 'No exact alias or covering range exists');
-  const wrapper = node('div', 'observed-talkgroup-match');
+  const wrapper = node('div', 'observed-group-identity-match');
   wrapper.append(node('strong', '', row.matched_alias_name || `Alias ${identifierNumber(row.matched_alias_id)}`),
     node('small', '', kind === 'range' ? 'Covered by range' : 'Exact alias'));
   return wrapper;
 }
 
-function observedTalkgroupTime(row, value) {
+function observedGroupIdentityTime(row, value) {
   const rendered = dateTime(value);
   if (value !== null && value !== undefined &&
       String(row?.topology || '').toUpperCase() === 'CONVENTIONAL' &&
       ['P25', 'NXDN'].includes(protocolFamily(row))) {
-    const wrapper = node('span', 'observed-talkgroup-time');
+    const wrapper = node('span', 'observed-group-identity-time');
     wrapper.append(rendered, ' (hour beginning)');
     return wrapper;
   }
   return rendered;
 }
 
-function observedTalkgroupKey(row) {
+function observedGroupIdentityKey(row) {
   const topology = String(row?.topology || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
-  const protocol = observedTalkgroupProtocol(row) || 'UNKNOWN';
+  const protocol = observedGroupIdentityProtocol(row) || 'UNKNOWN';
   let source = 'source:unknown';
-  if (row?.scope_key) source = `scope-key:${row.scope_key}`;
-  else if (row?.context_key) source = `context-key:${row.context_key}`;
-  const home = row?.qualification?.home || {};
-  return `${topology}|${protocol}|${source}|${rowGroupIdentityKind(row)}-${
-    row.talkgroup_id}-${observedP25IdentityState(row)}-${
-    home.wacn ?? 'x'}-${home.system_id ?? 'x'}-${home.talkgroup_id ?? 'x'}`;
+  if (row?.radio_system_key) source = `radio-system:${row.radio_system_key}`;
+  else if (row?.configuration_id) source = `channel:${row.configuration_id}`;
+  const canonical = String(row?.identity_key || '').trim() || `native:${row?.native_id ?? 'x'}`;
+  const carrier = topology === 'CONVENTIONAL' && protocol === 'dmr' ?
+    `|frequency:${row?.frequency_hz ?? 'x'}|timeslot:${row?.timeslot ?? 'x'}` : '';
+  return `${topology}|${protocol}|${source}|${rowGroupIdentityKind(row)}|${canonical}|local:${
+    row.group_identity_id ?? 'x'}${carrier}`;
 }
 
-function observedTalkgroupFocusKey(row) {
-  return encodeURIComponent(observedTalkgroupKey(row));
+function observedGroupIdentityFocusKey(row) {
+  return encodeURIComponent(observedGroupIdentityKey(row));
 }
 
-function observedTalkgroupPrefill(row, selectedList) {
-  if (!observedTalkgroupPromotionSupported(row)) {
-    throw new Error(observedTalkgroupPromotionReason(row));
+function observedGroupIdentityPrefill(row, selectedList) {
+  if (!observedGroupIdentityPromotionSupported(row)) {
+    throw new Error(observedGroupIdentityPromotionReason(row));
   }
   const policy = selectedList?.unmatched_talkgroup_policy || {};
-  const talkgroupId = Number(row.talkgroup_id);
+  const groupIdentityId = Number(row.group_identity_id);
   let matcher;
   if (isP25(row)) {
     if (String(row?.topology || '').toUpperCase() === 'CONVENTIONAL') {
-      throw new Error('Conventional P25 observations cannot be promoted until identity qualification is retained.');
+      throw new Error('Conventional P25 observations cannot be promoted until canonical identity evidence is retained.');
     }
-    if (['ordinary', 'stable_fully_qualified'].includes(observedP25IdentityState(row)) &&
-        Number.isInteger(talkgroupId) &&
-        talkgroupId > 0 && talkgroupId < 0xFFFF) {
-      matcher = { type: 'talkgroup', protocol: observedTalkgroupProtocol(row),
-        variant: observedTalkgroupVariant(row), value: talkgroupId };
+    if (Number.isInteger(groupIdentityId) &&
+        groupIdentityId > 0 && groupIdentityId < 0xFFFF) {
+      matcher = { type: 'talkgroup', protocol: observedGroupIdentityProtocol(row),
+        variant: observedGroupIdentityVariant(row), value: groupIdentityId };
     } else {
       throw new Error('This P25 observation does not have a usable local talkgroup ID.');
     }
   } else {
-    matcher = { type: 'talkgroup', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
+    matcher = { type: 'talkgroup', protocol: observedGroupIdentityProtocol(row), value: groupIdentityId };
   }
   return {
     alias_list_id: aliasListId(selectedList),
@@ -4813,11 +4818,11 @@ function observedTalkgroupPrefill(row, selectedList) {
     color: 0,
     icon_name: null,
     recordable: Boolean(policy.recordable),
-    broadcast_channels: [...(policy.broadcast_channels || [])],
+    broadcast_configuration_ids: [...(policy.broadcast_configuration_ids || [])],
     scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
     matcher,
-    returnFocusSelector: `.observed-talkgroup-create[data-observed-key="${observedTalkgroupFocusKey(row)}"]`
+    returnFocusSelector: `.observed-group-identity-create[data-observed-key="${observedGroupIdentityFocusKey(row)}"]`
   };
 }
 
@@ -4848,64 +4853,56 @@ function routedAliasPrefill(selectedList, options) {
     color: 0,
     icon_name: null,
     recordable: Boolean(policy.recordable),
-    broadcast_channels: [...(policy.broadcast_channels || [])],
+    broadcast_configuration_ids: [...(policy.broadcast_configuration_ids || [])],
     scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
     matcher: { type, protocol, ...(variant ? { variant } : {}), value }
   };
 }
 
-function openObservedTalkgroupAliasEditor(row, selectedList) {
-  if (observedTalkgroupMatchKind(row) === 'exact' || !observedTalkgroupPromotionSupported(row)) return;
-  openAliasEditorModal('create', null, observedTalkgroupPrefill(row, selectedList));
+function openObservedGroupIdentityAliasEditor(row, selectedList) {
+  if (observedGroupIdentityMatchKind(row) === 'exact' || !observedGroupIdentityPromotionSupported(row)) return;
+  openAliasEditorModal('create', null, observedGroupIdentityPrefill(row, selectedList));
 }
 
-function observedTalkgroupCreateButton(row, selectedList) {
-  if (!aliasAdminAllowed() || observedTalkgroupMatchKind(row) === 'exact') return '—';
-  if (!observedTalkgroupPromotionSupported(row)) {
-    return badge('Review only', 'state-stale', observedTalkgroupPromotionReason(row));
+function observedGroupIdentityCreateButton(row, selectedList) {
+  if (!aliasAdminAllowed() || observedGroupIdentityMatchKind(row) === 'exact') return '—';
+  if (!observedGroupIdentityPromotionSupported(row)) {
+    return badge('Review only', 'state-stale', observedGroupIdentityPromotionReason(row));
   }
-  const button = node('button', 'button secondary observed-talkgroup-create', 'Create Alias');
+  const button = node('button', 'button secondary observed-group-identity-create', 'Create Alias');
   button.type = 'button';
-  button.dataset.talkgroupId = String(row.talkgroup_id);
-  button.dataset.observedKey = observedTalkgroupFocusKey(row);
-  button.addEventListener('click', () => openObservedTalkgroupAliasEditor(row, selectedList));
+  button.dataset.groupIdentityId = String(row.group_identity_id);
+  button.dataset.observedKey = observedGroupIdentityFocusKey(row);
+  button.addEventListener('click', () => openObservedGroupIdentityAliasEditor(row, selectedList));
   return button;
 }
 
-function observedTalkgroupDetail(row, selectedList) {
-  const wrapper = node('div', 'observed-talkgroup-detail');
-  const identityColumn = node('div', 'observed-talkgroup-detail-column');
-  const activityColumn = node('div', 'observed-talkgroup-detail-column');
-  const home = observedP25HomeIdentity(row);
+function observedGroupIdentityDetail(row, selectedList) {
+  const wrapper = node('div', 'observed-group-identity-detail');
+  const identityColumn = node('div', 'observed-group-identity-detail-column');
+  const activityColumn = node('div', 'observed-group-identity-detail-column');
+  const localP25 = isP25(row) && String(row?.topology || '').toUpperCase() === 'TRUNKED';
   const identity = [
-    [home ? 'Local Talkgroup' : groupIdentityLabel(row, null, false), identityNumber(row, row.talkgroup_id)],
+    [localP25 ? 'Local Talkgroup' : groupIdentityLabel(row, null, false),
+      identityNumber(row, row.group_identity_id)],
     ['Protocol', protocolFamily(row) || row.protocol],
     ['System', row.system_name || '—'],
-    ['Sites', row.site_names || '—'],
+    ['Channel', row.channel_names || '—'],
     ['Topology', row.topology || '—'],
     ['WACN', row.wacn === null || row.wacn === undefined ? '—' : hexDecimalPair(row.wacn, 5)],
     ['System ID', row.system_id === null || row.system_id === undefined ? '—' : hexDecimalPair(row.system_id, 3)],
     ['Network ID', row.network_id === null || row.network_id === undefined ? '—' : identifierNumber(row.network_id)],
-    ['Frequency', row.frequency_count === null || row.frequency_count === undefined ||
-      Number(row.frequency_count) <= 0 ? '—' :
-      Number(row.frequency_count) === 1 ? frequency(row.frequency_hz) :
-        `${number(row.frequency_count)} frequencies`],
-    ['Timeslot', row.timeslot_count === null || row.timeslot_count === undefined ||
-      Number(row.timeslot_count) <= 0 ? '—' :
-      Number(row.timeslot_count) === 1 ? identifierNumber(row.timeslot) :
-        `${number(row.timeslot_count)} timeslots`]
+    ['Frequency', row.frequency_hz === null || row.frequency_hz === undefined ? '—' :
+      frequency(row.frequency_hz)],
+    ['Timeslot', row.timeslot === null || row.timeslot === undefined ? '—' :
+      identifierNumber(row.timeslot)]
   ];
-  if (home) {
-    identity.splice(1, 0,
-      ['Decoded Home', `${hex(home.wacn, 5)}-${hex(home.system, 3)}-${identifierNumber(home.talkgroup)}`],
-      ['Home WACN', hexDecimalPair(home.wacn, 5)], ['Home System ID', hexDecimalPair(home.system, 3)]);
-  }
   identityColumn.append(section('Identity', keyValues(identity)));
-  const coverage = [['Match', observedTalkgroupMatch(row)]];
-  if (!observedTalkgroupPromotionSupported(row)) {
-    coverage.push(['Promotion', badge('Review only', 'state-stale', observedTalkgroupPromotionReason(row))],
-      ['Reason', observedTalkgroupPromotionReason(row)]);
+  const coverage = [['Match', observedGroupIdentityMatch(row)]];
+  if (!observedGroupIdentityPromotionSupported(row)) {
+    coverage.push(['Promotion', badge('Review only', 'state-stale', observedGroupIdentityPromotionReason(row))],
+      ['Reason', observedGroupIdentityPromotionReason(row)]);
   }
   activityColumn.append(section('Alias Coverage', keyValues(coverage)));
   identityColumn.append(section('Calls', aliasDetailMetricBand(row, [
@@ -4923,29 +4920,29 @@ function observedTalkgroupDetail(row, selectedList) {
     node('p', 'metric-meaning-note',
       'The total also includes other recognized signaling actions. Calls and signaling can overlap.'))));
   identityColumn.append(section('Observed', keyValues([
-    ['First Activity', observedTalkgroupTime(row, row.first_seen_ms)],
-    ['Latest Activity', observedTalkgroupTime(row, row.last_seen_ms)]
+    ['First Activity', observedGroupIdentityTime(row, row.first_seen_ms)],
+    ['Latest Activity', observedGroupIdentityTime(row, row.last_seen_ms)]
   ])));
   wrapper.append(identityColumn, activityColumn);
-  if (aliasAdminAllowed() && observedTalkgroupMatchKind(row) !== 'exact' &&
-      observedTalkgroupPromotionSupported(row)) {
-    const actions = node('div', 'observed-talkgroup-detail-actions');
-    actions.append(observedTalkgroupCreateButton(row, selectedList));
+  if (aliasAdminAllowed() && observedGroupIdentityMatchKind(row) !== 'exact' &&
+      observedGroupIdentityPromotionSupported(row)) {
+    const actions = node('div', 'observed-group-identity-detail-actions');
+    actions.append(observedGroupIdentityCreateButton(row, selectedList));
     wrapper.append(actions);
   }
   return wrapper;
 }
 
-function openObservedTalkgroupDetail(row, selectedList) {
-  const id = identityNumber(row, row.talkgroup_id);
+function openObservedGroupIdentityDetail(row, selectedList) {
+  const id = identityNumber(row, row.group_identity_id);
   openReadOnlyModal(`Observed ${groupIdentityLabel(row, null, false)} ${id}`,
-    observedTalkgroupDetail(row, selectedList), {
-    id: `observed-talkgroup-${id}`, className: 'alias-editor-modal observed-talkgroup-modal'
+    observedGroupIdentityDetail(row, selectedList), {
+    id: `observed-group-identity-${id}`, className: 'alias-editor-modal observed-group-identity-modal'
   });
 }
 
-function observedTalkgroupToolbar(selectedList) {
-  const form = node('form', 'toolbar alias-catalog-toolbar observed-talkgroup-toolbar');
+function observedGroupIdentityToolbar(selectedList) {
+  const form = node('form', 'toolbar alias-catalog-toolbar observed-group-identity-toolbar');
   form.method = 'get';
   [['view', 'aliases'], ['list', aliasListId(selectedList)], ['aliasTab', 'discover'],
     ['sort', route.get('sort')], ['direction', route.get('direction')]].forEach(([name, value]) => {
@@ -4962,7 +4959,7 @@ function observedTalkgroupToolbar(selectedList) {
   input.type = 'search';
   input.name = 'q';
   input.value = route.get('q') || '';
-  input.placeholder = 'Talkgroup, system, or site';
+  input.placeholder = 'Group, system, or channel';
   search.append(input);
   form.append(search, node('button', '', 'Search'));
   if (route.get('q')) {
@@ -4974,36 +4971,36 @@ function observedTalkgroupToolbar(selectedList) {
   return form;
 }
 
-function renderObservedTalkgroups(main, page, selectedList) {
-  const rows = (page.rows || []).filter((row) => observedTalkgroupMatchKind(row) !== 'exact');
+function renderObservedGroupIdentities(main, page, selectedList) {
+  const rows = (page.rows || []).filter((row) => observedGroupIdentityMatchKind(row) !== 'exact');
   const columns = [
-    { id: 'talkgroup-id', label: 'Identity', fullLabel: 'Talkgroup identity', sort: 'talkgroup',
-      render: observedTalkgroupIdentity },
-    { id: 'system', label: 'System / Sites', sort: 'system', className: 'alias-cell',
-      render: observedTalkgroupSystem },
+    { id: 'group-identity-id', label: 'Identity', fullLabel: 'Group identity', sort: 'group_identity',
+      render: observedGroupIdentityValue },
+    { id: 'source', label: 'System / Channel', sort: 'system', className: 'alias-cell',
+      render: observedGroupIdentitySystem },
     { id: 'calls', label: 'Calls', sort: 'logical_call_count', className: 'numeric',
       render: (row) => aliasMetricValue(row, 'logical_call_count') },
     { id: 'signaling', label: 'Signaling', className: 'numeric',
       render: (row) => aliasMetricValue(row, 'signaling_observation_count') },
     { id: 'last-seen', label: 'Last Seen', sort: 'last_seen',
-      render: (row) => observedTalkgroupTime(row, row.last_seen_ms) },
-    { id: 'action', label: '', render: (row) => observedTalkgroupCreateButton(row, selectedList) }
+      render: (row) => observedGroupIdentityTime(row, row.last_seen_ms) },
+    { id: 'action', label: '', render: (row) => observedGroupIdentityCreateButton(row, selectedList) }
   ];
-  const host = node('div', 'alias-catalog-table-host observed-talkgroup-table-host');
+  const host = node('div', 'alias-catalog-table-host observed-group-identity-table-host');
   const actions = node('div', 'section-title-actions');
   const observedTable = table(rows, columns,
-    'No observed talkgroups without an exact alias are available for this list', {
-      type: 'alias-observed-talkgroups', serverSort: true, sortable: false,
+    'No observed groups without an exact alias are available for this list', {
+      type: 'alias-observed-group-identities', serverSort: true, sortable: false,
       defaultSort: 'last_seen', defaultDirection: 'desc',
-      rowKey: observedTalkgroupKey, rowClass: 'observed-talkgroup-row',
-      onRowClick: (row) => openObservedTalkgroupDetail(row, selectedList), layoutMenuHost: actions
+      rowKey: observedGroupIdentityKey, rowClass: 'observed-group-identity-row',
+      onRowClick: (row) => openObservedGroupIdentityDetail(row, selectedList), layoutMenuHost: actions
     });
   host.append(observedTable);
-  const block = section('Observed Talkgroups', host, actions);
-  block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'observed-talkgroup-section');
+  const block = section('Observed Groups', host, actions);
+  block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'observed-group-identity-section');
   block.append(node('p', 'metric-meaning-note alias-catalog-guide',
-    'This list contains talkgroups observed on its assigned systems that do not have an exact alias. Existing range ' +
-    'coverage appears beneath the identity.'), pager({ ...page, rows }));
+    'This list contains talkgroups and patch groups observed on assigned systems or channels that do not have an ' +
+    'exact alias. Existing range coverage appears beneath the identity.'), pager({ ...page, rows }));
   main.append(block);
 }
 
@@ -5157,14 +5154,14 @@ async function renderAliases() {
   if (!renderIsCurrent(renderContext)) return;
   const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.alias_lists || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
-  if (route.get('createAlias') === '1' && route.has('createListName')) {
-    const requestedListName = String(route.get('createListName') || '').trim();
-    const requestedList = lists.find((row) => requestedListName &&
-      String(row.name || '').toLowerCase() === requestedListName.toLowerCase());
+  if (route.get('createAlias') === '1' && route.has('createListId')) {
+    const routedListId = Number(route.get('createListId'));
+    const requestedList = Number.isInteger(routedListId) && routedListId > 0 ?
+      lists.find((row) => aliasListId(row) === routedListId) : null;
     if (requestedList) {
       selectedList = requestedList;
       route.set('list', String(aliasListId(selectedList)));
-      route.delete('createListName');
+      route.delete('createListId');
       window.history.replaceState({}, '', currentHref());
     } else selectedList = null;
   }
@@ -5214,7 +5211,7 @@ async function renderAliases() {
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
   const pagePromise = view === 'discover' ?
-    apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`,
+    apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
       pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases',
       pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}) }));
   const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
@@ -5261,10 +5258,10 @@ async function renderAliases() {
   listActions.append(remove);
   summary.append(listActions);
   main.append(summary, aliasEditorViewTabs(selectedList), view === 'discover' ?
-    observedTalkgroupToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
+    observedGroupIdentityToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
 
   if (view === 'discover') {
-    renderObservedTalkgroups(main, page, selectedList);
+    renderObservedGroupIdentities(main, page, selectedList);
     return;
   }
 
@@ -5376,7 +5373,7 @@ async function renderAliases() {
   }
 }
 
-const SIGNALING_COUNT_LABELS = new Map(TALKGROUP_SIGNALING_SERIES.map((series) =>
+const SIGNALING_COUNT_LABELS = new Map(GROUP_IDENTITY_SIGNALING_SERIES.map((series) =>
   [series.field, series.label]));
 
 function signalingCounts(row) {
@@ -5394,12 +5391,12 @@ function signalingActionRows(rows) {
   });
 }
 
-function talkgroupSignaling(row) {
-  const total = talkgroupSignalingSortValue(row);
+function groupIdentitySignaling(row) {
+  const total = groupIdentitySignalingSortValue(row);
   return total > 0 ? number(total) : '—';
 }
 
-function talkgroupSignalingSortValue(row) {
+function groupIdentitySignalingSortValue(row) {
   const total = Number(row.signaling_observation_count || 0);
   return Number.isFinite(total) && total > 0 ? total : 0;
 }
@@ -5409,7 +5406,7 @@ function withoutGrantActions(rows) {
 }
 
 function dashboardChannelKind(row) {
-  const value = String(row?.channel_kind || row?.channel_type || '').trim().toUpperCase();
+  const value = String(row?.channel_kind || '').trim().toUpperCase();
   if (value === 'TRUNKED' || value === 'CONVENTIONAL') return value;
   return '';
 }
@@ -5435,9 +5432,9 @@ function dashboardMode(row) {
 }
 
 function callSourceLabel(row) {
-  if (dashboardChannelKind(row) === 'TRUNKED') return siteLabel(row);
+  if (dashboardChannelKind(row) === 'TRUNKED') return channelLabel(row);
   if (row.source_label) return row.source_label;
-  if (row.channel_name) return row.channel_name;
+  if (row.name) return row.name;
   if (row.frequency_hz) return `${frequency(row.frequency_hz)} MHz`;
   return 'Unknown receiver';
 }
@@ -5445,7 +5442,7 @@ function callSourceLabel(row) {
 function callSourceLink(row) {
   const label = callSourceLabel(row);
   if (dashboardChannelKind(row) === 'TRUNKED') {
-    return siteNameSummary(row);
+    return channelNameSummary(row);
   }
   const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
   if (target) return anchor(label, target);
@@ -5843,7 +5840,7 @@ function dashboardCallActivityChart(activity) {
   return wrapper;
 }
 
-function talkgroupActivityChart(response, seriesConfigurations, ariaLabel) {
+function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel) {
   const values = (response.series || []).map((row) => ({ ...row, time_ms: Number(row.time_ms) }));
   if (!values.length) return node('div', 'empty', 'No activity data is available for this range');
 
@@ -5860,9 +5857,9 @@ function talkgroupActivityChart(response, seriesConfigurations, ariaLabel) {
     selected.add(largest.field);
   }
 
-  const wrapper = node('div', 'talkgroup-activity-chart');
+  const wrapper = node('div', 'group-identity-activity-chart');
   const legend = node('div', 'activity-series-legend');
-  const chartHost = node('div', 'talkgroup-activity-chart-host');
+  const chartHost = node('div', 'group-identity-activity-chart-host');
   wrapper.append(legend, chartHost);
 
   const draw = () => {
@@ -5942,13 +5939,13 @@ function elapsedLabel(timestamp, now = Date.now()) {
   return `${Math.round(elapsed / 86_400_000)} days ago`;
 }
 
-function signalSiteState(site, now = Date.now()) {
-  const observed = Number(site.last_observed_ms || 0);
+function signalChannelState(channel, now = Date.now()) {
+  const observed = Number(channel.last_observed_ms || 0);
   if (!observed || now - observed > SIGNAL_OFFLINE_MILLISECONDS) {
     return { label: 'Offline', className: 'offline', rank: 0 };
   }
-  const decode = optionalNumber(site.decode_health_pct);
-  if (!Number.isFinite(optionalNumber(site.average_signal_dbfs))) {
+  const decode = optionalNumber(channel.decode_health_pct);
+  if (!Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
     return { label: 'No signal', className: 'poor', rank: 1 };
   }
   if (!Number.isFinite(decode)) return { label: 'Monitoring', className: 'unknown', rank: 2 };
@@ -5961,10 +5958,10 @@ function signalSiteState(site, now = Date.now()) {
   return { label: 'Poor', className: 'poor', rank: 1 };
 }
 
-function sharedSignalDomain(sites) {
+function sharedSignalDomain(channels) {
   const values = [];
-  (sites || []).forEach((site) => {
-    (site.series || []).forEach((point) => {
+  (channels || []).forEach((channel) => {
+    (channel.series || []).forEach((point) => {
       [point.minimum_signal_dbfs, point.maximum_signal_dbfs, point.average_signal_dbfs].forEach((value) => {
         const numeric = optionalNumber(value);
         if (Number.isFinite(numeric)) values.push(numeric);
@@ -5981,7 +5978,7 @@ function sharedSignalDomain(sites) {
   return { minimum, maximum: Math.min(0, maximum) };
 }
 
-function qualityHistoryChart(site, response, metric, domain) {
+function qualityHistoryChart(channel, response, metric, domain) {
   const signal = metric === 'signal';
   const nominalWidth = 520;
   const maximumHeight = 190;
@@ -5992,8 +5989,8 @@ function qualityHistoryChart(site, response, metric, domain) {
   const svg = svgNode('svg');
   svg.setAttribute('class', `quality-chart-svg ${signal ? 'signal-chart-svg' : 'decode-chart-svg'}`);
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `${siteLabel(site)} ${signal ? 'signal strength' : 'decode quality'} history`);
-  const points = (site.series || []).map((point) => ({
+  svg.setAttribute('aria-label', `${channelLabel(channel)} ${signal ? 'signal strength' : 'decode quality'} history`);
+  const points = (channel.series || []).map((point) => ({
     ...point,
     timestamp: Number(point.time_ms),
     average: optionalNumber(point.average_signal_dbfs),
@@ -6135,56 +6132,56 @@ function qualityChartPanel(title, description, chart) {
   return panel;
 }
 
-function updateSignalCurrentTile(tile, site) {
-  const state = signalSiteState(site);
+function updateSignalCurrentTile(tile, channel) {
+  const state = signalChannelState(channel);
   const header = node('div', 'signal-current-header');
   const labels = node('div', 'signal-current-labels');
-  labels.append(siteNameSummary(site));
+  labels.append(channelNameSummary(channel));
   const system = node('div', 'signal-current-system');
-  system.append(dashboardReceiverContext(site));
+  system.append(dashboardChannelContext(channel));
   labels.append(system);
   header.append(labels, badge(state.label, `signal-state ${state.className}`));
   const power = node('div', 'signal-current-power');
-  power.append(node('strong', '', signalNumber(site.signal_dbfs)),
-    node('span', '', `30s avg ${signalNumber(site.average_signal_dbfs)}`));
+  power.append(node('strong', '', signalNumber(channel.signal_dbfs)),
+    node('span', '', `30s avg ${signalNumber(channel.average_signal_dbfs)}`));
   const details = node('div', 'signal-current-details');
-  const qualityFrequency = site.quality_frequency_hz || site.current_control_hz;
-  const decode = optionalNumber(site.decode_health_pct);
+  const qualityFrequency = channel.quality_frequency_hz || channel.current_control_hz;
+  const decode = optionalNumber(channel.decode_health_pct);
   const decodeClass = !Number.isFinite(decode) ? '' :
     (decode >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
       (decode >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'quality-warn' : 'quality-bad'));
   details.append(node('span', decodeClass,
-  `Decode ${percentNumber(site.decode_health_pct)}`),
+  `Decode ${percentNumber(channel.decode_health_pct)}`),
   node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
-  node('span', '', elapsedLabel(site.last_observed_ms)));
-  tile.dataset.guid = site.guid || '';
+  node('span', '', elapsedLabel(channel.last_observed_ms)));
+  tile.dataset.configurationId = channel.configuration_id || '';
   tile.replaceChildren(header, power, details);
   return tile;
 }
 
-function signalCurrentTile(site) {
-  return updateSignalCurrentTile(node('article', 'signal-current-tile'), site);
+function signalCurrentTile(channel) {
+  return updateSignalCurrentTile(node('article', 'signal-current-tile'), channel);
 }
 
-function sortSignalSites(sites) {
-  return [...sites].sort((left, right) =>
-    siteLabel(left).localeCompare(siteLabel(right), undefined, { sensitivity: 'base' }) ||
-      String(left.guid || '').localeCompare(String(right.guid || '')));
+function sortSignalChannels(channels) {
+  return [...channels].sort((left, right) =>
+    channelLabel(left).localeCompare(channelLabel(right), undefined, { sensitivity: 'base' }) ||
+      String(left.configuration_id || '').localeCompare(String(right.configuration_id || '')));
 }
 
-function signalOverview(site, includeName = true) {
+function signalOverview(channel, includeName = true) {
   const overview = node('div', 'signal-history-overview');
   overview.classList.toggle('without-identity', !includeName);
   if (includeName) {
     const identity = node('div', 'signal-history-identity');
     const system = node('span');
-    system.append(systemValue(site));
-    identity.append(siteLink(site), system);
+    system.append(radioSystemValue(channel));
+    identity.append(channelLink(channel), system);
     overview.append(identity);
   }
-  [['Current', signalNumber(site.signal_dbfs)], ['30s average', signalNumber(site.average_signal_dbfs)],
-    ['Decode', percentNumber(site.decode_health_pct)],
-    ['Last sample', elapsedLabel(site.last_observed_ms)]].forEach(([label, value]) => {
+  [['Current', signalNumber(channel.signal_dbfs)], ['30s average', signalNumber(channel.average_signal_dbfs)],
+    ['Decode', percentNumber(channel.decode_health_pct)],
+    ['Last sample', elapsedLabel(channel.last_observed_ms)]].forEach(([label, value]) => {
     const metric = node('div', 'signal-history-metric');
     metric.append(node('span', '', label), node('strong', '', value));
     overview.append(metric);
@@ -6240,35 +6237,36 @@ async function signalHealthSection() {
 
   const renderCurrent = () => {
     const now = Date.now();
-    const sites = sortSignalSites((currentResponse?.rows || []).filter((site) =>
-      now - Number(site.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
-    const healthy = sites.filter((site) =>
-      optionalNumber(site.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
-    const degraded = sites.filter((site) => {
-      const decode = optionalNumber(site.decode_health_pct);
+    const channels = sortSignalChannels((currentResponse?.rows || []).filter((channel) =>
+      canonicalConfigurationId(channel?.configuration_id) &&
+      now - Number(channel.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
+    const healthy = channels.filter((channel) =>
+      optionalNumber(channel.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
+    const degraded = channels.filter((channel) => {
+      const decode = optionalNumber(channel.decode_health_pct);
       return Number.isFinite(decode) && decode >= DECODE_DEGRADED_MINIMUM_PERCENT &&
         decode < DECODE_HEALTHY_MINIMUM_PERCENT;
     }).length;
-    const poor = sites.filter((site) => {
-      const decode = optionalNumber(site.decode_health_pct);
+    const poor = channels.filter((channel) => {
+      const decode = optionalNumber(channel.decode_health_pct);
       return Number.isFinite(decode) && decode < DECODE_DEGRADED_MINIMUM_PERCENT;
     }).length;
-    const unknown = sites.length - healthy - degraded - poor;
-    summary.textContent = `${number(sites.length)} reporting · ${number(healthy)} healthy · ` +
+    const unknown = channels.length - healthy - degraded - poor;
+    summary.textContent = `${number(channels.length)} reporting · ${number(healthy)} healthy · ` +
       `${number(degraded)} degraded · ${number(poor)} poor${unknown ? ` · ${number(unknown)} unknown` : ''}`;
 
     const activeKeys = new Set();
-    const orderedTiles = sites.map((site) => {
-      const key = site.guid || siteLabel(site);
+    const orderedTiles = channels.map((channel) => {
+      const key = canonicalConfigurationId(channel.configuration_id);
       activeKeys.add(key);
       const existing = tileNodes.get(key);
-      const tile = existing ? updateSignalCurrentTile(existing, site) : signalCurrentTile(site);
+      const tile = existing ? updateSignalCurrentTile(existing, channel) : signalCurrentTile(channel);
       tileNodes.set(key, tile);
       return tile;
     });
     [...tileNodes.keys()].filter((key) => !activeKeys.has(key)).forEach((key) => tileNodes.delete(key));
     tiles.replaceChildren(...orderedTiles);
-    if (!sites.length) tiles.append(node('div', 'empty', 'No trunked receivers are currently reporting'));
+    if (!channels.length) tiles.append(node('div', 'empty', 'No receiver channels are currently reporting'));
   };
 
   const logging = statsLoggingState();
@@ -6304,7 +6302,7 @@ async function signalHealthSection() {
   return block;
 }
 
-async function siteSignalHistorySection(site) {
+async function channelSignalHistorySection(channel) {
   const renderContext = captureRenderContext();
   const host = node('div', 'site-signal-history');
   const block = section('Control Channel Quality History', host);
@@ -6314,10 +6312,14 @@ async function siteSignalHistorySection(site) {
   let loading = false;
   const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
     selectedRange = value;
-    exportLink.href = exportCsvHref('site-quality', { guid: site.guid, range: selectedRange });
+    exportLink.href = exportCsvHref('channel-quality', {
+      configuration_id: channel.configuration_id, range: selectedRange
+    });
     await load(buttons, true);
   });
-  const exportLink = exportCsvLink('site-quality', { guid: site.guid, range: selectedRange });
+  const exportLink = exportCsvLink('channel-quality', {
+    configuration_id: channel.configuration_id, range: selectedRange
+  });
   const titleActions = node('div', 'section-title-actions');
   titleActions.append(rangeControl.controls, exportLink);
   block.querySelector('.section-title').append(titleActions);
@@ -6331,7 +6333,9 @@ async function siteSignalHistorySection(site) {
       host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
     }
     try {
-      const response = await api(siteApiPath(site.guid, 'quality'), { range: selectedRange, points: 300 });
+      const response = await api(channelApiPath(channel.configuration_id, 'quality'), {
+        range: selectedRange, points: 300
+      });
       if (sequence !== loadingSequence) return;
       const qualitySite = (response.rows || [])[0];
       disconnectPageObserversWithin(host);
@@ -6374,9 +6378,9 @@ async function siteSignalHistorySection(site) {
   return block;
 }
 
-async function talkgroupActivityHistorySection(scopeParameters) {
+async function groupIdentityActivityHistorySection(scopeParameters) {
   const renderContext = captureRenderContext();
-  const host = node('div', 'talkgroup-activity-history');
+  const host = node('div', 'group-identity-activity-history');
   const block = section('Activity History', host);
   let selectedRange = '24h';
   let loadingSequence = 0;
@@ -6393,11 +6397,11 @@ async function talkgroupActivityHistorySection(scopeParameters) {
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
-      host.replaceChildren(node('div', 'loading', 'Loading talkgroup activity history'));
+      host.replaceChildren(node('div', 'loading', 'Loading group activity history'));
     }
     try {
-      const response = await api(groupIdentityApiPath(scopeParameters.scope, scopeParameters.kind,
-        scopeParameters.talkgroup_id, 'activity'), { range: selectedRange });
+      const response = await api(groupIdentityApiPath(scopeParameters.radio_system_key,
+        scopeParameters.identity_key, 'activity'), { range: selectedRange });
       if (sequence !== loadingSequence) return;
       host.replaceChildren(metrics([
         ['Logical Calls', response.totals?.logical_call_count],
@@ -6405,8 +6409,8 @@ async function talkgroupActivityHistorySection(scopeParameters) {
         ['Submitted to Streamer', response.totals?.stream_submitted_logical_call_count],
         ['Encrypted', response.totals?.encrypted_logical_call_count]
       ], true),
-      section('Call Activity', talkgroupActivityChart(response, TALKGROUP_CALL_ACTIVITY_SERIES,
-        'Talkgroup calls and call outcomes by time')),
+      section('Call Activity', groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
+        'Group calls and call outcomes by time')),
       tableSection('Retained Signaling Totals',
         signalingCounts(response.totals || {}).map(([action, count]) => ({ action, count })), [
           { id: 'action', label: 'Action', key: 'action' },
@@ -6428,7 +6432,7 @@ async function talkgroupActivityHistorySection(scopeParameters) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Talkgroup activity history requires Stats Logging.'));
+    host.append(node('div', 'empty', 'Group activity history requires Stats Logging.'));
   } else {
     await load(rangeControl.buttons, true, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
@@ -6436,8 +6440,8 @@ async function talkgroupActivityHistorySection(scopeParameters) {
   return block;
 }
 
-async function siteTopTalkgroupsSection(site) {
-  const host = node('div', 'site-top-talkgroups');
+async function channelTopGroupsSection(channel) {
+  const host = node('div', 'channel-top-groups');
   let selectedRange = '24h';
   let loadingSequence = 0;
   let loading = false;
@@ -6447,20 +6451,23 @@ async function siteTopTalkgroupsSection(site) {
     await load(buttons, true);
   });
   const titleActions = sectionActionHost(rangeControl.controls);
-  const block = section('Talkgroup Site Observations', host, titleActions);
+  const block = section('Group Activity on This Channel', host, titleActions);
   const columns = [
-    { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sortValue: (row) => Number(row.talkgroup_id) },
-    { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
-    { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
+    { id: 'group-identity-id', label: 'Group', render: (row) => groupIdentityLink(row),
+      className: 'numeric', sortValue: (row) => Number(groupIdentityDisplayId(row)) },
+    { id: 'group-identity-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
+    { id: 'group-identity-name', label: 'Alias', fullLabel: 'Group Alias',
+      render: (row) => groupIdentityAliasLink(row),
+      className: 'alias-cell', sortValue: aliasLabel },
     { id: 'group', label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
-    { id: 'site-observations', label: 'Site Observations',
-      render: (row) => number(row.site_observation_count), className: 'numeric',
-      sortValue: (row) => Number(row.site_observation_count || 0) },
-    { id: 'encrypted-site-observations', label: 'Encrypted',
-      fullLabel: 'Encrypted Site Observations',
-      render: (row) => number(row.encrypted_site_observation_count),
+    { id: 'logical-calls', label: 'Logical Calls',
+      render: (row) => number(row.logical_call_count), className: 'numeric',
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'encrypted-logical-calls', label: 'Encrypted',
+      fullLabel: 'Encrypted Logical Calls',
+      render: (row) => number(row.encrypted_logical_call_count),
       className: 'numeric encrypted',
-      sortValue: (row) => Number(row.encrypted_site_observation_count || 0) }
+      sortValue: (row) => Number(row.encrypted_logical_call_count || 0) }
   ];
 
   const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
@@ -6470,16 +6477,16 @@ async function siteTopTalkgroupsSection(site) {
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
       cleanupTableLayoutMenu(tableController);
-      host.replaceChildren(node('div', 'loading', 'Loading talkgroup site observations'));
+      host.replaceChildren(node('div', 'loading', 'Loading group activity for this channel'));
     }
     try {
-      const response = await api(siteApiPath(site.guid, 'group-identities'), {
+      const response = await api(channelApiPath(channel.configuration_id, 'group-identities'), {
         range: selectedRange, limit: 20
       });
       if (sequence !== loadingSequence) return;
       host.replaceChildren(table(response.rows || [], columns,
-        'No talkgroup activity is available for this range', {
-          type: 'site-top-talkgroups', controller: tableController, layoutMenuHost: titleActions
+        'No group activity is available for this range', {
+          type: 'channel-top-groups', controller: tableController, layoutMenuHost: titleActions
         }));
     } catch (error) {
       if (sequence === loadingSequence) cleanupTableLayoutMenu(tableController);
@@ -6498,7 +6505,7 @@ async function siteTopTalkgroupsSection(site) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Talkgroup call activity requires Stats Logging.'));
+    host.append(node('div', 'empty', 'Group activity requires Stats Logging.'));
   } else {
     await load(rangeControl.buttons, true, true);
   }
@@ -7737,7 +7744,7 @@ async function refreshPlaybackScanLists(force = false) {
 }
 
 function synchronizePlaybackAccess(accessChanged = false) {
-  if (accessChanged) scannerSiteCache.clear();
+  if (accessChanged) scannerChannelCache.clear();
   const allowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
   const bar = document.getElementById('playback-bar');
   const status = document.getElementById('playback-status');
@@ -7798,8 +7805,8 @@ function synchronizePlaybackAccess(accessChanged = false) {
 }
 
 const SCANNER_DETAIL_LEVELS = Object.freeze({ simple: 0, normal: 1, advanced: 2, engineer: 3 });
-const SCANNER_SITE_CACHE_LIMIT = 64;
-const scannerSiteCache = new Map();
+const SCANNER_CHANNEL_CACHE_LIMIT = 64;
+const scannerChannelCache = new Map();
 let scannerDetailMode = 'normal';
 
 function scannerRelativeAge(timestamp) {
@@ -7814,14 +7821,15 @@ function scannerRelativeAge(timestamp) {
   return `${hours} hour${hours === 1 ? '' : 's'} ago`;
 }
 
-function scannerSiteMetadata(guid) {
-  const key = String(guid || '').trim();
+function scannerChannelMetadata(configurationId) {
+  const key = String(configurationId || '').trim();
   if (!key) return Promise.resolve(null);
-  if (scannerSiteCache.has(key)) return scannerSiteCache.get(key);
-  const request = api(siteApiPath(key), {}, { page: false }).catch(() => null);
-  scannerSiteCache.set(key, request);
-  while (scannerSiteCache.size > SCANNER_SITE_CACHE_LIMIT) {
-    scannerSiteCache.delete(scannerSiteCache.keys().next().value);
+  if (scannerChannelCache.has(key)) return scannerChannelCache.get(key);
+  const request = api(channelApiPath(key), {}, { page: false })
+    .then((response) => response?.channel || null).catch(() => null);
+  scannerChannelCache.set(key, request);
+  while (scannerChannelCache.size > SCANNER_CHANNEL_CACHE_LIMIT) {
+    scannerChannelCache.delete(scannerChannelCache.keys().next().value);
   }
   return request;
 }
@@ -7852,10 +7860,17 @@ function scannerNetworkSiteIdentity(call) {
     return [network, location].filter(Boolean).join(' · ');
   }
 
+  const family = String(call?.protocol || call?.decoder || '').toUpperCase();
   const values = [];
   const network = scannerIdentifierNumber(call?.network_id);
-  const system = scannerIdentifierNumber(call?.system_id);
   const site = scannerIdentifierNumber(call?.site_id);
+  if (family.includes('DMR')) {
+    if (network !== null) values.push(`Network ${network}`);
+    if (site !== null) values.push(`Site ${site}`);
+    return values.join(' · ');
+  }
+
+  const system = scannerIdentifierNumber(call?.system_id);
   const ran = scannerIdentifierNumber(call?.ran);
   if (network !== null && system !== null) values.push(`${network}-${system}`);
   else if (network !== null) values.push(`Network ${network}`);
@@ -7865,7 +7880,8 @@ function scannerNetworkSiteIdentity(call) {
   return values.join(' · ');
 }
 
-function scannerTargetLabel(call) {
+function scannerTargetLabel(call, channel) {
+  if (isAnalogChannel(channel || call)) return call?.channel || channel?.name || 'Analog channel';
   return call?.target_alias || (call?.target_id ? `${identifierTypeLabel(call.target_form)} ${call.target_id}` :
     call?.channel || 'Waiting for a call');
 }
@@ -7943,20 +7959,24 @@ function entityTarget(reference, tabsByView = {}) {
 
 function entityReferenceAllowed(reference) {
   const kind = String(reference?.kind || '').trim();
-  if (kind === 'conventional') return capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL);
-  return ['system', 'site', 'talkgroup', 'patch_group', 'radio'].includes(kind) &&
-    capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS);
+  return ['radio_system', 'channel', 'talkgroup', 'patch_group', 'radio'].includes(kind) &&
+    capabilityAllowed(ACCESS_CAPABILITIES.RADIO);
 }
 
-function scannerNavigate(call, destination) {
+function scannerNavigate(call, channel, destination) {
   let reference = null;
   let tabs = {};
-  if (destination === 'system') reference = call?.system_entity_ref;
+  if (destination === 'system') reference = call?.radio_system_entity_ref;
   else if (destination === 'target' || destination === 'target-alias') reference = call?.target_entity_ref;
   else if (destination === 'source' || destination === 'source-alias') reference = call?.source_entity_ref;
   else {
     reference = call?.entity_ref;
-    tabs = ['channel', 'frequency', 'lcn'].includes(destination) ? { site: 'channels' } : {};
+    tabs = ['channel', 'frequency', 'lcn'].includes(destination) ? { channel: 'frequencies' } : {};
+  }
+  if (!reference && dashboardChannelKind(channel) === 'CONVENTIONAL' && !isAnalogChannel(channel || call)) {
+    reference = call?.entity_ref || channel?.entity_ref;
+    if (destination === 'target' || destination === 'target-alias') tabs = { channel: 'groups' };
+    else if (destination === 'source' || destination === 'source-alias') tabs = { channel: 'radios' };
   }
   const target = entityTarget(reference, tabs);
 
@@ -8009,13 +8029,14 @@ function scannerCallRenderKey(call, state, site) {
   return JSON.stringify([
     scannerDetailMode, call.call_id || '', call.started_at_ms || '',
     scannerMatchedScanLists(call, state), site?.p25_decoder_mode || '',
-    site?.modulation || ''
+    site?.modulation || '', site?.configuration_id || '', site?.channel_kind || '',
+    site?.entity_ref?.key || ''
   ]);
 }
 
-function renderScannerCall(host, state, site) {
+function renderScannerCall(host, state, channelMetadata) {
   const call = state.displayCall || state.current;
-  const renderKey = scannerCallRenderKey(call, state, site);
+  const renderKey = scannerCallRenderKey(call, state, channelMetadata);
   host.dataset.scannerMode = scannerDetailMode;
   if (host.dataset.renderKey === renderKey && host.childNodes.length) {
     const wave = host.querySelector('.scanner-audio-wave');
@@ -8039,8 +8060,9 @@ function renderScannerCall(host, state, site) {
 
   const intro = node('div', 'scanner-call-intro');
   const copy = node('div');
+  const analog = isAnalogChannel(channelMetadata || call);
   copy.append(node('span', 'scanner-call-kind', `${call.decoder || call.protocol || 'Call'}${call.encrypted ?
-    ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call)),
+    ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call, channelMetadata)),
     node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
   const wave = node('div', `scanner-audio-wave${state.playing ? '' : ' paused'}`);
   for (let index = 0; index < 24; index++) wave.append(node('i'));
@@ -8050,17 +8072,17 @@ function renderScannerCall(host, state, site) {
   intro.append(copy, instruments);
 
   const fields = node('div', 'scanner-field-grid');
-  const open = (destination) => () => scannerNavigate(call, destination);
+  const open = (destination) => () => scannerNavigate(call, channelMetadata, destination);
   const participants = node('div', 'scanner-participant-grid');
-  participants.append(
-    scannerParticipant('Target', call.target_alias, call.target_id, call.target_description, call.target_group,
-      open('target-alias'), open('target')),
-    scannerParticipant('Source', scannerSourceAlias(call), call.source_id, call.source_description,
-      call.source_group, open('source-alias'), open('source'))
-  );
+  if (!analog) {
+    participants.append(scannerParticipant('Target', call.target_alias, call.target_id, call.target_description,
+      call.target_group, open('target-alias'), open('target')));
+  }
+  participants.append(scannerParticipant('Source', scannerSourceAlias(call), call.source_id,
+    call.source_description, call.source_group, open('source-alias'), open('source')));
   const networkSiteIdentity = scannerNetworkSiteIdentity(call);
   const nac = scannerIsP25(call) ? scannerHex(call.nac, 3) : '';
-  const modulation = site?.p25_decoder_mode || call.modulation || '';
+  const modulation = channelMetadata?.p25_decoder_mode || call.modulation || '';
   [
     scannerField('System', call.system, 0, open('system')),
     scannerField('Site', call.site, 0, open('site')),
@@ -8115,6 +8137,7 @@ function openPlaybackAvoidList(player = webCallPlayer) {
       const row = node('div', 'scanner-modal-row');
       const copy = node('div');
       copy.append(node('strong', '', avoid.label || 'Avoided target'));
+      if (avoid.system_scope) copy.append(node('span', '', avoid.system_scope));
       const remove = node('button', 'secondary', 'Remove');
       remove.type = 'button';
       remove.addEventListener('click', () => {
@@ -8134,7 +8157,9 @@ function scanListCoverageTree(coverage) {
   const aliases = Array.isArray(coverage?.aliases) ? coverage.aliases : [];
   const lists = new Map();
   aliases.forEach((alias) => {
-    const listKey = String(alias.alias_list_id ?? alias.alias_list ?? 'unknown');
+    const listId = aliasListId(alias);
+    if (listId === null) return;
+    const listKey = String(listId);
     if (!lists.has(listKey)) lists.set(listKey, { name: alias.alias_list || 'Alias List', groups: new Map() });
     const list = lists.get(listKey);
     const groupName = String(alias.group || 'Ungrouped');
@@ -8311,8 +8336,8 @@ function renderScanner() {
   placePlaybackBar();
 
   let latestState = player.viewState();
-  let currentSiteGuid = '';
-  let currentSite = null;
+  let currentConfigurationId = '';
+  let currentChannel = null;
   const updateAge = () => {
     const displayedCall = latestState.displayCall || latestState.current;
     age.textContent = displayedCall ? scannerRelativeAge(displayedCall.completed_at_ms) :
@@ -8320,6 +8345,12 @@ function renderScanner() {
   };
   const draw = (state) => {
     latestState = state;
+    const nextConfigurationId = String((state.displayCall || state.current)?.configuration_id || '');
+    const channelChanged = nextConfigurationId !== currentConfigurationId;
+    if (channelChanged) {
+      currentConfigurationId = nextConfigurationId;
+      currentChannel = null;
+    }
     playbackStatus.textContent = state.status ||
       (state.stopped ? 'Ready' : state.paused ? 'Paused' : 'Listening');
     playbackStatus.classList.toggle('active', !state.stopped && !state.paused);
@@ -8339,7 +8370,7 @@ function renderScanner() {
     clearQueue.disabled = !state.queuedCount;
     volume.value = String(state.volume);
     updateAge();
-    renderScannerCall(display, state, currentSite);
+    renderScannerCall(display, state, currentChannel);
 
     scanButtons.replaceChildren();
     const selectedCount = state.scanLists.filter((item) => item.selected).length;
@@ -8356,14 +8387,11 @@ function renderScanner() {
       scanButtons.append(button);
     });
 
-    const nextGuid = String((state.displayCall || state.current)?.site_guid || '');
-    if (nextGuid !== currentSiteGuid) {
-      currentSiteGuid = nextGuid;
-      currentSite = null;
-      if (nextGuid) void scannerSiteMetadata(nextGuid).then((site) => {
-        if (currentSiteGuid === nextGuid && display.isConnected) {
-          currentSite = site;
-          renderScannerCall(display, latestState, currentSite);
+    if (channelChanged) {
+      if (nextConfigurationId) void scannerChannelMetadata(nextConfigurationId).then((channel) => {
+        if (currentConfigurationId === nextConfigurationId && display.isConnected) {
+          currentChannel = channel;
+          renderScannerCall(display, latestState, currentChannel);
         }
       });
     }
@@ -8395,7 +8423,7 @@ function renderScanner() {
     scannerDetailMode = selectedMode;
     void settleUserPreferenceMutation((preferences) => { preferences.scanner.detail_mode = selectedMode; });
     modeBar.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
-    renderScannerCall(display, latestState, currentSite);
+    renderScannerCall(display, latestState, currentChannel);
   }));
 }
 
@@ -8411,114 +8439,116 @@ function pageParameters(extra = {}) {
 }
 
 function affiliationRouteFilters() {
-  const siteGuid = normalizedSiteText(route.get('site_guid'));
+  const configurationId = normalizedSiteText(route.get('configuration_id'));
   return {
     affiliated: route.get('affiliated') === 'true' ? true : null,
-    site_guid: siteGuid || null
+    configuration_id: configurationId || null
   };
 }
 
 function affiliationFilterActions(exportAction = null) {
   const filters = affiliationRouteFilters();
   const actions = node('div', 'section-title-actions');
-  if (filters.affiliated || filters.site_guid) {
-    actions.append(anchor('Clear Filter', currentHref({ affiliated: null, site_guid: null, offset: null }),
+  if (filters.affiliated || filters.configuration_id) {
+    actions.append(anchor('Clear Filter', currentHref({ affiliated: null, configuration_id: null, offset: null }),
       'button secondary'));
   }
   if (exportAction) actions.append(exportAction);
   return actions.childNodes.length ? actions : null;
 }
 
-function requiredSystemScope() {
-  const scopeToken = String(route.get('scope') || '').trim();
-  if (!scopeToken) throw new Error('System scope is missing from the URL');
-  return { scope: scopeToken };
+function requiredRadioSystem() {
+  const radioSystemKey = String(route.get('radio_system_key') || '').trim();
+  if (!radioSystemKey) throw new Error('Radio system key is missing from the URL');
+  return { radio_system_key: radioSystemKey };
 }
 
-function requiredId() {
-  const id = Number(route.get('id'));
-  if (!Number.isInteger(id) || id < 0) throw new Error('Identifier is missing from the URL');
-  return id;
+function requiredIdentityKey() {
+  const identityKey = String(route.get('identity_key') || '').trim();
+  if (!/^v1-[grp]-(?:x|[0-9a-f]{5})-(?:x|[0-9a-f]{3})-[0-9]+$/.test(identityKey)) {
+    throw new Error('Identity key is missing from the URL');
+  }
+  return identityKey;
 }
 
-function systemCapability(system, capability) {
+function radioSystemCapability(system, capability) {
   const capabilities = system?.capabilities;
   if (!capabilities || typeof capabilities !== 'object') return false;
   return Boolean(capabilities[capability]);
 }
 
-function systemTabItems(system) {
-  const values = scope(system);
-  const items = [{ id: 'info', label: 'Info', href: href('system', { ...values, tab: 'info' }) }];
-  if (systemCapability(system, 'group_identities')) {
-    items.push({ id: 'talkgroups', label: 'Talkgroups', href: href('system', { ...values, tab: 'talkgroups' }) });
+function radioSystemTabItems(system) {
+  const values = radioSystemRoute(system);
+  const items = [{ id: 'info', label: 'Info', href: href('radio-system', { ...values, tab: 'info' }) }];
+  if (radioSystemCapability(system, 'group_identities')) {
+    items.push({ id: 'groups', label: 'Groups', href: href('radio-system', { ...values, tab: 'groups' }) });
   }
-  if (systemCapability(system, 'radios')) {
-    items.push({ id: 'radios', label: 'Radios', href: href('system', { ...values, tab: 'radios' }) });
+  if (radioSystemCapability(system, 'radios')) {
+    items.push({ id: 'radios', label: 'Radios', href: href('radio-system', { ...values, tab: 'radios' }) });
   }
-  if (systemCapability(system, 'activity')) {
-    items.push({ id: 'activity', label: 'Activity', href: href('system', { ...values, tab: 'activity' }),
+  if (radioSystemCapability(system, 'activity')) {
+    items.push({ id: 'activity', label: 'Activity', href: href('radio-system', { ...values, tab: 'activity' }),
       disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
   }
-  if (systemCapability(system, 'talker_aliases')) {
+  if (radioSystemCapability(system, 'talker_aliases')) {
     items.push({ id: 'talker-aliases', label: 'Talker Aliases',
-      href: href('system', { ...values, tab: 'talker-aliases' }) });
+      href: href('radio-system', { ...values, tab: 'talker-aliases' }) });
   }
   return items;
 }
 
-function systemTabs(system, active) {
-  return tabs(systemTabItems(system), active);
+function radioSystemTabs(system, active) {
+  return tabs(radioSystemTabItems(system), active);
 }
 
-function entityTabs(view, system, id, active, radio, kind = null) {
-  const values = { ...scope(system), id, kind: kind === 'patch_group' ? 'patch_group' : null };
+function entityTabs(view, system, identityKey, active, radio) {
+  const values = { ...radioSystemRoute(system), identity_key: identityKey };
   const activity = { id: 'activity', label: 'Activity', href: href(view, { ...values, tab: 'activity' }),
     disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' };
   const items = [{ id: 'info', label: 'Info', href: href(view, { ...values, tab: 'info' }) }];
-  if (radio && systemCapability(system, 'group_identities')) {
-    items.push({ id: 'talkgroups', label: 'Talkgroups', href: href(view, { ...values, tab: 'talkgroups' }) });
-  } else if (!radio && systemCapability(system, 'radios')) {
+  if (radio && radioSystemCapability(system, 'group_identities')) {
+    items.push({ id: 'groups', label: 'Groups', href: href(view, { ...values, tab: 'groups' }) });
+  } else if (!radio && radioSystemCapability(system, 'radios')) {
     items.push({ id: 'radios', label: 'Radios', href: href(view, { ...values, tab: 'radios' }) });
   }
-  if (systemCapability(system, 'activity')) items.push(activity);
+  if (radioSystemCapability(system, 'activity')) items.push(activity);
   return tabs(items, active);
 }
 
-function siteCapability(site, capability) {
-  return Boolean(site?.capabilities?.[capability]);
+function channelCapability(channel, capability) {
+  return Boolean(channel?.capabilities?.[capability]);
 }
 
-function siteTabItems(site) {
-  const values = { guid: site.guid };
+function trunkedChannelTabItems(channel) {
+  const values = { configuration_id: channel.configuration_id };
   const items = [
-    { id: 'info', label: 'Info', href: href('site', { ...values, tab: 'info' }) }
+    { id: 'info', label: 'Info', href: href('channel', { ...values, tab: 'info' }) }
   ];
-  if (siteCapability(site, 'channels')) {
-    items.push({ id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) });
+  if (channelCapability(channel, 'channels')) {
+    items.push({ id: 'frequencies', label: 'Frequencies', href: href('channel', { ...values, tab: 'frequencies' }) });
   }
-  if (siteCapability(site, 'quality')) {
-    items.push({ id: 'quality', label: 'Quality', href: href('site', { ...values, tab: 'quality' }) });
+  if (channelCapability(channel, 'quality')) {
+    items.push({ id: 'quality', label: 'Quality', href: href('channel', { ...values, tab: 'quality' }) });
   }
-  if (siteCapability(site, 'neighbors')) {
-    items.push({ id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) });
+  if (channelCapability(channel, 'neighbors')) {
+    items.push({ id: 'neighbors', label: 'Neighbors', href: href('channel', { ...values, tab: 'neighbors' }) });
   }
-  if (siteCapability(site, 'frequency_bands')) {
-    items.push({ id: 'band-plan', label: 'Band Plan', href: href('site', { ...values, tab: 'band-plan' }) });
+  if (channelCapability(channel, 'frequency_bands')) {
+    items.push({ id: 'band-plan', label: 'Band Plan', href: href('channel', { ...values, tab: 'band-plan' }) });
   }
-  if (siteCapability(site, 'patch_groups')) {
-    items.push({ id: 'patches', label: 'Patches', href: href('site', { ...values, tab: 'patches' }) });
+  if (channelCapability(channel, 'patch_groups')) {
+    items.push({ id: 'patches', label: 'Patches', href: href('channel', { ...values, tab: 'patches' }) });
   }
-  if (siteCapability(site, 'activity')) {
-    items.push({ id: 'activity', label: 'Activity', href: href('site', { ...values, tab: 'activity' }),
+  if (channelCapability(channel, 'activity')) {
+    items.push({ id: 'activity', label: 'Activity', href: href('channel', { ...values, tab: 'activity' }),
       disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' }
     );
   }
   return items;
 }
 
-function siteTabs(site, active) {
-  return tabs(siteTabItems(site), active);
+function trunkedChannelTabs(channel, active) {
+  return tabs(trunkedChannelTabItems(channel), active);
 }
 
 function trunkedChannelUse(value) {
@@ -8550,8 +8580,12 @@ function trunkedNeighborStatus(value) {
   return badgeGroup(values);
 }
 
-function siteDirectoryIdentity(row) {
-  if (!isP25(row)) {
+function channelDirectoryRfIdentity(row) {
+  const family = protocolFamily(row);
+  if (family === 'DMR') {
+    return row.site_id == null ? '' : `Site ${identifierNumber(row.site_id)}`;
+  }
+  if (family === 'NXDN') {
     return [
       row.site_id == null ? '' : `Site ${identifierNumber(row.site_id)}`,
       row.ran == null ? '' : `RAN ${identifierNumber(row.ran)}`
@@ -8564,47 +8598,46 @@ function siteDirectoryIdentity(row) {
   ].filter(Boolean).join(' · ');
 }
 
-function siteDirectoryDetails(row) {
+function channelDirectoryDetails(row) {
   const bands = Number(row.bands);
   return [
-    siteDirectoryIdentity(row),
+    channelDirectoryRfIdentity(row),
     Number.isFinite(bands) && bands > 0 ? `${number(bands)} band plan${bands === 1 ? '' : 's'}` : ''
   ].filter(Boolean).join(' · ');
 }
 
-const siteColumns = [
-  { id: 'name', label: 'Name / Site', render: siteNameSummary, className: 'alias-cell', sort: 'name',
-    sortValue: siteLabel },
-  { id: 'details', label: 'Details', render: siteDirectoryDetails, sortValue: siteDirectoryDetails },
+const radioSystemChannelColumns = [
+  { id: 'name', label: 'Name / Site', render: channelNameSummary, className: 'alias-cell', sort: 'name',
+    sortValue: channelLabel },
+  { id: 'details', label: 'Details', render: channelDirectoryDetails, sortValue: channelDirectoryDetails },
   { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.current_control_hz), className: 'numeric', sort: 'control', sortValue: (row) => Number(row.current_control_hz || 0) },
   { id: 'channels', label: 'Ch', fullLabel: 'Channels', key: 'channels', className: 'numeric', sort: 'channels' },
   { id: 'neighbors', label: 'Nbrs', fullLabel: 'Neighbors', key: 'neighbors', className: 'numeric', sort: 'neighbors' },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
 
-function dashboardReceiverContext(row) {
+function dashboardChannelContext(row) {
   const values = [];
-  const trunked = dashboardChannelKind(row) === 'TRUNKED' ||
-    String(row.site_kind || '').trim().toUpperCase() === 'TRUNKED';
+  const trunked = dashboardChannelKind(row) === 'TRUNKED';
   if (trunked) {
-    values.push(isP25(row) ? systemLabel(row) : trunkedSystemLabel(row));
+    values.push(radioSystemLabel(row));
     if (isP25(row) && row.rfss != null) values.push(`RFSS ${hex(row.rfss, 2)}`);
     if (row.site_id != null) {
       values.push(`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`);
     }
-    if (!isP25(row) && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
+    if (protocolFamily(row) === 'NXDN' && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
   }
   if (isP25(row) && row.nac != null) values.push(`NAC ${hex(row.nac, 3)}`);
   return values.join(' · ');
 }
 
 const dashboardHealthColumns = [
-  { id: 'name', label: 'Site / Channel', render: callSourceLink, className: 'alias-cell',
+  { id: 'name', label: 'Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
   { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
     render: dashboardMode, sortValue: dashboardModeLabel },
-  { id: 'context', label: 'Context', render: dashboardReceiverContext,
-    sortValue: dashboardReceiverContext },
+  { id: 'radio-context', label: 'Radio Context', render: dashboardChannelContext,
+    sortValue: dashboardChannelContext },
   { id: 'frequency', label: 'MHz', fullLabel: 'Current or Primary Frequency MHz',
     render: (row) => frequency(row.current_control_hz || row.primary_frequency_hz),
     className: 'numeric', sortValue: (row) =>
@@ -8620,9 +8653,9 @@ function dashboardIdentityId(row) {
 }
 
 function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
-  const entityTab = ['talkgroups', 'radios'].includes(row.entity_tab) ? row.entity_tab : null;
+  const entityTab = ['groups', 'radios'].includes(row.entity_tab) ? row.entity_tab : null;
   const target = entityReferenceAllowed(row.entity_ref) ?
-    entityTarget(row.entity_ref, entityTab ? { 'conventional-detail': entityTab } : {}) : '';
+    entityTarget(row.entity_ref, entityTab ? { channel: entityTab } : {}) : '';
   return target ? anchor(label, target) : label;
 }
 
@@ -8799,11 +8832,10 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
 }
 
 function dashboardActivitySystem(row) {
-  const scopedSystem = row.scope_token ? systemLabel(row) : '';
-  const label = row.system_name || row.resolved_system_name || row.configured_system ||
-    row.configured_name || scopedSystem || row.resolved_channel_name || row.channel_name ||
-    row.scope_label || row.scope_token || '—';
-  const discriminator = String(row.scope_token || row.guid || row.configuration_id || '').trim();
+  const scopedSystem = row.radio_system_key ? radioSystemLabel(row) : '';
+  const label = row.system_name || row.name || scopedSystem || row.source_label ||
+    row.radio_system_key || '—';
+  const discriminator = String(row.radio_system_key || row.configuration_id || '').trim();
   const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
   const primary = target ? anchor(label, target) : node('span', '', label);
   if (!discriminator || discriminator === label) return primary;
@@ -8817,10 +8849,10 @@ function dashboardActivitySystem(row) {
 }
 
 function dashboardActivityRadio(row) {
-  const identifier = identityNumber(row, row.radio_id) || '—';
+  const identifier = identityNumber(row, radioDisplayId(row)) || '—';
   const reference = row.radio_entity_ref;
   const target = entityReferenceAllowed(reference) ?
-    entityTarget(reference, { 'conventional-detail': 'radios' }) : '';
+    entityTarget(reference, { channel: 'radios' }) : '';
   return target ? anchor(identifier, target) : identifier;
 }
 
@@ -8943,15 +8975,15 @@ async function renderDashboardActivity(renderContext) {
     const action = selectedAction;
     const actionLabel = selectedActionLabel || semanticLabel(action);
     radioTitle.textContent = `${actionLabel} · Source radios`;
-    if (!capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
+    if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
       radioRequest?.controller.abort();
       radioRequest?.unlink();
       radioRequest = null;
-      radioStatus.textContent = 'Systems & Sites access is required to list source radios.';
+      radioStatus.textContent = 'Radio access is required to list source radios.';
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(node('div', 'empty',
-        'Systems & Sites access is required to list source radios.'));
+        'Radio access is required to list source radios.'));
       return;
     }
     const request = nextRequest(radioRequest);
@@ -9068,39 +9100,39 @@ async function renderDashboardActivity(renderContext) {
   await loadSummary();
 }
 
-const talkgroupColumns = [
-  { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-  { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
-  { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
-  { id: 'talkgroup-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
-  { id: 'group', label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
+const groupIdentityColumns = [
+  { id: 'group-identity-id', label: 'ID', render: (row) => groupIdentityLink(row), className: 'numeric', sort: 'group_identity', sortValue: (row) => Number(row.native_id) },
+  { id: 'group-identity-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
+  { id: 'group-identity-name', label: 'Alias', fullLabel: 'Group Alias', render: (row) => groupIdentityAliasLink(row), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
+  { id: 'group-identity-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
+  { id: 'alias-group', label: 'Alias Group', key: 'alias_group', className: 'alias-cell', sort: 'alias_group' },
   { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
   { id: 'recorded-logical-calls', label: 'Rec', fullLabel: 'Recorded Logical Calls', render: (row) => number(row.recorded_logical_call_count), className: 'numeric', sort: 'recorded_logical_call_count', sortValue: (row) => Number(row.recorded_logical_call_count || 0) },
   { id: 'stream-submitted-logical-calls', label: 'Submitted', fullLabel: 'Submitted to Streamer', render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric', sort: 'stream_submitted_logical_call_count', sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) },
   { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
   { id: 'signaling', label: 'Signaling', fullLabel: 'Signaling observations',
-    render: talkgroupSignaling, className: 'numeric', sort: 'signaling_observation_count',
-    sortValue: talkgroupSignalingSortValue },
+    render: groupIdentitySignaling, className: 'numeric', sort: 'signaling_observation_count',
+    sortValue: groupIdentitySignalingSortValue },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
 
-function systemRadioColumns(system) {
+function radioSystemRadioColumns(system) {
   const columns = [
-    { id: 'radio', label: 'ID', render: (row) => radioLink(row), className: 'numeric', sort: 'id', sortValue: (row) => Number(row.radio_id) },
-    { id: 'alias', label: 'Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel }
+    { id: 'radio', label: 'ID', render: (row) => radioLink(row), className: 'numeric', sort: 'id', sortValue: (row) => Number(row.native_id) },
+    { id: 'alias', label: 'Alias', render: (row) => aliasLabel(row) ? radioLink(row, undefined, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel }
   ];
-  if (systemCapability(system, 'talker_aliases')) {
+  if (radioSystemCapability(system, 'talker_aliases')) {
     columns.push({ id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias',
       className: 'alias-cell', sort: 'talker_alias' });
   }
-  if (systemCapability(system, 'current_affiliations')) {
+  if (radioSystemCapability(system, 'current_affiliations')) {
     columns.push({ id: 'affiliation', label: 'Affiliation', fullLabel: 'Current Talkgroup Affiliation',
       render: affiliationTalkgroupCell, className: 'alias-cell', sort: 'affiliated_talkgroup',
       sortValue: affiliationTalkgroupSortValue });
   }
-  if (systemCapability(system, 'radio_site_presence')) {
-    columns.push({ id: 'affiliated-site', label: 'Last Confirmed Site', render: sitePresenceCell,
-      className: 'alias-cell', sort: 'site', sortValue: presenceSiteSortValue });
+  if (radioSystemCapability(system, 'radio_channel_presence')) {
+    columns.push({ id: 'confirmed-channel', label: 'Last Confirmed Channel', render: channelPresenceCell,
+      className: 'alias-cell', sort: 'channel', sortValue: presenceChannelSortValue });
   }
   columns.push(
     { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count),
@@ -9122,7 +9154,7 @@ function radioTableType(baseType, columns) {
   const variant = [
     ids.has('talker-alias') ? 'talker-alias' : null,
     ids.has('affiliation') ? 'affiliation' : null,
-    ids.has('affiliated-site') ? 'site' : null
+    ids.has('confirmed-channel') ? 'channel' : null
   ].filter(Boolean).join('-') || 'base';
   return tableLayouts.tableId(`${baseType}.${variant}`);
 }
@@ -9149,12 +9181,12 @@ async function renderDashboard() {
     if (!renderIsCurrent(renderContext)) return;
     content.append(signalHealth);
     content.append(dashboardSummarySection('Monitored Coverage', [
-      ['Trunked Systems', counts.trunked_systems],
-      ['Trunked Sites', counts.trunked_sites],
+      ['Radio Systems', counts.radio_systems],
+      ['Trunked Channels', counts.trunked_channels],
       ['Conventional Channels', counts.conventional_channels]
     ]));
-    content.append(tableSection('Recent Sites / Channels', dashboard.recent_receivers || [],
-      dashboardHealthColumns, 'No sites or channels recorded', { type: 'dashboard-receivers' }));
+    content.append(tableSection('Recent Channels', dashboard.recent_channels || [],
+      dashboardHealthColumns, 'No channels recorded', { type: 'dashboard-channels' }));
     return;
   }
 
@@ -10453,7 +10485,7 @@ async function loadRadioReferenceDetails(row, frequencyHz, signal = null) {
 
 function radioReferenceResultView(matches, frequencyHz, signal = null) {
   const rows = Array.isArray(matches) ? matches : [];
-  const siteLabel = (value) => {
+  const channelLabel = (value) => {
     const number = Number(value?.site_number);
     const numbered = Number.isInteger(number) && number > 0 ? `Site ${String(number).padStart(3, '0')}` : '';
     return [numbered, String(value?.site_name || '').trim()].filter(Boolean).join(' ');
@@ -10473,7 +10505,7 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
     const grid = node('div', 'radioreference-result-grid');
     items.forEach((row) => {
       const card = node('article', 'radioreference-result-card');
-      const title = isTrunked ? siteLabel(row) || row.description || row.system_name :
+      const title = isTrunked ? channelLabel(row) || row.description || row.system_name :
         row.alpha_tag || row.description || 'Conventional frequency';
       const header = node('div', 'radioreference-result-card-header');
       header.append(node('h4', '', title), node('span', 'radioreference-result-type',
@@ -10498,7 +10530,7 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
         const system = row.radio_reference_url ?
           externalAnchor(availableValue(row.system_name), row.radio_reference_url) : availableValue(row.system_name);
         addFact('system', 'System', system, true);
-        addFact('site', 'Site', siteLabel(row), true);
+        addFact('site', 'Site', channelLabel(row), true);
         addFact('channel-use', 'Channel use', 'Load details to identify', true);
       } else {
         addFact('name', 'Name', row.alpha_tag);
@@ -10535,7 +10567,7 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
           if (request !== detailRequest) return;
           if (isTrunked) {
             if (loaded?.site) {
-              const loadedSite = siteLabel(loaded.site) || 'Unknown site';
+              const loadedSite = channelLabel(loaded.site) || 'Unknown site';
               replaceFact('site', loaded.site.radio_reference_url ?
                 externalAnchor(loadedSite, loaded.site.radio_reference_url) : loadedSite);
               replaceFact('channel-use', availableValue(loaded.site.channel_use));
@@ -12296,12 +12328,13 @@ function tunerSpectrumPanel(snapPresetDocument) {
     add('LCN', activityValues(rows, (row) => row.lcn));
     add('Timeslot', activityValues(rows, (row) => row.timeslot));
 
-    const targetForms = [...new Set(rows.filter((row) => row.target_id)
+    const identityRows = rows.filter((row) => !isAnalogChannel(row));
+    const targetForms = [...new Set(identityRows.filter((row) => row.target_id)
       .map((row) => String(row.target_form || '').toUpperCase()))];
     (targetForms.length ? targetForms : ['']).forEach((form) => add(targetIdentifierLabel(form),
-      activityValues(rows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
+      activityValues(identityRows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
         (!form && !row.target_form)), (row) => row.target_id)));
-    add('Target alias', activityValues(rows, (row) => activityAliasLabel(row, 'target')));
+    add('Target alias', activityValues(identityRows, (row) => activityAliasLabel(row, 'target')));
     add('Source type', activityValues(rows, (row) => activityTokenLabel(row.source_form)));
     add('Source', activityValues(rows, (row) => row.source_id));
     add('Source alias', activityValues(rows, (row) => activityAliasLabel(row, 'source')));
@@ -12881,22 +12914,51 @@ function liveExistingAliasHref(reference) {
 
 function liveIdentityType(row, kind) {
   const matcherType = String(row?.[`${kind}_matcher`]?.type || '').trim().toLowerCase();
-  if (matcherType === 'talkgroup' || matcherType === 'radio') return matcherType;
+  if (['talkgroup', 'patch_group', 'radio'].includes(matcherType)) return matcherType;
+  const referenceType = String(row?.[`${kind}_entity_ref`]?.kind || '').trim().toLowerCase();
+  if (['talkgroup', 'patch_group', 'radio'].includes(referenceType)) return referenceType;
   const form = String(row?.[`${kind}_form`] || '').trim().toUpperCase();
+  if (form.includes('PATCH_GROUP')) return 'patch_group';
   if (form.includes('RADIO')) return 'radio';
   if (form.includes('TALKGROUP')) return 'talkgroup';
-  return '';
+  return 'unknown';
 }
 
-function liveIdentityInfoHref(row, kind) {
-  if (!capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) return '';
-  return entityRefHref(row?.[`${kind}_entity_ref`]) || '';
+function liveIdentityLabel(row, kind, titleCase = false) {
+  const type = liveIdentityType(row, kind);
+  if (type === 'radio') return titleCase ? 'Radio' : 'radio';
+  if (type === 'patch_group') return titleCase ? 'Patch Group' : 'patch group';
+  if (type === 'talkgroup') return titleCase ? 'Talkgroup' : 'talkgroup';
+  return titleCase ? 'Identity' : 'identity';
+}
+
+function liveIdentityInfo(row, kind) {
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) return null;
+  const identityLabel = liveIdentityLabel(row, kind);
+  const direct = entityRefHref(row?.[`${kind}_entity_ref`]);
+  if (direct) return {
+    target: direct,
+    title: `Open ${identityLabel} info`,
+    description: `View this ${identityLabel}'s activity and radio-system details.`
+  };
+  const conventional = channelTagSet(row?.tags).has('CONVENTIONAL') ||
+    dashboardChannelKind(row) === 'CONVENTIONAL';
+  const channelTarget = conventional && !isAnalogChannel(row) ? entityTarget(row?.entity_ref,
+    { channel: kind === 'source' ? 'radios' : 'groups' }) : '';
+  if (!channelTarget) return null;
+  const collection = kind === 'source' ? 'radios' : 'groups';
+  return {
+    target: channelTarget,
+    title: `Open channel ${collection}`,
+    description: `View ${collection} heard on this saved channel.`
+  };
 }
 
 let liveIdentityActionSequence = 0;
 
 function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit') {
-  const infoTarget = liveIdentityInfoHref(row, kind);
+  const info = liveIdentityInfo(row, kind);
+  const infoTarget = info?.target || '';
   if (!aliasTarget && !infoTarget) return label;
   const trigger = anchor(label, infoTarget || aliasTarget, 'live-alias-link');
   if (!aliasTarget || !infoTarget) return trigger;
@@ -12907,20 +12969,19 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
   trigger.addEventListener('click', (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    const type = liveIdentityType(row, kind);
-    const identityLabel = type === 'radio' ? 'radio' : 'talkgroup';
+    const identityLabel = liveIdentityLabel(row, kind);
     const modalBody = node('div', 'tuner-frequency-action-body');
     modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${String(label)}.`));
     const actions = node('div', 'tuner-frequency-action-list');
     const manage = anchor('', aliasTarget, 'button secondary tuner-frequency-action');
     manage.append(node('strong', '', aliasMode === 'create' ? 'Create alias' : 'Edit alias'),
       node('small', '', `${aliasMode === 'create' ? 'Create' : 'Open'} this ${identityLabel}'s configured alias.`));
-    const info = anchor('', infoTarget, 'button secondary tuner-frequency-action');
-    info.append(node('strong', '', `Open ${identityLabel} info`),
-      node('small', '', `View this ${identityLabel}'s activity and system details.`));
-    actions.append(manage, info);
+    const infoLink = anchor('', infoTarget, 'button secondary tuner-frequency-action');
+    infoLink.append(node('strong', '', info.title),
+      node('small', '', info.description));
+    actions.append(manage, infoLink);
     modalBody.append(actions);
-    openReadOnlyModal(`${identityLabel === 'radio' ? 'Radio' : 'Talkgroup'} ${row?.[`${kind}_id`] || ''}`,
+    openReadOnlyModal(`${liveIdentityLabel(row, kind, true)} ${row?.[`${kind}_id`] || ''}`,
       modalBody, { id: 'live-identity-actions', className: 'frequency-action-modal',
         returnFocusSelector: `#${id}` });
   });
@@ -12929,19 +12990,20 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
 
 function liveAliasDraftHref(row, kind) {
   const matcher = row?.[`${kind}_matcher`];
-  const aliasListName = String(row?.alias_list_name || '').trim();
+  const aliasListId = Number(row?.alias_list_id);
   const type = String(matcher?.type || '').trim().toLowerCase();
   const protocol = String(matcher?.protocol || '').trim().toLowerCase();
   const variant = String(matcher?.variant || '').trim().toLowerCase();
   const value = Number(matcher?.value);
-  if (!aliasAdminAllowed() || !aliasListName || !['talkgroup', 'radio'].includes(type) ||
+  if (!aliasAdminAllowed() || !Number.isInteger(aliasListId) || aliasListId <= 0 ||
+      !['talkgroup', 'radio'].includes(type) ||
       !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
       !Number.isSafeInteger(value) || value < 0 ||
       specialIdentifierLabel(row, value, type)) return '';
   const suggestedName = kind === 'source' && String(row?.talker_alias || '').trim() ?
     String(row.talker_alias).trim() : `${type === 'radio' ? 'Radio' : 'Talkgroup'} ${value}`;
   return href('aliases', {
-    aliasTab: 'configure', createAlias: 1, createListName: aliasListName, createType: type,
+    aliasTab: 'configure', createAlias: 1, createListId: aliasListId, createType: type,
     createProtocol: protocol, createVariant: variant, createValue: value, createName: suggestedName
   });
 }
@@ -12979,11 +13041,11 @@ function liveAliasValue(row, kind) {
 
 function liveConventionalChannelValue(row) {
   const label = String(row?.channel_name || '');
-  const target = capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL) ? entityRefHref(row?.entity_ref) : '';
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
   return label && target ? anchor(label, target, 'live-channel-link') : label;
 }
 
-function liveSystemTabTitle(value, label, siteTarget, selectTable) {
+function liveChannelTabTitle(value, label, channelTarget, selectTable) {
   const title = String(label || '');
   const channelName = String(value?.channel_name || '').trim();
   const parenthetical = channelName ? `(${channelName})` : '';
@@ -12995,13 +13057,13 @@ function liveSystemTabTitle(value, label, siteTarget, selectTable) {
     (siteName && title.includes(siteName) ? title.indexOf(siteName) : -1);
   const selectable = (text) => {
     if (!text) return null;
-    const button = node('button', 'systems-tab-title-button', text);
+    const button = node('button', 'channels-tab-title-button', text);
     button.type = 'button';
     button.addEventListener('click', selectTable);
     return button;
   };
-  if (linkAt < 0 || !siteTarget) return selectable(title);
-  const site = anchor(linkText, siteTarget, 'systems-tab-label');
+  if (linkAt < 0 || !channelTarget) return selectable(title);
+  const site = anchor(linkText, channelTarget, 'channels-tab-label');
   site.setAttribute('aria-label', `Open ${siteName || channelName} site details`);
   return fragment(selectable(title.slice(0, linkAt)), site, selectable(title.slice(linkAt + linkText.length)));
 }
@@ -13049,7 +13111,7 @@ function livePresentedTableRows(tableValue, presentation) {
   }).map((row) => livePresentedRow(row, presentation));
 }
 
-function liveSystemsSection(onSelectionChange) {
+function liveChannelsSection(onSelectionChange) {
   const tables = new Map();
   const tabNodes = new Map();
   const dismissedStoppedTables = new Set();
@@ -13161,16 +13223,18 @@ function liveSystemsSection(onSelectionChange) {
     { id: 'source', label: 'Src ID', fullLabel: 'Source ID', width: 105,
       render: (row) => liveIdentifierAliasValue(row, 'source'), sortValue: (row) => Number(row.source_id || 0) },
     { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias', width: 220,
-      render: (row) => liveAliasValue(row, 'target'), title: (row) => row.target_alias_description || '',
-      sortValue: (row) => row.target_alias || '' },
+      render: (row) => isAnalogChannel(row) ? liveConventionalChannelValue(row) : liveAliasValue(row, 'target'),
+      title: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias_description || '',
+      sortValue: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias || '' },
     { id: 'target', label: 'Tgt ID', fullLabel: 'Target ID', width: 105,
-      render: (row) => liveIdentifierAliasValue(row, 'target'), sortValue: (row) => Number(row.target_id || 0) },
+      render: (row) => isAnalogChannel(row) ? '' : liveIdentifierAliasValue(row, 'target'),
+      sortValue: (row) => isAnalogChannel(row) ? 0 : Number(row.target_id || 0) },
     { id: 'decoder', label: 'Decoder', width: 80, render: (row) => decoderLabel(row.decoder, true),
       title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' }
   ];
-  const tabBar = node('div', 'systems-live-tabs');
+  const tabBar = node('div', 'channels-live-tabs');
   const connection = badge('Connecting', 'state-stale');
-  const titleActions = node('div', 'section-title-actions live-systems-title-actions');
+  const titleActions = node('div', 'section-title-actions live-channels-title-actions');
   titleActions.append(connection);
   if (userPreferenceController.snapshot().loaded) {
     const presentationSettings = node('button',
@@ -13189,18 +13253,18 @@ function liveSystemsSection(onSelectionChange) {
   let selectRow = () => {};
   const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
-    type: 'live-systems', rowKey: (row) => row.key,
+    type: 'live-channels', rowKey: (row) => row.key,
     sortable: true,
     rowClass: (row) => selection?.rowKey === row.key ? 'selected' : '',
     onRowClick: (row) => {
       const value = tables.get(activeTableId);
       if (value) selectRow(value, row);
     },
-    wrapperClass: 'table-scroll', tableClass: 'systems-live-table', layoutMenuHost: titleActions
+    wrapperClass: 'table-scroll', tableClass: 'channels-live-table', layoutMenuHost: titleActions
   });
-  const host = node('div', 'systems-live');
+  const host = node('div', 'channels-live');
   host.append(tabBar, liveTable);
-  const block = section('Live Systems', host, titleActions);
+  const block = section('Live Channels', host, titleActions);
 
   const clearSelection = () => {
     if (!selection) return;
@@ -13267,21 +13331,21 @@ function liveSystemsSection(onSelectionChange) {
     tables.set(value.table_id, value);
     let tab = tabNodes.get(value.table_id);
     if (!tab) {
-      tab = node('div', 'systems-live-tab');
-      const select = node('button', 'systems-tab-select');
+      tab = node('div', 'channels-live-tab');
+      const select = node('button', 'channels-tab-select');
       select.type = 'button';
-      const quality = node('span', 'systems-tab-quality');
+      const quality = node('span', 'channels-tab-quality');
       for (let index = 0; index < 4; index += 1) quality.append(node('span'));
       select.append(quality);
       select.addEventListener('click', () => {
         const current = tables.get(value.table_id);
         const qualityTarget = current?.table_id !== 'conventional' &&
-          capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityTarget(current?.entity_ref, { site: 'quality' }) : '';
+          capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityTarget(current?.entity_ref, { channel: 'quality' }) : '';
         if (qualityTarget) openLocalHref(qualityTarget);
         else showTable(value.table_id);
       });
-      const title = node('span', 'systems-tab-title');
-      const close = node('button', 'systems-tab-close', '×');
+      const title = node('span', 'channels-tab-title');
+      const close = node('button', 'channels-tab-close', '×');
       close.type = 'button';
       close.hidden = true;
       close.addEventListener('click', (event) => {
@@ -13296,18 +13360,18 @@ function liveSystemsSection(onSelectionChange) {
       tabBar.append(tab);
     }
     const label = value.title || value.channel_name || value.table_id;
-    const select = tab.querySelector('.systems-tab-select');
-    const title = tab.querySelector('.systems-tab-title');
+    const select = tab.querySelector('.channels-tab-select');
+    const title = tab.querySelector('.channels-tab-title');
     const titleSignature = `${label}|${JSON.stringify(value.entity_ref || null)}|${value.table_id}`;
     if (title.dataset.liveValue !== titleSignature) {
       title.dataset.liveValue = titleSignature;
-      const siteTarget = value.table_id !== 'conventional' &&
-        capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? entityTarget(value.entity_ref) : '';
-      title.replaceChildren(liveSystemTabTitle(value, label, siteTarget, () => showTable(value.table_id)));
+      const channelTarget = value.table_id !== 'conventional' &&
+        capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityTarget(value.entity_ref) : '';
+      title.replaceChildren(liveChannelTabTitle(value, label, channelTarget, () => showTable(value.table_id)));
     }
-    const quality = tab.querySelector('.systems-tab-quality');
-    const qualityLinksToSite = value.table_id !== 'conventional' &&
-      capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) && Boolean(entityTarget(value.entity_ref, { site: 'quality' }));
+    const quality = tab.querySelector('.channels-tab-quality');
+    const qualityLinksToChannel = value.table_id !== 'conventional' &&
+      capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && Boolean(entityTarget(value.entity_ref, { channel: 'quality' }));
     const currentControl = liveCurrentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
@@ -13318,11 +13382,11 @@ function liveSystemsSection(onSelectionChange) {
     const decodeQuality = qualityFresh && Number.isFinite(decodeValue) ?
       Math.max(0, Math.min(100, decodeValue)) : null;
     if (value.table_id === 'conventional') {
-      quality.className = 'systems-tab-quality quality-neutral';
+      quality.className = 'channels-tab-quality quality-neutral';
       tab.title = label;
       select.setAttribute('aria-label', `Show live channels for ${label}`);
     } else if (signalStrength === null && decodeQuality === null) {
-      quality.className = 'systems-tab-quality quality-unavailable';
+      quality.className = 'channels-tab-quality quality-unavailable';
       tab.title = `${label} · Signal strength and decode quality unavailable`;
       select.setAttribute('aria-label', `Open ${label} channel quality; signal strength and decode quality unavailable`);
     } else {
@@ -13330,7 +13394,7 @@ function liveSystemsSection(onSelectionChange) {
       const state = decodeQuality === null ? 'unavailable' :
         (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
           (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
-      quality.className = `systems-tab-quality quality-${state} quality-level-${level}`;
+      quality.className = `channels-tab-quality quality-${state} quality-level-${level}`;
       const signalLabel = signalStrength === null ? 'Signal strength unavailable' :
         `${signalStrength.toFixed(1)} dBFS signal strength`;
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
@@ -13338,11 +13402,11 @@ function liveSystemsSection(onSelectionChange) {
       tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
       select.setAttribute('aria-label', `Open ${label} channel quality, ${signalLabel}, ${qualityLabel}`);
     }
-    quality.classList.toggle('quality-link', Boolean(qualityLinksToSite));
-    select.classList.toggle('quality-link', Boolean(qualityLinksToSite));
+    quality.classList.toggle('quality-link', Boolean(qualityLinksToChannel));
+    select.classList.toggle('quality-link', Boolean(qualityLinksToChannel));
     const stopped = value.table_id !== 'conventional' && value.channel_running === false;
     tab.classList.toggle('stopped', stopped);
-    const close = tab.querySelector('.systems-tab-close');
+    const close = tab.querySelector('.channels-tab-close');
     close.hidden = !stopped;
     close.title = stopped ? `Close stopped channel ${label}` : '';
     close.setAttribute('aria-label', `Close stopped channel ${label}`);
@@ -13393,8 +13457,8 @@ async function renderLive() {
   const split = node('div', 'live-split');
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
-  const systems = liveSystemsSection(eventsPanel.select);
-  split.append(systems, eventsPanel.element);
+  const channels = liveChannelsSection(eventsPanel.select);
+  split.append(channels, eventsPanel.element);
   beginPage(renderContext, split);
 }
 
@@ -13434,136 +13498,153 @@ async function renderTunerSpectrum() {
     'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
 }
 
-function systemsDirectoryDetails(row) {
-  if (row.directory_type === 'site') return siteDirectoryDetails(row);
+function radioSystemAssignmentLabel(row) {
+  const state = String(row?.assignment_state || '').trim().toUpperCase();
+  if (state === 'CURRENT') return 'Current receiver assignment';
+  if (state === 'HISTORICAL') return 'Historical activity';
+  return '';
+}
+
+function radioSystemsDirectoryDetails(row) {
+  if (row.directory_type === 'channel') return channelDirectoryDetails(row);
+  const assignment = radioSystemAssignmentLabel(row);
   if (isP25(row)) {
     return [
+      assignment,
       row.wacn == null ? '' : `WACN ${hex(row.wacn, 5)}`,
       row.system_id == null ? '' : `System ${hex(row.system_id, 3)}`
     ].filter(Boolean).join(' · ');
+  }
+  if (!isSavedChannelRadioSystem(row)) {
+    if (protocolFamily(row) === 'DMR') {
+      return [assignment, trunkedVariant(row), semanticLabel(row.model),
+        row.network_id == null ? '' : `Network ${identifierNumber(row.network_id)}`]
+        .filter(Boolean).join(' · ');
+    }
+    if (protocolFamily(row) === 'NXDN') {
+      return [assignment, trunkedVariant(row), semanticLabel(row.location_category),
+        row.system_id == null ? '' : `System ${identifierNumber(row.system_id)}`]
+        .filter(Boolean).join(' · ');
+    }
   }
   const variant = trunkedVariant(row);
   const domain = identityDomainLabel(row);
   const variantKey = variant.toLowerCase().replace(/[^a-z0-9]/g, '');
   const domainKey = domain.toLowerCase().replace(/[^a-z0-9]/g, '');
   return [
-    variant, domain && domainKey !== variantKey ? domain : '',
-    row.network_id == null ? '' : `Network ${identifierNumber(row.network_id)}`,
-    row.system_id == null ? '' : `System ${identifierNumber(row.system_id)}`
+    assignment, 'Scoped to this saved channel', variant, domain && domainKey !== variantKey ? domain : ''
   ].filter(Boolean).join(' · ');
 }
 
-function systemsDirectoryInventory(row) {
-  if (row.directory_type === 'site') {
-    return `${number(row.channels)} ${Number(row.channels) === 1 ? 'channel' : 'channels'}`;
+function radioSystemsDirectoryInventory(row) {
+  if (row.directory_type === 'channel') {
+    return `${number(row.learned_channels)} ${Number(row.learned_channels) === 1 ? 'frequency' : 'frequencies'}`;
   }
-  const values = [`${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}`];
+  const values = [`${number(row.channels)} ${Number(row.channels) === 1 ? 'channel' : 'channels'}`];
   if (isP25(row) && Number(row.patch_groups) > 0) values.push(`${number(row.patch_groups)} patches`);
   return values.join(' · ');
 }
 
-function systemsDirectoryContent(data) {
+function radioSystemsDirectoryContent(data) {
   const { page, tableRows: rows, truncatedParentCount, previewLimit, tableOptions = {} } = data;
   const columns = [
-    { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
+    { id: 'directory-name', label: 'Radio System / Channel', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
-      if (row.directory_type === 'system') {
-        const label = row.configured_system || `${protocolFamily(row)} System`;
+      if (row.directory_type === 'radio_system') {
+        const label = row.system_name || radioSystemLabel(row);
         const heading = node('strong');
-        heading.append(systemLink(row.entity_ref, label));
+        heading.append(radioSystemLink(row.entity_ref, label));
         wrapper.append(heading);
-        const aliasList = scopeAliasListName(row);
-        if (aliasList) wrapper.append(node('span', 'muted', aliasList));
+        const aliasLists = Array.isArray(row.alias_lists) ? row.alias_lists : [];
+        if (aliasLists.length) wrapper.append(node('span', 'muted',
+          `${aliasLists.length} Alias List${aliasLists.length === 1 ? '' : 's'}`));
       } else {
-        wrapper.append(node('span', 'directory-branch', '↳'), siteNameSummary(row));
+        wrapper.append(node('span', 'directory-branch', '↳'), channelNameSummary(row));
       }
       return wrapper;
     } },
     { id: 'protocol', label: 'Protocol', render: (row) => protocolFamily(row) },
-    { id: 'details', label: 'Details', render: systemsDirectoryDetails },
+    { id: 'details', label: 'Details', render: radioSystemsDirectoryDetails },
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
-      render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
-    { id: 'inventory', label: 'Inventory', render: systemsDirectoryInventory },
-    { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric',
-      render: (row) => row.directory_type === 'system' ? number(row.talkgroups) : '' },
+      render: (row) => row.directory_type === 'channel' ? frequency(row.current_control_hz) : '' },
+    { id: 'inventory', label: 'Inventory', render: radioSystemsDirectoryInventory },
+    { id: 'groups', label: 'Groups', className: 'numeric',
+      render: (row) => row.directory_type === 'radio_system' ?
+        number(Number(row.talkgroups || 0) + Number(row.patch_groups || 0)) : '' },
     { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? number(row.radios) : '' },
+      row.directory_type === 'radio_system' ? number(row.radios) : '' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  const directoryTable = table(rows, columns, 'No systems or sites recorded', {
-    type: 'system-directory',
+  const directoryTable = table(rows, columns, 'No radio systems or channels recorded', {
+    type: 'radio-system-directory',
     sortable: false,
     rowClass: (row) => `directory-${row.directory_type}-row`,
     ...tableOptions
   });
   const rendered = [directoryTable];
   if (truncatedParentCount) rendered.push(node('div', 'directory-warning',
-    `${number(truncatedParentCount)} system group${truncatedParentCount === 1 ? '' : 's'} exceeded the ` +
-    `${number(previewLimit)}-site preview limit. Open the system for its complete paged site list.`));
-  rendered.push(pager(page, 'bottom', 'Systems'));
+    `${number(truncatedParentCount)} radio system${truncatedParentCount === 1 ? '' : 's'} exceeded the ` +
+    `${number(previewLimit)}-channel preview limit. Open the radio system for its complete channel list.`));
+  rendered.push(pager(page, 'bottom', 'Radio systems'));
   return fragment(...rendered);
 }
 
-async function renderSystems() {
+async function renderRadioSystems() {
   const renderContext = captureRenderContext();
-  const directory = createAsyncSection('System Directory', {
-    loadingMessage: 'Loading systems and sites…',
-    errorMessage: 'The systems directory could not be loaded.'
+  const directory = createAsyncSection('Radio Systems', {
+    loadingMessage: 'Loading radio systems and channels…',
+    errorMessage: 'The radio system directory could not be loaded.'
   });
   if (!beginPage(renderContext,
-    pageHeader('Systems & Sites', 'P25, DMR, and NXDN systems with their observed sites'),
-    searchBar('Search protocol, system, site, name, or GUID'), directory.element)) return;
+    pageHeader('Radio Systems',
+      'Browse trunked radio systems and the saved receiver channels that receive them'),
+    searchBar('Search protocol, system, channel, or name'), directory.element)) return;
   await directory.load(
-    () => systemsDirectory.load(apiPage, pageParameters()),
-    (data) => systemsDirectoryContent({ ...data, tableOptions: {
+    () => radioSystemsDirectory.load(apiPage, pageParameters()),
+    (data) => radioSystemsDirectoryContent({ ...data, tableOptions: {
       layoutMenuHost: directory.titleActions, controller: directory.tableController
     } }),
     renderContext);
 }
 
-async function renderSystem() {
+async function renderRadioSystem() {
   const renderContext = captureRenderContext();
-  const systemScope = requiredSystemScope();
-  const response = await api(systemApiPath(systemScope.scope));
+  const radioSystem = requiredRadioSystem();
+  const response = await api(radioSystemApiPath(radioSystem.radio_system_key));
   if (!renderIsCurrent(renderContext)) return;
   const system = response;
   const requestedTab = route.get('tab') || 'info';
-  const tabItems = systemTabItems(system);
+  const tabItems = radioSystemTabItems(system);
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
   if (tab !== requestedTab) {
     route.set('tab', tab);
     window.history.replaceState({}, '', currentHref());
   }
+  const pageContext = [system.channel_names, radioSystemsDirectoryDetails(system)].filter(Boolean).join(' · ');
   if (!beginPage(renderContext,
-    pageHeader(systemValue(system), system.site_names || `${protocolFamily(system)} trunked system`),
-    systemTabs(system, tab))) return;
+    pageHeader(radioSystemValue(system), pageContext),
+    radioSystemTabs(system, tab))) return;
 
-  if (tab === 'talkgroups') {
-    const page = await apiPage(systemApiPath(systemScope.scope, 'group-identities'), pageParameters());
-    content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups',
-      exportCsvLink('system-talkgroups', systemScope), { topPager: true }));
+  if (tab === 'groups') {
+    const page = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'group-identities'), pageParameters());
+    content.append(pagedSection('Groups', page, groupIdentityColumns, 'Search group ID', 'group-identities',
+      exportCsvLink('radio-system-group-identities', radioSystem), { topPager: true }));
   } else if (tab === 'radios') {
     const filters = affiliationRouteFilters();
-    const page = await apiPage(systemApiPath(systemScope.scope, 'radios'), pageParameters(filters));
-    const title = filters.site_guid ? (filters.affiliated ? 'Affiliated Radios at Site' : 'Radios at Site') :
+    const page = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'radios'), pageParameters(filters));
+    const title = filters.configuration_id ?
+      (filters.affiliated ? 'Affiliated Radios on Channel' : 'Radios on Channel') :
       (filters.affiliated ? 'Affiliated Radios' : 'Radios');
-    const exportAction = exportCsvLink('system-radios', { ...systemScope, ...filters });
-    const columns = systemRadioColumns(system);
+    const exportAction = exportCsvLink('radio-system-radios', { ...radioSystem, ...filters });
+    const columns = radioSystemRadioColumns(system);
     content.append(pagedSection(title, page, columns, 'Search radio ID', radioTableType('radios', columns),
       affiliationFilterActions(exportAction), { topPager: true }));
   } else if (tab === 'talker-aliases') {
-    const page = await apiPage(systemApiPath(systemScope.scope, 'talker-aliases'), pageParameters());
+    const page = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'talker-aliases'), pageParameters());
     const columns = [
-    { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
+    { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.native_id) },
       { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
-      { id: 'radio-alias', label: 'Alias', fullLabel: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
-      { id: 'talkgroup-id', label: 'Last TGID', render: (row) => talkgroupLink(row,
-        row.last_talkgroup_id, undefined, row.last_talkgroup_entity_ref), className: 'numeric',
-        sort: 'last_talkgroup', sortValue: (row) => Number(row.last_talkgroup_id) },
-      { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias',
-        render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_',
-          row.last_talkgroup_entity_ref), className: 'alias-cell', sort: 'last_talkgroup_name',
-        sortValue: (row) => row.talkgroup_alias_name || '' },
+      { id: 'radio-alias', label: 'Alias', fullLabel: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, undefined, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
       { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
@@ -13573,29 +13654,31 @@ async function renderSystem() {
     if (!page.rows.length) block.querySelector('.empty').textContent = 'No talker aliases recorded for this system';
     content.append(block);
   } else if (tab === 'activity') {
-    await renderActivity(systemScope, 'System Activity');
+    await renderActivity(radioSystem,
+      isSavedChannelRadioSystem(system) ? 'Saved Channel Activity' : 'System Activity');
   } else {
     const infoColumn = node('div', 'entity-info-column system-info-column');
     const blocks = [section('Directory', metrics([
-      ['Known Sites', system.sites],
+      ['Configured Channels', system.channels],
       ['Known Talkgroups', system.talkgroups],
       ['Known Patch Groups', system.patch_groups],
       ['Known Radios', system.radios]
     ], true)), section('Logical Call Activity', metrics([
       ['Logical Calls', system.logical_call_count],
-      ['Site Observations', system.site_observation_count],
+      ['Channel Observations', system.channel_observation_count],
       ['Recorded', system.recorded_logical_call_count],
       ['Submitted to Streamer', system.stream_submitted_logical_call_count],
       ['Encrypted', system.encrypted_logical_call_count]
     ], true))];
-    if (systemCapability(system, 'current_affiliations')) {
+    if (radioSystemCapability(system, 'current_affiliations')) {
       blocks.push(section('Current State', metrics([
         ['Currently Affiliated', system.affiliated_radios]
       ], true)));
     }
-    blocks.push(section('System Info', keyValues([
-      ['System', systemInfoValue(system)],
-      ['Alias List', aliasListLink(system.alias_list_name, system.alias_list_id)],
+    blocks.push(section(isSavedChannelRadioSystem(system) ? 'Saved Channel Scope' : 'System Info', keyValues([
+      [radioSystemOwnerLabel(system), radioSystemInfoValue(system)],
+      ['Assignment', radioSystemAssignmentLabel(system)],
+      ['Alias Lists', radioSystemAliasLists(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
     ])), tableSection('Retained Signaling Observations',
       signalingActionRows(response.action_counts), [
@@ -13606,67 +13689,67 @@ async function renderSystem() {
     ], 'No signaling observations recorded', { type: 'system-action-observations' }, activityMetricGuide()));
     infoColumn.append(...blocks);
 
-    const sitesPage = await apiPage(systemApiPath(systemScope.scope, 'sites'), pageParameters());
-    const sitesColumn = node('div', 'entity-info-column system-sites-column');
-    sitesColumn.append(pagedSection('Sites', sitesPage, siteColumns,
-      'Search site, name, or GUID', 'sites'));
+    const channelsPage = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'channels'), pageParameters());
+    const channelsColumn = node('div', 'entity-info-column radio-system-channels-column');
+    channelsColumn.append(pagedSection('Channels', channelsPage, radioSystemChannelColumns,
+      'Search channel, site, or name', 'radio-system-channels'));
     const layout = node('div', 'entity-info-layout system-info-layout');
-    layout.append(infoColumn, sitesColumn);
+    layout.append(infoColumn, channelsColumn);
     content.append(layout);
   }
 }
 
-async function renderTalkgroup() {
+async function renderGroupIdentity() {
   const renderContext = captureRenderContext();
-  const systemScope = requiredSystemScope();
-  const id = requiredId();
-  const kind = route.get('kind') === 'patch_group' ? 'patch_group' : 'talkgroup';
-  const response = await api(groupIdentityApiPath(systemScope.scope, kind, id));
-  const talkgroup = response;
+  const radioSystem = requiredRadioSystem();
+  const identityKey = requiredIdentityKey();
+  const response = await api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey));
+  const groupIdentity = response;
+  const kind = rowGroupIdentityKind(groupIdentity);
   const tab = route.get('tab') || 'info';
-  const formattedId = identityNumber(talkgroup, id);
+  const formattedId = identityNumber(groupIdentity, groupIdentity.native_id);
   const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
-  const title = aliasLabel(talkgroup) || `${kindLabel} ${formattedId}`;
+  const title = aliasLabel(groupIdentity) || `${kindLabel} ${formattedId}`;
   if (!beginPage(renderContext,
-    pageHeader(title, fragment(systemValue(talkgroup), ` · ${kindLabel} ${formattedId}`)),
-    entityTabs('talkgroup', talkgroup, id, tab, false, kind))) return;
+    pageHeader(title, fragment(radioSystemValue(groupIdentity), ` · ${kindLabel} ${formattedId}`)),
+    entityTabs('group-identity', groupIdentity, identityKey, tab, false))) return;
 
   if (tab === 'radios') {
     const currentAffiliations = kind === 'talkgroup' &&
-      systemCapability(talkgroup, 'current_affiliations');
-    const sitePresence = currentAffiliations && systemCapability(talkgroup, 'radio_site_presence');
+      radioSystemCapability(groupIdentity, 'current_affiliations');
+    const channelPresence = currentAffiliations && radioSystemCapability(groupIdentity, 'radio_channel_presence');
     const affiliatedOnly = currentAffiliations && route.get('affiliated') === 'true';
-    const relationships = await apiPage(systemApiPath(systemScope.scope, 'relationships'),
-      pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null,
+    const relationships = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'relationships'),
+      pageParameters({ group_identity_key: identityKey,
         affiliated: affiliatedOnly ? true : null }));
     const columns = [
-      { id: 'radio', label: 'Radio', render: (row) => radioLink(row, row.radio_id, undefined,
-        row.radio_entity_ref), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
+      { id: 'radio', label: 'Radio', render: (row) => radioLink(row, row.radio_native_id, undefined,
+        row.radio_entity_ref), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_native_id) },
       { id: 'alias', label: 'Alias', render: (row) => row.radio_alias_name ?
-        radioLink(row, row.radio_id, row.radio_alias_name, row.radio_entity_ref) : '',
+        radioLink(row, row.radio_native_id, row.radio_alias_name, row.radio_entity_ref) : '',
         className: 'alias-cell', sort: 'radio_alias', sortValue: (row) => row.radio_alias_name || '' },
       { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
-    if (systemCapability(talkgroup, 'talker_aliases')) {
+    if (radioSystemCapability(groupIdentity, 'talker_aliases')) {
       columns.splice(2, 0, { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias',
         className: 'alias-cell', sort: 'talker_alias' });
     }
-    if (sitePresence) {
-      columns.splice(systemCapability(talkgroup, 'talker_aliases') ? 3 : 2, 0,
-        { id: 'affiliated-site', label: 'Affiliated Site', fullLabel: 'Last Confirmed Affiliated Site',
-          render: (row) => row.currently_affiliated === true ? sitePresenceCell(row) : '',
-          className: 'alias-cell', sort: 'site', sortValue: (row) => row.currently_affiliated === true ?
-            presenceSiteSortValue(row) : '' });
+    if (channelPresence) {
+      columns.splice(radioSystemCapability(groupIdentity, 'talker_aliases') ? 3 : 2, 0,
+        { id: 'confirmed-channel', label: 'Confirmed Channel', fullLabel: 'Last Confirmed Affiliated Channel',
+          render: (row) => row.currently_affiliated === true ? channelPresenceCell(row) : '',
+          className: 'alias-cell', sort: 'channel', sortValue: (row) => row.currently_affiliated === true ?
+            presenceChannelSortValue(row) : '' });
     }
     const action = currentAffiliations ? anchor(affiliatedOnly ? 'Clear Filter' : 'Show Affiliated',
       currentHref({ affiliated: affiliatedOnly ? null : true, offset: null }), 'button secondary') : null;
     content.append(pagedSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', relationships,
-      columns, null, radioTableType('talkgroup-radios', columns), action));
+      columns, null, radioTableType('group-identity-radios', columns), action));
   } else if (tab === 'activity') {
     if (detailedHistoryAvailable()) {
-      await renderActivity({ ...systemScope, talkgroup_id: id, kind }, 'Activity Log');
+      await renderActivity({ ...radioSystem, group_identity_key: identityKey }, 'Activity Log');
     } else {
       content.append(section('Activity Log', node('div', 'empty',
         'Detailed history logging is not running.')));
@@ -13674,47 +13757,50 @@ async function renderTalkgroup() {
   } else {
     const infoColumn = node('div', 'entity-info-column');
     const blocks = [section('Identity', keyValues([
-      ['System', systemLink(talkgroup.system_entity_ref, systemInfoValue(talkgroup))],
+      [radioSystemOwnerLabel(groupIdentity), radioSystemLink(groupIdentity.radio_system_entity_ref,
+        radioSystemInfoValue(groupIdentity))],
       [kind === 'patch_group' ? 'Patch Group ID' : 'Talkgroup ID', formattedId],
-      ['Alias', aliasLabel(talkgroup)],
-      ['Description', talkgroup.alias_description],
-      ['Group', talkgroup.alias_group]
+      ['Alias', aliasLabel(groupIdentity)],
+      ['Description', groupIdentity.alias_description],
+      ['Group', groupIdentity.alias_group]
     ])), section('Logical Call Activity', metrics([
-      ['Logical Calls', talkgroup.logical_call_count],
-      ['Site Observations', talkgroup.site_observation_count],
-      ['Recorded', talkgroup.recorded_logical_call_count],
-      ['Submitted to Streamer', talkgroup.stream_submitted_logical_call_count],
-      ['Encrypted', talkgroup.encrypted_logical_call_count]
+      ['Logical Calls', groupIdentity.logical_call_count],
+      ['Channel Observations', groupIdentity.channel_observation_count],
+      ['Recorded', groupIdentity.recorded_logical_call_count],
+      ['Submitted to Streamer', groupIdentity.stream_submitted_logical_call_count],
+      ['Encrypted', groupIdentity.encrypted_logical_call_count]
     ], true)), section('Relationships', metrics([
-      ['Observed Radios', talkgroup.radios]
+      ['Observed Radios', groupIdentity.radios]
     ], true))];
-    if (kind === 'talkgroup' && systemCapability(talkgroup, 'current_affiliations')) {
+    if (kind === 'talkgroup' && radioSystemCapability(groupIdentity, 'current_affiliations')) {
       const currentState = [
-        ['Currently Affiliated', anchor(number(talkgroup.affiliated_radios),
-          href('talkgroup', { ...scope(talkgroup), id, tab: 'radios', affiliated: true }))]
+        ['Currently Affiliated', anchor(number(groupIdentity.affiliated_radios),
+          href('group-identity', { ...radioSystemRoute(groupIdentity), identity_key: identityKey,
+            tab: 'radios', affiliated: true }))]
       ];
-      if (systemCapability(talkgroup, 'radio_site_presence')) {
-        currentState.push(['Affiliated Sites', number(talkgroup.affiliated_sites)]);
+      if (radioSystemCapability(groupIdentity, 'radio_channel_presence')) {
+        currentState.push(['Affiliated Channels', number(groupIdentity.affiliated_channels)]);
       }
       blocks.push(section('Current State', keyValues(currentState)));
     }
     blocks.push(section('Last-known Facts', keyValues([
-      ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id, undefined,
-        talkgroup.last_source_entity_ref)],
-      ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(talkgroup.last_encryption_algorithm_name,
-        talkgroup.last_encryption_algorithm_id)],
-      ['Last Encryption Key ID', hexDecimalPair(talkgroup.last_encryption_key_id)]
+      ['Last Source', radioLink(groupIdentity, groupIdentity.last_source_radio_id, undefined,
+        groupIdentity.last_source_entity_ref)],
+      ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(groupIdentity.last_encryption_algorithm_name,
+        groupIdentity.last_encryption_algorithm_id)],
+      ['Last Encryption Key ID', hexDecimalPair(groupIdentity.last_encryption_key_id)]
     ])), section('Observed Times', keyValues([
-      ['First Observed', dateTime(talkgroup.first_seen_ms)],
-      ['Last Observed', dateTime(talkgroup.last_seen_ms)]
+      ['First Observed', dateTime(groupIdentity.first_seen_ms)],
+      ['Last Observed', dateTime(groupIdentity.last_seen_ms)]
     ])), tableSection('Collected Signaling Observations',
-      signalingCounts(talkgroup).map(([action, count]) => ({ action, count })), [
+      signalingCounts(groupIdentity).map(([action, count]) => ({ action, count })), [
       { id: 'action', label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
     ], 'No signaling observations recorded', { type: 'action-counts' }));
     infoColumn.append(...blocks);
     const layout = node('div', 'entity-info-layout');
-    const activityHistory = await talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind });
+    const activityHistory = await groupIdentityActivityHistorySection({ ...radioSystem,
+      identity_key: identityKey });
     if (!renderIsCurrent(renderContext)) return;
     layout.append(infoColumn, activityHistory);
     content.append(layout);
@@ -13723,45 +13809,45 @@ async function renderTalkgroup() {
 
 async function renderRadio() {
   const renderContext = captureRenderContext();
-  const systemScope = requiredSystemScope();
-  const id = requiredId();
-  const response = await api(`${systemApiPath(systemScope.scope, 'radios')}/${encodeURIComponent(String(id))}`);
+  const radioSystem = requiredRadioSystem();
+  const identityKey = requiredIdentityKey();
+  const response = await api(`${radioSystemApiPath(radioSystem.radio_system_key, 'radios')}/${encodeURIComponent(identityKey)}`);
   const radio = response;
   const tab = route.get('tab') || 'info';
-  const formattedId = identityNumber(radio, id);
+  const formattedId = identityNumber(radio, radio.native_id);
   const title = aliasLabel(radio) || radio.last_talker_alias || `Radio ${formattedId}`;
   if (!beginPage(renderContext,
-    pageHeader(title, fragment(systemValue(radio), ` · Radio ${formattedId}`)),
-    entityTabs('radio', radio, id, tab, true))) return;
+    pageHeader(title, fragment(radioSystemValue(radio), ` · Radio ${formattedId}`)),
+    entityTabs('radio', radio, identityKey, tab, true))) return;
 
-  if (tab === 'talkgroups') {
-    const relationships = await apiPage(systemApiPath(systemScope.scope, 'relationships'),
-      pageParameters({ radio_id: id }));
+  if (tab === 'groups') {
+    const relationships = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'relationships'),
+      pageParameters({ radio_identity_key: identityKey }));
     const columns = [
-      { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row, row.talkgroup_id,
-        undefined, row.talkgroup_entity_ref), className: 'numeric', sort: 'talkgroup',
-        sortValue: (row) => Number(row.talkgroup_id) },
-      { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
-      { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row,
-        row.talkgroup_id, 'talkgroup_alias_', row.talkgroup_entity_ref), className: 'alias-cell',
-        sort: 'talkgroup_alias', sortValue: (row) => row.talkgroup_alias_name || '' },
-      { id: 'talkgroup-description', label: 'Description', key: 'talkgroup_alias_description',
+      { id: 'group-identity-id', label: 'Group', render: (row) => groupIdentityLink(row,
+        row.group_native_id, undefined, row.group_identity_entity_ref), className: 'numeric',
+        sort: 'group_identity', sortValue: (row) => Number(row.group_native_id) },
+      { id: 'group-identity-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
+      { id: 'group-identity-name', label: 'Group Alias', render: (row) => groupIdentityAliasLink(row,
+        row.group_native_id, 'group_identity_alias_', row.group_identity_entity_ref), className: 'alias-cell',
+        sort: 'group_identity_alias', sortValue: (row) => row.group_identity_alias_name || '' },
+      { id: 'group-identity-description', label: 'Description', key: 'group_identity_alias_description',
         className: 'alias-cell' },
       { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
-    content.append(pagedSection('Talkgroups', relationships, columns, null, 'radio-talkgroups'));
+    content.append(pagedSection('Groups', relationships, columns, null, 'radio-groups'));
   } else if (tab === 'activity') {
-    await renderActivity({ ...systemScope, radio_id: id });
+    await renderActivity({ ...radioSystem, radio_identity_key: identityKey });
   } else {
     const infoColumn = node('div', 'entity-info-column entity-info-standalone');
     const identityValues = [
-      ['System', systemLink(radio.system_entity_ref, systemInfoValue(radio))],
+      [radioSystemOwnerLabel(radio), radioSystemLink(radio.radio_system_entity_ref, radioSystemInfoValue(radio))],
       ['Radio ID', formattedId],
       ['Alias', aliasLabel(radio)]
     ];
-    if (systemCapability(radio, 'talker_aliases')) {
+    if (radioSystemCapability(radio, 'talker_aliases')) {
       identityValues.push(['Talker Alias', radio.last_talker_alias]);
     }
     const blocks = [section('Identity', keyValues(identityValues)), section('Logical Call Activity', metrics([
@@ -13770,34 +13856,25 @@ async function renderRadio() {
       ['Submitted to Streamer', radio.stream_submitted_logical_call_count],
       ['Encrypted', radio.encrypted_logical_call_count]
     ], true))];
-    if (systemCapability(radio, 'current_affiliations')) {
+    if (radioSystemCapability(radio, 'current_affiliations')) {
       blocks.push(section('Current Affiliation', keyValues([
-        ['Talkgroup ID', talkgroupLink(radio, radio.affiliated_talkgroup_id, undefined,
+        ['Talkgroup ID', groupIdentityLink(radio, radio.affiliated_talkgroup_id, undefined,
           radio.affiliated_talkgroup_entity_ref)],
-        ['Talkgroup Alias', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
+        ['Talkgroup Alias', groupIdentityAliasLink(radio, radio.affiliated_talkgroup_id,
           'affiliated_talkgroup_alias_', radio.affiliated_talkgroup_entity_ref)],
         ['Affiliation Confirmed', dateTime(radio.affiliation_confirmed_at_ms)]
       ])));
     }
-    if (systemCapability(radio, 'radio_site_presence')) {
+    if (radioSystemCapability(radio, 'radio_channel_presence')) {
       const presence = authoritativePresence(radio);
-      blocks.push(section('Last Confirmed Site', keyValues([
-        ['Site', sitePresenceCell(radio, false)],
+      blocks.push(section('Last Confirmed Channel', keyValues([
+        ['Channel', channelPresenceCell(radio, false)],
         ['Confirmed', presence ? dateTime(presence.confirmed_at_ms) : '—']
       ])));
     }
     blocks.push(section('Relationships', metrics([
-      ['Observed Talkgroups', radio.talkgroups]
+      ['Observed Groups', radio.groups]
     ])), section('Last-known Facts', keyValues([
-      ['Last Talkgroup', talkgroupLink(radio, radio.last_talkgroup_id, undefined,
-        radio.last_talkgroup_entity_ref)],
-      ['Talkgroup Alias', talkgroupAliasLink(radio, radio.last_talkgroup_id,
-        'last_talkgroup_alias_', radio.last_talkgroup_entity_ref)],
-      ['Last Peer Radio', radioLink(radio, radio.last_peer_radio_id, undefined,
-        radio.last_peer_entity_ref)],
-      ['Peer Alias', radio.last_peer_alias_name ?
-        radioLink(radio, radio.last_peer_radio_id, radio.last_peer_alias_name,
-          radio.last_peer_entity_ref) : ''],
       ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(radio.last_encryption_algorithm_name,
         radio.last_encryption_algorithm_id)],
       ['Last Encryption Key ID', hexDecimalPair(radio.last_encryption_key_id)]
@@ -13815,13 +13892,29 @@ async function renderRadio() {
   }
 }
 
-function siteIdentity(site) {
-  if (!isP25(site)) return trunkedIdentity(site);
+function channelLocationIdentity(channel) {
+  if (protocolFamily(channel) === 'DMR') {
+    const model = semanticLabel(channel.model);
+    return [
+      model ? `${model} model` : '',
+      channel.network_id == null ? '' : `Network ${identifierNumber(channel.network_id)}`,
+      channel.site_id == null ? '' : `Site ${identifierNumber(channel.site_id)}`
+    ].filter(Boolean).join(' · ');
+  }
+  if (protocolFamily(channel) === 'NXDN') {
+    return [
+      semanticLabel(channel.location_category),
+      channel.system_id == null ? '' : `System ${identifierNumber(channel.system_id)}`,
+      channel.site_id == null ? '' : `Site ${identifierNumber(channel.site_id)}`,
+      channel.site_network_id == null ? '' : `Integrator ${identifierNumber(channel.site_network_id)}`,
+      channel.ran == null ? '' : `RAN ${identifierNumber(channel.ran)}`
+    ].filter(Boolean).join(' · ');
+  }
   return [
-    site.wacn == null ? '' : `WACN ${hex(site.wacn, 5)}`,
-    site.system_id == null ? '' : `System ${hex(site.system_id, 3)}`,
-    site.rfss == null ? '' : `RFSS ${hex(site.rfss, 2)}`,
-    site.site_id == null ? '' : `Site ${hex(site.site_id, 2)}`
+    channel.wacn == null ? '' : `WACN ${hex(channel.wacn, 5)}`,
+    channel.system_id == null ? '' : `System ${hex(channel.system_id, 3)}`,
+    channel.rfss == null ? '' : `RFSS ${hex(channel.rfss, 2)}`,
+    channel.site_id == null ? '' : `Site ${hex(channel.site_id, 2)}`
   ].filter(Boolean).join(' · ');
 }
 
@@ -13830,59 +13923,90 @@ function p25DecoderMode(value) {
     String(value || '').trim().toUpperCase()] || availableValue(value);
 }
 
-function p25SiteDetailRows(site) {
+function p25ChannelDetailRows(channel) {
   return [
-    ['Callsign', callsignLink(site.callsign)], ['WACN', hexDecimalPair(site.wacn, 5)],
-    ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
-    ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site_id, 2)],
-    ['Local Registration Area', hexDecimalPair(site.lra, 2)],
-    ['Active RFSS Network Connection', yesNoKnown(site.active_rfss_network_connection)],
-    ['Manufacturer', site.mfid_display],
-    ['Configured Decoder Mode', p25DecoderMode(site.p25_decoder_mode)],
-    ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
-    ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
-    ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' :
-      `${number(site.wuid_lease_minutes)} minutes`],
-    ['Unit registration over control channel', yesNoKnown(site.registration_service)],
-    ['TDMA', yesNoKnown(site.tdma)], ['u-Slots', site.micro_slots == null ? '' : number(site.micro_slots)],
-    ['Voice', yesNoKnown(site.voice_service)]
+    ['Callsign', callsignLink(channel.callsign)], ['WACN', hexDecimalPair(channel.wacn, 5)],
+    ['SysID', hexDecimalPair(channel.system_id, 3)], ['NAC', hexDecimalPair(channel.nac, 3)],
+    ['RFSS', hexDecimalPair(channel.rfss, 2)], ['Site', hexDecimalPair(channel.site_id, 2)],
+    ['Local Registration Area', hexDecimalPair(channel.lra, 2)],
+    ['Active RFSS Network Connection', yesNoKnown(channel.active_rfss_network_connection)],
+    ['Manufacturer', channel.mfid_display],
+    ['Configured Decoder Mode', p25DecoderMode(channel.p25_decoder_mode)],
+    ['Broadcast Clock', dateTime(channel.broadcast_clock_ms)],
+    ['Data', yesNoKnown(channel.data_service)], ['Data Access', channel.data_access],
+    ['Working Unit ID Lease Time', channel.wuid_lease_minutes == null ? '' :
+      `${number(channel.wuid_lease_minutes)} minutes`],
+    ['Unit registration over control channel', yesNoKnown(channel.registration_service)],
+    ['TDMA', yesNoKnown(channel.tdma)], ['u-Slots', channel.micro_slots == null ? '' : number(channel.micro_slots)],
+    ['Voice', yesNoKnown(channel.voice_service)]
   ];
 }
 
-function dmrSiteDetailRows(site) {
-  return [
-    ['Variant', trunkedVariant(site)], ['Network', identifierNumber(site.network_id)],
-    ['System', identifierNumber(site.system_id)], ['Site', identifierNumber(site.site_id)],
-    ['RAN', identifierNumber(site.ran)], ['Brand', semanticLabel(site.brand)],
-    ['Model', semanticLabel(site.model)], ['Mode', semanticLabel(site.mode)],
-    ['Channel Type', semanticLabel(site.channel_type)],
-    ['Color Code TS1', identifierNumber(site.color_code_ts1)],
-    ['Color Code TS2', identifierNumber(site.color_code_ts2)]
-  ];
+function distinctObservedVariant(channel) {
+  const observed = trunkedVariant({ variant: channel?.site_variant });
+  const authoritative = trunkedVariant(channel);
+  return observed && observed !== authoritative ? observed : '';
 }
 
-function nxdnSiteDetailRows(site) {
-  return [
-    ['Variant', trunkedVariant(site)], ['Network', identifierNumber(site.network_id)],
-    ['System', identifierNumber(site.system_id)], ['Site', identifierNumber(site.site_id)],
-    ['RAN', identifierNumber(site.ran)], ['Category', identityDomainLabel(site)],
-    ['Repeater State', semanticLabel(site.repeater_state)],
-    ['Current Repeater', identifierNumber(site.current_repeater)],
-    ['Services', (site.services || []).map(semanticLabel).join(', ')],
-    ['Failure Call Timer', Object.hasOwn(site, 'failure_call_timer_seconds') ?
-      (site.failure_call_timer_seconds == null ? 'Unspecified' :
-        `${number(site.failure_call_timer_seconds)} seconds`) : '']
-  ];
+function distinctObservedClassification(observed, authoritative) {
+  const observedLabel = semanticLabel(observed);
+  return observedLabel && observedLabel !== semanticLabel(authoritative) ? observedLabel : '';
 }
 
-function siteProtocolDetailRows(site) {
-  if (isP25(site)) return p25SiteDetailRows(site);
-  if (protocolFamily(site) === 'DMR') return dmrSiteDetailRows(site);
-  if (protocolFamily(site) === 'NXDN') return nxdnSiteDetailRows(site);
+function dmrChannelDetailRows(channel) {
+  const rows = [
+    ['Radio System Variant', trunkedVariant(channel)],
+    ['Radio System Network', identifierNumber(channel.network_id)],
+    ['Radio System Model', semanticLabel(channel.model)],
+    ['Observed Site', identifierNumber(channel.site_id)]
+  ];
+  const siteVariant = distinctObservedVariant(channel);
+  const siteModel = distinctObservedClassification(channel.site_model, channel.model);
+  if (siteVariant) rows.push(['Observed Site Variant', siteVariant]);
+  if (siteModel) rows.push(['Observed Site Model', siteModel]);
+  rows.push(
+    ['Brand', semanticLabel(channel.brand)], ['Mode', semanticLabel(channel.mode)],
+    ['Channel Type', semanticLabel(channel.channel_type)],
+    ['Color Code TS1', identifierNumber(channel.color_code_ts1)],
+    ['Color Code TS2', identifierNumber(channel.color_code_ts2)]
+  );
+  return rows;
+}
+
+function nxdnChannelDetailRows(channel) {
+  const rows = [
+    ['Radio System Variant', trunkedVariant(channel)],
+    ['Radio System Category', semanticLabel(channel.location_category)],
+    ['Radio System ID', identifierNumber(channel.system_id)],
+    ['Observed Site', identifierNumber(channel.site_id)]
+  ];
+  const integrator = identifierNumber(channel.site_network_id);
+  const siteVariant = distinctObservedVariant(channel);
+  const siteCategory = distinctObservedClassification(channel.site_location_category,
+    channel.location_category);
+  if (integrator) rows.push(['Observed Integrator', integrator]);
+  if (siteVariant) rows.push(['Observed Site Variant', siteVariant]);
+  if (siteCategory) rows.push(['Observed Site Category', siteCategory]);
+  rows.push(
+    ['RAN', identifierNumber(channel.ran)],
+    ['Repeater State', semanticLabel(channel.repeater_state)],
+    ['Current Repeater', identifierNumber(channel.current_repeater)],
+    ['Services', (channel.services || []).map(semanticLabel).join(', ')],
+    ['Failure Call Timer', Object.hasOwn(channel, 'failure_call_timer_seconds') ?
+      (channel.failure_call_timer_seconds == null ? 'Unspecified' :
+        `${number(channel.failure_call_timer_seconds)} seconds`) : '']
+  );
+  return rows;
+}
+
+function channelProtocolDetailRows(channel) {
+  if (isP25(channel)) return p25ChannelDetailRows(channel);
+  if (protocolFamily(channel) === 'DMR') return dmrChannelDetailRows(channel);
+  if (protocolFamily(channel) === 'NXDN') return nxdnChannelDetailRows(channel);
   return [];
 }
 
-function p25SiteChannelColumns() {
+function p25ChannelFrequencyColumns() {
   return [
     { id: 'descriptor', label: 'LCN / Mode', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
     { id: 'callsign', label: 'Callsign', render: (row) => callsignLink(row.callsign),
@@ -13908,7 +14032,7 @@ function p25SiteChannelColumns() {
   ];
 }
 
-function trunkedSiteChannelColumns() {
+function trunkedChannelFrequencyColumns() {
   return [
     { id: 'channel', label: 'Channel', key: 'channel_number', className: 'numeric',
       render: (row) => identifierNumber(row.channel_number) },
@@ -13929,23 +14053,23 @@ function trunkedSiteChannelColumns() {
   ];
 }
 
-async function renderSiteChannels(site, renderContext) {
-  const p25 = isP25(site);
-  const directory = createAsyncSection('Channels', {
-    action: exportCsvLink('site-channels', { guid: site.guid }),
-    loadingMessage: 'Loading site channels…',
-    errorMessage: 'The site channels could not be loaded.'
+async function renderTrunkedChannelFrequencies(channel, renderContext) {
+  const p25 = isP25(channel);
+  const directory = createAsyncSection('Frequencies', {
+    action: exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id }),
+    loadingMessage: 'Loading channel frequencies…',
+    errorMessage: 'The channel frequencies could not be loaded.'
   });
   if (!renderIsCurrent(renderContext)) return;
   content.append(directory.element);
   await directory.load(
-    () => apiPage(siteApiPath(site.guid, 'channels'), pageParameters()),
+    () => apiPage(channelApiPath(channel.configuration_id, 'frequencies'), pageParameters()),
     (page) => fragment(
-      protocolFamily(site) === 'DMR' ? node('p', 'muted',
+      protocolFamily(channel) === 'DMR' ? node('p', 'muted',
         'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.') : null,
-      pagedTableContent(page, p25 ? p25SiteChannelColumns() : trunkedSiteChannelColumns(),
-        p25 ? 'site-channels' : 'trunked-site-channels', {
-          itemLabel: 'Channels', emptyText: 'No channels recorded',
+      pagedTableContent(page, p25 ? p25ChannelFrequencyColumns() : trunkedChannelFrequencyColumns(),
+        p25 ? 'channel-frequencies-p25' : 'channel-frequencies-trunked', {
+          itemLabel: 'Frequencies', emptyText: 'No frequencies recorded',
           tableOptions: {
             sortable: false, serverSort: false,
             layoutMenuHost: directory.titleActions, controller: directory.tableController
@@ -13954,7 +14078,7 @@ async function renderSiteChannels(site, renderContext) {
     renderContext);
 }
 
-function p25SiteNeighborColumns() {
+function p25ChannelNeighborColumns() {
   return [
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
       sortValue: (row) => row.state || '' },
@@ -13986,14 +14110,14 @@ function p25SiteNeighborColumns() {
   ];
 }
 
-function trunkedSiteNeighborColumns(site) {
+function trunkedChannelNeighborColumns(channel) {
   return [
     { id: 'variant', label: 'Variant', render: (row) => trunkedVariant({
-      protocol: site.protocol,
+      protocol: channel.protocol,
       variant: row.variant
     }) },
     { id: 'model-category', label: 'Model / Category', render: (row) => identityDomainLabel({
-      protocol: site.protocol,
+      protocol: channel.protocol,
       address_domain: row.address_domain,
       model: row.model,
       location_category: row.location_category
@@ -14019,20 +14143,20 @@ function trunkedSiteNeighborColumns(site) {
   ];
 }
 
-async function renderSiteNeighbors(site, renderContext) {
-  const p25 = isP25(site);
+async function renderChannelNeighbors(channel, renderContext) {
+  const p25 = isP25(channel);
   const directory = createAsyncSection('Neighbors', {
-    action: exportCsvLink('site-neighbors', { guid: site.guid }),
-    loadingMessage: 'Loading site neighbors…',
-    errorMessage: 'The site neighbors could not be loaded.'
+    action: exportCsvLink('channel-neighbors', { configuration_id: channel.configuration_id }),
+    loadingMessage: 'Loading channel neighbors…',
+    errorMessage: 'The channel neighbors could not be loaded.'
   });
   if (!renderIsCurrent(renderContext)) return;
   content.append(directory.element);
   await directory.load(
-    () => apiPage(siteApiPath(site.guid, 'neighbors'), pageParameters()),
+    () => apiPage(channelApiPath(channel.configuration_id, 'neighbors'), pageParameters()),
     (page) => pagedTableContent(page,
-      p25 ? p25SiteNeighborColumns() : trunkedSiteNeighborColumns(site),
-      p25 ? 'site-neighbors' : 'trunked-site-neighbors', {
+      p25 ? p25ChannelNeighborColumns() : trunkedChannelNeighborColumns(channel),
+      p25 ? 'channel-neighbors-p25' : 'channel-neighbors-trunked', {
         itemLabel: 'Neighbors', emptyText: 'No neighbors recorded',
         tableOptions: {
           sortable: false, serverSort: false,
@@ -14042,38 +14166,39 @@ async function renderSiteNeighbors(site, renderContext) {
     renderContext);
 }
 
-async function renderSiteInfo(site, renderContext) {
+async function renderTrunkedChannelInfo(channel, renderContext) {
   const summary = [
-    ['Metadata Updates', site.observation_count], ['Channels', site.channels], ['Neighbors', site.neighbors]
+    ['Metadata Updates', channel.observation_count], ['Frequencies', channel.frequencies], ['Neighbors', channel.neighbors]
   ];
-  if (siteCapability(site, 'frequency_bands')) summary.push(['Band Plans', site.bands]);
-  if (siteCapability(site, 'patch_groups')) summary.push(['Patches', site.patches]);
-  if (siteCapability(site, 'current_affiliations') && siteCapability(site, 'radio_site_presence')) {
-    const label = number(site.affiliated_radios);
-    const linked = site.scope_token && site.guid ? anchor(label,
-      href('system', { ...scope(site), tab: 'radios', affiliated: true, site_guid: site.guid })) : label;
-    summary.push(['Affiliated Radios', site.affiliated_radios, linked]);
+  if (channelCapability(channel, 'frequency_bands')) summary.push(['Band Plans', channel.bands]);
+  if (channelCapability(channel, 'patch_groups')) summary.push(['Patches', channel.patches]);
+  if (channelCapability(channel, 'current_affiliations') && channelCapability(channel, 'radio_channel_presence')) {
+    const label = number(channel.affiliated_radios);
+    const linked = channel.radio_system_key && channel.configuration_id ? anchor(label,
+      href('radio-system', { ...radioSystemRoute(channel), tab: 'radios', affiliated: true,
+        configuration_id: channel.configuration_id })) : label;
+    summary.push(['Affiliated Radios', channel.affiliated_radios, linked]);
   }
 
   const infoColumn = node('div', 'entity-info-column');
-  infoColumn.append(section('Site Info', keyValues([
-    ['System', systemLink(site.system_entity_ref, systemInfoValue(site))],
-    ['Site', siteInfoSiteValue(site)], ['Name', configuredNameValue(site)],
-    ['GUID', site.guid],
-    ['Alias List', aliasListLink(site.alias_list_name, site.alias_list_id)],
-    ['Protocol', protocolFamily(site)], ['Decoder', decoderDisplay(site.decoder)],
-    ['Configured Frequency', frequency(site.primary_frequency_hz)],
-    ['Current Control Frequency', frequency(site.current_control_hz)],
-    ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)]
+  infoColumn.append(section('Channel Info', keyValues([
+    [radioSystemOwnerLabel(channel), radioSystemLink(channel.radio_system_entity_ref, radioSystemInfoValue(channel))],
+    ['Site', siteNameValue(channel)], ['Name', nameValue(channel)],
+    ['Configuration ID', channel.configuration_id],
+    ['Alias List', aliasListLink(channel.alias_list_name, channel.alias_list_id)],
+    ['Protocol', protocolFamily(channel)], ['Decoder', decoderDisplay(channel.decoder)],
+    ['Configured Frequency', frequency(channel.primary_frequency_hz)],
+    ['Current Control Frequency', frequency(channel.current_control_hz)],
+    ['First Seen', dateTime(channel.first_seen_ms)], ['Last Seen', dateTime(channel.last_seen_ms)]
   ])));
-  const protocolDetails = siteProtocolDetailRows(site);
+  const protocolDetails = channelProtocolDetailRows(channel);
   if (protocolDetails.length) {
-    infoColumn.append(section(`${protocolFamily(site)} Details`, keyValues(protocolDetails)));
+    infoColumn.append(section(`${protocolFamily(channel)} Details`, keyValues(protocolDetails)));
   }
 
   const activityColumn = node('div', 'entity-info-column');
-  if (siteCapability(site, 'group_identities')) {
-    activityColumn.append(await siteTopTalkgroupsSection(site));
+  if (channelCapability(channel, 'group_identities')) {
+    activityColumn.append(await channelTopGroupsSection(channel));
   }
   if (!renderIsCurrent(renderContext)) return;
   const layout = node('div', 'entity-info-layout');
@@ -14082,30 +14207,27 @@ async function renderSiteInfo(site, renderContext) {
   content.append(metrics(summary), layout);
 }
 
-async function renderSite() {
-  const renderContext = captureRenderContext();
-  const guid = route.get('guid');
-  if (!guid) throw new Error('Site GUID is missing from the URL');
-  const response = await api(siteApiPath(guid));
-  const site = response;
+async function renderTrunkedChannel(channel, configurationId, renderContext) {
   const requestedTab = route.get('tab') || 'info';
-  const tabItems = siteTabItems(site);
+  const tabItems = trunkedChannelTabItems(channel);
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
-  const display = siteDisplayParts(site);
-  const subtitle = [display.secondary, protocolFamily(site), trunkedVariant(site), siteIdentity(site)]
+  const display = channelDisplayParts(channel);
+  const siteVariant = trunkedVariant({ variant: channel.site_variant });
+  const subtitle = [display.secondary, protocolFamily(channel), trunkedVariant(channel) || siteVariant,
+    channelLocationIdentity(channel)]
     .filter(Boolean).join(' · ');
-  if (!beginPage(renderContext, pageHeader(siteValue(site), subtitle), siteTabs(site, tab))) return;
+  if (!beginPage(renderContext, pageHeader(channelValue(channel), subtitle), trunkedChannelTabs(channel, tab))) return;
 
   if (tab === 'quality') {
-    const signalHistory = await siteSignalHistorySection(site);
+    const signalHistory = await channelSignalHistorySection(channel);
     if (!renderIsCurrent(renderContext)) return;
     content.append(signalHistory);
-  } else if (tab === 'channels') {
-    await renderSiteChannels(site, renderContext);
+  } else if (tab === 'frequencies') {
+    await renderTrunkedChannelFrequencies(channel, renderContext);
   } else if (tab === 'neighbors') {
-    await renderSiteNeighbors(site, renderContext);
+    await renderChannelNeighbors(channel, renderContext);
   } else if (tab === 'band-plan') {
-    const data = await api(siteApiPath(guid, 'frequency-bands'));
+    const data = await api(channelApiPath(configurationId, 'frequency-bands'));
     const overrideActive = data.band_source === 'P25_OVERRIDE';
     const homeBandColumns = [
       { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
@@ -14124,7 +14246,7 @@ async function renderSite() {
     const bandSource = badge(overrideActive ? 'P25 Override' : 'OTA Bandplan',
       overrideActive ? 'state-current' : '');
     content.append(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
-      'No home-system band plan recorded', { type: 'site-bands' }, null, bandSource));
+      'No home-system band plan recorded', { type: 'channel-frequency-bands' }, null, bandSource));
     content.append(tableSection('ISSI Advertised Band Plans', data.foreign_bands || [], [
       { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
       { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
@@ -14139,9 +14261,9 @@ async function renderSite() {
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
       { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ], 'No ISSI-advertised band plans recorded', { type: 'site-foreign-bands' }));
+    ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }));
   } else if (tab === 'patches') {
-    const data = await api(siteApiPath(guid, 'patch-groups'));
+    const data = await api(channelApiPath(configurationId, 'patch-groups'));
     const talkgroups = new Map();
     const radios = new Map();
     (data.talkgroups || []).forEach((row) => {
@@ -14152,43 +14274,42 @@ async function renderSite() {
       if (!radios.has(row.patch_group)) radios.set(row.patch_group, []);
       radios.get(row.patch_group).push(row);
     });
-    const memberLinks = (values, builder) => {
+    const memberValues = (values, formatter) => {
       const span = node('span');
       (values || []).forEach((value, index) => {
         if (index) span.append(document.createTextNode(', '));
-        span.append(builder(value));
+        span.append(valueNode(formatter(value)));
       });
       return span;
     };
     const groups = data.groups || [];
     const columns = [
-      { id: 'patch-id', label: 'Patch', fullLabel: 'Patch Talkgroup ID',
-        render: (row) => talkgroupLink(row, row.patch_group),
+      { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup ID',
+        render: (row) => identityNumber(row, row.patch_group),
         className: 'numeric', sortValue: (row) => Number(row.patch_group) },
-      { id: 'patch-name', label: 'Alias', fullLabel: 'Patch Alias', render: (row) => row.patch_alias_name ?
-        talkgroupLink(row, row.patch_group, row.patch_alias_name) : '',
+      { id: 'patch-name', label: 'Alias', fullLabel: 'Local Patch Alias', render: (row) => row.patch_alias_name || '',
         className: 'alias-cell', sortValue: (row) => row.patch_alias_name || '' },
-      { id: 'member-talkgroup-ids', label: 'TGIDs', fullLabel: 'Member Talkgroup IDs', render: (row) =>
-        memberLinks(talkgroups.get(row.patch_group), (member) => talkgroupLink(member, member.talkgroup_id)) },
-      { id: 'member-talkgroup-names', label: 'TG Aliases', fullLabel: 'Talkgroup Aliases', className: 'alias-cell', render: (row) =>
-        memberLinks(talkgroups.get(row.patch_group), (member) => member.alias_name ?
-          talkgroupLink(member, member.talkgroup_id, member.alias_name) : '') },
-      { id: 'member-radio-ids', label: 'Radios', fullLabel: 'Radio IDs', render: (row) =>
-        memberLinks(radios.get(row.patch_group), (member) => radioLink(member, member.radio_id)) },
-      { id: 'member-radio-names', label: 'Radio Aliases', className: 'alias-cell', render: (row) =>
-        memberLinks(radios.get(row.patch_group), (member) => member.alias_name ?
-          radioLink(member, member.radio_id, member.alias_name) : '') },
+      { id: 'member-talkgroup-ids', label: 'Local TGIDs', fullLabel: 'Local Member Talkgroup IDs', render: (row) =>
+        memberValues(talkgroups.get(row.patch_group), (member) => identityNumber(member, member.talkgroup_id)) },
+      { id: 'member-talkgroup-names', label: 'TG Aliases', fullLabel: 'Local Talkgroup Aliases',
+        className: 'alias-cell', render: (row) =>
+          memberValues(talkgroups.get(row.patch_group), (member) => member.alias_name || '') },
+      { id: 'member-radio-ids', label: 'Local Radios', fullLabel: 'Local Radio IDs', render: (row) =>
+        memberValues(radios.get(row.patch_group), (member) => identifierNumber(member.radio_id)) },
+      { id: 'member-radio-names', label: 'Radio Aliases', fullLabel: 'Local Radio Aliases',
+        className: 'alias-cell', render: (row) =>
+          memberValues(radios.get(row.patch_group), (member) => member.alias_name || '') },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
       { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     if (groups.some((row) => Number(row.version))) columns.splice(2, 0,
       { id: 'version', label: 'Version', key: 'version', className: 'numeric' });
-    content.append(tableSection('Patches', groups, columns, 'No patches recorded', { type: 'site-patches' }));
+    content.append(tableSection('Patches', groups, columns, 'No patches recorded', { type: 'channel-patches' }));
   } else if (tab === 'activity') {
-    await renderActivity({ guid });
+    await renderActivity({ configuration_id: configurationId });
   } else {
-    await renderSiteInfo(site, renderContext);
+    await renderTrunkedChannelInfo(channel, renderContext);
   }
 }
 
@@ -14280,15 +14401,21 @@ function activityIdentifier(row, value, kind, reference) {
       `${specialLabel}, ${protocol} system or special signaling identifier ${identifier}`);
     return result;
   }
-  if (kind === 'talkgroup') return talkgroupLink(row, value, identifier, reference);
+  if (['talkgroup', 'patch_group'].includes(kind)) {
+    return groupIdentityLink(row, value, identifier, reference);
+  }
   if (kind === 'radio') return radioLink(row, value, identifier, reference);
   return identifier;
 }
 
+function activityTargetKind(row) {
+  const kind = identityKind(row?.target_kind);
+  return ['talkgroup', 'patch_group', 'radio'].includes(kind) ? kind : '';
+}
+
 function activityTargetIdentifier(row) {
-  const targetKind = identityKind(row.target_kind);
-  const kind = targetKind === 'radio' ? 'radio' :
-    ['talkgroup', 'patch_group'].includes(targetKind) ? 'talkgroup' : '';
+  if (isAnalogChannel(row)) return '';
+  const kind = activityTargetKind(row);
   return activityIdentifier(row, row.target_id, kind, row.target_entity_ref);
 }
 
@@ -14300,23 +14427,29 @@ function activitySourceAlias(row) {
 }
 
 function activityTargetAlias(row) {
+  if (isAnalogChannel(row)) return '';
   const alias = row.target_alias_name || '';
   if (!alias) return '';
-  const targetKind = identityKind(row.target_kind);
-  const kind = targetKind === 'radio' ? 'radio' :
-    ['talkgroup', 'patch_group'].includes(targetKind) ? 'talkgroup' : '';
+  const kind = activityTargetKind(row);
   if (specialIdentifierLabel(row, row.target_id, kind)) return alias;
-  if (kind === 'talkgroup') return talkgroupLink(row, row.target_id, alias, row.target_entity_ref);
+  if (['talkgroup', 'patch_group'].includes(kind)) {
+    return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref);
+  }
   if (kind === 'radio') return radioLink(row, row.target_id, alias, row.target_entity_ref);
   return alias;
 }
 
 function activityChannel(row) {
-  return [
+  const label = String(row.name || '').trim();
+  const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row.entity_ref) : '';
+  const channel = label && target ? anchor(label, target) : label;
+  const details = [
     Number(row.frequency_hz) ? `${frequency(row.frequency_hz)} MHz` : '',
     row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`,
     timeslotLabel(row.timeslot)
   ].filter(Boolean).join(' · ');
+  if (!channel) return details;
+  return details ? fragment(channel, node('small', 'identity-summary-context', details)) : channel;
 }
 
 function activityColumns() {
@@ -14493,45 +14626,54 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   }
 }
 
-function conventionalMode(row) {
+function channelMode(row) {
   const family = protocolFamily(row);
   const decoder = decoderLabel(row.decoder, true);
   return family && decoder && family.toUpperCase() === decoder.toUpperCase() ? family :
     [family, decoder].filter(Boolean).join(' · ');
 }
 
-function conventionalDetails(row) {
+function channelDetails(row) {
+  if (String(row.channel_kind || '').toUpperCase() === 'TRUNKED') return channelDirectoryRfIdentity(row);
   return isP25(row) && row.nac != null ? `NAC ${hex(row.nac, 3)}` : '';
 }
 
-function conventionalColumns() {
+function channelDirectoryColumns() {
   return [
     { id: 'name', label: 'Name', render: (row) => {
-      const label = row.channel_name || row.configured_name || 'Unnamed channel';
+      const label = row.name || 'Unnamed channel';
       const target = entityRefHref(row.entity_ref);
       return target ? anchor(label, target) : label;
-    }, className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.configured_name || '' },
-    { id: 'mode', label: 'Mode', render: conventionalMode, sort: 'decoder', sortValue: conventionalMode },
-    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'details', label: 'Details', render: conventionalDetails, sortValue: conventionalDetails },
+    }, className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
+    { id: 'type', label: 'Type', render: (row) =>
+      String(row.channel_kind || '').toUpperCase() === 'TRUNKED' ? 'Trunked' : 'Conventional',
+      sort: 'type', sortValue: (row) => row.channel_kind || '' },
+    { id: 'system', label: 'System / Site', render: (row) =>
+      [row.system_name, row.site_name].filter(Boolean).join(' · '),
+      sortValue: (row) => `${row.system_name || ''}\u0000${row.site_name || ''}` },
+    { id: 'mode', label: 'Mode', render: channelMode, sort: 'decoder', sortValue: channelMode },
+    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
+      render: (row) => frequency(row.primary_frequency_hz), className: 'numeric', sort: 'frequency',
+      sortValue: (row) => Number(row.primary_frequency_hz || 0) },
+    { id: 'details', label: 'Details', render: channelDetails, sortValue: channelDetails },
     { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
 }
 
-async function renderConventional() {
+async function renderChannels() {
   const renderContext = captureRenderContext();
-  const directory = createAsyncSection('Conventional Channels', {
-    action: exportCsvLink('conventional-channels'),
-    loadingMessage: 'Loading conventional channels…',
-    errorMessage: 'The conventional channel directory could not be loaded.'
+  const directory = createAsyncSection('Channels', {
+    action: exportCsvLink('channels'),
+    loadingMessage: 'Loading channels…',
+    errorMessage: 'The channel directory could not be loaded.'
   });
   if (!beginPage(renderContext,
-    pageHeader('Conventional', 'Started conventional analog and digital channel summaries'),
-    searchBar('Search name or frequency'), directory.element)) return;
+    pageHeader('Channels', 'Every configured trunked and conventional receiver channel'),
+    searchBar('Search name, system, site, protocol, or frequency'), directory.element)) return;
   await directory.load(
-    () => apiPage('/api/v1/conventional-channels', pageParameters()),
-    (page) => pagedTableContent(page, conventionalColumns(), 'conventional', {
+    () => apiPage('/api/v1/channels', pageParameters()),
+    (page) => pagedTableContent(page, channelDirectoryColumns(), 'channels', {
       itemLabel: 'Channels', tableOptions: {
         layoutMenuHost: directory.titleActions, controller: directory.tableController
       }
@@ -14539,37 +14681,35 @@ async function renderConventional() {
     renderContext);
 }
 
-function conventionalCapability(context, capability) {
-  return Boolean(context?.capabilities?.[capability]);
-}
-
-function conventionalTabItems(channel) {
-  const values = { id: channel.configuration_id };
+function channelTabItems(channel) {
+  const values = { configuration_id: channel.configuration_id };
   const items = [];
   items.push({ id: 'info', label: 'Info',
-    href: href('conventional-detail', { ...values, tab: 'info' }) });
-  if (conventionalCapability(channel, 'group_identities')) {
-    items.push({ id: 'talkgroups', label: 'Talkgroups',
-      href: href('conventional-detail', { ...values, tab: 'talkgroups' }) });
+    href: href('channel', { ...values, tab: 'info' }) });
+  const analog = ['AM', 'NBFM'].includes(String(channel.decoder || '').toUpperCase());
+  if (!analog && channelCapability(channel, 'group_identities')) {
+    items.push({ id: 'groups', label: 'Groups',
+      href: href('channel', { ...values, tab: 'groups' }) });
   }
-  if (conventionalCapability(channel, 'radios')) {
+  if (channelCapability(channel, 'radios')) {
     items.push({ id: 'radios', label: 'Radios',
-      href: href('conventional-detail', { ...values, tab: 'radios' }) });
+      href: href('channel', { ...values, tab: 'radios' }) });
   }
-  if (conventionalCapability(channel, 'activity')) {
+  if (channelCapability(channel, 'activity')) {
     items.push({ id: 'activity', label: 'Activity',
-      href: href('conventional-detail', { ...values, tab: 'activity' }),
+      href: href('channel', { ...values, tab: 'activity' }),
       disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
   }
   return items;
 }
 
-function conventionalTalkgroupColumns() {
+function channelGroupIdentityColumns() {
   return [
-    { id: 'talkgroup-id', label: 'Talkgroup', key: 'talkgroup_id', className: 'numeric',
-      sort: 'talkgroup', render: (row) => identifierNumber(row.talkgroup_id) },
-    { id: 'talkgroup-name', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
-    { id: 'talkgroup-description', label: 'Description', key: 'alias_description',
+    { id: 'group-identity-id', label: 'Group', className: 'numeric',
+      sort: 'group_identity', render: (row) => identityNumber(row, groupIdentityDisplayId(row)) },
+    { id: 'group-identity-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
+    { id: 'group-identity-name', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
+    { id: 'group-identity-description', label: 'Description', key: 'alias_description',
       className: 'alias-cell' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
@@ -14595,10 +14735,10 @@ function conventionalTalkgroupColumns() {
   ];
 }
 
-function conventionalRadioColumns() {
+function channelRadioColumns() {
   return [
-    { id: 'radio', label: 'Radio', key: 'radio_id', className: 'numeric', sort: 'radio',
-      render: (row) => identifierNumber(row.radio_id) },
+    { id: 'radio', label: 'Radio', className: 'numeric', sort: 'radio',
+      render: (row) => identityNumber(row, radioDisplayId(row)) },
     { id: 'radio-alias', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
@@ -14644,47 +14784,42 @@ function conventionalRadioColumns() {
   ];
 }
 
-async function renderConventionalTalkgroups(configurationId) {
-  const page = await apiPage(conventionalApiPath(configurationId, 'talkgroups'), pageParameters({
-    limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
+async function renderChannelGroupIdentities(configurationId) {
+  const page = await apiPage(channelApiPath(configurationId, 'group-identities'), pageParameters({
+    limit: CHANNEL_IDENTITY_PAGE_LIMIT
   }));
-  content.append(pagedSection('Talkgroups', page, conventionalTalkgroupColumns(),
-    'Search talkgroup ID or alias', 'conventional-talkgroups',
-    exportCsvLink('conventional-talkgroups', { configuration_id: configurationId })));
+  content.append(pagedSection('Groups', page, channelGroupIdentityColumns(),
+    'Search group ID or alias', 'channel-group-identities',
+    exportCsvLink('channel-group-identities', { configuration_id: configurationId })));
 }
 
-async function renderConventionalRadios(configurationId) {
-  const page = await apiPage(conventionalApiPath(configurationId, 'radios'), pageParameters({
-    limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
+async function renderChannelRadios(configurationId) {
+  const page = await apiPage(channelApiPath(configurationId, 'radios'), pageParameters({
+    limit: CHANNEL_IDENTITY_PAGE_LIMIT
   }));
-  content.append(pagedSection('Radios', page, conventionalRadioColumns(),
-    'Search radio ID or alias', 'conventional-radios',
-    exportCsvLink('conventional-radios', { configuration_id: configurationId })));
+  content.append(pagedSection('Radios', page, channelRadioColumns(),
+    'Search radio ID or alias', 'channel-radios',
+    exportCsvLink('channel-radios', { configuration_id: configurationId })));
 }
 
-async function renderConventionalDetail() {
-  const renderContext = captureRenderContext();
-  const configurationId = route.get('id');
-  if (!configurationId) throw new Error('Conventional channel ID is missing from the URL');
-  const data = await api(conventionalApiPath(configurationId));
-  const channel = data?.channel;
-  if (!channel || typeof channel !== 'object') throw new Error('The conventional channel response is invalid');
-  const tabItems = conventionalTabItems(channel);
+async function renderConventionalChannel(data, channel, configurationId, renderContext) {
+  const tabItems = channelTabItems(channel);
   const requestedTab = route.get('tab') || 'info';
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : tabItems[0].id;
   if (!beginPage(renderContext,
-    pageHeader(channel.channel_name || channel.configured_name || 'Conventional Channel', protocolFamily(channel)),
+    pageHeader(channel.name || 'Channel',
+      `${protocolFamily(channel)} · Conventional`),
     tabs(tabItems, tab))) return;
 
   if (tab === 'activity') {
     await renderActivity({ configuration_id: configurationId });
-  } else if (tab === 'talkgroups') {
-    await renderConventionalTalkgroups(configurationId);
+  } else if (tab === 'groups') {
+    await renderChannelGroupIdentities(configurationId);
   } else if (tab === 'radios') {
-    await renderConventionalRadios(configurationId);
+    await renderChannelRadios(configurationId);
   } else {
     content.append(section('Channel Info', keyValues([
-      ['Name', channel.channel_name || channel.configured_name],
+      ['Name', channel.name],
       ['Protocol', protocolFamily(channel)], ['Decoder', decoderDisplay(channel.decoder)],
       ['Alias List', aliasListLink(channel.alias_list_name, channel.alias_list_id)],
       ['Frequency', frequency(channel.primary_frequency_hz)],
@@ -14710,7 +14845,23 @@ async function renderConventionalDetail() {
         sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'first-seen', label: 'First', fullLabel: 'First Observed', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Observed', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ], 'No frequency summaries recorded', { type: 'conventional-frequencies' }));
+    ], 'No frequency summaries recorded', { type: 'channel-frequencies' }));
+  }
+}
+
+async function renderChannel() {
+  const renderContext = captureRenderContext();
+  const configurationId = String(route.get('configuration_id') || '').trim();
+  if (!configurationId) throw new Error('Channel configuration ID is missing from the URL');
+  const data = await api(channelApiPath(configurationId));
+  const channel = data?.channel;
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
+    throw new Error('The channel response is invalid');
+  }
+  if (String(channel.channel_kind || '').toUpperCase() === 'TRUNKED') {
+    await renderTrunkedChannel(channel, configurationId, renderContext);
+  } else {
+    await renderConventionalChannel(data, channel, configurationId, renderContext);
   }
 }
 
@@ -15026,13 +15177,13 @@ function accessPolicyIdentity(policy) {
   return wrapper;
 }
 
-function wholeSiteAccessControl(policy, statusHost) {
-  const wrapper = node('div', 'admin-site-access-control');
-  const copy = node('div', 'admin-site-access-copy');
-  copy.append(node('strong', '', 'Whole-site access'),
+function webAccessControl(policy, statusHost) {
+  const wrapper = node('div', 'admin-web-access-control');
+  const copy = node('div', 'admin-web-access-copy');
+  copy.append(node('strong', '', 'Entire web interface'),
     node('p', '', 'Set the minimum tier for every receiver page, API, live stream, audio request, diagnostic, and ' +
       'export. The application shell and sign-in endpoints remain public so authorized users can sign in.'));
-  const control = node('label', 'admin-site-access-tier');
+  const control = node('label', 'admin-web-access-tier');
   control.append(node('span', '', 'Minimum tier'), accessPolicyTierControl(policy, statusHost));
   wrapper.append(copy, control);
   return wrapper;
@@ -15042,16 +15193,16 @@ async function renderAdminAccess() {
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
   const policies = adminAccessPolicies(response).sort((left, right) =>
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
-  const sitePolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.SITE_ACCESS);
-  const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.SITE_ACCESS);
+  const webPolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.WEB_ACCESS);
+  const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.WEB_ACCESS);
   const statusHost = node('div', 'admin-operation-status');
   statusHost.setAttribute('role', 'status');
   const titleActions = sectionActionHost();
   const body = node('div', 'admin-section-body');
   body.append(node('p', 'admin-section-intro',
-    'Whole-site access applies first. Each capability below can then require a higher tier for its page and backing ' +
+    'Web access applies first. Each capability below can then require a higher tier for its page and backing ' +
       'APIs.'), statusHost);
-  if (sitePolicy) body.append(wholeSiteAccessControl(sitePolicy, statusHost));
+  if (webPolicy) body.append(webAccessControl(webPolicy, statusHost));
   body.append(table(featurePolicies, [
       { id: 'capability', label: 'Capability', width: 310, render: accessPolicyIdentity,
         sortValue: (policy) => policy.displayName || policy.id },
@@ -15496,9 +15647,9 @@ async function renderAdminRadioReferenceSettings() {
   }
 }
 
-async function renderSiteSettings() {
+async function renderReceiverSettings() {
   const renderContext = captureRenderContext();
-  await renderAdminSiteBehaviorSettings();
+  await renderAdminReceiverBehaviorSettings();
   if (!renderIsCurrent(renderContext)) return;
   await renderAdminSpectrumSnapSettings();
   if (!renderIsCurrent(renderContext)) return;
@@ -15576,7 +15727,7 @@ async function renderAdminSpectrumSnapSettings() {
   }
 }
 
-function decodeSiteSettingsEnvelope(value) {
+function decodeReceiverSettingsEnvelope(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       !Number.isInteger(value.revision) || value.revision < 1 ||
       !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings) ||
@@ -15585,8 +15736,8 @@ function decodeSiteSettingsEnvelope(value) {
       !Number.isInteger(value.settings.traffic_grant_age_out_milliseconds) ||
       value.settings.traffic_grant_age_out_milliseconds < 100 ||
       value.settings.traffic_grant_age_out_milliseconds > 15000) {
-    const error = new Error('The server returned invalid Site Settings.');
-    error.code = 'invalid_site_settings_response';
+    const error = new Error('The server returned invalid Receiver Settings.');
+    error.code = 'invalid_receiver_settings_response';
     throw error;
   }
   return {
@@ -15595,45 +15746,45 @@ function decodeSiteSettingsEnvelope(value) {
   };
 }
 
-async function requestSiteSettings(method = 'GET', settings = null, revision = null) {
+async function requestReceiverSettings(method = 'GET', settings = null, revision = null) {
   const headers = { Accept: 'application/json' };
   const options = { method, headers };
   if (method === 'PUT') {
-    if (!Number.isInteger(revision) || revision < 1) throw new Error('Site Settings must be loaded before saving.');
+    if (!Number.isInteger(revision) || revision < 1) throw new Error('Receiver Settings must be loaded before saving.');
     headers['Content-Type'] = 'application/json';
     headers['If-Match'] = `"${revision}"`;
     options.body = JSON.stringify(settings);
   }
-  const response = await jsonDocumentFetch('/api/v1/admin/site-settings', options);
+  const response = await jsonDocumentFetch('/api/v1/admin/receiver-settings', options);
   let documentValue = null;
   try {
     documentValue = await response.json();
   } catch (_) { }
   if (!response.ok) {
     const failure = documentValue?.error && typeof documentValue.error === 'object' ? documentValue.error : null;
-    const error = new Error(failure?.message || 'Site Settings could not be saved.');
+    const error = new Error(failure?.message || 'Receiver Settings could not be saved.');
     error.status = response.status;
-    error.code = failure?.code || (response.status === 409 ? 'site_settings_conflict' : 'site_settings_failed');
+    error.code = failure?.code || (response.status === 409 ? 'receiver_settings_conflict' : 'receiver_settings_failed');
     if (response.status === 409) {
-      try { error.current = decodeSiteSettingsEnvelope(documentValue); } catch (_) { }
+      try { error.current = decodeReceiverSettingsEnvelope(documentValue); } catch (_) { }
     }
     throw error;
   }
-  return decodeSiteSettingsEnvelope(documentValue);
+  return decodeReceiverSettingsEnvelope(documentValue);
 }
 
-async function renderAdminSiteBehaviorSettings() {
-  const body = node('div', 'admin-section-body site-settings');
-  const form = node('form', 'admin-form settings-page-form site-settings-form');
+async function renderAdminReceiverBehaviorSettings() {
+  const body = node('div', 'admin-section-body receiver-settings');
+  const form = node('form', 'admin-form settings-page-form receiver-settings-form');
   const grantAge = node('input');
   grantAge.type = 'number';
   grantAge.min = '100';
   grantAge.max = '15000';
   grantAge.required = true;
   grantAge.disabled = true;
-  const message = node('div', 'admin-form-message', 'Loading site settings…');
+  const message = node('div', 'admin-form-message', 'Loading receiver settings…');
   message.setAttribute('role', 'status');
-  const save = node('button', '', 'Save Site Settings');
+  const save = node('button', '', 'Save Receiver Settings');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
@@ -15646,7 +15797,7 @@ async function renderAdminSiteBehaviorSettings() {
   footer.append(message, actions);
   form.append(settingsCardGrid(group), footer);
   body.append(form);
-  content.append(section('Site behavior', body));
+  content.append(section('Receiver behavior', body));
 
   let confirmed = null;
   const apply = (envelope) => {
@@ -15662,17 +15813,17 @@ async function renderAdminSiteBehaviorSettings() {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     disable(true);
-    message.textContent = 'Saving Site Settings…';
+    message.textContent = 'Saving Receiver Settings…';
     try {
-      const next = await requestSiteSettings('PUT', {
+      const next = await requestReceiverSettings('PUT', {
         traffic_grant_age_out_milliseconds: Number(grantAge.value)
       }, confirmed?.revision);
       apply(next);
-      message.textContent = 'Site Settings saved.';
+      message.textContent = 'Receiver Settings saved.';
     } catch (error) {
-      if (error?.code === 'site_settings_conflict' && error.current) {
+      if (error?.code === 'receiver_settings_conflict' && error.current) {
         apply(error.current);
-        message.textContent = 'Site Settings changed in another session. Current server values were reloaded.';
+        message.textContent = 'Receiver Settings changed in another session. Current server values were reloaded.';
       } else {
         if (confirmed) apply(confirmed);
         message.textContent = error.message;
@@ -15682,7 +15833,7 @@ async function renderAdminSiteBehaviorSettings() {
     }
   });
   try {
-    apply(await requestSiteSettings());
+    apply(await requestReceiverSettings());
     disable(false);
     message.textContent = '';
   } catch (error) {
@@ -15728,12 +15879,11 @@ function p25OverrideCreateRouteProfile(parameters) {
   return Object.values(profile).every((value) => value !== null) ? profile : null;
 }
 
-function p25OverrideCreateRouteGuid(parameters) {
+function p25OverrideCreateRouteConfigurationId(parameters) {
   if (!parameters || typeof parameters.get !== 'function' || parameters.get('createP25Override') !== '1') {
     return null;
   }
-  const value = String(parameters.get('guid') || '').trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
+  return canonicalConfigurationId(parameters.get('configuration_id')) || null;
 }
 
 function p25OverrideDetectedBands(documentValue, requestedProfile) {
@@ -15938,7 +16088,7 @@ async function renderAdminP25BandplanOverrides() {
     if (route.toString() !== renderRoute) return;
     const createRequested = route.has('createP25Override');
     const requestedProfile = p25OverrideCreateRouteProfile(route);
-    const requestedGuid = p25OverrideCreateRouteGuid(route);
+    const requestedConfigurationId = p25OverrideCreateRouteConfigurationId(route);
     let requestedCard = null;
     const cards = documentValue.profiles.map((profile) => {
       const card = p25OverrideProfileCard(profile);
@@ -15947,12 +16097,12 @@ async function renderAdminP25BandplanOverrides() {
     });
     list.append(...cards);
     if (createRequested) {
-      if (requestedProfile && requestedGuid) {
+      if (requestedProfile && requestedConfigurationId) {
         if (!requestedCard) {
           let detectedBands = [];
           let detectedBandsLoaded = true;
           try {
-            const detected = await api(siteApiPath(requestedGuid, 'frequency-bands'));
+            const detected = await api(channelApiPath(requestedConfigurationId, 'frequency-bands'));
             detectedBands = p25OverrideDetectedBands(detected, requestedProfile);
           } catch (_) {
             detectedBandsLoaded = false;
@@ -16470,8 +16620,8 @@ function userPreferenceSummaryCards(preferences) {
       ['Playing call in every page title', settingsEnabled(preferences.page_titles.prepend_playing_call)],
       ['Playback volume', `${Math.round(preferences.playback.volume * 100)}%`],
       ['Selected scan lists', selectedScanListSummary(preferences.playback.selected_scan_list_ids)],
-      ['Conversation Mode', settingsEnabled(preferences.playback.conversation_grouping)],
-      ['Calls before switching', number(preferences.playback.conversation_burst_limit)],
+      ['Group calls by target', settingsEnabled(preferences.playback.target_grouping)],
+      ['Calls per target', number(preferences.playback.target_burst_limit)],
       ['Detail level', semanticLabel(preferences.scanner.detail_mode)]
     ])),
     settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
@@ -16704,30 +16854,30 @@ function openScannerSettings(returnFocusSelector = null) {
   const form = node('form', 'admin-form scanner-settings-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  const conversationGrouping = preferenceCheckbox('conversation-grouping', 'Conversation Mode',
-    current.playback.conversation_grouping,
-    'When calls are waiting, keep a conversation together before switching to another target.');
+  const targetGrouping = preferenceCheckbox('target-grouping', 'Group calls by playback target',
+    current.playback.target_grouping,
+    'When calls are waiting, keep calls for the same playback target together before switching to a different target.');
   const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
     current.page_titles.prepend_playing_call,
     'The Scanner title always shows the audible target. Turn this on to add it to other pages too.');
-  const conversationBurstLimit = node('input');
-  conversationBurstLimit.type = 'number';
-  conversationBurstLimit.name = 'conversation-burst-limit';
-  conversationBurstLimit.min = '1';
-  conversationBurstLimit.max = '20';
-  conversationBurstLimit.required = true;
-  conversationBurstLimit.value = String(current.playback.conversation_burst_limit);
+  const targetBurstLimit = node('input');
+  targetBurstLimit.type = 'number';
+  targetBurstLimit.name = 'target-burst-limit';
+  targetBurstLimit.min = '1';
+  targetBurstLimit.max = '20';
+  targetBurstLimit.required = true;
+  targetBurstLimit.value = String(current.playback.target_burst_limit);
   const apply = (preferences) => {
-    conversationGrouping.input.checked = preferences.playback.conversation_grouping;
-    conversationBurstLimit.value = String(preferences.playback.conversation_burst_limit);
+    targetGrouping.input.checked = preferences.playback.target_grouping;
+    targetBurstLimit.value = String(preferences.playback.target_burst_limit);
     prependTitle.input.checked = preferences.page_titles.prepend_playing_call;
   };
   const fields = node('div', 'settings-field-grid');
-  fields.append(formField('Calls before switching', conversationBurstLimit,
-    'Play 1–20 waiting calls from the same conversation before another waiting conversation gets a turn.'));
-  const card = settingsCard('Conversation playback',
+  fields.append(formField('Calls before switching targets', targetBurstLimit,
+    'Play 1–20 waiting calls for the current playback target before another target gets a turn.'));
+  const card = settingsCard('Playback order',
     'These choices affect only calls that have already built up in this browser queue.',
-    conversationGrouping.control, fields);
+    targetGrouping.control, fields);
   const titleCard = settingsCard('Page titles',
     'Choose whether Scanner playback also appears in the title of other pages.', prependTitle.control);
   const save = node('button', '', 'Save Scanner Settings');
@@ -16747,18 +16897,18 @@ function openScannerSettings(returnFocusSelector = null) {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     const submitted = {
-      conversation_grouping: conversationGrouping.input.checked,
-      conversation_burst_limit: Number(conversationBurstLimit.value),
+      target_grouping: targetGrouping.input.checked,
+      target_burst_limit: Number(targetBurstLimit.value),
       prepend_playing_call: prependTitle.input.checked
     };
-    const controls = [conversationGrouping.input, conversationBurstLimit, prependTitle.input, save];
+    const controls = [targetGrouping.input, targetBurstLimit, prependTitle.input, save];
     controls.forEach((control) => { control.disabled = true; });
     modal.setBusy(true);
     message.textContent = 'Saving Scanner settings…';
     try {
       await updateUserPreferences((preferences) => {
-        preferences.playback.conversation_grouping = submitted.conversation_grouping;
-        preferences.playback.conversation_burst_limit = submitted.conversation_burst_limit;
+        preferences.playback.target_grouping = submitted.target_grouping;
+        preferences.playback.target_burst_limit = submitted.target_burst_limit;
         preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
       }, false);
       modal.setDirty(false);
@@ -16932,7 +17082,7 @@ async function renderAdmin() {
   const availableTabs = [
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'alerts', label: 'Alerts', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'site-settings', label: 'Site Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
+    { id: 'receiver-settings', label: 'Receiver Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'p25-bandplans', label: 'P25 Bandplan Overrides', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
     { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
@@ -16953,9 +17103,9 @@ async function renderAdmin() {
     pageTitleController.update({ pageTitle: 'Health Alerts' });
     await renderAdminAlerts();
   }
-  else if (active === 'site-settings') {
-    pageTitleController.update({ pageTitle: 'Site Settings' });
-    await renderSiteSettings();
+  else if (active === 'receiver-settings') {
+    pageTitleController.update({ pageTitle: 'Receiver Settings' });
+    await renderReceiverSettings();
   }
   else if (active === 'p25-bandplans') {
     pageTitleController.update({ pageTitle: 'P25 Bandplan Overrides' });
@@ -17157,13 +17307,12 @@ applicationRoutes = routeFoundation.createRegistry({
   live: renderLive,
   scanner: renderScanner,
   'tuner-spectrum': renderTunerSpectrum,
-  systems: renderSystems,
-  system: renderSystem,
-  talkgroup: renderTalkgroup,
+  'radio-systems': renderRadioSystems,
+  'radio-system': renderRadioSystem,
+  'group-identity': renderGroupIdentity,
   radio: renderRadio,
-  site: renderSite,
-  conventional: renderConventional,
-  'conventional-detail': renderConventionalDetail,
+  channels: renderChannels,
+  channel: renderChannel,
   aliases: renderAliases,
   configuration: renderConfiguration,
   hardware: renderHardware,

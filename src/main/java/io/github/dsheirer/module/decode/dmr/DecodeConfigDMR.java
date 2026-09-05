@@ -41,7 +41,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
     private boolean mIgnoreCRCChecksums = false;
     private boolean mUseCompressedTalkgroups = false;
     private List<TimeslotFrequency> mTimeslotMap = new ArrayList<>();
-    private DMRChannelMode mChannelMode;
+    private DMRChannelMode mChannelMode = DMRChannelMode.CONVENTIONAL;
 
     /**
      * Overrides the default value to indicate that DMR has two timeslots
@@ -67,19 +67,12 @@ public class DecodeConfigDMR extends DecodeConfiguration
     }
 
     /**
-     * Configured DMR channel mode. Legacy configurations that do not contain this setting are inferred as trunked
-     * only when they contain at least one usable LCN-to-frequency mapping. All other legacy and new configurations
-     * default to conventional.
+     * Configured DMR channel mode.
      */
     @JacksonXmlProperty(isAttribute = true, localName = "channel_mode")
     public DMRChannelMode getChannelMode()
     {
-        if(mChannelMode != null)
-        {
-            return mChannelMode;
-        }
-
-        return hasValidTimeslotFrequencyMapping() ? DMRChannelMode.TRUNKED : DMRChannelMode.CONVENTIONAL;
+        return mChannelMode;
     }
 
     /**
@@ -87,35 +80,21 @@ public class DecodeConfigDMR extends DecodeConfiguration
      */
     public void setChannelMode(DMRChannelMode channelMode)
     {
-        mChannelMode = channelMode;
+        mChannelMode = channelMode != null ? channelMode : DMRChannelMode.CONVENTIONAL;
     }
 
-    /**
-     * Indicates if this channel is explicitly or implicitly configured for conventional operation.
-     */
+    /** Indicates if this channel is configured for conventional operation. */
     @JsonIgnore
     public boolean isConventional()
     {
         return getChannelMode() == DMRChannelMode.CONVENTIONAL;
     }
 
-    /**
-     * Indicates if this channel is explicitly or implicitly configured for trunked operation.
-     */
+    /** Indicates if this channel is configured for trunked operation. */
     @JsonIgnore
     public boolean isTrunked()
     {
         return getChannelMode() == DMRChannelMode.TRUNKED;
-    }
-
-    /**
-     * Indicates if a legacy configuration contains a usable LCN-to-frequency mapping.
-     */
-    @JsonIgnore
-    public boolean hasValidTimeslotFrequencyMapping()
-    {
-        return mTimeslotMap != null && mTimeslotMap.stream().anyMatch(mapping -> mapping != null &&
-            mapping.getNumber() > 0 && mapping.getDownlinkFrequency() > 0);
     }
 
     /**

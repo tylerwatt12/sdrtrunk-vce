@@ -15,10 +15,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.gson.JsonObject;
 import io.github.dsheirer.audio.broadcast.AudioRecording;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.net.http.HttpRequest;
@@ -32,6 +34,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class RadioResolveBroadcasterTest
 {
+    private static final String RADIORESOLVE_ID = "11111111-2222-4333-8444-555555555555";
+
     @Test
     void modesIndependentlyControlCallsAndMetadata()
     {
@@ -89,7 +93,7 @@ class RadioResolveBroadcasterTest
         configuration.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
         RadioResolveBroadcaster broadcaster = new RadioResolveBroadcaster(configuration, null, null, null);
         Channel channel = new Channel("Control");
-        channel.setRadresGuid("site-guid");
+        channel.setRadioResolveId(RADIORESOLVE_ID);
 
         broadcaster.receiveSiteMetadata(new SiteMetadataEvent(channel, completeSiteSnapshot(),
             System.currentTimeMillis()));
@@ -111,6 +115,47 @@ class RadioResolveBroadcasterTest
         HttpRequest request = RadioResolveBroadcaster.createUploadRequest(configuration, audioRecording, null);
 
         assertEquals(Optional.of(Duration.ofSeconds(30)), request.timeout());
+    }
+
+    @Test
+    void externalPayloadsKeepTheRadioResolveFieldNames()
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        IdentifierCollection identifiers = new IdentifierCollection(
+            List.of(RadioResolveConfigurationIdentifier.create(RADIORESOLVE_ID)));
+        AudioRecording audioRecording = new AudioRecording(Path.of("call.mp3"), List.of(), identifiers,
+            System.currentTimeMillis(), 1000);
+
+        JsonObject callPayload = RadioResolveBroadcaster.createCallPayload(configuration, audioRecording, null);
+        assertEquals(RADIORESOLVE_ID, callPayload.get("radres_guid").getAsString());
+
+        Channel channel = new Channel("Control");
+        channel.setRadioResolveId(RADIORESOLVE_ID);
+        JsonObject metadataPayload = RadioResolveBroadcaster.createSiteMetadataPayload(
+            new SiteMetadataEvent(channel, completeSiteSnapshot(), System.currentTimeMillis()), "hash",
+            configuration, System.currentTimeMillis());
+        assertEquals(RADIORESOLVE_ID, metadataPayload.get("radresGuid").getAsString());
+    }
+
+    @Test
+    void sitePayloadUsesProducerTimeChannelLabelsAfterAChannelEdit()
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        Channel channel = new Channel("Original Control");
+        channel.setRadioResolveId(RADIORESOLVE_ID);
+        channel.setAliasListName("Original Aliases");
+        SiteMetadataEvent event = new SiteMetadataEvent(channel, completeSiteSnapshot(), 1_000L,
+            854_087_500L);
+
+        channel.setName("Replacement Control");
+        channel.setAliasListName("Replacement Aliases");
+        channel.setRadioResolveId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+
+        JsonObject payload = RadioResolveBroadcaster.createSiteMetadataPayload(event, "hash", configuration,
+            1_000L);
+        assertEquals(RADIORESOLVE_ID, payload.get("radresGuid").getAsString());
+        assertEquals("Original Control", payload.getAsJsonObject("channel").get("name").getAsString());
+        assertEquals("Original Aliases", payload.getAsJsonObject("channel").get("aliasList").getAsString());
     }
 
     private static AudioRecording recording(Path path)

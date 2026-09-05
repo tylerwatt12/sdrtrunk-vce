@@ -19,47 +19,48 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class StatsDatabaseMaintenanceRequest
 {
-    private final P25ActivityLogMaintenance.Operation mOperation;
-    private final String mSiteGuid;
-    private final CompletableFuture<P25ActivityLogMaintenance.Result> mResult = new CompletableFuture<>();
+    private final ReceiverActivityMaintenance.Operation mOperation;
+    private final String mConfigurationId;
+    private final CompletableFuture<ReceiverActivityMaintenance.Result> mResult = new CompletableFuture<>();
 
-    private StatsDatabaseMaintenanceRequest(P25ActivityLogMaintenance.Operation operation, String siteGuid)
+    private StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation operation, String configurationId)
     {
         mOperation = Objects.requireNonNull(operation, "Maintenance operation is required");
-        mSiteGuid = siteGuid;
+        mConfigurationId = configurationId;
 
-        if(operation == P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS &&
-            (siteGuid == null || siteGuid.isBlank()))
+        if(operation == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS &&
+            (configurationId == null || configurationId.isBlank()))
         {
-            throw new IllegalArgumentException("Site GUID is required");
+            throw new IllegalArgumentException("Channel configuration ID is required");
         }
-        else if(operation != P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS && siteGuid != null)
+        else if(operation != ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS && configurationId != null)
         {
-            throw new IllegalArgumentException("Site GUID is only valid for CLEAR_SITE_STATS");
+            throw new IllegalArgumentException("Channel configuration ID is only valid for CLEAR_CHANNEL_STATS");
         }
     }
 
-    public static StatsDatabaseMaintenanceRequest forOperation(P25ActivityLogMaintenance.Operation operation)
+    public static StatsDatabaseMaintenanceRequest forOperation(ReceiverActivityMaintenance.Operation operation)
     {
         return new StatsDatabaseMaintenanceRequest(operation, null);
     }
 
-    public static StatsDatabaseMaintenanceRequest clearSite(String guid)
+    public static StatsDatabaseMaintenanceRequest clearChannel(String configurationId)
     {
-        return new StatsDatabaseMaintenanceRequest(P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS, guid);
+        return new StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS,
+            configurationId);
     }
 
-    public P25ActivityLogMaintenance.Operation operation()
+    public ReceiverActivityMaintenance.Operation operation()
     {
         return mOperation;
     }
 
-    public String siteGuid()
+    public String configurationId()
     {
-        return mSiteGuid;
+        return mConfigurationId;
     }
 
-    public CompletableFuture<P25ActivityLogMaintenance.Result> result()
+    public CompletableFuture<ReceiverActivityMaintenance.Result> result()
     {
         return mResult;
     }

@@ -10,6 +10,8 @@
  */
 package io.github.dsheirer.module.decode.nxdn;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 /**
  * Immutable, one-time observation of a completed call from an explicitly conventional NXDN channel.
  *
@@ -17,9 +19,9 @@ package io.github.dsheirer.module.decode.nxdn;
  * that call closes so downstream statistics can count it without time-window deduplication.</p>
  */
 public record NXDNConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
-                                        String guid, String channelName, String aliasListName, long frequencyHertz,
-                                        TargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
-                                        Integer targetRadioId, boolean encrypted)
+                                        long frequencyHertz, TargetKind targetKind, Integer talkgroupId,
+                                        Integer sourceRadioId, Integer targetRadioId, boolean encrypted,
+                                        TrunkedIdentityDomain identityDomain)
 {
     public enum TargetKind
     {

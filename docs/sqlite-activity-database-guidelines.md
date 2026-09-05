@@ -35,8 +35,8 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
   channel roles, and similar bounded categories. Do not repeat category names in hot tables.
 - Use integers for epoch milliseconds, frequencies in hertz, identifiers, counts, and booleans (`0`/`1`). Avoid text
   encodings of numeric values.
-- Normalize repeated system, site, receiver-context, talkgroup, radio, and alias identities. Reference their compact
-  integer key from high-volume tables.
+- Normalize repeated radio-system, saved-channel, group-identity, radio, and alias identities. Reference their compact integer
+  key from high-volume tables.
 - Store descriptive text once in the appropriate identity/configuration table. Do not copy channel names, aliases,
   decoder names, or formatted labels into every event or bucket.
 - Do not store JSON, serialized Java objects, raw decoded messages, audio payloads, or arbitrary metadata maps in the
@@ -51,7 +51,7 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 - Add an index only for a demonstrated query path. Each index increases database size, WAL traffic, checkpoint work,
   migration time, and write amplification.
 - Avoid indexes whose leading columns duplicate an existing primary key or index. Prefer one index that supports the
-  actual scope, time range, and ordering used by the website.
+  actual owner, filters, time range, and ordering used by the website.
 - Use partial indexes when a query targets a sparse state and the predicate is stable.
 - Never add indexes merely to silence a theoretical concern. Test the real query against representative row counts.
 
@@ -71,7 +71,8 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 
 - Bound every time range, page size, result count, and chart point count on the server.
 - Aggregate in SQL and return only fields rendered by the client. Avoid `SELECT *` on high-volume tables.
-- Scope identifiers by their owning system/site/context; a talkgroup or radio number alone is not globally unique.
+- Key trunked identities by their owning radio system and channel-owned facts by their saved channel. A group or radio
+  number alone is not globally unique.
 - Keep chart payloads coarse and predictable. Zero-fill missing buckets in the bounded API response rather than storing
   empty database rows.
 - Do not make dashboard requests scan detailed event history. Dashboards and directory pages must use summaries and
@@ -85,7 +86,7 @@ Schema and query changes must include tests that cover:
   prior-format fixture for every persisted schema or semantic change;
 - schema validation, every registered Alpha 8-or-newer source-to-current route, and Application Migrator behavior;
 - duplicate-event/output suppression and aggregate correctness;
-- system/site/context scoping;
+- radio-system and saved-channel ownership isolation;
 - bounded ranges, pagination, and chart point limits;
 - representative-volume query plans with no unintended full scan of detailed history; and
 - `PRAGMA integrity_check` or `quick_check` after migration tests.

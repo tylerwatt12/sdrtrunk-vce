@@ -15,12 +15,18 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.configuration.ConfigurationChannelProjection;
+import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.log.config.EventLogConfiguration;
+import io.github.dsheirer.record.config.RecordConfiguration;
+import io.github.dsheirer.source.config.SourceConfigRecording;
+import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebPasswordVerifier;
-import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -28,6 +34,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -62,6 +69,10 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
         "passwordHashBase64", "passwordChangedAtEpochMillis", "credentialVersion");
     private static final Set<String> STORED_USER_FIELDS = Set.of("tier", "credential");
     private static final Set<String> DISPLAY_FIELDS = Set.of("format_version", "show_encryption_details");
+    private static final Set<String> LEGACY_CONFIGURABLE_CAPABILITIES = Set.of(
+        "site-access", "dashboard", "live", "systems", "conventional", "credits", "csv-export", "call-audio");
+    private static final Set<String> LEGACY_FIXED_CAPABILITIES = Set.of(
+        "user-settings", "admin-users", "admin-access", "admin-aliases", "admin-settings", "receiver-health");
     private static final int MAXIMUM_LEGACY_ACCESS_BYTES = 1_048_576;
     private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
     private static final ObjectMapper STRICT_MAPPER = new ObjectMapper(JsonFactory.builder()
@@ -228,11 +239,12 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                     continue;
                 }
 
-                ConfigurationChannelProjection.readBooleanFlag(resultSet, "auto_start");
-                ConfigurationChannelProjection.readNullableInt(resultSet, "auto_start_order");
+                Format5ChannelProjection.readBooleanFlag(resultSet, "auto_start");
+                Format5ChannelProjection.readNullableInt(resultSet, "auto_start_order");
 
                 String json = resultSet.getString("config_json");
-                JsonNode root = parseObject(json, "configuration_channel row " + id, MAXIMUM_PORTABLE_PREFERENCES_BYTES);
+                ObjectNode root = (ObjectNode)parseObject(json, "configuration_channel row " + id,
+                    MAXIMUM_PORTABLE_PREFERENCES_BYTES);
                 JsonNode idNode = root.get("configurationId");
 
                 if(idNode == null || !idNode.isTextual())
@@ -265,7 +277,7 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                         " changes identity during strict decoding");
                 }
 
-                ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
+                Format5ChannelProjection projection = Format5ChannelProjection.from(channel);
 
                 String channelKind = ChannelConfigurationPolicy.requireChannelKind(channel).name();
                 String radresGuid = resultSet.getString("radres_guid");
@@ -298,7 +310,13 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                             " and " + id);
                     }
                 }
-                activeChannels.add(new ActiveChannelRow(id, configurationId, channelKind, projection));
+                root.remove(List.of("radresGuid", "radioResolveId", "radres_guid"));
+                if(radresGuid != null && !radresGuid.strip().isEmpty())
+                {
+                    root.put("radresGuid", radresGuid);
+                }
+                activeChannels.add(new ActiveChannelRow(id, configurationId, channelKind, projection,
+                    STRICT_MAPPER.writeValueAsString(root)));
             }
         }
         catch(IllegalArgumentException exception)
@@ -376,14 +394,16 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                 continue;
             }
 
-            WebCapability capability = WebCapability.fromId(id)
-                .orElseThrow(() -> new IOException("Unknown legacy web capability: " + id));
-            if(!capability.configurable())
+            if(LEGACY_FIXED_CAPABILITIES.contains(id))
             {
                 throw new IOException("Fixed web capability has a legacy override: " + id);
             }
+            if(!LEGACY_CONFIGURABLE_CAPABILITIES.contains(id))
+            {
+                throw new IOException("Unknown legacy web capability: " + id);
+            }
             AccessTier tier = parseTier(entry.getValue().textValue(), "policy " + id);
-            if(tier != capability.defaultTier())
+            if(tier != AccessTier.PUBLIC)
             {
                 policies.put(id, tier);
             }
@@ -546,12 +566,21 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                 insert.setLong(1, channel.id());
                 insert.setString(2, channel.configurationId());
                 insert.setString(3, channel.channelKind());
-                for(int sourceColumn = 2; sourceColumn <= 9; sourceColumn++)
+                for(int sourceColumn = 2; sourceColumn <= 7; sourceColumn++)
                 {
                     insert.setObject(sourceColumn + 2, rows.getObject(sourceColumn));
                 }
+                insert.setInt(10, channel.projection().autoStart() ? 1 : 0);
+                if(channel.projection().autoStartOrder() != null)
+                {
+                    insert.setInt(11, channel.projection().autoStartOrder());
+                }
+                else
+                {
+                    insert.setNull(11, Types.INTEGER);
+                }
                 channel.projection().bind(insert, 12);
-                insert.setObject(18, rows.getObject("config_json"));
+                insert.setString(18, channel.payload());
                 insert.executeUpdate();
             }
         }
@@ -853,8 +882,117 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
     }
 
     private record ActiveChannelRow(long id, String configurationId, String channelKind,
-                                    ConfigurationChannelProjection projection)
+                                    Format5ChannelProjection projection, String payload)
     {
+    }
+
+    /** Frozen format-5 row projection; it must not follow the smaller current projection. */
+    private record Format5ChannelProjection(boolean autoStart, Integer autoStartOrder, String decoderType,
+                                            String sourceType, Long primaryFrequencyHz, int frequencyCount,
+                                            boolean hasRecorders, boolean hasEventLoggers)
+    {
+        private static Format5ChannelProjection from(Channel channel)
+        {
+            DecodeConfiguration decode = channel.getDecodeConfiguration();
+            SourceConfiguration source = channel.getSourceConfiguration();
+            List<Long> frequencies = channel.getFrequencyList();
+            RecordConfiguration record = channel.getRecordConfiguration();
+            EventLogConfiguration eventLog = channel.getEventLogConfiguration();
+            return new Format5ChannelProjection(channel.getAutoStart(), channel.getAutoStartOrder(),
+                decode != null && decode.getDecoderType() != null ? decode.getDecoderType().name() : null,
+                source != null && source.getSourceType() != null ? source.getSourceType().name() : null,
+                primaryFrequency(source), frequencies != null ? frequencies.size() : 0,
+                record != null && record.getRecorders() != null && !record.getRecorders().isEmpty(),
+                eventLog != null && eventLog.getLoggers() != null && !eventLog.getLoggers().isEmpty());
+        }
+
+        private static boolean readBooleanFlag(ResultSet resultSet, String column) throws SQLException, IOException
+        {
+            long value = requiredInteger(resultSet, column);
+            if(value == 0)
+            {
+                return false;
+            }
+            if(value == 1)
+            {
+                return true;
+            }
+            throw new IOException("configuration_channel " + column + " must be 0 or 1");
+        }
+
+        private static Integer readNullableInt(ResultSet resultSet, String column) throws SQLException, IOException
+        {
+            Long value = nullableInteger(resultSet, column);
+            if(value == null)
+            {
+                return null;
+            }
+            if(value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
+            {
+                throw new IOException("configuration_channel " + column +
+                    " is outside the supported integer range");
+            }
+            return value.intValue();
+        }
+
+        private void bind(PreparedStatement statement, int firstParameter) throws SQLException
+        {
+            statement.setString(firstParameter, decoderType);
+            statement.setString(firstParameter + 1, sourceType);
+            if(primaryFrequencyHz != null)
+            {
+                statement.setLong(firstParameter + 2, primaryFrequencyHz);
+            }
+            else
+            {
+                statement.setNull(firstParameter + 2, Types.INTEGER);
+            }
+            statement.setInt(firstParameter + 3, frequencyCount);
+            statement.setInt(firstParameter + 4, hasRecorders ? 1 : 0);
+            statement.setInt(firstParameter + 5, hasEventLoggers ? 1 : 0);
+        }
+
+        private static Long primaryFrequency(SourceConfiguration source)
+        {
+            if(source instanceof SourceConfigTuner tuner)
+            {
+                return tuner.getFrequency();
+            }
+            if(source instanceof SourceConfigTunerMultipleFrequency multiple)
+            {
+                long frequency = multiple.getPreferredFrequency();
+                return frequency > 0 ? frequency : null;
+            }
+            if(source instanceof SourceConfigRecording recording)
+            {
+                return recording.getFrequency();
+            }
+            return null;
+        }
+
+        private static long requiredInteger(ResultSet resultSet, String column) throws SQLException, IOException
+        {
+            Long value = nullableInteger(resultSet, column);
+            if(value == null)
+            {
+                throw new IOException("configuration_channel " + column + " cannot be null");
+            }
+            return value;
+        }
+
+        private static Long nullableInteger(ResultSet resultSet, String column) throws SQLException, IOException
+        {
+            Object value = resultSet.getObject(column);
+            if(value == null)
+            {
+                return null;
+            }
+            if(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)
+            {
+                return ((Number)value).longValue();
+            }
+            throw new IOException("configuration_channel " + column + " is not stored as an integer");
+        }
     }
 
     private record ChannelInspection(List<ActiveChannelRow> activeChannels, Set<Long> retiredChannelIds)

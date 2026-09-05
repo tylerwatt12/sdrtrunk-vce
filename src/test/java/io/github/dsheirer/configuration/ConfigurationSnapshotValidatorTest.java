@@ -64,9 +64,10 @@ class ConfigurationSnapshotValidatorTest
     {
         AliasListDefinition definition =
             new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(1);
         Channel differentSystem = new Channel("Different System");
         differentSystem.setSystem("System B");
-        differentSystem.setAliasListName("County");
+        differentSystem.setAliasListDefinition(definition);
         differentSystem.setDecodeConfiguration(new DecodeConfigP25Phase1());
         ConfigurationSnapshot differentSystemState =
             snapshot(List.of(definition), List.of(differentSystem), List.of());
@@ -76,7 +77,7 @@ class ConfigurationSnapshotValidatorTest
 
         Channel wrongFamily = new Channel("Wrong Family");
         wrongFamily.setSystem("System A");
-        wrongFamily.setAliasListName("County");
+        wrongFamily.setAliasListDefinition(definition);
         wrongFamily.setDecodeConfiguration(new DecodeConfigDMR());
         ConfigurationSnapshot wrongFamilyState = snapshot(List.of(definition), List.of(wrongFamily), List.of());
 
@@ -89,9 +90,10 @@ class ConfigurationSnapshotValidatorTest
     {
         AliasListDefinition definition =
             new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(1);
         Channel channel = new Channel("Control");
         channel.setSystem("System A");
-        channel.setAliasListName("County");
+        channel.setAliasListDefinition(definition);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         ConfigurationSnapshot state = snapshot(List.of(definition), List.of(channel), List.of());
 
@@ -103,8 +105,10 @@ class ConfigurationSnapshotValidatorTest
     {
         AliasListDefinition definition =
             new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(1);
         Channel channel = new Channel("Control");
         channel.setSystem("System A");
+        channel.setAliasListDefinition(definition);
         channel.setAliasListName("county");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         ConfigurationSnapshot state = snapshot(List.of(definition), List.of(channel), List.of());

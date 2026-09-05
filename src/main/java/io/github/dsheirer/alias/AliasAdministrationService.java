@@ -60,7 +60,6 @@ public final class AliasAdministrationService
     public static final int MAX_BULK_ALIASES = 10_000;
     public static final int MAX_ALIAS_LIST_NAME_LENGTH = 25;
     public static final int MAX_BROADCAST_CHANNELS = 64;
-    public static final int MAX_BROADCAST_CHANNEL_NAME_LENGTH = 256;
     public static final int MAX_SCAN_LISTS = 100;
     public static final int MAX_SCAN_LIST_COVERAGE_ALIASES = 5_000;
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
@@ -160,8 +159,12 @@ public final class AliasAdministrationService
             List<String> icons = mConfigurationManager.getIconModel() != null ?
                 mConfigurationManager.getIconModel().iconsProperty().stream()
                     .map(icon -> icon.getName()).filter(Objects::nonNull).sorted().toList() : List.of();
-            List<String> streams = mConfigurationManager.getBroadcastModel().getBroadcastConfigurations().stream()
-                .map(configuration -> configuration.getName()).filter(Objects::nonNull).sorted().toList();
+            List<BroadcastDestination> streams = mConfigurationManager.getBroadcastModel()
+                .getBroadcastConfigurations().stream()
+                .map(configuration -> new BroadcastDestination(configuration.getConfigurationId(),
+                    configuration.getName()))
+                .sorted(Comparator.comparing(BroadcastDestination::name, String.CASE_INSENSITIVE_ORDER))
+                .toList();
             return new Options(revision(), copyDefinition(definition), AliasMatchRegistry.allowed(definition), icons,
                 streams, aliasModel().getGroupNames(), scanListConfiguration.scanLists(),
                 scanListConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId));
@@ -472,10 +475,10 @@ public final class AliasAdministrationService
                 throw new IllegalArgumentException("Unmatched talkgroup behavior is available only for P25, DMR, " +
                     "NXDN, and NBFM alias lists");
             }
-            UnmatchedTalkgroupPolicy previous = definition.getUnmatchedTalkgroupPolicy();
-            validatePolicyStreams(policy, previous);
+            UnmatchedTalkgroupPolicy canonicalPolicy = canonicalPolicy(policy);
+            validatePolicyStreams(canonicalPolicy, definition.getUnmatchedTalkgroupPolicy());
             Set<Long> memberships = replaceScanListMemberships ? validatedScanListIds(scanListIds) : Set.of();
-            definition.setUnmatchedTalkgroupPolicy(policy);
+            definition.setUnmatchedTalkgroupPolicy(canonicalPolicy);
             if(replaceScanListMemberships)
             {
                 scanListModel().replaceUnmatchedTalkgroupMemberships(aliasListId, memberships);
@@ -729,23 +732,12 @@ public final class AliasAdministrationService
                     alias.setGroup(null);
                 }
 
-                applyStreamOperation(alias, edit.streamOperation(), edit.broadcastChannels());
+                applyStreamOperation(alias, edit.streamOperation(), edit.broadcastConfigurationIds());
             }
 
             MutationTarget replacementTarget = saveAliasesTarget(replacements);
             return replacementTarget.withAliasList(target);
         });
-    }
-
-    /**
-     * Rewrites Alias and unmatched-talkgroup stream references after a broadcast destination is renamed.
-     */
-    public MutationResult renameBroadcastChannelReferences(String previousName, String updatedName)
-    {
-        String previous = requireName(previousName, "Previous broadcast channel name");
-        String updated = requireName(updatedName, "Updated broadcast channel name");
-
-        return mutate(null, () -> renameBroadcastChannelReferencesTarget(previous, updated));
     }
 
     private MutationResult mutate(Long expectedRevision, Supplier<MutationTarget> operation)
@@ -764,7 +756,7 @@ public final class AliasAdministrationService
                 {
                     target = operation.get();
                     mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(), target.publication(),
-                        target.beforePublication(), target.broadcastConfigurationRename());
+                        target.beforePublication());
                 }
                 catch(ConfigurationManager.ConfigurationCommitException |
                       ConfigurationIdentityAllocator.AllocationException exception)
@@ -796,7 +788,7 @@ public final class AliasAdministrationService
                 mutation = operation.get();
                 mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(),
                     new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true, Set.of()),
-                    null, null);
+                    null);
             }
             catch(ConfigurationManager.ConfigurationCommitException |
                   ConfigurationIdentityAllocator.AllocationException exception)
@@ -877,7 +869,7 @@ public final class AliasAdministrationService
 
         AliasListDefaults defaults = defaultsFor(resolveAliasList(alias));
         alias.setRecordable(defaults.isRecordEnabled());
-        alias.setBroadcastChannels(defaults.streamDestinationNames().stream().map(BroadcastChannel::new).toList());
+        alias.setBroadcastChannels(defaults.streamDestinations());
     }
 
     private Set<Long> inheritedScanListIds(Alias alias)
@@ -922,10 +914,10 @@ public final class AliasAdministrationService
     /** Validates and installs a batch in the detached candidate by durable identity. */
     private MutationTarget saveAliasesTarget(List<Alias> prepared)
     {
-        return saveAliasesTarget(prepared, Set.of());
+        return saveAliasesTargetInternal(prepared);
     }
 
-    private MutationTarget saveAliasesTarget(List<Alias> prepared, Set<String> additionalConfiguredStreams)
+    private MutationTarget saveAliasesTargetInternal(List<Alias> prepared)
     {
         if(prepared == null || prepared.isEmpty())
         {
@@ -966,7 +958,7 @@ public final class AliasAdministrationService
             }
 
             AliasListDefinition definition = resolveAliasList(alias);
-            validateAlias(alias, definition, current, additionalConfiguredStreams);
+            validateAlias(alias, definition, current);
             alias.setAliasListDefinition(definition);
         }
 
@@ -997,83 +989,16 @@ public final class AliasAdministrationService
         return new MutationTarget(null, aliasIds, aliases.size(), PublicationMode.ALIASES_THEN_SCAN_LISTS);
     }
 
-    private MutationTarget renameBroadcastChannelReferencesTarget(String previousName, String updatedName)
-    {
-        if(previousName.equals(updatedName))
-        {
-            return new MutationTarget(null, List.of(), 0, PublicationMode.ALIASES);
-        }
-        if(!isConfiguredStream(previousName))
-        {
-            throw new IllegalArgumentException("Broadcast channel [" + previousName + "] does not exist");
-        }
-        if(isConfiguredStream(updatedName))
-        {
-            throw new IllegalArgumentException("Broadcast channel [" + updatedName + "] already exists");
-        }
-
-        List<Alias> replacements = aliasModel().getAliases().stream()
-            .filter(alias -> alias.hasBroadcastChannel(previousName))
-            .map(AliasAdministrationService::copyAlias)
-            .toList();
-
-        for(Alias replacement: replacements)
-        {
-            replacement.removeBroadcastChannel(previousName);
-            replacement.addBroadcastChannel(updatedName);
-        }
-
-        List<AliasListPolicyState> policyStates = new ArrayList<>();
-        for(AliasListDefinition definition: aliasModel().aliasListDefinitions())
-        {
-            UnmatchedTalkgroupPolicy previous = definition.getUnmatchedTalkgroupPolicy();
-            if(previous.getStreamDestinationNames().contains(previousName))
-            {
-                List<String> destinations = new ArrayList<>();
-                for(String destination: previous.getStreamDestinationNames())
-                {
-                    String replacement = destination.equals(previousName) ? updatedName : destination;
-                    if(!destinations.contains(replacement))
-                    {
-                        destinations.add(replacement);
-                    }
-                }
-
-                UnmatchedTalkgroupPolicy updated = new UnmatchedTalkgroupPolicy(previous.isRecordEnabled(),
-                    destinations);
-                validatePolicyStreams(updated, previous, Set.of(updatedName));
-                policyStates.add(new AliasListPolicyState(definition, updated));
-            }
-        }
-
-        MutationTarget aliasesTarget = replacements.isEmpty() ?
-            new MutationTarget(null, List.of(), 0, PublicationMode.ALIASES) :
-            saveAliasesTarget(replacements, Set.of(updatedName));
-
-        if(!policyStates.isEmpty())
-        {
-            policyStates.forEach(state -> state.definition().setUnmatchedTalkgroupPolicy(state.updated()));
-        }
-
-        PublicationMode publicationMode = policyStates.isEmpty() ? PublicationMode.ALIASES :
-            PublicationMode.ALIAS_LISTS;
-        return new MutationTarget(null, List.of(), replacements.size() + policyStates.size(),
-            aliasesTarget.savedAliases(), publicationMode, null,
-            new ConfigurationManager.BroadcastConfigurationRename(previousName, updatedName));
-    }
-
     private Catalog catalogOnConfigurationThread()
     {
         List<AliasListDefinition> definitions = aliasModel().aliasListDefinitions().stream()
             .map(AliasAdministrationService::copyDefinition).toList();
         Map<Long,Integer> aliasCounts = new LinkedHashMap<>();
         Map<Long,Integer> channelCounts = new LinkedHashMap<>();
-        Map<String,Long> aliasListIdsByName = new java.util.HashMap<>();
         for(AliasListDefinition definition : definitions)
         {
             aliasCounts.put(definition.getId(), 0);
             channelCounts.put(definition.getId(), 0);
-            aliasListIdsByName.put(definition.getName().toLowerCase(Locale.ROOT), definition.getId());
         }
         for(Alias alias : aliasModel().getAliases())
         {
@@ -1084,12 +1009,9 @@ public final class AliasAdministrationService
         }
         for(Channel channel : mConfigurationManager.getChannelModel().getChannels())
         {
-            String aliasListName = channel != null ? channel.getAliasListName() : null;
-            Long aliasListId = aliasListName != null ?
-                aliasListIdsByName.get(aliasListName.toLowerCase(Locale.ROOT)) : null;
-            if(aliasListId != null)
+            if(channel != null && channelCounts.containsKey(channel.getAliasListId()))
             {
-                channelCounts.merge(aliasListId, 1, Integer::sum);
+                channelCounts.merge(channel.getAliasListId(), 1, Integer::sum);
             }
         }
         ScanListConfiguration scanListConfiguration = scanListModel().configuration();
@@ -1123,8 +1045,7 @@ public final class AliasAdministrationService
 
     private static boolean matchesList(Channel channel, AliasListDefinition definition)
     {
-        return channel != null && channel.getAliasListName() != null &&
-            definition.getName().equalsIgnoreCase(channel.getAliasListName());
+        return channel != null && channel.getAliasListId() == definition.getId();
     }
 
     private Alias prepareNewAlias(Alias source)
@@ -1145,9 +1066,7 @@ public final class AliasAdministrationService
 
     private AliasListDefinition resolveAliasList(Alias alias)
     {
-        AliasListDefinition definition = alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
-            aliasModel().getAliasListDefinition(alias.getAliasListId()) :
-            aliasModel().getAliasListDefinition(alias.getAliasListName());
+        AliasListDefinition definition = aliasModel().getAliasListDefinition(alias);
 
         if(definition == null)
         {
@@ -1163,12 +1082,6 @@ public final class AliasAdministrationService
     }
 
     private void validateAlias(Alias alias, AliasListDefinition definition, Alias previous)
-    {
-        validateAlias(alias, definition, previous, Set.of());
-    }
-
-    private void validateAlias(Alias alias, AliasListDefinition definition, Alias previous,
-                               Set<String> additionalConfiguredStreams)
     {
         requireName(alias.getName(), "Alias name");
         AliasID matcher = alias.getMatchIdentifier();
@@ -1194,25 +1107,19 @@ public final class AliasAdministrationService
 
         for(BroadcastChannel channel: broadcastChannels)
         {
-            if(channel == null || channel.getChannelName() == null || channel.getChannelName().isBlank())
+            if(channel == null || !channel.isValid())
             {
-                throw new IllegalArgumentException("Broadcast channel names cannot be blank");
+                throw new IllegalArgumentException("Broadcast destinations require a stable configuration ID");
             }
 
-            if(channel.getChannelName().length() > MAX_BROADCAST_CHANNEL_NAME_LENGTH)
+            if(!isConfiguredStream(channel.getConfigurationId()))
             {
-                throw new IllegalArgumentException("Broadcast channel names cannot exceed " +
-                    MAX_BROADCAST_CHANNEL_NAME_LENGTH + " characters");
-            }
-
-            if(!isConfiguredStream(channel.getChannelName()) &&
-                !additionalConfiguredStreams.contains(channel.getChannelName()) &&
-                (previous == null || !previous.hasBroadcastChannel(channel.getChannelName())))
-            {
-                throw new IllegalArgumentException("Broadcast channel [" + channel.getChannelName() +
+                throw new IllegalArgumentException("Broadcast destination [" + channel.getConfigurationId() +
                     "] does not exist");
             }
         }
+        alias.setBroadcastChannels(broadcastChannels.stream()
+            .map(channel -> requireBroadcastDestination(channel.getConfigurationId())).toList());
 
         if(alias.getIconName() != null &&
             (previous == null || !Objects.equals(previous.getIconName(), alias.getIconName())))
@@ -1233,42 +1140,31 @@ public final class AliasAdministrationService
             definition.getName() + "]. Use the alias list's Unmatched Talkgroups settings instead.");
     }
 
-    private boolean isConfiguredStream(String channelName)
+    private boolean isConfiguredStream(String configurationId)
     {
-        return channelName != null && mConfigurationManager.getBroadcastModel().getBroadcastConfigurations().stream()
-            .anyMatch(configuration -> channelName.equals(configuration.getName()));
+        return configurationId != null && mConfigurationManager.getBroadcastModel().getBroadcastConfigurations()
+            .stream().anyMatch(configuration -> configurationId.equals(configuration.getConfigurationId()));
     }
 
     private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous)
     {
-        validatePolicyStreams(policy, previous, Set.of());
-    }
-
-    private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous,
-                                       Set<String> additionalConfiguredStreams)
-    {
-        if(policy.getStreamDestinationNames().size() > MAX_BROADCAST_CHANNELS)
+        if(policy.getStreamDestinations().size() > MAX_BROADCAST_CHANNELS)
         {
             throw new IllegalArgumentException("Unmatched Talkgroups cannot have more than " +
                 MAX_BROADCAST_CHANNELS + " broadcast channels");
         }
 
-        Set<String> previousNames = previous != null ?
-            Set.copyOf(previous.getStreamDestinationNames()) : Set.of();
-
-        for(String channelName: policy.getStreamDestinationNames())
+        for(BroadcastChannel destination: policy.getStreamDestinations())
         {
-            if(channelName == null || channelName.isBlank() ||
-                channelName.length() > MAX_BROADCAST_CHANNEL_NAME_LENGTH)
+            if(destination == null || !destination.isValid())
             {
-                throw new IllegalArgumentException("Broadcast channel names must contain between 1 and " +
-                    MAX_BROADCAST_CHANNEL_NAME_LENGTH + " characters");
+                throw new IllegalArgumentException("Broadcast destinations require a stable configuration ID");
             }
 
-            if(!isConfiguredStream(channelName) && !additionalConfiguredStreams.contains(channelName) &&
-                !previousNames.contains(channelName))
+            if(!isConfiguredStream(destination.getConfigurationId()))
             {
-                throw new IllegalArgumentException("Broadcast channel [" + channelName + "] does not exist");
+                throw new IllegalArgumentException("Broadcast destination [" + destination.getConfigurationId() +
+                    "] does not exist");
             }
         }
     }
@@ -1292,16 +1188,16 @@ public final class AliasAdministrationService
             return;
         }
 
-        for(String channel: edit.broadcastChannels())
+        for(String configurationId: edit.broadcastConfigurationIds())
         {
-            if(!isConfiguredStream(channel))
+            if(!isConfiguredStream(configurationId))
             {
-                throw new IllegalArgumentException("Broadcast channel [" + channel + "] does not exist");
+                throw new IllegalArgumentException("Broadcast destination [" + configurationId + "] does not exist");
             }
         }
     }
 
-    private static void applyStreamOperation(Alias alias, StreamOperation operation, List<String> channelNames)
+    private void applyStreamOperation(Alias alias, StreamOperation operation, List<String> configurationIds)
     {
         if(operation == null)
         {
@@ -1310,11 +1206,29 @@ public final class AliasAdministrationService
 
         switch(operation)
         {
-            case ADD -> channelNames.forEach(alias::addBroadcastChannel);
-            case REMOVE -> channelNames.forEach(alias::removeBroadcastChannel);
-            case REPLACE -> alias.setBroadcastChannels(channelNames.stream().map(BroadcastChannel::new).toList());
+            case ADD -> configurationIds.stream().map(this::requireBroadcastDestination)
+                .forEach(alias::addBroadcastChannel);
+            case REMOVE -> configurationIds.forEach(alias::removeBroadcastConfiguration);
+            case REPLACE -> alias.setBroadcastChannels(configurationIds.stream()
+                .map(this::requireBroadcastDestination).toList());
             case CLEAR -> alias.setBroadcastChannels(List.of());
         }
+    }
+
+    private BroadcastChannel requireBroadcastDestination(String configurationId)
+    {
+        return mConfigurationManager.getBroadcastModel().getBroadcastConfigurations().stream()
+            .filter(configuration -> Objects.equals(configurationId, configuration.getConfigurationId()))
+            .findFirst()
+            .map(configuration -> new BroadcastChannel(configuration.getConfigurationId(), configuration.getName()))
+            .orElseThrow(() -> new IllegalArgumentException("Broadcast destination [" + configurationId +
+                "] does not exist"));
+    }
+
+    private UnmatchedTalkgroupPolicy canonicalPolicy(UnmatchedTalkgroupPolicy policy)
+    {
+        return new UnmatchedTalkgroupPolicy(policy.isRecordEnabled(), policy.getStreamDestinations().stream()
+            .map(destination -> requireBroadcastDestination(destination.getConfigurationId())).toList());
     }
 
     private void validateIconName(String iconName)
@@ -1361,13 +1275,13 @@ public final class AliasAdministrationService
         {
             throw new IllegalArgumentException("Group can only be supplied for a SET operation");
         }
-        if(edit.streamOperation() == null && edit.broadcastChannels() != null)
+        if(edit.streamOperation() == null && edit.broadcastConfigurationIds() != null)
         {
             throw new IllegalArgumentException("Stream operation is required when broadcast channels are supplied");
         }
         if(edit.streamOperation() != null)
         {
-            List<String> channels = edit.broadcastChannels();
+            List<String> channels = edit.broadcastConfigurationIds();
             boolean requiresChannels = edit.streamOperation() != StreamOperation.CLEAR;
 
             if(requiresChannels && (channels == null || channels.isEmpty()))
@@ -1385,7 +1299,7 @@ public final class AliasAdministrationService
                 {
                     if(channel == null || channel.isBlank() || !unique.add(channel))
                     {
-                        throw new IllegalArgumentException("Broadcast channel names must be nonblank and unique");
+                        throw new IllegalArgumentException("Broadcast configuration IDs must be nonblank and unique");
                     }
                 }
             }
@@ -2004,15 +1918,19 @@ public final class AliasAdministrationService
         }
     }
 
+    public record BroadcastDestination(String configurationId, String name)
+    {
+    }
+
     public record Options(long revision, AliasListDefinition aliasList, List<AliasMatchDescriptor> matchers,
-                          List<String> iconNames, List<String> streamNames, List<String> groupNames,
+                          List<String> iconNames, List<BroadcastDestination> streams, List<String> groupNames,
                           List<ScanList> scanLists, Set<Long> unmatchedScanListIds)
     {
         public Options
         {
             matchers = List.copyOf(matchers);
             iconNames = List.copyOf(iconNames);
-            streamNames = List.copyOf(streamNames);
+            streams = List.copyOf(streams);
             groupNames = List.copyOf(groupNames);
             scanLists = List.copyOf(scanLists);
             unmatchedScanListIds = Set.copyOf(unmatchedScanListIds);
@@ -2033,13 +1951,14 @@ public final class AliasAdministrationService
 
     public record BulkEdit(List<Long> aliasIds, Long targetAliasListId, Integer color, String iconName,
                            Boolean recordable, GroupOperation groupOperation, String group,
-                           StreamOperation streamOperation, List<String> broadcastChannels, boolean delete)
+                           StreamOperation streamOperation, List<String> broadcastConfigurationIds, boolean delete)
     {
         public BulkEdit
         {
             aliasIds = aliasIds != null ? List.copyOf(aliasIds) : null;
             group = group != null ? group.trim() : null;
-            broadcastChannels = broadcastChannels != null ? List.copyOf(broadcastChannels) : null;
+            broadcastConfigurationIds = broadcastConfigurationIds != null ?
+                List.copyOf(broadcastConfigurationIds) : null;
         }
     }
 
@@ -2066,8 +1985,7 @@ public final class AliasAdministrationService
 
     private record MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
                                   List<Alias> savedAliases, PublicationMode publicationMode,
-                                  Runnable beforePublication,
-                                  ConfigurationManager.BroadcastConfigurationRename broadcastConfigurationRename)
+                                  Runnable beforePublication)
     {
         private MutationTarget
         {
@@ -2078,37 +1996,29 @@ public final class AliasAdministrationService
         private MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
                                PublicationMode publicationMode)
         {
-            this(aliasList, aliases, affected, List.of(), publicationMode, null, null);
-        }
-
-        private MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
-                               List<Alias> savedAliases, PublicationMode publicationMode,
-                               Runnable beforePublication)
-        {
-            this(aliasList, aliases, affected, savedAliases, publicationMode, beforePublication, null);
+            this(aliasList, aliases, affected, List.of(), publicationMode, null);
         }
 
         private MutationTarget withAliasList(AliasListDefinition definition)
         {
             return new MutationTarget(definition, aliases, affected, savedAliases, publicationMode,
-                beforePublication, broadcastConfigurationRename);
+                beforePublication);
         }
 
         private MutationTarget withPublication(PublicationMode mode)
         {
-            return new MutationTarget(aliasList, aliases, affected, savedAliases, mode, beforePublication,
-                broadcastConfigurationRename);
+            return new MutationTarget(aliasList, aliases, affected, savedAliases, mode, beforePublication);
         }
 
         private ConfigurationManager.AliasConfigurationPublication publication()
         {
             Set<Long> changedAliasIds = new HashSet<>(aliases);
             savedAliases.stream().map(Alias::getId).forEach(changedAliasIds::add);
-            Set<String> clearedChannelAliasListNames = publicationMode.clearsChannelAssignments() && aliasList != null ?
-                Set.of(aliasList.getName()) : Set.of();
+            Set<Long> clearedChannelAliasListIds = publicationMode.clearsChannelAssignments() && aliasList != null ?
+                Set.of(aliasList.getId()) : Set.of();
             return new ConfigurationManager.AliasConfigurationPublication(changedAliasIds,
                 publicationMode.definitionsChanged(), publicationMode.scanListsChanged(),
-                publicationMode.scanListsFirst(), clearedChannelAliasListNames);
+                publicationMode.scanListsFirst(), clearedChannelAliasListIds);
         }
     }
 
@@ -2157,9 +2067,6 @@ public final class AliasAdministrationService
 
     }
 
-    private record AliasListPolicyState(AliasListDefinition definition, UnmatchedTalkgroupPolicy updated)
-    {
-    }
 
     private record ScanListMutation(ScanList scanList, int affected)
     {

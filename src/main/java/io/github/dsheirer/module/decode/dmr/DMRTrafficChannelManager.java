@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import com.google.common.eventbus.EventBus;
+import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
@@ -27,6 +28,7 @@ import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -44,7 +46,10 @@ import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
+import io.github.dsheirer.module.decode.traffic.CallSystemIdentity;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -116,6 +121,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
     private volatile DMRNetworkConfigurationSnapshot mLatestNetworkConfigurationSnapshot;
+    private volatile String mNativeRadioSystemKey;
     private final AtomicLong mRestHandoffGeneration = new AtomicLong();
     private final AtomicReference<RestHandoffSlot> mPendingRestHandoff = new AtomicReference<>();
     private final AtomicBoolean mRestHandoffIngressDirty = new AtomicBoolean();
@@ -159,10 +165,10 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     /**
      * Records a completed over-the-air alias only when its source radio is known.
      */
-    public void processTalkerAlias(TalkerAliasIdentifier alias, RadioIdentifier radio,
+    public void processTalkerAlias(IChannelDescriptor channel, TalkerAliasIdentifier alias, RadioIdentifier radio,
                                    IdentifierCollection identifiers, long timestamp)
     {
-        if(alias == null || alias.getValue() == null || alias.getValue().toString().isBlank() ||
+        if(alias == null || alias.getValue() == null || alias.getValue().isBlank() ||
             radio == null || radio.getRole() != Role.FROM)
         {
             return;
@@ -175,14 +181,22 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             IdentifierCollection context = identifiers != null ?
                 new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
             context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
-            MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.DMR, radio,
-                alias, context, TrunkedIdentityDomain.STANDARD,
-                timestamp > 0 ? timestamp : System.currentTimeMillis()));
+            long observedAt = timestamp > 0 ? timestamp : System.currentTimeMillis();
+            Integer timeslot = identifiers != null && identifiers.getTimeslot() > 0 ?
+                identifiers.getTimeslot() : channel instanceof DMRChannel dmr ? dmr.getTimeslot() : null;
+            CallSystemIdentity callIdentity = mCallStartTracker.identityForActiveCall(mParentChannel, Protocol.DMR,
+                channel, timeslot, context, observedAt);
+
+            if(callIdentity != null && callIdentity.radioSystemKey() != null)
+            {
+                MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.DMR, radio,
+                    alias, context, TrunkedIdentityDomain.STANDARD, observedAt, callIdentity));
+            }
         }
     }
 
     /**
-     * Shared activity model used by the desktop and web Systems views.
+     * Shared activity model used by the desktop and web Live views.
      */
     public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
     {
@@ -305,10 +319,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     {
                         Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), ChannelType.TRAFFIC);
                         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+                        trafficChannel.setAliasListId(mParentChannel.getAliasListId());
                         trafficChannel.setSystem(mParentChannel.getSystem());
                         trafficChannel.setSite(mParentChannel.getSite());
                         trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
-                        trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
+                        trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
                         trafficChannel.setDecodeConfiguration(decodeConfig);
                         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                         trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
@@ -469,6 +484,36 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         if(snapshot != null)
         {
             mLatestNetworkConfigurationSnapshot = snapshot;
+            String radioSystemKey = "TIER_III".equals(snapshot.variant()) ?
+                RadioSystemKey.dmrTier3(snapshot.model(), snapshot.network()) : null;
+            //Incomplete Tier III evidence is an unresolved generation, never permission to retain an older key.
+            updateNativeRadioSystemKey(radioSystemKey);
+        }
+    }
+
+    String getNativeRadioSystemKey()
+    {
+        return mNativeRadioSystemKey;
+    }
+
+    /** Clears decoder-generation site evidence without tearing down active traffic allocations. */
+    void resetNetworkConfigurationIdentity()
+    {
+        mLatestNetworkConfigurationSnapshot = null;
+        updateNativeRadioSystemKey(null);
+    }
+
+    void updateNativeRadioSystemKey(String radioSystemKey)
+    {
+        if(!Objects.equals(mNativeRadioSystemKey, radioSystemKey))
+        {
+            mNativeRadioSystemKey = radioSystemKey;
+            EventBus eventBus = getInterModuleEventBus();
+
+            if(eventBus != null)
+            {
+                eventBus.post(new RadioSystemKeyEvent(radioSystemKey));
+            }
         }
     }
 
@@ -695,6 +740,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             trafficChannel.setSourceConfiguration(trafficSourceConfig);
             ChannelStartProcessingRequest startRequest = new ChannelStartProcessingRequest(channel, restChannel,
                 null, this);
+            startRequest.addPreloadDataContent(new RadioSystemKeyEvent(mNativeRadioSystemKey));
 
             if(handoff.networkConfigurationSnapshot() != null)
             {
@@ -944,7 +990,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             long timestamp = Math.max(trafficChannelEvent.getTimeStart(), trafficChannelEvent.getTimeEnd());
             TrunkedCallStartTracker.ObservationResult observation = mCallStartTracker.enrichActiveCall(
                 mParentChannel, Protocol.DMR, trafficChannelEvent.getChannelDescriptor(), timeslot,
-                trafficChannelEvent.getIdentifierCollection(), trafficChannelEvent.getEventType(), timestamp);
+                trafficChannelEvent.getIdentifierCollection(), trafficChannelEvent.getEventType(), timestamp,
+                mNativeRadioSystemKey);
 
             if(observation.attribution() != null)
             {
@@ -996,11 +1043,14 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             DecodeEventType decodeEventType = getEventType(opcode, identifierCollection, encrypted);
             TrunkedCallStartTracker.ObservationResult callObservation =
                 mCallStartTracker.observeWithAttribution(mParentChannel, Protocol.DMR, channel,
-                    channel.getTimeslot(), identifierCollection, decodeEventType, timestamp);
+                    channel.getTimeslot(), identifierCollection, decodeEventType, timestamp,
+                    mNativeRadioSystemKey);
             TrunkedCallStartEvent callStart = callObservation.callStart();
 
             if(callStart != null)
             {
+                postCallSystemKeyToActiveTrafficChannel(channel.getDownlinkFrequency(),
+                    callStart.radioSystemKey(), callStart.callStartEpochMilliseconds(), callStart.timeslot());
                 MyEventBus.getGlobalEventBus().post(callStart);
             }
 
@@ -1140,6 +1190,13 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                             //Preload the channel grant event for this traffic-channel start only.
                             ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel,
                                 channel, identifierCollection, this);
+                            String radioSystemKey = callStart != null ? callStart.radioSystemKey() :
+                                RadioSystemKey.effectiveForReceiver(Protocol.DMR, TrunkedIdentityDomain.STANDARD,
+                                    io.github.dsheirer.controller.channel.ChannelConfigurationKey.configured(
+                                        mParentChannel), mNativeRadioSystemKey);
+                            request.addPreloadDataContent(callStart != null ?
+                                new RadioSystemKeyEvent(radioSystemKey, callStart.callStartEpochMilliseconds(),
+                                    callStart.timeslot()) : new RadioSystemKeyEvent(radioSystemKey));
                             request.addPreloadDataContent(new DMRChannelGrantPreloadData(event));
                             trafficStartRequest = request;
                         }
@@ -1202,6 +1259,24 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             {
                 processTrafficChannelTeardown(trafficStartRequest.getChannel());
             }
+        }
+    }
+
+    /**
+     * Gives an already-running traffic chain the exact system key and activation boundary captured for this physical
+     * call.  The audio module can correct a call that raced this handoff without relabelling an older call.
+     */
+    private void postCallSystemKeyToActiveTrafficChannel(long frequency, String radioSystemKey,
+                                                         long callStartEpochMilliseconds, Integer timeslot)
+    {
+        Channel trafficChannel = mAllocatedChannelFrequencyMap.get(frequency);
+        EventBus eventBus = getInterModuleEventBus();
+
+        if(eventBus != null && trafficChannel != null && trafficChannel != mParentChannel &&
+            trafficChannel != mRestChannelReservationToken)
+        {
+            eventBus.post(new PostChannelModuleEventRequest(List.of(trafficChannel),
+                new RadioSystemKeyEvent(radioSystemKey, callStartEpochMilliseconds, timeslot)));
         }
     }
 
@@ -1403,6 +1478,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void reset()
     {
         mCallStartTracker.clear();
+        resetNetworkConfigurationIdentity();
     }
 
     /**
@@ -1438,6 +1514,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         {
             mAvailableTrafficChannels.clear();
             mCallStartTracker.clear();
+            resetNetworkConfigurationIdentity();
             channels = new ArrayList<>(mAllocatedChannelFrequencyMap.values());
         }
         finally

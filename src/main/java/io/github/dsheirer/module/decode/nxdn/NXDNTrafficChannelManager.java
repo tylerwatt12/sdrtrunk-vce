@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.nxdn;
 
+import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -26,6 +27,7 @@ import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -59,6 +61,8 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.Duplex;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.CallSystemIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -72,6 +76,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.locks.Lock;
@@ -109,6 +114,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private final boolean mTrunkingEnabled;
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
+    private volatile String mNativeRadioSystemKey;
 
     /**
      * Constructs an instance
@@ -139,11 +145,37 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     }
 
     /**
-     * Shared activity model used by the desktop and web Systems views.
+     * Shared activity model used by the desktop and web Live views.
      */
     public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
     {
         mChannelActivityModel = channelActivityModel;
+    }
+
+    void updateNativeRadioSystemKey(String radioSystemKey)
+    {
+        if(!Objects.equals(mNativeRadioSystemKey, radioSystemKey))
+        {
+            mNativeRadioSystemKey = radioSystemKey;
+            EventBus eventBus = getInterModuleEventBus();
+
+            if(eventBus != null)
+            {
+                eventBus.post(new RadioSystemKeyEvent(radioSystemKey));
+            }
+        }
+    }
+
+    String getNativeRadioSystemKey()
+    {
+        return mNativeRadioSystemKey;
+    }
+
+    TrunkedIdentityDomain getConfiguredIdentityDomain()
+    {
+        return mParentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN config &&
+            config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD() ?
+                TrunkedIdentityDomain.NXDN_TYPE_D : TrunkedIdentityDomain.NXDN_TYPE_C;
     }
 
     /**
@@ -177,10 +209,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                 {
                     Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), Channel.ChannelType.TRAFFIC);
                     trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+                    trafficChannel.setAliasListId(mParentChannel.getAliasListId());
                     trafficChannel.setSystem(mParentChannel.getSystem());
                     trafficChannel.setSite(mParentChannel.getSite());
                     trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
-                    trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
+                    trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
                     trafficChannel.setDecodeConfiguration(copyDecodeConfiguration(decodeConfig));
                     trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                     trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
@@ -408,7 +441,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
                         if(traffic != null)
                         {
-                            requestTrafficChannelStart(traffic, channel, ic, tracker);
+                            requestTrafficChannelStart(traffic, channel, ic, tracker,
+                                new RadioSystemKeyEvent(effectiveCurrentRadioSystemKey()));
                         }
                         else
                         {
@@ -496,7 +530,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                                    RadioIdentifier radio, long timestamp)
     {
         if(talkerAlias == null || talkerAlias.getValue() == null ||
-            talkerAlias.getValue().toString().isBlank() || radio == null || radio.getRole() != Role.FROM)
+            talkerAlias.getValue().isBlank() || radio == null || radio.getRole() != Role.FROM)
         {
             return;
         }
@@ -520,9 +554,16 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
             if(mTrunkingEnabled)
             {
-                MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.NXDN,
-                    radio, talkerAlias, context, talkerAliasIdentityDomain(radio),
-                    timestamp > 0 ? timestamp : System.currentTimeMillis()));
+                TrunkedIdentityDomain identityDomain = talkerAliasIdentityDomain(radio);
+                long observedAt = timestamp > 0 ? timestamp : System.currentTimeMillis();
+                CallSystemIdentity callIdentity = mCallStartTracker.identityForActiveCall(mParentChannel,
+                    Protocol.NXDN, channel, null, context, observedAt);
+
+                if(callIdentity != null && callIdentity.radioSystemKey() != null)
+                {
+                    MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.NXDN,
+                        radio, talkerAlias, context, identityDomain, observedAt, callIdentity));
+                }
             }
         }
         finally
@@ -586,7 +627,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     }
 
     /**
-     * Keeps progress snapshots bounded while ensuring that an active call is refreshed before the Systems row's
+     * Keeps progress snapshots bounded while ensuring that an active call is refreshed before the Live row's
      * configured traffic-grant age-out expires.
      */
     long getActivityProgressIntervalMilliseconds()
@@ -655,11 +696,14 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             DecodeEventType eventType = getType(callType, encryption);
             TrunkedCallStartTracker.ObservationResult callObservation = isLogicalVoiceChannel(channel) ?
                 mCallStartTracker.observeWithAttribution(mParentChannel, Protocol.NXDN, channel, null, ic,
-                    eventType, timestamp) : new TrunkedCallStartTracker.ObservationResult(null, null);
+                    eventType, timestamp, mNativeRadioSystemKey) :
+                new TrunkedCallStartTracker.ObservationResult(null, null);
             TrunkedCallStartEvent callStart = callObservation.callStart();
 
             if(callStart != null)
             {
+                postCallSystemKeyToActiveTrafficChannel(frequency, callStart.radioSystemKey(),
+                    callStart.callStartEpochMilliseconds(), callStart.timeslot());
                 MyEventBus.getGlobalEventBus().post(callStart);
             }
 
@@ -713,7 +757,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
                 if(traffic != null)
                 {
-                    requestTrafficChannelStart(traffic, channel, ic, tracker);
+                    String radioSystemKey = callStart != null ? callStart.radioSystemKey() :
+                        effectiveCurrentRadioSystemKey();
+                    requestTrafficChannelStart(traffic, channel, ic, tracker, callStart != null ?
+                        new RadioSystemKeyEvent(radioSystemKey, callStart.callStartEpochMilliseconds(),
+                            callStart.timeslot()) : new RadioSystemKeyEvent(radioSystemKey));
                 }
                 else
                 {
@@ -748,7 +796,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      * @param tracker to update with channel allocation flag
      */
     private void requestTrafficChannelStart(Channel trafficChannel, NXDNChannel nxdnChannel,
-                                            IdentifierCollection ic, NXDNChannelEventTracker tracker)
+                                            IdentifierCollection ic, NXDNChannelEventTracker tracker,
+                                            RadioSystemKeyEvent radioSystemKeyEvent)
     {
         if(nxdnChannel != null && nxdnChannel.getDownlinkFrequency() > 0 && getInterModuleEventBus() != null)
         {
@@ -775,7 +824,9 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             mAllocatedTrafficChannelMap.put(nxdnChannel.getDownlinkFrequency(), trafficChannel);
             ChannelStartProcessingRequest startChannelRequest = new ChannelStartProcessingRequest(trafficChannel,
                     nxdnChannel, ic, this);
-            startChannelRequest.addPreloadDataContent(new NXDNChannelInfoPreloadData(mChannelAccessInformation, mChannelFrequencies));
+            startChannelRequest.addPreloadDataContent(radioSystemKeyEvent);
+            startChannelRequest.addPreloadDataContent(new NXDNChannelInfoPreloadData(
+                mChannelAccessInformation, mChannelFrequencies));
             getInterModuleEventBus().post(startChannelRequest);
             tracker.setTrafficChannelAllocated(true);
         }
@@ -783,6 +834,28 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             //Return the channel to the traffic channel pool if we didn't start it.
             mAvailableTrafficChannelQueue.add(trafficChannel);
+        }
+    }
+
+    private String effectiveCurrentRadioSystemKey()
+    {
+        TrunkedIdentityDomain identityDomain = getConfiguredIdentityDomain();
+        return io.github.dsheirer.module.decode.traffic.RadioSystemKey.effectiveForReceiver(Protocol.NXDN,
+            identityDomain, io.github.dsheirer.controller.channel.ChannelConfigurationKey.configured(mParentChannel),
+            mNativeRadioSystemKey);
+    }
+
+    /** Carries the frozen key and activation boundary to an already-running child. */
+    private void postCallSystemKeyToActiveTrafficChannel(long frequency, String radioSystemKey,
+                                                         long callStartEpochMilliseconds, Integer timeslot)
+    {
+        Channel trafficChannel = mAllocatedTrafficChannelMap.get(frequency);
+        EventBus eventBus = getInterModuleEventBus();
+
+        if(eventBus != null && trafficChannel != null)
+        {
+            eventBus.post(new PostChannelModuleEventRequest(List.of(trafficChannel),
+                new RadioSystemKeyEvent(radioSystemKey, callStartEpochMilliseconds, timeslot)));
         }
     }
 
@@ -856,6 +929,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     public void reset()
     {
         mCallStartTracker.clear();
+        updateNativeRadioSystemKey(null);
     }
 
     @Override
@@ -873,6 +947,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             mAvailableTrafficChannelQueue.clear();
             mCallStartTracker.clear();
+            updateNativeRadioSystemKey(null);
 
             List<Channel> channels = new ArrayList<>(mAllocatedTrafficChannelMap.values());
 

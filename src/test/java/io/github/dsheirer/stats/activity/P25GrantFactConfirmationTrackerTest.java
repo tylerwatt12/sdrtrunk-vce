@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import org.junit.jupiter.api.Test;
@@ -36,13 +38,14 @@ class P25GrantFactConfirmationTrackerTest
             confirmedBand);
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activity(long timestamp)
+    private static ReceiverActivityRecords.ActivityEvent activity(long timestamp)
     {
-        String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
-            "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854_187_500L, "0-509", 0, false,
-            null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25-1", null,
-            false, null, null);
+        String configurationId = "123e4567-e89b-12d3-a456-426614174000";
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
+            "CALL_GROUP", "1811524", "56138", "TALKGROUP", java.util.List.of(), 854_187_500L, "0-509", 0,
+            false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, null, false, null, null,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
+            ReceiverActivityRecords.P25Identity.ORDINARY, java.util.List.of(), null);
     }
 }

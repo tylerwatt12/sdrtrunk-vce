@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -32,9 +33,12 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class AbstractAudioModuleTest
@@ -129,7 +133,9 @@ class AbstractAudioModuleTest
     void carriesImmutableSourceCarrierTimestampsAndVoiceFingerprint()
     {
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE2, "configuration-id", "MARCS Site",
-            "site-guid", 42, new P25SiteIdentity(0xBEE00, 0x348, 2, 19), true);
+            "radioresolve-id", 42, new P25SiteIdentity(0xBEE00, 0x348, 2, 19),
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 2_000, source);
         List<AudioCallEvent> events = new ArrayList<>();
         module.setAudioCallEventListener(events::add);
@@ -175,7 +181,9 @@ class AbstractAudioModuleTest
     void classifiesCallsAsTrunkedAfterDmrRestChannelConversion()
     {
         CallLegSource initialSource = new CallLegSource(DecoderType.DMR, "configuration-id", "DMR Site",
-            "site-guid", 42, null, false);
+            "radioresolve-id", 42, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, false);
         TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 2_000, initialSource);
         EventBus eventBus = new EventBus("audio-module-channel-conversion-test");
         module.setInterModuleEventBus(eventBus);
@@ -194,6 +202,122 @@ class AbstractAudioModuleTest
             "Calls completed after a rest-channel handoff must enter trunked logical-call statistics");
         assertEquals(CallEncryptionState.UNKNOWN, completion.snapshot().encryptionState(),
             "A non-P25 metadata-only call has no authoritative encryption observation");
+    }
+
+    @Test
+    void dmrRestConversionUpdatesAContinuationWaitingToStart()
+    {
+        CallLegSource initialSource = new CallLegSource(DecoderType.DMR, "configuration-id", "DMR Site",
+            "radioresolve-id", 42, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, false);
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 20, initialSource);
+        EventBus eventBus = new EventBus("audio-module-channel-continuation-conversion-test");
+        module.setInterModuleEventBus(eventBus);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+
+        module.appendFrame();
+        module.appendFrame(); //Closes a rollover segment and starts its linked continuation.
+        eventBus.post(new ChannelConfigurationChangeNotification(
+            new Channel("Converted rest channel", Channel.ChannelType.TRAFFIC)));
+        module.stop();
+        module.appendFrame();
+        module.stop();
+
+        List<AudioCallEvent> completions = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            .toList();
+        assertEquals(3, completions.size());
+        assertFalse(completions.get(0).snapshot().callLegSource().trafficChannel());
+        assertTrue(completions.get(1).snapshot().callLegSource().trafficChannel(),
+            "the waiting continuation must receive the committed traffic role");
+        assertTrue(completions.get(2).snapshot().callLegSource().trafficChannel(),
+            "later physical calls must use the traffic source template");
+    }
+
+    @Test
+    void nativeSystemChangesApplyOnlyToNewPhysicalCallLegs()
+    {
+        CallLegSource initialSource = new CallLegSource(DecoderType.DMR, "configuration-id", "DMR Site",
+            "radioresolve-id", 42, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 20, initialSource);
+        EventBus eventBus = new EventBus("audio-module-native-system-test");
+        module.setInterModuleEventBus(eventBus);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+
+        module.appendFrame();
+        eventBus.post(new RadioSystemKeyEvent("dmr:tier3:small:42"));
+        module.appendFrame(); //Forces a linked continuation of the already-started physical leg.
+        module.stop();
+
+        List<AudioCallEvent> completions = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            .toList();
+        assertEquals(2, completions.size());
+        assertNull(completions.get(0).snapshot().callLegSource().radioSystemKey());
+        assertNull(completions.get(1).snapshot().callLegSource().radioSystemKey(),
+            "a linked continuation must keep the source captured for its physical call leg");
+
+        module.beginAt(2_000);
+        eventBus.post(new RadioSystemKeyEvent(null));
+        module.closeAt(2_100);
+        module.beginAt(3_000);
+        module.closeAt(3_100);
+
+        completions = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            .toList();
+        assertEquals("dmr:tier3:small:42",
+            completions.get(2).snapshot().callLegSource().radioSystemKey(),
+            "clearing the template while a call is active must not rewrite that call");
+        assertNull(completions.get(3).snapshot().callLegSource().radioSystemKey());
+    }
+
+    @Test
+    void callScopedSystemKeyHandoffDoesNotWaitForTheAudioMonitor() throws Exception
+    {
+        CallLegSource initialSource = new CallLegSource(DecoderType.DMR, "configuration-id", "DMR Site",
+            null, 0L, null, io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true,
+            "dmr:tier3:small:41");
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 2_000, initialSource);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        module.beginAt(1_100L);
+        CountDownLatch monitorHeld = new CountDownLatch(1);
+        CountDownLatch releaseMonitor = new CountDownLatch(1);
+        CountDownLatch updateReturned = new CountDownLatch(1);
+        Thread holder = new Thread(() -> module.holdMonitor(monitorHeld, releaseMonitor));
+        Thread updater = new Thread(() -> {
+            module.radioSystemKeyChanged(new RadioSystemKeyEvent("dmr:tier3:small:42", 1_000L, 0));
+            updateReturned.countDown();
+        });
+        holder.start();
+        assertTrue(monitorHeld.await(2, TimeUnit.SECONDS));
+
+        try
+        {
+            updater.start();
+            assertTrue(updateReturned.await(500, TimeUnit.MILLISECONDS),
+                "the control-channel callback must not wait for the audio producer's monitor");
+        }
+        finally
+        {
+            releaseMonitor.countDown();
+            holder.join(2_000L);
+            updater.join(2_000L);
+        }
+
+        assertFalse(holder.isAlive());
+        assertFalse(updater.isAlive());
+        module.closeAt(1_200L);
+        AudioCallEvent completion = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).findFirst().orElseThrow();
+        assertEquals("dmr:tier3:small:42", completion.snapshot().callLegSource().radioSystemKey());
     }
 
     @Test
@@ -301,6 +425,23 @@ class AbstractAudioModuleTest
                                              long timestamp)
         {
             setCurrentCallEncryptionEvidence(evidence, key, timestamp);
+        }
+
+        private void holdMonitor(CountDownLatch entered, CountDownLatch release)
+        {
+            synchronized(this)
+            {
+                entered.countDown();
+
+                try
+                {
+                    release.await(2, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
 
         @Override

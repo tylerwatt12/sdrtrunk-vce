@@ -21,6 +21,7 @@ package io.github.dsheirer.controller.channel;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -77,17 +78,21 @@ public class Channel extends Configuration
     private EventLogConfiguration mEventLogConfiguration = new EventLogConfiguration();
     private RecordConfiguration mRecordConfiguration = new RecordConfiguration();
 
+    private volatile long mAliasListId = AliasListDefinition.UNASSIGNED_ID;
     private StringProperty mAliasListName = new SimpleStringProperty();
     private StringProperty mSystem = new SimpleStringProperty();
     private StringProperty mSite = new SimpleStringProperty();
     private StringProperty mName = new SimpleStringProperty();
-    private StringProperty mRadresGuid = new SimpleStringProperty();
+    private StringProperty mRadioResolveId = new SimpleStringProperty();
     private ObjectProperty<P25SiteIdentity> mP25SiteIdentity = new SimpleObjectProperty<>();
     private String mConfigurationId;
     private boolean mConfigurationIdPersistenceRequired;
     private ObservableList<Long> mFrequencyList;
 
     private BooleanProperty mProcessing = new SimpleBooleanProperty();
+    /** Manager-owned transient identity for the currently mapped processing-chain run. */
+    private transient volatile long mProcessingIncarnation;
+    private transient volatile boolean mProcessingIncarnationActive;
     private BooleanProperty mAutoStart = new SimpleBooleanProperty();
     private IntegerProperty mAutoStartOrder = new SimpleIntegerProperty();
     private boolean mSelected;
@@ -137,6 +142,7 @@ public class Channel extends Configuration
         channel.setSystem(mSystem.get());
         channel.setSite(mSite.get());
         channel.setAliasListName(mAliasListName.get());
+        channel.setAliasListId(mAliasListId);
         channel.setAutoStart(mAutoStart.get());
         channel.setAutoStartOrder(mAutoStartOrder.get());
 
@@ -297,11 +303,11 @@ public class Channel extends Configuration
     }
 
     /**
-     * Stable source GUID property.
+     * Stable identifier used to correlate this configured RF source with RadioResolve.
      */
-    public StringProperty radresGuidProperty()
+    public StringProperty radioResolveIdProperty()
     {
-        return mRadresGuid;
+        return mRadioResolveId;
     }
 
     /**
@@ -457,7 +463,7 @@ public class Channel extends Configuration
 
     /**
      * Stable internal identifier for this saved channel configuration.  Unlike {@link #getChannelID()}, this value is
-     * persisted and unlike {@link #getRadresGuid()}, it has no external site meaning.
+     * persisted and unlike {@link #getRadioResolveId()}, it has no external service meaning.
      */
     public String getConfigurationId()
     {
@@ -467,6 +473,17 @@ public class Channel extends Configuration
         }
 
         return mConfigurationId;
+    }
+
+    /**
+     * Returns the configuration identifier only after it has been loaded from or accepted by persistent storage.
+     * Unlike {@link #getConfigurationId()}, this observer-safe accessor never treats a transient channel's generated
+     * candidate as durable identity.
+     */
+    @JsonIgnore
+    public String getPersistedConfigurationId()
+    {
+        return mConfigurationIdPersistenceRequired ? null : mConfigurationId;
     }
 
     /**
@@ -512,47 +529,46 @@ public class Channel extends Configuration
     }
 
     /**
-     * Stable site GUID for configured RF sources.
+     * Stable identifier used to correlate this configured RF source with RadioResolve. Standard saved channels are
+     * assigned an identifier when needed; temporary traffic channels inherit their parent's identifier.
      */
-    public String getRadresGuid()
+    public String getRadioResolveId()
     {
-        if(isStandardChannel() && !hasRadresGuid())
+        if(isStandardChannel() && !hasRadioResolveId())
         {
-            mRadresGuid.set(UUID.randomUUID().toString());
+            mRadioResolveId.set(UUID.randomUUID().toString());
         }
 
-        return mRadresGuid.get();
+        return mRadioResolveId.get();
     }
 
-    /**
-     * Sets the stable site GUID.
-     */
-    public void setRadresGuid(String radresGuid)
+    /** Restores the stable RadioResolve correlation identifier. */
+    public void setRadioResolveId(String radioResolveId)
     {
-        if(radresGuid != null && !radresGuid.isBlank())
+        if(radioResolveId != null && !radioResolveId.isBlank())
         {
             try
             {
-                mRadresGuid.set(UUID.fromString(radresGuid.trim()).toString());
+                mRadioResolveId.set(UUID.fromString(radioResolveId.trim()).toString());
             }
             catch(IllegalArgumentException _)
             {
-                mRadresGuid.set(null);
+                mRadioResolveId.set(null);
             }
         }
         else
         {
-            mRadresGuid.set(null);
+            mRadioResolveId.set(null);
         }
     }
 
     /**
-     * Indicates if this channel has a site GUID.
+     * Indicates if this channel has a RadioResolve correlation identifier.
      */
     @JsonIgnore
-    public boolean hasRadresGuid()
+    public boolean hasRadioResolveId()
     {
-        return mRadresGuid != null && mRadresGuid.get() != null && !mRadresGuid.get().isBlank();
+        return mRadioResolveId != null && mRadioResolveId.get() != null && !mRadioResolveId.get().isBlank();
     }
 
     /**
@@ -619,6 +635,61 @@ public class Channel extends Configuration
     public boolean isProcessing()
     {
         return mProcessing.get();
+    }
+
+    /**
+     * Transient processing-chain incarnation. Zero means this channel has not been activated by a processing manager.
+     */
+    @JsonIgnore
+    public long getProcessingIncarnation()
+    {
+        return mProcessingIncarnation;
+    }
+
+    /** True while the current transient processing incarnation owns an authoritative manager mapping. */
+    @JsonIgnore
+    public boolean isProcessingIncarnationActive()
+    {
+        return mProcessingIncarnationActive;
+    }
+
+    /**
+     * Tests one captured processing incarnation without consulting the asynchronously updated UI processing flag.
+     * An inactive match is useful for the terminal quality snapshot produced while a chain is being stopped.
+     */
+    @JsonIgnore
+    public boolean matchesProcessingIncarnation(long incarnation, boolean requireActive)
+    {
+        if(incarnation == 0)
+        {
+            return true;
+        }
+
+        long current = mProcessingIncarnation;
+        boolean active = mProcessingIncarnationActive;
+        return current == incarnation && (!requireActive || active) && mProcessingIncarnation == incarnation;
+    }
+
+    /** Manager-only synchronous activation performed when a processing-chain map entry becomes authoritative. */
+    void activateProcessingIncarnation(long incarnation)
+    {
+        if(incarnation == 0)
+        {
+            throw new IllegalArgumentException("processing incarnation must be non-zero");
+        }
+
+        mProcessingIncarnationActive = false;
+        mProcessingIncarnation = incarnation;
+        mProcessingIncarnationActive = true;
+    }
+
+    /** Manager-only synchronous closure performed before a processing-chain map entry loses authority. */
+    void deactivateProcessingIncarnation(long incarnation)
+    {
+        if(mProcessingIncarnation == incarnation)
+        {
+            mProcessingIncarnationActive = false;
+        }
     }
 
     /**
@@ -724,6 +795,46 @@ public class Channel extends Configuration
     public void setAliasListName(String name)
     {
         mAliasListName.set(name);
+
+        if(name == null || name.isBlank())
+        {
+            mAliasListId = AliasListDefinition.UNASSIGNED_ID;
+        }
+    }
+
+    /**
+     * Stable Alias List relationship used by persistence and runtime lookup. The name remains presentation text and
+     * is never used as the durable relationship key.
+     */
+    @JsonIgnore
+    public long getAliasListId()
+    {
+        return mAliasListId;
+    }
+
+    public void setAliasListId(long aliasListId)
+    {
+        if(aliasListId < AliasListDefinition.UNASSIGNED_ID)
+        {
+            throw new IllegalArgumentException("Alias list ID cannot be negative");
+        }
+
+        mAliasListId = aliasListId;
+    }
+
+    /** Assigns or clears the stable relationship and its current display name together. */
+    public void setAliasListDefinition(AliasListDefinition definition)
+    {
+        if(definition == null)
+        {
+            mAliasListId = AliasListDefinition.UNASSIGNED_ID;
+            mAliasListName.set(null);
+        }
+        else
+        {
+            mAliasListId = definition.getId();
+            mAliasListName.set(definition.getName());
+        }
     }
 
     /**
@@ -920,6 +1031,6 @@ public class Channel extends Configuration
     {
         return (Channel c) -> new Observable[] {c.processingProperty(), c.nameProperty(), c.aliasListNameProperty(),
             c.autoStartOrderProperty(), c.autoStartProperty(), c.siteProperty(), c.systemProperty(),
-            c.radresGuidProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
+            c.radioResolveIdProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
     }
 }

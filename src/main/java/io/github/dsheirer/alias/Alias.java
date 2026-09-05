@@ -52,6 +52,7 @@ public class Alias
 
     private volatile long mId = UNASSIGNED_ID;
     private volatile long mAliasListId = UNASSIGNED_ALIAS_LIST_ID;
+    private transient volatile AliasListDefinition mAliasListDefinition;
     private final BooleanProperty mRecordable = new SimpleBooleanProperty();
     private final BooleanProperty mStreamable = new SimpleBooleanProperty();
     private final BooleanProperty mOverlap = new SimpleBooleanProperty();
@@ -122,19 +123,36 @@ public class Alias
             throw new IllegalArgumentException("Alias list ID cannot be negative");
         }
 
+        if(mAliasListDefinition != null && mAliasListDefinition.getId() != aliasListId)
+        {
+            mAliasListDefinition = null;
+        }
+
         mAliasListId = aliasListId;
+    }
+
+    /**
+     * Exact in-memory Alias List relationship for a new draft, or the definition bound to the durable ID after load.
+     * The reference is runtime-only; SQLite stores {@link #getAliasListId()} as the authoritative relationship.
+     */
+    @JsonIgnore
+    public AliasListDefinition getAliasListDefinition()
+    {
+        return mAliasListDefinition;
     }
 
     public void setAliasListDefinition(AliasListDefinition definition)
     {
         if(definition == null)
         {
+            mAliasListDefinition = null;
             setAliasListId(UNASSIGNED_ALIAS_LIST_ID);
             setAliasListName(null);
         }
         else
         {
             setAliasListId(definition.getId());
+            mAliasListDefinition = definition;
             setAliasListName(definition.getName());
         }
     }
@@ -273,10 +291,7 @@ public class Alias
         mDescription.set(description);
     }
 
-    /**
-     * Tests membership using the durable SQLite identity. Name matching is only for not-yet-persisted import and
-     * editor objects that do not have database identities yet.
-     */
+    /** Tests membership by durable SQLite identity, or exact definition object for an unpersisted draft. */
     boolean belongsTo(AliasListDefinition definition)
     {
         if(definition == null)
@@ -292,8 +307,7 @@ public class Alias
                 getAliasListId() == definition.getId();
         }
 
-        return getAliasListName() != null && definition.getName() != null &&
-            getAliasListName().equalsIgnoreCase(definition.getName());
+        return mAliasListDefinition == definition;
     }
 
     public String getGroup()
@@ -370,34 +384,36 @@ public class Alias
         }
     }
 
-    public void addBroadcastChannel(String channel)
+    public void addBroadcastChannel(String configurationId, String channelName)
     {
-        if(channel != null && !channel.isEmpty())
+        if(configurationId != null && !configurationId.isBlank())
         {
-            addBroadcastChannel(new BroadcastChannel(channel));
+            addBroadcastChannel(new BroadcastChannel(configurationId, channelName));
         }
     }
 
     public void addBroadcastChannel(BroadcastChannel broadcastChannel)
     {
-        if(broadcastChannel != null && broadcastChannel.isValid() && !mBroadcastChannels.contains(broadcastChannel))
+        if(broadcastChannel != null && (broadcastChannel.isValid() || broadcastChannel.hasDisplayName()) &&
+            !mBroadcastChannels.contains(broadcastChannel))
         {
             mBroadcastChannels.add(broadcastChannel);
         }
     }
 
-    public boolean hasBroadcastChannel(String channel)
+    public boolean hasBroadcastConfiguration(String configurationId)
     {
-        return channel != null && !channel.isEmpty() &&
+        return configurationId != null && !configurationId.isBlank() &&
             mBroadcastChannels.stream().anyMatch(broadcastChannel ->
-                channel.equals(broadcastChannel.getChannelName()));
+                configurationId.equals(broadcastChannel.getConfigurationId()));
     }
 
-    public void removeBroadcastChannel(String channel)
+    public void removeBroadcastConfiguration(String configurationId)
     {
-        if(channel != null && !channel.isEmpty())
+        if(configurationId != null && !configurationId.isBlank())
         {
-            mBroadcastChannels.removeIf(broadcastChannel -> channel.equals(broadcastChannel.getChannelName()));
+            mBroadcastChannels.removeIf(broadcastChannel ->
+                configurationId.equals(broadcastChannel.getConfigurationId()));
         }
     }
 

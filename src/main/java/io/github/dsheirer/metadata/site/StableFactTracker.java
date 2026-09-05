@@ -156,6 +156,12 @@ public class StableFactTracker<V,K>
             return Result.NONE;
         }
 
+        if(mStableValue != null && timestamp < mStableLastSeenTimestamp)
+        {
+            //A stale observation cannot update the incumbent or become a challenger that later rewinds it.
+            return Result.NONE;
+        }
+
         if(mStableValue == null && policy.trustInitialValue())
         {
             return promoteIfAllowed(value, key, timestamp, promotionGuard);

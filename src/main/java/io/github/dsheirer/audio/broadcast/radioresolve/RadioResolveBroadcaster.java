@@ -82,13 +82,13 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
     private static final Duration CALL_UPLOAD_TIMEOUT = Duration.ofSeconds(30);
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
-    private static final long MISSING_GUID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
+    private static final long MISSING_RADIORESOLVE_ID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
     private static final long[] RETRY_BACKOFF_MS = {5000, 15000, 30000, 60000, 120000};
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private final Object mQueueLock = new Object();
     private final Deque<PendingUpload> mAudioRecordingQueue = new ArrayDeque<>();
-    private final Map<String,MetadataState> mMetadataStateByGuid = new HashMap<>();
+    private final Map<String,MetadataState> mMetadataStateByRadioResolveId = new HashMap<>();
     private final AtomicInteger mInFlightUploads = new AtomicInteger();
     private ScheduledFuture<?> mAudioRecordingProcessorFuture;
     private HttpClient mHttpClient;
@@ -97,8 +97,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private volatile boolean mServerReachable;
     private long mLastConnectionAttempt;
     private long mConnectionAttemptInterval = 5000;
-    private long mLastMissingGuidWarningTimestamp;
-    private int mMissingGuidSkipCount;
+    private long mLastMissingRadioResolveIdWarningTimestamp;
+    private int mMissingRadioResolveIdSkipCount;
 
     public RadioResolveBroadcaster(RadioResolveConfiguration config, InputAudioFormat inputAudioFormat,
                                    MP3Setting mp3Setting, AliasModel aliasModel)
@@ -194,14 +194,15 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(!getBroadcastConfiguration().isSiteMetadataEnabled() || event == null || !event.isUseful())
+        if(!getBroadcastConfiguration().isSiteMetadataEnabled() || event == null || !event.isUseful() ||
+            !event.matchesCurrentChannel())
         {
             return;
         }
 
-        String guid = event.channel().getRadresGuid();
+        String radioResolveId = event.receiverContext().radioResolveId();
 
-        if(guid == null || guid.isBlank())
+        if(radioResolveId == null || radioResolveId.isBlank())
         {
             return;
         }
@@ -209,7 +210,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
         String hash = hash(snapshot);
         long now = System.currentTimeMillis();
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(guid, snapshot);
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(radioResolveId, snapshot);
         if(!readiness.ready())
         {
             return;
@@ -220,9 +221,10 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return;
         }
 
-        synchronized(mMetadataStateByGuid)
+        synchronized(mMetadataStateByRadioResolveId)
         {
-            MetadataState state = mMetadataStateByGuid.computeIfAbsent(guid, ignored -> new MetadataState());
+            MetadataState state = mMetadataStateByRadioResolveId.computeIfAbsent(radioResolveId,
+                ignored -> new MetadataState());
             boolean changed = !hash.equals(state.mLastSuccessfulHash);
             boolean heartbeatDue = now - state.mLastSuccessfulEpochMilliseconds >=
                 METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS;
@@ -266,7 +268,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             if(response.statusCode() >= 200 && response.statusCode() < 300)
             {
-                markMetadataSent(event.channel().getRadresGuid(), hash, observedAt);
+                markMetadataSent(event.receiverContext().radioResolveId(), hash, observedAt);
                 setBroadcastState(BroadcastState.CONNECTED);
             }
             else if(response.statusCode() == 401 || response.statusCode() == 403)
@@ -287,11 +289,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         }
     }
 
-    private void markMetadataSent(String guid, String hash, long observedAt)
+    private void markMetadataSent(String radioResolveId, String hash, long observedAt)
     {
-        synchronized(mMetadataStateByGuid)
+        synchronized(mMetadataStateByRadioResolveId)
         {
-            MetadataState state = mMetadataStateByGuid.computeIfAbsent(guid, ignored -> new MetadataState());
+            MetadataState state = mMetadataStateByRadioResolveId.computeIfAbsent(radioResolveId,
+                ignored -> new MetadataState());
             state.mLastSuccessfulHash = hash;
             state.mLastSuccessfulEpochMilliseconds = observedAt;
         }
@@ -337,11 +340,11 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             }
 
             AudioRecording audioRecording = pendingUpload.getAudioRecording();
-            String guid = getConfigurationIdentifier(audioRecording, Form.RADRES_GUID);
+            String radioResolveId = getConfigurationIdentifier(audioRecording, Form.RADIORESOLVE_ID);
 
-            if(guid == null || guid.isBlank())
+            if(radioResolveId == null || radioResolveId.isBlank())
             {
-                warnMissingGuidSkipped(audioRecording);
+                warnMissingRadioResolveIdSkipped(audioRecording);
                 audioRecording.removePendingReplay();
                 incrementAgedOffAudioCount();
                 broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
@@ -386,17 +389,19 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         }
     }
 
-    private void warnMissingGuidSkipped(AudioRecording audioRecording)
+    private void warnMissingRadioResolveIdSkipped(AudioRecording audioRecording)
     {
-        mMissingGuidSkipCount++;
+        mMissingRadioResolveIdSkipCount++;
         long now = System.currentTimeMillis();
 
-        if(now - mLastMissingGuidWarningTimestamp >= MISSING_GUID_WARNING_INTERVAL_MILLISECONDS)
+        if(now - mLastMissingRadioResolveIdWarningTimestamp >=
+            MISSING_RADIORESOLVE_ID_WARNING_INTERVAL_MILLISECONDS)
         {
-            mLog.warn("RadioResolve skipped {} call upload(s) missing radres_guid. Last recording identifiers: {}",
-                mMissingGuidSkipCount, describeIdentifiers(audioRecording));
-            mMissingGuidSkipCount = 0;
-            mLastMissingGuidWarningTimestamp = now;
+            mLog.warn("RadioResolve skipped {} call upload(s) missing a RadioResolve ID. " +
+                    "Last recording identifiers: {}", mMissingRadioResolveIdSkipCount,
+                describeIdentifiers(audioRecording));
+            mMissingRadioResolveIdSkipCount = 0;
+            mLastMissingRadioResolveIdWarningTimestamp = now;
         }
     }
 
@@ -604,7 +609,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         root.addProperty("frequency_mhz", formatFrequencyMHz(getFrequency(audioRecording)));
         root.addProperty("system_label", getConfigurationIdentifier(audioRecording, Form.SYSTEM));
         root.addProperty("site_label", getConfigurationIdentifier(audioRecording, Form.SITE));
-        root.addProperty("radres_guid", getConfigurationIdentifier(audioRecording, Form.RADRES_GUID));
+        root.addProperty("radres_guid", getConfigurationIdentifier(audioRecording, Form.RADIORESOLVE_ID));
         root.addProperty("p25_nac", getP25NetworkIdentifier(audioRecording, Form.NETWORK_ACCESS_CODE, 3));
         root.addProperty("logical_channel", getDecoderIdentifier(audioRecording, Form.CHANNEL_NAME));
         root.addProperty("audio_protocol", getConfigurationIdentifier(audioRecording, Form.DECODER_TYPE));
@@ -628,13 +633,13 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         root.addProperty("observedAtEpochMilliseconds", observedAt);
         root.addProperty("nodeName", getNodeName(configuration));
         root.addProperty("timezone", getNodeTimezone(configuration));
-        root.addProperty("radresGuid", event.channel().getRadresGuid());
+        root.addProperty("radresGuid", event.receiverContext().radioResolveId());
         root.addProperty("decoder", event.snapshot().decoder());
         root.addProperty("summaryHash", hash);
 
         JsonObject channelObject = new JsonObject();
-        channelObject.addProperty("name", event.channel().getName());
-        channelObject.addProperty("aliasList", event.channel().getAliasListName());
+        channelObject.addProperty("name", event.receiverContext().channelName());
+        channelObject.addProperty("aliasList", event.receiverContext().aliasListName());
         root.add("channel", channelObject);
         root.add("network", GSON.toJsonTree(event.snapshot().network()));
         root.add("currentSite", GSON.toJsonTree(event.snapshot().currentSite()));

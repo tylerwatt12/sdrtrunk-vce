@@ -18,10 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.CallTimer;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.source.config.SourceConfigRecording;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -39,6 +41,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class TrunkedSiteMetadataMapperTest
 {
+    private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000122";
+
     @TempDir
     Path mTemporaryFolder;
 
@@ -71,9 +75,8 @@ class TrunkedSiteMetadataMapperTest
         assertNotNull(mapped);
         assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, mapped.protocolCode());
         assertEquals(3, mapped.variantCode());
-        assertEquals(2, mapped.identityDomainCode());
-        assertEquals("Metro Radio", mapped.configuredSystem());
-        assertEquals("Downtown", mapped.channelName());
+        assertEquals(0, mapped.locationCategoryCode());
+        assertEquals(channel.getConfigurationId().toString(), mapped.configurationId());
         assertEquals(10, mapped.networkId());
         assertEquals(20, mapped.siteId());
         assertEquals(3, mapped.brandCode());
@@ -92,7 +95,8 @@ class TrunkedSiteMetadataMapperTest
                 value.observedAtEpochMilliseconds() == 700L));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE,
             mapped.neighbors().getFirst().statusFlags());
-        assertEquals(2, mapped.neighbors().getFirst().identityDomainCode());
+        assertEquals(2, mapped.neighbors().getFirst().dmrModelCode());
+        assertEquals(0, mapped.neighbors().getFirst().nxdnLocationCategoryCode());
         assertEquals(800L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
 
         TrunkedSiteSchema.Snapshot heartbeat = TrunkedSiteMetadataMapper.map(
@@ -115,12 +119,13 @@ class TrunkedSiteMetadataMapperTest
         channel.setSite("Airport");
         TrunkedSiteSchema.Snapshot renamed = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 7_000L));
-        assertNotEquals(mapped.snapshotHash(), renamed.snapshotHash());
+        assertEquals(mapped.snapshotHash(), renamed.snapshotHash(),
+            "display-only channel labels are not part of an over-the-air snapshot");
 
         channel.setSite(" ");
         TrunkedSiteSchema.Snapshot fallback = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 8_000L));
-        assertEquals("Control", fallback.channelName());
+        assertEquals(mapped.snapshotHash(), fallback.snapshotHash());
     }
 
     @Test
@@ -170,8 +175,8 @@ class TrunkedSiteMetadataMapperTest
         NXDNNetworkConfigurationSnapshot source = new NXDNNetworkConfigurationSnapshot(
             "NXDN", "TYPE-D", 5,
             new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, null, 7),
-            9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
-            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),
+            9, "CONTROL", null, null, List.of(Service.VOICE_CALL, Service.DATA_CALL), List.of(),
+            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, CallTimer.CT4),
             List.of(new NXDNNetworkConfigurationSnapshot.Channel("CONTROL_1", "DFA", null,
                 120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null, 600L)),
             List.of(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
@@ -183,7 +188,7 @@ class TrunkedSiteMetadataMapperTest
         assertNotNull(mapped);
         assertEquals(TrunkedSiteSchema.PROTOCOL_NXDN, mapped.protocolCode());
         assertEquals(2, mapped.variantCode());
-        assertEquals(4, mapped.identityDomainCode());
+        assertEquals(4, mapped.locationCategoryCode());
         assertEquals(7, mapped.networkId());
         assertEquals(8, mapped.systemId());
         assertEquals(9, mapped.siteId());
@@ -196,14 +201,15 @@ class TrunkedSiteMetadataMapperTest
             value.observedAtEpochMilliseconds() == 900L));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ISOLATED,
             mapped.neighbors().getFirst().statusFlags());
-        assertEquals(4, mapped.neighbors().getFirst().identityDomainCode());
+        assertEquals(0, mapped.neighbors().getFirst().dmrModelCode());
+        assertEquals(4, mapped.neighbors().getFirst().nxdnLocationCategoryCode());
         assertEquals(700L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
 
         NXDNNetworkConfigurationSnapshot refreshedSource = new NXDNNetworkConfigurationSnapshot(
             "NXDN", "TYPE-D", 5,
             new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, null, 7),
-            9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
-            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),
+            9, "CONTROL", null, null, List.of(Service.VOICE_CALL, Service.DATA_CALL), List.of(),
+            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, CallTimer.CT4),
             List.of(new NXDNNetworkConfigurationSnapshot.Channel("CONTROL_1", "DFA", null,
                 120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null, 1_600L)),
             List.of(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
@@ -227,7 +233,7 @@ class TrunkedSiteMetadataMapperTest
     }
 
     @Test
-    void hashMaterialKeepsConfiguredFieldBoundaries()
+    void hashMaterialIgnoresConfiguredDisplayFieldBoundaries()
     {
         DMRNetworkConfigurationSnapshot source = new DMRNetworkConfigurationSnapshot(
             "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control", 1, 2,
@@ -244,7 +250,8 @@ class TrunkedSiteMetadataMapperTest
         TrunkedSiteSchema.Snapshot secondMapped = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(second, source, 1_000L));
 
-        assertNotEquals(firstMapped.snapshotHash(), secondMapped.snapshotHash());
+        assertEquals(firstMapped.snapshotHash(), secondMapped.snapshotHash(),
+            "configured display labels are authoritative in configuration_channel, not the observed snapshot");
     }
 
     @Test
@@ -270,19 +277,44 @@ class TrunkedSiteMetadataMapperTest
     }
 
     @Test
+    void rejectsProducerTimeSiteStateAfterTheLiveChannelIsEdited()
+    {
+        Channel channel = channel(451_000_000L);
+        DMRNetworkConfigurationSnapshot source = new DMRNetworkConfigurationSnapshot(
+            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
+            1, 2, List.of(), List.of());
+        ProtocolSiteMetadataEvent event = new ProtocolSiteMetadataEvent(channel, source, 1_000L,
+            451_000_000L);
+
+        channel.setConfigurationId("00000000-0000-0000-0000-000000000999");
+        channel.setName("Replacement");
+        channel.setSite("Replacement Site");
+        SourceConfigRecording replacement = new SourceConfigRecording();
+        replacement.setFrequency(460_000_000L);
+        channel.setSourceConfiguration(replacement);
+
+        TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(event);
+        assertNull(mapped);
+        assertEquals(CONFIGURATION_ID, event.receiverContext().configurationId());
+        assertEquals(451_000_000L, event.receiverContext().effectivePrimaryFrequency());
+        assertEquals("Control", event.receiverContext().channelName());
+        assertEquals("Downtown", event.receiverContext().siteName());
+    }
+
+    @Test
     void existingSingleWriterPersistsMappedTrunkedSnapshot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         Channel channel = channel(451_000_000L);
+        createDatabase(database, channel);
         DMRNetworkConfigurationSnapshot source = new DMRNetworkConfigurationSnapshot(
             "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control", 1, 2,
             List.of(), List.of());
         TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 1_000L));
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10, 250, 25);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, false, 10, 250, 25);
         writer.start();
-        writer.enqueue(new P25ActivityLogRecords.TrunkedSiteSnapshot(
+        writer.enqueue(new ReceiverActivityRecords.TrunkedSiteSnapshot(
             mapped.observedAtEpochMilliseconds(), mapped));
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
 
@@ -297,28 +329,51 @@ class TrunkedSiteMetadataMapperTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT protocol_code, network_id, site_id
+                SELECT protocol_code, observed_network_id, observed_site_id
                 FROM trunked_site_snapshot
-                WHERE guid='00000000-0000-0000-0000-000000000123'
-                """))
+                JOIN receiver_channel receiver ON receiver.id = trunked_site_snapshot.channel_id
+                WHERE receiver.configuration_id='%s'
+                """.formatted(channel.getConfigurationId())))
         {
             assertTrue(resultSet.next());
             assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, resultSet.getInt("protocol_code"));
-            assertEquals(10, resultSet.getInt("network_id"));
-            assertEquals(20, resultSet.getInt("site_id"));
+            assertEquals(10, resultSet.getInt("observed_network_id"));
+            assertEquals(20, resultSet.getInt("observed_site_id"));
         }
     }
 
     private static Channel channel(long frequency)
     {
         Channel channel = new Channel("Control");
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setSystem("Metro Radio");
         channel.setSite("Downtown");
         channel.setAliasListName("County");
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000123");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000123");
         SourceConfigRecording recording = new SourceConfigRecording();
         recording.setFrequency(frequency);
         channel.setSourceConfiguration(recording);
         return channel;
+    }
+
+    private static void createDatabase(Path database, Channel channel) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverActivitySchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%s', 'TRUNKED', 0, 'Metro Radio', 'Downtown', 'Control',
+                    '00000000-0000-0000-0000-000000000123', 0, 'DMR', 451000000,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
+                """.formatted(channel.getConfigurationId()));
+        }
     }
 }

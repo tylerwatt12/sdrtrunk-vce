@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.hasRouteNamed;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -145,7 +146,7 @@ class LegacyXmlConfigurationImporterTest
         assertTrue(aliases.stream().allMatch(alias -> "County".equals(alias.getAliasListName())));
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof Talkgroup));
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof TalkgroupRange));
-        assertTrue(aliases.stream().allMatch(alias -> alias.hasBroadcastChannel("RadioResolve")));
+        assertTrue(aliases.stream().allMatch(alias -> hasRouteNamed(alias, "RadioResolve")));
         assertTrue(aliases.stream().allMatch(alias -> alias.getMatchIdentifier().toString()
             .equals(alias.getMatchIdentifier().valueProperty().get())));
         assertTrue(aliases.stream().allMatch(alias -> alias.getBroadcastChannels().stream()
@@ -168,7 +169,7 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(DecoderType.P25_CONVENTIONAL, state.channels().get(0).getDecodeConfiguration().getDecoderType());
         assertTrue(state.channels().get(0).getAutoStart());
         assertEquals(4, state.channels().get(0).getAutoStartOrder());
-        assertEquals("11111111-2222-3333-4444-555555555555", state.channels().get(0).getRadresGuid());
+        assertEquals("11111111-2222-3333-4444-555555555555", state.channels().get(0).getRadioResolveId());
         assertInstanceOf(SourceConfigTuner.class, state.channels().get(0).getSourceConfiguration());
 
         assertInstanceOf(DecodeConfigP25Phase1.class, state.channels().get(1).getDecodeConfiguration());
@@ -635,7 +636,7 @@ class LegacyXmlConfigurationImporterTest
         RadioRange radioRange = assertInstanceOf(RadioRange.class, radioAlias.getMatchIdentifier());
         assertEquals(70000, radioRange.getMinRadio());
         assertEquals(71000, radioRange.getMaxRadio());
-        assertTrue(radioAlias.hasBroadcastChannel("Icecast"));
+        assertTrue(hasRouteNamed(radioAlias, "Icecast"));
         assertEquals("Icecast", radioAlias.getBroadcastChannels().iterator().next().valueProperty().get());
 
         Dcs dcs = assertInstanceOf(Dcs.class, aliases.stream()

@@ -124,11 +124,11 @@ final class AliasListDefinitionResolver
 
             if(definition == null)
             {
-                claim.mChannel.setAliasListName(null);
+                claim.mChannel.setAliasListDefinition(null);
             }
             else
             {
-                claim.mChannel.setAliasListName(definition.getName());
+                claim.mChannel.setAliasListDefinition(definition);
             }
         }
 
@@ -200,8 +200,7 @@ final class AliasListDefinitionResolver
             }
 
             definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(catchAll.isRecordable(),
-                catchAll.getBroadcastChannels().stream()
-                    .map(BroadcastChannel::getChannelName).toList()));
+                catchAll.getBroadcastChannels()));
             state.getLegacyAliasListenEnabled(catchAll).ifPresent(enabled ->
                 state.setLegacyAliasListListenEnabled(definition, enabled));
             aliases.remove(catchAll);

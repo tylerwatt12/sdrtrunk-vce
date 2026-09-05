@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import org.junit.jupiter.api.Test;
 
@@ -41,5 +43,24 @@ class TrunkedIdentityEligibilityTest
             Form.TALKGROUP, 0xFFF0));
         assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.NXDN, TrunkedIdentityDomain.NXDN_TYPE_D,
             Form.RADIO, 0xFFF1));
+    }
+
+    @Test
+    void separatesPermanentP25RadioIdsFromTemporaryWorkingAddresses()
+    {
+        assertFalse(TrunkedIdentityEligibility.isEligible(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFD26));
+        assertTrue(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD,
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26, 0xBEE00, 0x954, 831_102)));
+        assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD,
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFFFD, 0xBEE00, 0x954, 831_102)));
+        assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, APCO25IncompleteRadioIdentifier.createTo(831_102)));
+        assertTrue(TrunkedIdentityEligibility.isObservedLocalEligible(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFD26, true));
+        assertFalse(TrunkedIdentityEligibility.isObservedLocalEligible(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, Form.RADIO, 0xFFFFFD, true));
     }
 }

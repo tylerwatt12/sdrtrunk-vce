@@ -15,7 +15,10 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /** Complete Alias, Alias List, and scan-list state for one database transaction. */
@@ -35,6 +38,8 @@ public record AliasConfigurationSnapshot(List<AliasListDefinition> definitions, 
                                                              ScanListConfiguration scanLists)
     {
         List<AliasListDefinition> definitionCopies = new ArrayList<>();
+        Map<AliasListDefinition,AliasListDefinition> definitionsBySource = new IdentityHashMap<>();
+        Map<Long,AliasListDefinition> definitionsById = new HashMap<>();
         for(AliasListDefinition definition: Objects.requireNonNull(definitions,
             "Alias-list definitions cannot be null"))
         {
@@ -42,6 +47,11 @@ public record AliasConfigurationSnapshot(List<AliasListDefinition> definitions, 
                 definition.getUnmatchedTalkgroupPolicy());
             copy.setId(definition.getId());
             definitionCopies.add(copy);
+            definitionsBySource.put(definition, copy);
+            if(copy.getId() > AliasListDefinition.UNASSIGNED_ID)
+            {
+                definitionsById.put(copy.getId(), copy);
+            }
         }
 
         List<Alias> aliasCopies = new ArrayList<>();
@@ -49,6 +59,15 @@ public record AliasConfigurationSnapshot(List<AliasListDefinition> definitions, 
         {
             Alias copy = AliasFactory.copyOf(alias);
             copy.setId(alias.getId());
+            AliasListDefinition definitionCopy = definitionsBySource.get(alias.getAliasListDefinition());
+            if(definitionCopy == null && alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID)
+            {
+                definitionCopy = definitionsById.get(alias.getAliasListId());
+            }
+            if(definitionCopy != null)
+            {
+                copy.setAliasListDefinition(definitionCopy);
+            }
             aliasCopies.add(copy);
         }
 

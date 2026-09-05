@@ -24,32 +24,31 @@ import org.junit.jupiter.api.Test;
 
 class WebConfiguredEntityRepositoryTest
 {
-    private static final String SITE_ID = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
+    private static final String TRUNKED_ID = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
     private static final String CONVENTIONAL_ID = "728d2d66-de4e-476b-a696-919f32dd4d12";
-    private static final String CONVENTIONAL_RADRES_GUID = "a1b2c3d4-e5f6-4789-8abc-def012345678";
 
     @Test
     void savedConfigurationOwnsExistenceAndActivityIsOptional() throws Exception
     {
         try(Connection connection = database())
         {
-            insertConfiguration(connection, 1, SITE_ID, "TRUNKED", SITE_ID, "P25_PHASE1");
-            insertConfiguration(connection, 2, CONVENTIONAL_ID, "CONVENTIONAL", null, "NBFM");
+            insertConfiguration(connection, 1, TRUNKED_ID, "TRUNKED", "P25_PHASE1");
+            insertConfiguration(connection, 2, CONVENTIONAL_ID, "CONVENTIONAL", "NBFM");
             WebConfiguredEntityRepository repository = new WebConfiguredEntityRepository();
 
-            WebConfiguredEntityRepository.ConfiguredChannel site = repository.requireSite(connection, SITE_ID);
-            assertNull(site.contextId());
-            assertEquals(Map.of("kind", "site", "key", SITE_ID), site.toApiMap().get("entity_ref"));
-            assertFalse(site.toApiMap().containsKey("alias_list_id"),
-                "internal exact-scope ownership must not leak into the configured-channel DTO");
+            WebConfiguredEntityRepository.ConfiguredChannel trunked =
+                repository.requireChannel(connection, TRUNKED_ID);
+            assertNull(trunked.channelId());
+            assertEquals(Map.of("kind", "channel", "key", TRUNKED_ID),
+                trunked.toApiMap().get("entity_ref"));
 
             WebConfiguredEntityRepository.ConfiguredChannel conventional =
-                repository.requireConventional(connection, CONVENTIONAL_ID);
-            assertNull(conventional.contextId());
-            assertEquals(Map.of("kind", "conventional", "key", CONVENTIONAL_ID),
+                repository.requireChannel(connection, CONVENTIONAL_ID);
+            assertNull(conventional.channelId());
+            assertEquals(Map.of("kind", "channel", "key", CONVENTIONAL_ID),
                 conventional.toApiMap().get("entity_ref"));
             StatsApiException uppercase = assertThrows(StatsApiException.class,
-                () -> repository.requireSite(connection, SITE_ID.toUpperCase()));
+                () -> repository.requireChannel(connection, TRUNKED_ID.toUpperCase()));
             assertEquals(400, uppercase.status());
         }
     }
@@ -60,12 +59,11 @@ class WebConfiguredEntityRepositoryTest
         try(Connection connection = database(); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO receiver_context(id, context_key, first_seen_ms, last_seen_ms, nac,
-                    primary_frequency_hz)
-                VALUES (10, 'GUID:%s', 1000, 2000, 0x293, 851012500)
-                """.formatted(SITE_ID));
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
+                VALUES (10, '%s', 1000, 2000)
+                """.formatted(TRUNKED_ID));
             StatsApiException exception = assertThrows(StatsApiException.class,
-                () -> new WebConfiguredEntityRepository().requireSite(connection, SITE_ID));
+                () -> new WebConfiguredEntityRepository().requireChannel(connection, TRUNKED_ID));
             assertEquals(404, exception.status());
         }
     }
@@ -75,19 +73,23 @@ class WebConfiguredEntityRepositoryTest
     {
         try(Connection connection = database(); Statement statement = connection.createStatement())
         {
-            insertConfiguration(connection, 2, CONVENTIONAL_ID, "CONVENTIONAL", CONVENTIONAL_RADRES_GUID, "DMR");
+            insertConfiguration(connection, 2, CONVENTIONAL_ID, "CONVENTIONAL", "DMR");
             statement.executeUpdate("""
-                INSERT INTO receiver_context(id, context_key, first_seen_ms, last_seen_ms, nac,
-                    primary_frequency_hz)
-                VALUES (10, 'CONFIGURATION:%s', 1000, 2000, NULL, 451012500),
-                       (11, 'GUID:%s', 1000, 3000, NULL, 452012500),
-                       (12, 'CONFIGURATION:00000000-0000-0000-0000-000000000001', 1000, 4000,
-                        NULL, 453012500)
-                """.formatted(CONVENTIONAL_ID, CONVENTIONAL_RADRES_GUID));
+                INSERT INTO radio_system(id, system_key, configuration_id, protocol_code,
+                    address_domain_code, first_seen_ms, last_seen_ms)
+                VALUES (7, 'dmr:channel:728d2d66-de4e-476b-a696-919f32dd4d12',
+                    '728d2d66-de4e-476b-a696-919f32dd4d12', 3, 0, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
+                VALUES (10, '%s', 1000, 2000, 7),
+                       (12, '00000000-0000-0000-0000-000000000001', 1000, 4000, NULL)
+                """.formatted(CONVENTIONAL_ID));
             WebConfiguredEntityRepository.ConfiguredChannel configured =
-                new WebConfiguredEntityRepository().requireConventional(connection, CONVENTIONAL_ID);
-            assertEquals(10L, configured.contextId());
-            assertEquals(451012500L, configured.observedPrimaryFrequencyHz());
+                new WebConfiguredEntityRepository().requireChannel(connection, CONVENTIONAL_ID);
+            assertEquals(10L, configured.channelId());
+            assertEquals(851012500L, configured.primaryFrequencyHz());
+            assertEquals("dmr:channel:728d2d66-de4e-476b-a696-919f32dd4d12", configured.radioSystemKey());
         }
     }
 
@@ -106,21 +108,37 @@ class WebConfiguredEntityRepositoryTest
                     system_name TEXT,
                     site_name TEXT,
                     name TEXT,
-                    alias_list_name TEXT,
-                    radres_guid TEXT,
+                    alias_list_id INTEGER,
                     decoder_type TEXT,
-                    primary_frequency_hz INTEGER
+                    primary_frequency_hz INTEGER,
+                    address_domain_code INTEGER NOT NULL DEFAULT 0
                 )
                 """);
             statement.executeUpdate("CREATE TABLE alias_list (id INTEGER PRIMARY KEY, name TEXT)");
             statement.executeUpdate("""
-                CREATE TABLE receiver_context (
+                CREATE TABLE radio_system (
                     id INTEGER PRIMARY KEY,
-                    context_key TEXT NOT NULL UNIQUE,
+                    system_key TEXT NOT NULL UNIQUE,
+                    configuration_id TEXT,
+                    protocol_code INTEGER NOT NULL,
+                    address_domain_code INTEGER NOT NULL,
+                    p25_wacn INTEGER,
+                    p25_system_id INTEGER,
+                    dmr_model_code INTEGER,
+                    dmr_network_id INTEGER,
+                    nxdn_location_category_code INTEGER,
+                    nxdn_system_id INTEGER,
+                    first_seen_ms INTEGER,
+                    last_seen_ms INTEGER
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE receiver_channel (
+                    id INTEGER PRIMARY KEY,
+                    configuration_id TEXT NOT NULL UNIQUE,
                     first_seen_ms INTEGER,
                     last_seen_ms INTEGER,
-                    nac INTEGER,
-                    primary_frequency_hz INTEGER
+                    radio_system_id INTEGER
                 )
                 """);
         }
@@ -129,20 +147,19 @@ class WebConfiguredEntityRepositoryTest
     }
 
     private static void insertConfiguration(Connection connection, int id, String configurationId,
-                                            String kind, String guid, String decoder) throws Exception
+                                            String kind, String decoder) throws Exception
     {
         try(var statement = connection.prepareStatement("""
             INSERT INTO configuration_channel(id, configuration_id, channel_kind, sort_order, system_name,
-                site_name, name, alias_list_name, radres_guid, decoder_type, primary_frequency_hz)
-            VALUES (?, ?, ?, ?, 'County', 'Downtown', 'Primary', 'County', ?, ?, 851012500)
+                site_name, name, alias_list_id, decoder_type, primary_frequency_hz)
+            VALUES (?, ?, ?, ?, 'County', 'Downtown', 'Primary', NULL, ?, 851012500)
             """))
         {
             statement.setInt(1, id);
             statement.setString(2, configurationId);
             statement.setString(3, kind);
             statement.setInt(4, id);
-            statement.setString(5, guid);
-            statement.setString(6, decoder);
+            statement.setString(5, decoder);
             statement.executeUpdate();
         }
     }

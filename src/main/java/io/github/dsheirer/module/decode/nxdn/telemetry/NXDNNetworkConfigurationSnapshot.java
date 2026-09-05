@@ -12,6 +12,8 @@
 package io.github.dsheirer.module.decode.nxdn.telemetry;
 
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.CallTimer;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +26,7 @@ public record NXDNNetworkConfigurationSnapshot(String decoder, String variant, I
                                                Location currentLocation, Integer typeDSite,
                                                String typeDSiteType, Station station,
                                                SiteConfiguration siteConfiguration,
-                                               List<String> services, List<String> restrictions,
+                                               List<Service> services, List<String> restrictions,
                                                FailureStatus failureStatus, List<Channel> controlChannels,
                                                List<NeighborSite> neighborSites, Integer currentRepeater,
                                                String repeaterStatus, List<Integer> observedRepeaters,
@@ -49,7 +51,7 @@ public record NXDNNetworkConfigurationSnapshot(String decoder, String variant, I
                                             Location currentLocation, Integer typeDSite,
                                             String typeDSiteType, Station station,
                                             SiteConfiguration siteConfiguration,
-                                            List<String> services, List<String> restrictions,
+                                            List<Service> services, List<String> restrictions,
                                             FailureStatus failureStatus, List<Channel> controlChannels,
                                             List<NeighborSite> neighborSites, Integer currentRepeater,
                                             String repeaterStatus, List<Integer> observedRepeaters)
@@ -137,18 +139,29 @@ public record NXDNNetworkConfigurationSnapshot(String decoder, String variant, I
     {
     }
 
-    public record Station(String identifier, Boolean characterCrcValid, String option)
+    public record Station(String identifier, Boolean characterCrcValid, StationOption option)
     {
     }
 
-    public record SiteConfiguration(Integer version, Integer advertisedNeighborCount, String channelAccess,
+    /** Station-ID fragmentation facts captured without formatting the decoder message on its callback. */
+    public record StationOption(boolean start, boolean end, boolean complete, int value)
+    {
+    }
+
+    /** Channel-allocation facts captured without retaining the decoded message object. */
+    public record ChannelAccess(boolean directFrequencyAssignment, long baseFrequencyHertz,
+                                long stepSizeHertz)
+    {
+    }
+
+    public record SiteConfiguration(Integer version, Integer advertisedNeighborCount, ChannelAccess channelAccess,
                                     Integer bcchFramesPerSuperframe, Integer groupsPerRcch,
                                     Integer pagingFrames, Integer multipurposeFrames,
                                     Integer groupIterationsPerSuperframe)
     {
     }
 
-    public record FailureStatus(Location location, String callTimer)
+    public record FailureStatus(Location location, CallTimer callTimer)
     {
     }
 

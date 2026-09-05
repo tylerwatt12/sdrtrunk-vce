@@ -317,11 +317,11 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     }
 
     /**
-     * Returns the broadcaster associated with the stream name or null if there is no broadcaster setup for the name.
+     * Returns the broadcaster associated with the stable broadcast-configuration identity.
      */
-    public AbstractAudioBroadcaster<?> getBroadcaster(String streamName)
+    public AbstractAudioBroadcaster<?> getBroadcaster(String configurationId)
     {
-        BroadcastConfiguration broadcastConfiguration = getBroadcastConfiguration(streamName);
+        BroadcastConfiguration broadcastConfiguration = getBroadcastConfiguration(configurationId);
 
         if(broadcastConfiguration != null)
         {
@@ -338,11 +338,11 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
         {
             for(BroadcastChannel broadcastChannel : audioRecording.getBroadcastChannels())
             {
-                String channelName = broadcastChannel.getChannelName();
+                String configurationId = broadcastChannel.getConfigurationId();
 
-                if(channelName != null)
+                if(configurationId != null)
                 {
-                    AbstractAudioBroadcaster<?> audioBroadcaster = getBroadcaster(channelName);
+                    AbstractAudioBroadcaster<?> audioBroadcaster = getBroadcaster(configurationId);
 
                     if(audioBroadcaster != null && audioBroadcaster.accepts(audioRecording))
                     {
@@ -359,7 +359,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful())
+        if(event == null || !event.isUseful() || !event.matchesCurrentChannel())
         {
             return;
         }
@@ -651,18 +651,34 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     }
 
     /**
-     * Returns the broadcast configuration identified by the stream name
+     * Returns the broadcast configuration identified by its stable UUID.
      */
-    public BroadcastConfiguration getBroadcastConfiguration(String streamName)
+    public BroadcastConfiguration getBroadcastConfiguration(String configurationId)
     {
         for(ConfiguredBroadcast configuredBroadcast: mConfiguredBroadcasts)
         {
-            if(configuredBroadcast.getBroadcastConfiguration().getName() != null &&
-                configuredBroadcast.getBroadcastConfiguration().getName().equals(streamName))
+            if(configuredBroadcast.getBroadcastConfiguration().getConfigurationId() != null &&
+                configuredBroadcast.getBroadcastConfiguration().getConfigurationId().equals(configurationId))
             {
                 return configuredBroadcast.getBroadcastConfiguration();
             }
 
+        }
+        return null;
+    }
+
+    /**
+     * Finds a configuration by its editable display name for presentation-only duplicate checks.
+     */
+    public BroadcastConfiguration getBroadcastConfigurationByName(String name)
+    {
+        for(ConfiguredBroadcast configuredBroadcast: mConfiguredBroadcasts)
+        {
+            BroadcastConfiguration configuration = configuredBroadcast.getBroadcastConfiguration();
+            if(configuration.getName() != null && configuration.getName().equals(name))
+            {
+                return configuration;
+            }
         }
         return null;
     }

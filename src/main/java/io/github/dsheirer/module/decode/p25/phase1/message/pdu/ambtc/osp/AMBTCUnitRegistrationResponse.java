@@ -37,7 +37,8 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
     private static final IntField BLOCK_0_WACN = IntField.length4(0);
     private static final IntField BLOCK_0_SYSTEM = IntField.length12(4);
     private static final IntField BLOCK_0_RADIO_ID = IntField.length24(16);
-    private static final IntField BLOCK_0_RESPONSE = IntField.length2(46);
+    private static final IntField BLOCK_0_SOURCE_ADDRESS = IntField.length24(40);
+    private static final IntField BLOCK_0_RESPONSE = IntField.length2(70);
 
     private Response mResponse;
     private APCO25FullyQualifiedRadioIdentifier mRegistrationAddress;
@@ -75,7 +76,7 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
     {
         if(mRegistrationAddress == null && hasDataBlock(0))
         {
-            int localAddress = getHeader().getMessage().getInt(HEADER_ADDRESS);
+            int localAddress = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ADDRESS);
             int wacn = getHeader().getMessage().getInt(HEADER_WACN);
             wacn <<= 4;
             wacn += getDataBlock(0).getMessage().getInt(BLOCK_0_WACN);

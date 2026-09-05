@@ -82,6 +82,9 @@ import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationRespons
 import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationResponseTypeD;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasComplete;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
+import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
 import java.util.List;
@@ -97,6 +100,7 @@ public class NXDNDecoderState extends DecoderState
     private final ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private final NXDNTrafficChannelManager mTrafficChannelManager;
     private final boolean mTrunkingEnabled;
+    private final TrunkedIdentityDomain mIdentityDomain;
     private DecodeEvent mCurrentConventionalCallEvent;
     private boolean mEncryptedCallStateDetermined = false;
     private boolean mEncryptedCall = false;
@@ -121,10 +125,14 @@ public class NXDNDecoderState extends DecoderState
         mTrafficChannelManager = trafficChannelManager;
         DecodeConfigNXDN config = channel != null &&
             channel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN ? configNXDN : null;
+        mIdentityDomain = config != null && config.getTransmissionMode() != null &&
+            config.getTransmissionMode().isTypeD() ? TrunkedIdentityDomain.NXDN_TYPE_D :
+            TrunkedIdentityDomain.NXDN_TYPE_C;
         mTrunkingEnabled = config == null || config.isTrunked();
         mSiteMetadataPublisher = mTrunkingEnabled ? new ProtocolSiteMetadataPublisher(mChannel,
             mNetworkConfigurationMonitor::getSnapshot, this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter) : null;
+            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter,
+            this::getCurrentFrequency) : null;
     }
 
     /**
@@ -143,6 +151,12 @@ public class NXDNDecoderState extends DecoderState
     @Override
     public void reset()
     {
+        mNetworkConfigurationMonitor.reset();
+        if(mChannel != null && mChannel.isStandardChannel() && mTrafficChannelManager != null)
+        {
+            mTrafficChannelManager.updateNativeRadioSystemKey(null);
+        }
+
         if(!mTrunkingEnabled)
         {
             resetState();
@@ -917,10 +931,41 @@ public class NXDNDecoderState extends DecoderState
 
         if(mSiteMetadataPublisher != null)
         {
+            updateNativeRadioSystemKey();
             mSiteMetadataPublisher.publish(layer3.getTimestamp());
         }
 
         broadcast(new DecoderStateEvent(this, event, state));
+    }
+
+    private void updateNativeRadioSystemKey()
+    {
+        if(mChannel != null && mChannel.isStandardChannel())
+        {
+            updateNativeRadioSystemKey(mTrafficChannelManager, mNetworkConfigurationMonitor.getSnapshot());
+        }
+    }
+
+    static void updateNativeRadioSystemKey(NXDNTrafficChannelManager trafficChannelManager,
+                                            NXDNNetworkConfigurationSnapshot snapshot)
+    {
+        if(trafficChannelManager == null)
+        {
+            return;
+        }
+
+        String radioSystemKey = null;
+        if(trafficChannelManager.getConfiguredIdentityDomain() == TrunkedIdentityDomain.NXDN_TYPE_C &&
+            snapshot != null && "TYPE_C".equals(snapshot.variant()))
+        {
+            NXDNNetworkConfigurationSnapshot.Location location = snapshot.currentLocation();
+            radioSystemKey = location != null ?
+                RadioSystemKey.nxdnTypeC(location.category(), location.system()) : null;
+        }
+
+        //Incomplete Type-C evidence, Type-D, and a changed-RAN snapshot with no variant are all unresolved for native
+        //grouping. None may retain a key learned from an older decoder/site generation.
+        trafficChannelManager.updateNativeRadioSystemKey(radioSystemKey);
     }
 
     /**
@@ -1071,8 +1116,8 @@ public class NXDNDecoderState extends DecoderState
         long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
         boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new NXDNConventionalCallEvent(startTimestamp, endTimestamp,
-            mChannel.getConfigurationId(), mChannel.getRadresGuid(), mChannel.getName(), mChannel.getAliasListName(),
-            frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
+            mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted,
+            mIdentityDomain));
     }
 
     private static DecodeEventType callEventType(CallType callType, EncryptionKeyIdentifier encryption)

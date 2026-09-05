@@ -66,7 +66,7 @@ class StatsWebDashboardActivityAccessTest
         }
 
         accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.PUBLIC);
-        accessService.setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.USER);
+        accessService.setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.USER);
         WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
         WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
         HttpServer server = HttpServer.create(
@@ -124,7 +124,7 @@ class StatsWebDashboardActivityAccessTest
             Arrays.fill(adminPassword, '\u0000');
         }
 
-        accessService.setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.PUBLIC);
+        accessService.setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.PUBLIC);
         WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
         WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
         HttpServer server = HttpServer.create(

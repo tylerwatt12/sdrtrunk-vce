@@ -21,33 +21,51 @@ import org.junit.jupiter.api.Test;
 
 class WebEntityRefTest
 {
+    private static final String CHANNEL_ID = "728d2d66-de4e-476b-a696-919f32dd4d12";
+
     @Test
     void exposesOnlyTheCanonicalFieldsForEachClosedShape()
     {
-        assertEquals(Map.of("kind", "system", "key", "p25:BEE00:49F:alias-list:1"),
-            WebEntityRef.system("p25:BEE00:49F:alias-list:1").toMap());
-        assertEquals(Map.of("kind", "site", "key", "728d2d66-de4e-476b-a696-919f32dd4d12"),
-            WebEntityRef.site("728d2d66-de4e-476b-a696-919f32dd4d12").toMap());
-        assertEquals(Map.of("kind", "conventional", "key", "728d2d66-de4e-476b-a696-919f32dd4d12"),
-            WebEntityRef.conventional("728d2d66-de4e-476b-a696-919f32dd4d12").toMap());
-        assertEquals(Map.of("kind", "talkgroup", "scope", "dmr:guid:site", "id", 91),
-            WebEntityRef.talkgroup("dmr:guid:site", 91).toMap());
-        assertEquals(Map.of("kind", "patch_group", "scope", "p25:scope", "id", 700),
-            WebEntityRef.patchGroup("p25:scope", 700).toMap());
-        assertEquals(Map.of("kind", "radio", "scope", "nxdn:guid:site", "id", 1201),
-            WebEntityRef.radio("nxdn:guid:site", 1201).toMap());
+        assertEquals(Map.of("kind", "radio_system", "key", "p25:bee00:49f"),
+            WebEntityRef.radioSystem("p25:bee00:49f").toMap());
+        assertEquals(Map.of("kind", "radio_system", "key", "dmr:tier3:tiny:511"),
+            WebEntityRef.radioSystem("dmr:tier3:tiny:511").toMap());
+        assertEquals(Map.of("kind", "radio_system", "key", "nxdn-c:regional:16382"),
+            WebEntityRef.radioSystem("nxdn-c:regional:16382").toMap());
+        assertEquals(Map.of("kind", "channel", "key", CHANNEL_ID),
+            WebEntityRef.channel(CHANNEL_ID).toMap());
+        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "dmr:channel:" + CHANNEL_ID,
+                "identity_key", "v1-g-x-x-91"),
+            WebEntityRef.talkgroup("dmr:channel:" + CHANNEL_ID, "v1-g-x-x-91").toMap());
+        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-p-bee00-49f-700"),
+            WebEntityRef.patchGroup("p25:bee00:49f", "v1-p-bee00-49f-700").toMap());
+        assertEquals(Map.of("kind", "radio", "radio_system_key", "nxdn-d:channel:" + CHANNEL_ID,
+                "identity_key", "v1-r-x-x-1201"),
+            WebEntityRef.radio("nxdn-d:channel:" + CHANNEL_ID, "v1-r-x-x-1201").toMap());
     }
 
     @Test
     void rejectsPartialOrInvalidReferencesAndOmitsAnUnresolvedReference()
     {
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.system(" "));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.site("site-guid"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.site("1-1-1-1-1"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem(" "));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("p25:bee00:49f "));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("p25:bee00:49F"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("dmr:tier3:tiny:512"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("nxdn-c:global:1023"));
         assertThrows(IllegalArgumentException.class,
-            () -> WebEntityRef.site("728D2D66-DE4E-476B-A696-919F32DD4D12"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.conventional("not-a-uuid"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radio("scope", 0));
+            () -> WebEntityRef.radioSystem("dmr:channel:728D2D66-DE4E-476B-A696-919F32DD4D12"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("not-a-channel-uuid"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("1-1-1-1-1"));
+        assertThrows(IllegalArgumentException.class,
+            () -> WebEntityRef.channel("728D2D66-DE4E-476B-A696-919F32DD4D12"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("not-a-uuid"));
+        assertThrows(IllegalArgumentException.class,
+            () -> WebEntityRef.radio("scope", "v1-r-x-x-1201"));
+        assertThrows(IllegalArgumentException.class,
+            () -> WebEntityRef.radio("nxdn-d:channel:" + CHANNEL_ID, "v1-r-x-x-0"));
+        assertThrows(IllegalArgumentException.class,
+            () -> WebEntityRef.radio("nxdn-d:channel:" + CHANNEL_ID, "v1-g-x-x-1"));
 
         Map<String,Object> row = new LinkedHashMap<>();
         WebEntityRef.put(row, null);

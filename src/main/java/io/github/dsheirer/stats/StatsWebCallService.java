@@ -12,6 +12,7 @@ package io.github.dsheirer.stats;
 
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
+import io.github.dsheirer.audio.call.CallPlaybackTarget;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
@@ -20,13 +21,11 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
-import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
-import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import java.nio.ByteBuffer;
@@ -37,7 +36,6 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -589,6 +587,8 @@ final class StatsWebCallService implements AutoCloseable
         Identifier<?> source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier<?> target = identifiers != null ? identifiers.getToIdentifier() : null;
         AudioCallRecordingMetadata recordingMetadata = snapshot.recordingMetadata();
+        CallLegSource callLegSource = snapshot.callLegSource();
+        CallPlaybackTarget playbackTarget = CallPlaybackTarget.from(snapshot, target);
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         putText(value, "call_id", id);
         putText(value, "audio_url", StatsApiV1.CALLS + "/" + id + "/audio");
@@ -597,23 +597,22 @@ final class StatsWebCallService implements AutoCloseable
         value.put("duration_ms", call.getDuration());
         putText(value, "system", recordingMetadata != null ? recordingMetadata.systemName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
-        putText(value, "system_identity", recordingMetadata != null ? recordingMetadata.systemIdentity() : null);
+        putText(value, "radio_system_key", playbackTarget != null ? playbackTarget.radioSystemKey() : null);
         putText(value, "site", recordingMetadata != null ? recordingMetadata.siteName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY));
-        putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.siteIdentity() : null);
-        Object siteGuid = identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID, Role.ANY);
-        putText(value, "site_guid", siteGuid);
         putText(value, "channel", recordingMetadata != null ? recordingMetadata.channelName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
-        putText(value, "channel_identity", recordingMetadata != null ? recordingMetadata.channelIdentity() :
-            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY));
-        Object configurationId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
+        Object identifierConfigurationId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
             Form.UNIQUE_ID, Role.ANY);
+        String configurationId = callLegSource != null && callLegSource.channelConfigurationId() != null ?
+            callLegSource.channelConfigurationId() : identifierConfigurationId != null ?
+                String.valueOf(identifierConfigurationId) : null;
         putText(value, "configuration_id", configurationId);
         putText(value, "alias_list", recordingMetadata != null ? recordingMetadata.aliasListName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY));
-        putText(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE,
-            Role.ANY));
+        putText(value, "decoder", callLegSource != null && callLegSource.decoderType() != null ?
+            callLegSource.decoderType().name() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
         putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
         putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
         putText(value, "source_description", recordingMetadata != null ? recordingMetadata.sourceDescription() : null,
@@ -631,16 +630,24 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "target_group", recordingMetadata != null ? recordingMetadata.destinationGroup() : null,
             MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
         putText(value, "target_form", form(target));
-        putText(value, "protocol", target != null && target.getProtocol() != null ? target.getProtocol().name() :
-            recordingMetadata != null ? recordingMetadata.destinationProtocol() : null);
-        putText(value, "conversation_key", conversationKey(snapshot, target));
+        Protocol sourceProtocol = callLegSource != null && callLegSource.decoderType() != null ?
+            canonicalProtocol(callLegSource.decoderType().getProtocol()) : null;
+        putText(value, "protocol", sourceProtocol != null ? sourceProtocol.name() :
+            recordingMetadata != null && recordingMetadata.destinationProtocol() != null ?
+                recordingMetadata.destinationProtocol() :
+                target != null && target.getProtocol() != null ? canonicalProtocol(target.getProtocol()).name() :
+                    null);
+        if(playbackTarget != null)
+        {
+            value.put("playback_target", playbackTarget.toMap(playbackTargetLabel(playbackTarget,
+                recordingMetadata, target)));
+        }
         value.put("scan_list_ids", scanListIds != null ? scanListIds.stream()
             .sorted(Comparator.naturalOrder()).toList() : List.of());
         value.put("frequency_hz", longValue(identifiers, Form.CHANNEL_FREQUENCY));
         putText(value, "lcn", identifierValue(identifiers, IdentifierClass.DECODER, Form.CHANNEL_NAME,
             Role.BROADCAST));
         putIdentifierValue(value, "network_id", identifiers, Form.NETWORK);
-        CallLegSource callLegSource = snapshot.callLegSource();
         P25SiteIdentity learnedP25Site = callLegSource != null ? callLegSource.p25SiteIdentity() : null;
 
         if(learnedP25Site != null)
@@ -662,29 +669,30 @@ final class StatsWebCallService implements AutoCloseable
         putIdentifierValue(value, "ran", identifiers, Form.RAN);
         WebEntityNavigationCatalog.Snapshot navigation = mNavigationCatalog != null ?
             mNavigationCatalog.snapshot() : WebEntityNavigationCatalog.Snapshot.empty();
-        WebEntityNavigationCatalog.Channel channel = navigation.channel(
-            configurationId != null ? String.valueOf(configurationId) : null,
-            siteGuid != null ? String.valueOf(siteGuid) : null);
+        WebEntityNavigationCatalog.Channel channel = navigation.channel(configurationId);
 
         if(channel != null)
         {
             WebEntityRef.put(value, channel.entityRef());
 
-            if(channel.systemRef() != null)
-            {
-                value.put("system_entity_ref", channel.systemRef().toMap());
-            }
+            String eventRadioSystemKey = playbackTarget != null ? playbackTarget.radioSystemKey() : null;
+            boolean catalogMatchesEvent = eventRadioSystemKey != null && channel.radioSystemRef() != null &&
+                eventRadioSystemKey.equals(channel.radioSystemRef().key());
 
-            WebEntityRef sourceReference = navigationReference(channel, source);
-            WebEntityRef targetReference = navigationReference(channel, target);
+            if(catalogMatchesEvent)
+            {
+                value.put("radio_system_entity_ref", channel.radioSystemRef().toMap());
+                WebEntityRef sourceReference = navigationReference(channel, source);
+                WebEntityRef targetReference = navigationReference(channel, target);
 
-            if(sourceReference != null)
-            {
-                value.put("source_entity_ref", sourceReference.toMap());
-            }
-            if(targetReference != null)
-            {
-                value.put("target_entity_ref", targetReference.toMap());
+                if(sourceReference != null)
+                {
+                    value.put("source_entity_ref", sourceReference.toMap());
+                }
+                if(targetReference != null)
+                {
+                    value.put("target_entity_ref", targetReference.toMap());
+                }
             }
         }
 
@@ -706,15 +714,31 @@ final class StatsWebCallService implements AutoCloseable
     private static WebEntityRef navigationReference(WebEntityNavigationCatalog.Channel channel,
                                                     Identifier<?> identifier)
     {
-        if(channel == null || identifier == null || identifier instanceof FullyQualifiedRadioIdentifier ||
-            identifier instanceof FullyQualifiedTalkgroupIdentifier)
+        if(channel == null || identifier == null)
         {
             return null;
+        }
+
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            return channel.identity(Form.RADIO, identifier.getProtocol(), radio.getRadio(), radio.getWacn(),
+                radio.getSystem());
+        }
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+        {
+            return channel.identity(Form.TALKGROUP, identifier.getProtocol(), talkgroup.getTalkgroup(),
+                talkgroup.getWacn(), talkgroup.getSystem());
         }
 
         int value;
 
         if(identifier instanceof PatchGroupIdentifier patchIdentifier && patchIdentifier.getValue() != null &&
+            patchIdentifier.getValue().getPatchGroup() instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+        {
+            return channel.identity(Form.PATCH_GROUP, identifier.getProtocol(), talkgroup.getTalkgroup(),
+                talkgroup.getWacn(), talkgroup.getSystem());
+        }
+        else if(identifier instanceof PatchGroupIdentifier patchIdentifier && patchIdentifier.getValue() != null &&
             patchIdentifier.getValue().getPatchGroup() != null)
         {
             value = patchIdentifier.getValue().getPatchGroup().getValue();
@@ -742,68 +766,46 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
-    private static String conversationKey(AudioCallSnapshot snapshot, Identifier<?> target)
+    private static String playbackTargetLabel(CallPlaybackTarget playbackTarget,
+                                              AudioCallRecordingMetadata recordingMetadata,
+                                              Identifier<?> target)
     {
-        IdentifierCollection identifiers = snapshot != null ? snapshot.identifierCollection() : null;
-        AudioCallRecordingMetadata recordingMetadata = snapshot != null ? snapshot.recordingMetadata() : null;
-        Object configuredSystem = identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
-        String stableSystem = recordingMetadata != null ? recordingMetadata.systemIdentity() : null;
-
-        if(stableSystem == null || stableSystem.isBlank())
+        if(playbackTarget == null)
         {
-            stableSystem = configuredSystem != null ? configuredSystem.toString() : "unknown";
+            return null;
         }
 
-        String protocol = target != null && target.getProtocol() != null ? target.getProtocol().name() :
-            recordingMetadata != null ? recordingMetadata.destinationProtocol() : null;
-
-        if(protocol == null || protocol.isBlank())
+        if(playbackTarget.kind() == CallPlaybackTarget.Kind.CHANNEL ||
+            playbackTarget.kind() == CallPlaybackTarget.Kind.CHANNEL_TIMESLOT)
         {
-            Object decoder = identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY);
-            protocol = decoder != null ? decoder.toString() : "unknown";
+            String channel = recordingMetadata != null ? recordingMetadata.channelName() : null;
+            String label = channel != null && !channel.isBlank() ? channel.strip() : "Saved channel";
+            return playbackTarget.kind() == CallPlaybackTarget.Kind.CHANNEL_TIMESLOT ?
+                label + " · Timeslot " + playbackTarget.timeslot() : label;
         }
 
-        String prefix = protocol.trim().toLowerCase(Locale.ROOT) + ":" +
-            stableSystem.trim().toLowerCase(Locale.ROOT);
+        String alias = recordingMetadata != null ? recordingMetadata.destinationAlias() : null;
 
-        String destinationIdentity = recordingMetadata != null ? recordingMetadata.destinationIdentity() : null;
-
-        if(target instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+        if(alias != null && !alias.isBlank())
         {
-            return prefix + ":talkgroup:fq:" + (destinationIdentity != null && !destinationIdentity.isBlank() ?
-                destinationIdentity.trim().toLowerCase(Locale.ROOT) :
-                fullyQualified.getWacn() + ":" + fullyQualified.getSystem() + ":" +
-                    fullyQualified.getTalkgroup());
-        }
-        else if(target instanceof NXDNFullyQualifiedTalkgroupIdentifier fullyQualified)
-        {
-            return prefix + ":talkgroup:fq:" + (destinationIdentity != null && !destinationIdentity.isBlank() ?
-                destinationIdentity.trim().toLowerCase(Locale.ROOT) :
-                fullyQualified.getSystem() + ":" + fullyQualified.getValue());
-        }
-        else if(target instanceof TalkgroupIdentifier talkgroup)
-        {
-            return prefix + ":talkgroup:" + talkgroup.getValue();
-        }
-        else if(target instanceof PatchGroupIdentifier patchIdentifier)
-        {
-            PatchGroup patchGroup = patchIdentifier.getValue();
-
-            if(patchGroup != null && patchGroup.getPatchGroup() != null)
-            {
-                return prefix + ":patch:" + patchGroup.getPatchGroup().getValue();
-            }
+            return alias.strip();
         }
 
-        Object configuredChannel = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
-            Form.UNIQUE_ID, Role.ANY);
-        String channel = recordingMetadata != null ? recordingMetadata.channelIdentity() : null;
-        channel = channel != null && !channel.isBlank() ? channel :
-            configuredChannel != null ? configuredChannel.toString() : "unknown";
-        long frequency = longValue(identifiers, Form.CHANNEL_FREQUENCY);
-        int timeslot = snapshot != null ? snapshot.timeslot() : 0;
-        return prefix + ":channel:" + channel.trim().toLowerCase(Locale.ROOT) + ":frequency:" + frequency +
-            ":slot:" + timeslot;
+        String identifier = recordingMetadata != null ? recordingMetadata.destinationValue() : null;
+
+        if(identifier == null || identifier.isBlank())
+        {
+            identifier = target != null && target.getValue() != null ? target.getValue().toString() : null;
+        }
+
+        String kind = switch(playbackTarget.kind())
+        {
+            case TALKGROUP -> "Talkgroup";
+            case PATCH_GROUP -> "Patch group";
+            case RADIO -> "Radio";
+            default -> "Target";
+        };
+        return identifier != null && !identifier.isBlank() ? kind + ' ' + identifier : kind;
     }
 
     private static Object identifierValue(IdentifierCollection identifiers, IdentifierClass identifierClass,
@@ -999,6 +1001,11 @@ final class StatsWebCallService implements AutoCloseable
         {
             return -1;
         }
+    }
+
+    private static Protocol canonicalProtocol(Protocol protocol)
+    {
+        return protocol == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : protocol;
     }
 
     @Override

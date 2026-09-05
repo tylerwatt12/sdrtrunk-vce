@@ -20,10 +20,12 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
@@ -32,6 +34,8 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStru
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitRegistrationResponseAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitRegistrationResponseExtended;
 import io.github.dsheirer.module.decode.p25.reference.Response;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
@@ -57,6 +61,56 @@ class P25P2DecoderStateRegistrationTest
         assertEquals(2, events.size());
         assertRegistration(events.get(0), P25AffiliationEvent.Outcome.ACCEPTED, 1_000L);
         assertRegistration(events.get(1), P25AffiliationEvent.Outcome.REJECTED, 2_000L);
+    }
+
+    @Test
+    void abbreviatedRegistrationUsesTheLearnedServingWacn()
+    {
+        Channel channel = new Channel("P25 Phase 2 Roaming Registration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_2",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x3A1, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x3A1, 1, 1, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of()), 100L);
+        P25P2DecoderState state = new P25P2DecoderState(channel, 0, new P25TrafficChannelManager(channel),
+            new PatchGroupManager(), stabilizer, new SiteMetadataPublicationRateLimiter(1_000));
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+
+        state.receive(message(1_000L, new ParsedAbbreviatedUnitRegistration()));
+
+        P25AffiliationEvent event = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        APCO25FullyQualifiedRadioIdentifier radio = assertInstanceOf(
+            APCO25FullyQualifiedRadioIdentifier.class, event.getRadioIdentifier());
+        assertEquals(0xFFFD26, radio.getValue());
+        assertEquals(0xBEE00, radio.getWacn());
+        assertEquals(0x954, radio.getSystem());
+        assertEquals(831_102, radio.getRadio());
+    }
+
+    @Test
+    void abbreviatedRegistrationNeedsOnlyTheLearnedServingNetworkWacn()
+    {
+        Channel channel = new Channel("P25 Phase 2 Roaming Registration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_2",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x3A1, null), null,
+            List.of(), List.of(), List.of(), List.of(), List.of()), 100L);
+        P25P2DecoderState state = new P25P2DecoderState(channel, 0, new P25TrafficChannelManager(channel),
+            new PatchGroupManager(), stabilizer, new SiteMetadataPublicationRateLimiter(1_000));
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+
+        state.receive(message(1_000L, new ParsedAbbreviatedUnitRegistration()));
+
+        P25AffiliationEvent event = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        APCO25FullyQualifiedRadioIdentifier radio = assertInstanceOf(
+            APCO25FullyQualifiedRadioIdentifier.class, event.getRadioIdentifier());
+        assertEquals(0xBEE00, radio.getWacn());
+        assertEquals(0x954, radio.getSystem());
+        assertEquals(831_102, radio.getRadio());
     }
 
     private static MacMessage message(long timestamp, MacStructure structure)
@@ -111,6 +165,29 @@ class P25P2DecoderStateRegistrationTest
         public List<Identifier> getIdentifiers()
         {
             return List.of(mRadio);
+        }
+    }
+
+    private static class ParsedAbbreviatedUnitRegistration extends UnitRegistrationResponseAbbreviated
+    {
+        private ParsedAbbreviatedUnitRegistration()
+        {
+            super(abbreviatedRegistration(), 0);
+        }
+
+        @Override
+        public MacOpcode getOpcode()
+        {
+            return MacOpcode.PHASE1_6C_UNIT_REGISTRATION_RESPONSE_ABBREVIATED;
+        }
+
+        private static CorrectedBinaryMessage abbreviatedRegistration()
+        {
+            CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+            message.setInt(0x954, io.github.dsheirer.bits.IntField.length12(20));
+            message.setInt(831_102, io.github.dsheirer.bits.IntField.length24(32));
+            message.setInt(0xFFFD26, io.github.dsheirer.bits.IntField.length24(56));
+            return message;
         }
     }
 

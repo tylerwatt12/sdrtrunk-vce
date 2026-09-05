@@ -12,10 +12,22 @@
 package io.github.dsheirer.module.decode.p25;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 
 /**
- * Independent evidence that a traffic decoder received payload on a granted frequency/timeslot.
+ * Immutable independent evidence that a traffic decoder received payload on a granted frequency/timeslot.
  */
-public record P25TrafficChannelConfirmationEvent(Channel channel, long frequencyHertz, int timeslot, long timestamp)
+public record P25TrafficChannelConfirmationEvent(String configurationId, long frequencyHertz, int timeslot,
+                                                 long timestamp)
 {
+    public P25TrafficChannelConfirmationEvent
+    {
+        configurationId = ChannelConfigurationKey.canonical(configurationId);
+    }
+
+    /** Captures the saved channel identity before this confirmation crosses the statistics queue. */
+    public P25TrafficChannelConfirmationEvent(Channel channel, long frequencyHertz, int timeslot, long timestamp)
+    {
+        this(ChannelConfigurationKey.configured(channel), frequencyHertz, timeslot, timestamp);
+    }
 }

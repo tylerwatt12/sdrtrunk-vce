@@ -25,8 +25,10 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
@@ -38,39 +40,6 @@ import org.junit.jupiter.api.Test;
 class ResolvedCallPolicyTest
 {
     @Test
-    void nxdnIdentityKeepsItsSystemWithoutInventingANetwork()
-    {
-        NXDNFullyQualifiedTalkgroupIdentifier systemOne =
-            NXDNFullyQualifiedTalkgroupIdentifier.createTo(11, 1200);
-        ResolvedCallPolicy.DestinationIdentity first =
-            ResolvedCallPolicy.DestinationIdentity.from(systemOne);
-        ResolvedCallPolicy.DestinationIdentity same =
-            ResolvedCallPolicy.DestinationIdentity.from(
-                NXDNFullyQualifiedTalkgroupIdentifier.createTo(11, 1200));
-        ResolvedCallPolicy.DestinationIdentity differentSystem =
-            ResolvedCallPolicy.DestinationIdentity.from(
-                NXDNFullyQualifiedTalkgroupIdentifier.createTo(12, 1200));
-
-        assertEquals(Protocol.NXDN, first.protocol());
-        assertEquals(1200, first.talkgroup());
-        assertTrue(first.fullyQualified());
-        assertNull(first.qualifier().networkId());
-        assertEquals(11, first.qualifier().systemId());
-        assertEquals(first, same);
-        assertNotEquals(first, differentSystem);
-        assertTrue(first.matches(same));
-        assertFalse(first.matches(differentSystem));
-        assertEquals(systemOne, NXDNFullyQualifiedTalkgroupIdentifier.createTo(11, 1200));
-        assertNotEquals(systemOne, NXDNFullyQualifiedTalkgroupIdentifier.createTo(12, 1200));
-
-        AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null,
-            new IdentifierCollection(List.of(systemOne)));
-        assertEquals("1200", metadata.destinationValue());
-        assertEquals("NXDN:fq:11:1200", metadata.destinationIdentity());
-        assertEquals("NXDN:fq:11:1200", metadata.destinationMatcherIdentity());
-    }
-
-    @Test
     void p25IdentityKeepsNetworkAndSystemInTheSameCanonicalQualifierShape()
     {
         ResolvedCallPolicy.DestinationIdentity identity =
@@ -78,10 +47,43 @@ class ResolvedCallPolicyTest
                 APCO25FullyQualifiedTalkgroupIdentifier.createTo(99, 0xABCDE, 0x321, 1200));
 
         assertEquals(Protocol.APCO25, identity.protocol());
-        assertEquals(1200, identity.talkgroup());
+        assertEquals(99, identity.localAddress());
+        assertEquals(1200, identity.canonicalIdentity());
         assertEquals(0xABCDE, identity.qualifier().networkId().intValue());
         assertEquals(0x321, identity.qualifier().systemId());
         assertTrue(identity.qualifier().hasNetwork());
+    }
+
+    @Test
+    void privateRadioDestinationKeepsItsRoleAndCanonicalHomeTuple()
+    {
+        ResolvedCallPolicy.DestinationIdentity identity = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 9_001));
+
+        assertEquals(Protocol.APCO25, identity.protocol());
+        assertEquals(io.github.dsheirer.identifier.Form.RADIO, identity.kind());
+        assertEquals(123, identity.localAddress());
+        assertEquals(9_001, identity.canonicalIdentity());
+        assertEquals(0xABCDE, identity.qualifier().networkId().intValue());
+        assertEquals(0x321, identity.qualifier().systemId());
+    }
+
+    @Test
+    void p25SpecialRangeRadioDestinationsCannotBecomeDuplicateIdentity()
+    {
+        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25RadioIdentifier.createTo(10_000_000)));
+        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 10_000_000)));
+        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFFFD, 0xABCDE, 0x321, 9_001)));
+        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25IncompleteRadioIdentifier.createTo(9_001)));
+
+        ResolvedCallPolicy.DestinationIdentity roaming = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26, 0xBEE00, 0x954, 831_102));
+        assertEquals(0xFFFD26, roaming.localAddress());
+        assertEquals(831_102, roaming.canonicalIdentity());
     }
 
     @Test
@@ -97,9 +99,9 @@ class ResolvedCallPolicyTest
             .collect(Collectors.toSet());
 
         assertTrue(destinations.contains(new ResolvedCallPolicy.DestinationIdentity(
-            Protocol.APCO25, 500, null)));
+            Protocol.APCO25, io.github.dsheirer.identifier.Form.PATCH_GROUP, 500, 500, null)));
         assertTrue(destinations.contains(new ResolvedCallPolicy.DestinationIdentity(
-            Protocol.APCO25, 700,
+            Protocol.APCO25, io.github.dsheirer.identifier.Form.TALKGROUP, 501, 700,
             ResolvedCallPolicy.DestinationQualifier.networkAndSystem(0xABCDE, 0x321))));
     }
 

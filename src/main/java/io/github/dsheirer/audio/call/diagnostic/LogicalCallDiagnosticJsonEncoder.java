@@ -184,7 +184,7 @@ final class LogicalCallDiagnosticJsonEncoder implements LogicalCallDiagnosticRec
             writeText(generator, "decoder", leg.decoder());
             writeText(generator, "channel_configuration_id", leg.channelConfigurationId());
             writeText(generator, "channel_name", leg.channelName());
-            writeText(generator, "learned_site_guid", leg.siteGuid());
+            writeText(generator, "radioresolve_id", leg.radioResolveId());
             generator.writeNumberField("durable_alias_list_id", leg.durableAliasListId());
             writeNumber(generator, "wacn", leg.wacn());
             writeNumber(generator, "system_id", leg.system());

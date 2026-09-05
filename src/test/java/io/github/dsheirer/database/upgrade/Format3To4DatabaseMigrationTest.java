@@ -96,80 +96,44 @@ class Format3To4DatabaseMigrationTest
 
             assertEquals(3, report.source().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-13-to-14", report.steps().getLast().id());
+            assertEquals("format-14-to-15", report.steps().getLast().id());
             DatabaseFormatCatalog.DetectedFormat current = DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, current.version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
 
-            //Administrator configuration and structurally unchanged receiver history are preserved.
+            //Administrator configuration survives the full chain.
             assertEquals("{\"preserved\":true}", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='format-3-preserve-sentinel'
                 """));
-            assertEquals("5:2:3:1", scalar(connection, """
-                SELECT call_count || ':' || encrypted_count || ':' || recorded_count || ':' || streamed_count
-                FROM conventional_activity_summary WHERE context_id=701
-                """));
-            assertEquals("6:1:22001", scalar(connection, """
-                SELECT call_count || ':' || encrypted_count || ':' || last_source_radio_id
-                FROM dmr_conventional_talkgroup_summary WHERE context_id=703
-                """));
-            assertEquals("97.5:195:5", scalar(connection, """
-                SELECT decode_health_pct || ':' || valid_frames || ':' || invalid_frames
-                FROM p25_control_channel_quality WHERE guid='format-3-guid'
-                """));
-            assertEquals("fixture:2", scalar(connection, """
-                SELECT snapshot_hash || ':' || observation_count
-                FROM trunked_site_snapshot WHERE guid='format-3-trunked-site'
-                """));
-
-            //Alias identities are recovered only for one exact NOCASE match; unmatched names remain safely null.
-            assertEquals("Default P25", scalar(connection, """
-                SELECT alias_list.name
-                FROM receiver_context JOIN alias_list ON alias_list.id=receiver_context.alias_list_id
-                WHERE receiver_context.id=700
-                """));
-            assertEquals("Default DMR", scalar(connection, """
-                SELECT alias_list.name
-                FROM receiver_context JOIN alias_list ON alias_list.id=receiver_context.alias_list_id
-                WHERE receiver_context.id=703
-                """));
-            assertNull(nullableScalar(connection,
-                "SELECT alias_list_id FROM receiver_context WHERE id=702"));
-
-            //Compatible conventional identities and non-CALL signaling are copied exactly.
-            assertEquals("5:2:3:1", scalar(connection, """
-                SELECT call_count || ':' || encrypted_count || ':' || recorded_count || ':' || streamed_count
-                FROM conventional_call_identity_bucket WHERE context_id=701 AND identity_id=4101
-                """));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM conventional_call_identity_bucket WHERE context_id=700"));
-            assertEquals("3:2", scalar(connection, """
-                SELECT grant_count || ':' || page_count
-                FROM trunked_signaling_activity_bucket
-                WHERE context_id=700 AND bucket_start_ms=1699999200000
-                """));
-
-            //Physical CALL and old identity projections are reset; new logical/site projections start empty.
-            for(String retired: List.of("call_identity_bucket", "p25_site_frequency_summary",
-                "p25_site_talkgroup_bucket", "p25_site_activity_bucket"))
+            //Format 15 intentionally resets all old receiver/system/site observations whose identities were ambiguous.
+            for(String retired: List.of("receiver_context", "call_identity_bucket", "p25_site_frequency_summary",
+                "p25_site_talkgroup_bucket", "p25_site_activity_bucket", "p25_control_channel_quality",
+                "trunked_radio_site_presence", "trunked_radio_talkgroup_summary"))
             {
                 assertFalse(tableExists(connection, retired), "Retired table remains: " + retired);
             }
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM receiver_channel"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM radio_system"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_control_channel_quality"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM statistics_status"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM conventional_activity_summary"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM p25_learned_site"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM pragma_table_info('trunked_signaling_activity_bucket') WHERE name='call_count'
                 """));
 
-            assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("200", metadata(connection, "conventional_call_output_metrics_started_at_ms"));
-            assertTrue(Long.parseLong(metadata(connection,
-                "trunked_logical_call_metrics_started_at_ms")) > 200);
-            assertTrue(Long.parseLong(metadata(connection,
-                "trunked_identity_metrics_started_at_ms")) > 200);
+            assertNull(metadata(connection, "p25_activity_schema_version"));
+            long boundary = Long.parseLong(metadata(connection,
+                "conventional_call_output_metrics_started_at_ms"));
+            assertTrue(boundary > 200);
+            assertEquals(Long.toString(boundary), metadata(connection,
+                "trunked_logical_call_metrics_started_at_ms"));
+            assertEquals(Long.toString(boundary), metadata(connection,
+                "radio_system_metrics_started_at_ms"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             ApplicationDatabaseMigrator.validateCurrentDatabase(connection);

@@ -18,13 +18,14 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
  */
 public record RadioResolveMetadataReadiness(boolean ready, String message)
 {
-    public static RadioResolveMetadataReadiness evaluate(String guid, P25NetworkConfigurationSnapshot snapshot)
+    public static RadioResolveMetadataReadiness evaluate(String radioResolveId,
+                                                         P25NetworkConfigurationSnapshot snapshot)
     {
         StringBuilder missing = new StringBuilder();
 
-        if(guid == null || guid.isBlank())
+        if(radioResolveId == null || radioResolveId.isBlank())
         {
-            appendMissing(missing, "GUID");
+            appendMissing(missing, "RadioResolve ID");
         }
 
         if(snapshot == null || snapshot.decoder() == null || snapshot.decoder().isBlank())

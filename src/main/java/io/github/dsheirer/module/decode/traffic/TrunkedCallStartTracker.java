@@ -18,15 +18,8 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
-import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
-import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
-import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -88,8 +81,24 @@ public class TrunkedCallStartTracker
                                                                   DecodeEventType eventType,
                                                                   long timestamp)
     {
+        return observeWithAttribution(parentChannel, protocol, channelDescriptor, timeslot, identifiers, eventType,
+            timestamp, null);
+    }
+
+    /**
+     * Observes one call using the processing chain's effective system identity at the instant the physical call
+     * starts. The key may identify a native system or the saved-channel fallback used before native identity is known.
+     */
+    public synchronized ObservationResult observeWithAttribution(Channel parentChannel, Protocol protocol,
+                                                                  IChannelDescriptor channelDescriptor,
+                                                                  Integer timeslot,
+                                                                  IdentifierCollection identifiers,
+                                                                  DecodeEventType eventType,
+                                                                  long timestamp,
+                                                                  String radioSystemKey)
+    {
         return observe(parentChannel, protocol, channelDescriptor, timeslot, identifiers, eventType, timestamp,
-            true);
+            true, radioSystemKey);
     }
 
     /**
@@ -103,23 +112,43 @@ public class TrunkedCallStartTracker
                                                             DecodeEventType eventType,
                                                             long timestamp)
     {
+        return enrichActiveCall(parentChannel, protocol, channelDescriptor, timeslot, identifiers, eventType,
+            timestamp, null);
+    }
+
+    public synchronized ObservationResult enrichActiveCall(Channel parentChannel, Protocol protocol,
+                                                            IChannelDescriptor channelDescriptor,
+                                                            Integer timeslot,
+                                                            IdentifierCollection identifiers,
+                                                            DecodeEventType eventType,
+                                                            long timestamp,
+                                                            String radioSystemKey)
+    {
         return observe(parentChannel, protocol, channelDescriptor, timeslot, identifiers, eventType, timestamp,
-            false);
+            false, radioSystemKey);
     }
 
     private ObservationResult observe(Channel parentChannel, Protocol protocol,
                                       IChannelDescriptor channelDescriptor, Integer timeslot,
                                       IdentifierCollection identifiers, DecodeEventType eventType,
-                                      long timestamp, boolean allowCallStart)
+                                      long timestamp, boolean allowCallStart, String radioSystemKey)
     {
-        if(parentChannel == null || protocol == null || protocol == Protocol.UNKNOWN || eventType == null ||
+        if(parentChannel == null || protocol != Protocol.DMR && protocol != Protocol.NXDN || eventType == null ||
             !eventType.isVoiceCallEvent() || timestamp <= 0)
         {
             return ObservationResult.EMPTY;
         }
 
         cleanup(timestamp);
-        ResourceKey resourceKey = ResourceKey.from(channelDescriptor, timeslot);
+        TrunkedChannelDescriptorSnapshot channelSnapshot =
+            TrunkedChannelDescriptorSnapshot.capture(channelDescriptor);
+        Integer effectiveTimeslot = timeslot != null ? timeslot :
+            channelSnapshot != null ? channelSnapshot.timeslot() : null;
+        ResourceKey resourceKey = ResourceKey.from(channelSnapshot, effectiveTimeslot);
+        if(resourceKey == null)
+        {
+            return ObservationResult.EMPTY;
+        }
         Long endedAt = mEndedObservations.get(resourceKey);
 
         //Control and traffic decoder streams can deliver an older observation after an explicit call end.
@@ -146,7 +175,12 @@ public class TrunkedCallStartTracker
             return ObservationResult.EMPTY;
         }
 
-        TrunkedIdentityDomain identityDomain = identityDomain(parentChannel, protocol, identifiers);
+        TrunkedIdentityDomain identityDomain = identityDomain(parentChannel, protocol);
+        if(protocol == Protocol.NXDN &&
+            !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers, identityDomain))
+        {
+            return ObservationResult.EMPTY;
+        }
         TargetIdentity target = TargetIdentity.fromTarget(protocol, identityDomain,
             identifiers != null ? identifiers.getToIdentifier() : null);
         TargetIdentity source = TargetIdentity.fromSource(protocol, identityDomain,
@@ -166,11 +200,14 @@ public class TrunkedCallStartTracker
                 return ObservationResult.EMPTY;
             }
 
+            String effectiveRadioSystemKey = effectiveRadioSystemKey(parentChannel, protocol, identityDomain,
+                radioSystemKey);
             mObservations.put(resourceKey, new ActiveCall(target, source, encrypted,
-                observedEncryption.algorithmId(), observedEncryption.keyId(), timestamp, timestamp));
+                observedEncryption.algorithmId(), observedEncryption.keyId(), timestamp, timestamp,
+                effectiveRadioSystemKey));
             enforceMaximumSize(mObservations);
-            return new ObservationResult(callStart(parentChannel, protocol, channelDescriptor, timeslot,
-                identifiers, eventType, timestamp), null);
+            return new ObservationResult(new TrunkedCallStartEvent(parentChannel, protocol, channelSnapshot,
+                effectiveTimeslot, identifiers, eventType, timestamp, effectiveRadioSystemKey), null);
         }
 
         boolean destinationBecameKnown = !previous.target().isKnown() && target.isKnown();
@@ -189,7 +226,7 @@ public class TrunkedCallStartTracker
         IdentifierCollection mergedIdentifiers = mergedIdentifiers(identifiers, updatedTarget, updatedSource);
         mObservations.put(resourceKey, new ActiveCall(updatedTarget, updatedSource,
             previous.encrypted() || encrypted, updatedEncryptionAlgorithm, updatedEncryptionKey,
-            previous.callStartEpochMilliseconds(), timestamp));
+            previous.callStartEpochMilliseconds(), timestamp, previous.radioSystemKey()));
         enforceMaximumSize(mObservations);
 
         if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown &&
@@ -199,35 +236,10 @@ public class TrunkedCallStartTracker
         }
 
         return new ObservationResult(null, new TrunkedCallAttributionEvent(parentChannel, protocol,
-            channelDescriptor, timeslot, previous.callStartEpochMilliseconds(), mergedIdentifiers,
+            channelSnapshot, effectiveTimeslot, previous.callStartEpochMilliseconds(), mergedIdentifiers,
             destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown,
-            updatedEncryptionAlgorithm, updatedEncryptionKey, previous.encrypted()));
-    }
-
-    private static TrunkedCallStartEvent callStart(Channel parentChannel, Protocol protocol,
-                                                   IChannelDescriptor channelDescriptor, Integer timeslot,
-                                                   IdentifierCollection identifiers, DecodeEventType eventType,
-                                                   long timestamp)
-    {
-        IdentifierCollection snapshot = identifiers != null ?
-            new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
-
-        if(timeslot != null && timeslot >= 0)
-        {
-            snapshot.setTimeslot(timeslot);
-        }
-
-        DecodeEvent.DecodeEventBuilder builder = DecodeEvent.builder(eventType, timestamp)
-            .protocol(protocol)
-            .channel(channelDescriptor)
-            .identifiers(snapshot);
-
-        if(timeslot != null && timeslot >= 0)
-        {
-            builder.timeslot(timeslot);
-        }
-
-        return new TrunkedCallStartEvent(parentChannel, builder.build());
+            updatedEncryptionAlgorithm, updatedEncryptionKey, previous.encrypted(),
+            previous.radioSystemKey()));
     }
 
     private static IdentifierCollection mergedIdentifiers(IdentifierCollection identifiers,
@@ -254,7 +266,11 @@ public class TrunkedCallStartTracker
      */
     public synchronized void end(IChannelDescriptor channelDescriptor, Integer timeslot, long timestamp)
     {
-        ResourceKey key = ResourceKey.from(channelDescriptor, timeslot);
+        ResourceKey key = ResourceKey.from(TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot);
+        if(key == null)
+        {
+            return;
+        }
         ActiveCall current = mObservations.get(key);
 
         //A delayed end must not terminate a newer call already active on the same resource.
@@ -304,15 +320,69 @@ public class TrunkedCallStartTracker
         }
 
         cleanup(timestamp);
-        ResourceKey key = ResourceKey.from(channelDescriptor, timeslot);
+        ResourceKey key = ResourceKey.from(TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot);
+        if(key == null)
+        {
+            return;
+        }
         ActiveCall current = mObservations.get(key);
 
         if(current != null && timestamp >= current.lastObservedAtMilliseconds())
         {
             mObservations.put(key, new ActiveCall(current.target(), current.source(), current.encrypted(),
                 current.encryptionAlgorithmId(), current.encryptionKeyId(),
-                current.callStartEpochMilliseconds(), timestamp));
+                current.callStartEpochMilliseconds(), timestamp, current.radioSystemKey()));
         }
+    }
+
+    /**
+     * Returns the immutable system key and start time captured when the matching physical call started. A completed
+     * talker-alias message may arrive after the manager has learned a different current system, so both values must
+     * come from the call rather than the manager's latest state. Ambiguous, stale, or next-call observations are
+     * rejected.
+     */
+    public synchronized CallSystemIdentity identityForActiveCall(Channel parentChannel, Protocol protocol,
+                                                                 IChannelDescriptor channelDescriptor,
+                                                                 Integer timeslot,
+                                                                 IdentifierCollection identifiers,
+                                                                 long timestamp)
+    {
+        if(parentChannel == null || protocol != Protocol.DMR && protocol != Protocol.NXDN || timestamp <= 0)
+        {
+            return null;
+        }
+
+        cleanup(timestamp);
+        ResourceKey resourceKey = ResourceKey.from(
+            TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot);
+        if(resourceKey == null)
+        {
+            return null;
+        }
+        ActiveCall active = mObservations.get(resourceKey);
+        boolean stale = active != null && timestamp >= active.lastObservedAtMilliseconds() &&
+            timestamp - active.lastObservedAtMilliseconds() > mContinuationThresholdMilliseconds;
+        if(active == null || timestamp < active.callStartEpochMilliseconds() || stale)
+        {
+            return null;
+        }
+
+        TrunkedIdentityDomain identityDomain = identityDomain(parentChannel, protocol);
+        TargetIdentity observedTarget = TargetIdentity.fromTarget(protocol, identityDomain,
+            identifiers != null ? identifiers.getToIdentifier() : null);
+        TargetIdentity observedSource = TargetIdentity.fromSource(protocol, identityDomain,
+            identifiers != null ? identifiers.getFromIdentifier() : null);
+
+        boolean targetConflict = active.target().isKnown() && observedTarget.isKnown() &&
+            !active.target().sameIdentity(observedTarget);
+        boolean sourceConflict = active.source().isKnown() && observedSource.isKnown() &&
+            !active.source().sameIdentity(observedSource);
+        if(targetConflict || sourceConflict)
+        {
+            return null;
+        }
+
+        return new CallSystemIdentity(active.callStartEpochMilliseconds(), active.radioSystemKey());
     }
 
     /**
@@ -368,8 +438,7 @@ public class TrunkedCallStartTracker
         return existing != null ? existing : observed;
     }
 
-    private static TrunkedIdentityDomain identityDomain(Channel parentChannel, Protocol protocol,
-                                                        IdentifierCollection identifiers)
+    private static TrunkedIdentityDomain identityDomain(Channel parentChannel, Protocol protocol)
     {
         if(protocol != Protocol.NXDN)
         {
@@ -382,19 +451,17 @@ public class TrunkedCallStartTracker
             return TrunkedIdentityDomain.NXDN_TYPE_D;
         }
 
-        if(identifiers != null)
-        {
-            for(Identifier identifier: identifiers.getIdentifiers())
-            {
-                if(identifier instanceof NXDNTalkgroupIdentifier talkgroup && talkgroup.isTypeD() ||
-                    identifier instanceof NXDNRadioIdentifier radio && radio.isTypeD())
-                {
-                    return TrunkedIdentityDomain.NXDN_TYPE_D;
-                }
-            }
-        }
-
         return TrunkedIdentityDomain.NXDN_TYPE_C;
+    }
+
+    private static String effectiveRadioSystemKey(Channel parentChannel, Protocol protocol,
+                                                  TrunkedIdentityDomain identityDomain,
+                                                  String radioSystemKey)
+    {
+        String configurationId = parentChannel != null ?
+            io.github.dsheirer.controller.channel.ChannelConfigurationKey.configured(parentChannel) : null;
+        return RadioSystemKey.effectiveForReceiver(protocol, identityDomain, configurationId,
+            radioSystemKey);
     }
 
     public record ObservationResult(TrunkedCallStartEvent callStart, TrunkedCallAttributionEvent attribution)
@@ -404,7 +471,8 @@ public class TrunkedCallStartTracker
 
     private record ActiveCall(TargetIdentity target, TargetIdentity source, boolean encrypted,
                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                              long callStartEpochMilliseconds, long lastObservedAtMilliseconds)
+                              long callStartEpochMilliseconds, long lastObservedAtMilliseconds,
+                              String radioSystemKey)
     {
     }
 
@@ -432,34 +500,34 @@ public class TrunkedCallStartTracker
         }
     }
 
-    private record TargetIdentity(Form form, String value, Identifier identifier)
+    private record TargetIdentity(Form form, Integer observedLocalId, Identifier identifier)
     {
         private boolean isKnown()
         {
-            return form != null && value != null;
+            return form != null && observedLocalId != null;
         }
 
         private boolean sameIdentity(TargetIdentity other)
         {
-            return other != null && form == other.form() && Objects.equals(value, other.value());
+            if(other == null || form != other.form())
+            {
+                return false;
+            }
+
+            return observedLocalId != null && observedLocalId > 0 &&
+                observedLocalId.equals(other.observedLocalId());
         }
 
         private static TargetIdentity fromTarget(Protocol protocol, TrunkedIdentityDomain identityDomain,
                                                  Identifier identifier)
         {
-            return identifier != null && (identifier.getForm() == Form.TALKGROUP ||
-                identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO) &&
-                TrunkedIdentityEligibility.isEligible(protocol, identityDomain, identifier.getForm(),
-                    integerValue(identifier)) ? from(identifier) : new TargetIdentity(null, null, null);
+            return from(protocol, identityDomain, identifier, true);
         }
 
         private static TargetIdentity fromSource(Protocol protocol, TrunkedIdentityDomain identityDomain,
                                                  Identifier identifier)
         {
-            return identifier != null && identifier.getForm() == Form.RADIO &&
-                TrunkedIdentityEligibility.isEligible(protocol, identityDomain, Form.RADIO,
-                    integerValue(identifier)) ?
-                from(identifier) : new TargetIdentity(null, null, null);
+            return from(protocol, identityDomain, identifier, false);
         }
 
         private static Integer integerValue(Identifier identifier)
@@ -470,54 +538,97 @@ public class TrunkedCallStartTracker
                 return patch.getValue().getPatchGroup().getValue();
             }
 
-            if(identifier instanceof FullyQualifiedRadioIdentifier radio)
-            {
-                return radio.getValue() != null && radio.getValue() > 0 ? radio.getValue() : radio.getRadio();
-            }
-
             return identifier != null && identifier.getValue() instanceof Number number ?
                 number.intValue() : null;
         }
 
-        private static TargetIdentity from(Identifier identifier)
+        private static TargetIdentity from(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                           Identifier identifier, boolean destination)
         {
-            return identifier != null ? new TargetIdentity(identifier.getForm(),
-                identifier.getValue() != null ? identifier.getValue().toString() : null, identifier) :
-                new TargetIdentity(null, null, null);
+            if(identifier == null || destination && identifier.getForm() != Form.TALKGROUP &&
+                identifier.getForm() != Form.PATCH_GROUP && identifier.getForm() != Form.RADIO ||
+                !destination && identifier.getForm() != Form.RADIO)
+            {
+                return unknown();
+            }
+
+            Form form = identifier.getForm();
+            return TrunkedIdentityEligibility.isEligible(protocol, identityDomain, form, integerValue(identifier)) ?
+                new TargetIdentity(form, integerValue(identifier), identifier) : unknown();
+        }
+
+        private static TargetIdentity unknown()
+        {
+            return new TargetIdentity(null, null, null);
         }
     }
 
-    private record ResourceKey(long frequencyHertz, String descriptor, int timeslot)
+    private record ResourceKey(ResourceKind kind, long frequencyHertz,
+                               int primaryChannelNumber, int secondaryChannelNumber, int timeslot)
     {
-        private static ResourceKey from(IChannelDescriptor channelDescriptor, Integer timeslot)
+        private static ResourceKey from(TrunkedChannelDescriptorSnapshot snapshot, Integer timeslot)
         {
-            long frequency = channelDescriptor != null && channelDescriptor.getDownlinkFrequency() > 0 ?
-                channelDescriptor.getDownlinkFrequency() : 0;
-            String descriptor = null;
-
-            //Logical channel identity remains stable before and after a frequency map resolves.
-            if(channelDescriptor instanceof DMRChannel dmr)
+            if(snapshot == null)
             {
-                descriptor = "DMR:" + dmr.getChannelNumber();
-                frequency = 0;
-            }
-            else if(channelDescriptor instanceof NXDNChannelLookup nxdn)
-            {
-                descriptor = "NXDN:LOOKUP:" + nxdn.getChannelNumber();
-                frequency = 0;
-            }
-            else if(channelDescriptor instanceof NXDNChannelDFA nxdn)
-            {
-                descriptor = "NXDN:DFA:" + nxdn.getOutboundChannelNumber() + ":" +
-                    nxdn.getInboundChannelNumber();
-                frequency = 0;
-            }
-            else if(frequency == 0 && channelDescriptor != null)
-            {
-                descriptor = channelDescriptor.toString();
+                return null;
             }
 
-            return new ResourceKey(frequency, descriptor, timeslot != null ? timeslot : -1);
+            int slot = timeslot != null ? timeslot :
+                snapshot.timeslot() != null ? snapshot.timeslot() : -1;
+            int primary = snapshot.primaryChannelNumber() != null ? snapshot.primaryChannelNumber() : -1;
+            int secondary = snapshot.secondaryChannelNumber() != null ? snapshot.secondaryChannelNumber() : -1;
+
+            //Logical channel identities remain stable when a frequency map becomes available.  Keep the key family
+            //deliberately broader than the display snapshot: control and traffic observations can use different DMR
+            //descriptor subclasses for the same physical resource.
+            switch(snapshot.kind())
+            {
+                case DMR_CHANNEL, DMR_TIER_III, DMR_ABSOLUTE:
+                    if(primary >= 0)
+                    {
+                        return new ResourceKey(ResourceKind.DMR_CHANNEL, 0L, primary, -1, slot);
+                    }
+                    break;
+                case DMR_LSN, DMR_REST_LSN:
+                    if(secondary >= 0)
+                    {
+                        return new ResourceKey(ResourceKind.DMR_CHANNEL, 0L, secondary, -1, slot);
+                    }
+                    break;
+                case NXDN_LOOKUP:
+                    if(primary >= 0)
+                    {
+                        return new ResourceKey(ResourceKind.NXDN_LOOKUP, 0L, primary, -1, slot);
+                    }
+                    break;
+                case NXDN_DFA:
+                    if(primary >= 0)
+                    {
+                        return new ResourceKey(ResourceKind.NXDN_DFA, 0L, primary, secondary, slot);
+                    }
+                    break;
+                case NXDN_CHANNEL, UNKNOWN:
+                    if(snapshot.downlinkFrequencyHertz() != null)
+                    {
+                        return new ResourceKey(ResourceKind.FREQUENCY, snapshot.downlinkFrequencyHertz(),
+                            -1, -1, slot);
+                    }
+                    break;
+                case NXDN_FAKE:
+                    break;
+            }
+
+            //An unknown zero-frequency descriptor has no collision-free identity.  Refuse it instead of using
+            //mutable display text as a call key.
+            return null;
         }
+    }
+
+    private enum ResourceKind
+    {
+        DMR_CHANNEL,
+        NXDN_LOOKUP,
+        NXDN_DFA,
+        FREQUENCY
     }
 }

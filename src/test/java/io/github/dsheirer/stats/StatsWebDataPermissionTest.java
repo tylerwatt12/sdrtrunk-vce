@@ -45,19 +45,17 @@ class StatsWebDataPermissionTest
         try(TestServer server = startServer("csv-permissions.sqlite"))
         {
             server.access().setCapabilityTier(WebCapability.CSV_EXPORT, AccessTier.PUBLIC);
-            server.access().setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.USER);
-            server.access().setCapabilityTier(WebCapability.CONVENTIONAL_VIEW, AccessTier.PUBLIC);
+            server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.USER);
 
-            assertEquals(200, server.get(export("conventional-channels"), null).statusCode());
-            assertEquals(403, server.get(export("system-talkgroups") + "?scope=p25:BEE00:49F", null).statusCode());
+            assertEquals(403, server.get(export("channels"), null).statusCode());
 
             String listener = server.login();
-            assertEquals(404,
-                server.get(export("system-talkgroups") + "?scope=p25:BEE00:49F", listener).statusCode());
+            assertEquals(200, server.get(export("channels"), listener).statusCode());
 
             server.access().setCapabilityTier(WebCapability.CSV_EXPORT, AccessTier.USER);
-            assertEquals(403, server.get(export("conventional-channels"), null).statusCode());
-            assertEquals(200, server.get(export("conventional-channels"), listener).statusCode());
+            server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.PUBLIC);
+            assertEquals(403, server.get(export("channels"), null).statusCode());
+            assertEquals(200, server.get(export("channels"), listener).statusCode());
         }
     }
 
@@ -66,30 +64,19 @@ class StatsWebDataPermissionTest
     {
         try(TestServer server = startServer("activity-permissions.sqlite"))
         {
-            server.access().setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.USER);
-            server.access().setCapabilityTier(WebCapability.CONVENTIONAL_VIEW, AccessTier.PUBLIC);
+            server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.USER);
 
-            assertEquals(404,
+            assertEquals(401, server.get(StatsApiV1.ACTIVITY, null).statusCode());
+            assertEquals(401,
                 server.get(StatsApiV1.ACTIVITY + "?configuration_id=" + CONFIGURATION_ID, null).statusCode());
-            assertEquals(403, server.get(StatsApiV1.ACTIVITY + "?scope=p25:BEE00:49F", null).statusCode());
-            assertEquals(403, server.get(StatsApiV1.ACTIVITY, null).statusCode());
 
             String listener = server.login();
-            assertEquals(200,
-                server.get(StatsApiV1.ACTIVITY + "?scope=p25:BEE00:49F", listener).statusCode());
-
-            HttpResponse<String> mixed = server.get(
-                StatsApiV1.ACTIVITY + "?configuration_id=" + CONFIGURATION_ID + "&scope=p25:BEE00:49F", null);
-            assertEquals(400, mixed.statusCode(), mixed.body());
-            assertEquals("invalid_parameter", OBJECT_MAPPER.readTree(mixed.body()).at("/error/code").textValue());
-
-            server.access().setCapabilityTier(WebCapability.SYSTEMS_VIEW, AccessTier.PUBLIC);
-            server.access().setCapabilityTier(WebCapability.CONVENTIONAL_VIEW, AccessTier.USER);
-            assertEquals(200, server.get(StatsApiV1.ACTIVITY + "?scope=p25:BEE00:49F", null).statusCode());
-            assertEquals(403,
-                server.get(StatsApiV1.ACTIVITY + "?configuration_id=" + CONFIGURATION_ID, null).statusCode());
+            assertEquals(200, server.get(StatsApiV1.ACTIVITY, listener).statusCode());
             assertEquals(404,
                 server.get(StatsApiV1.ACTIVITY + "?configuration_id=" + CONFIGURATION_ID, listener).statusCode());
+
+            server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.PUBLIC);
+            assertEquals(200, server.get(StatsApiV1.ACTIVITY, null).statusCode());
         }
     }
 

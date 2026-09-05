@@ -105,6 +105,8 @@ public class DMRNetworkConfigurationMonitor
     private String mChannelType;
     private Integer mColorCodeTS1;
     private Integer mColorCodeTS2;
+    private Tier3Identity mTier3Identity;
+    private long mTier3IdentityObservedAt;
     private final StableFactTracker<NetworkFamily,NetworkFamily> mNetworkFamilyTracker =
         new StableFactTracker<>(family -> family);
 
@@ -122,6 +124,17 @@ public class DMRNetworkConfigurationMonitor
             .filter(frequency -> frequency != null)
             .map(TimeslotFrequency::copy)
             .toList();
+    }
+
+    /** Clears all learned and candidate state before this monitor is reused for another decoder generation. */
+    public synchronized void reset()
+    {
+        mNetworkFamilyTracker.reset();
+        clearFamilySpecificFacts();
+        mTier3Identity = null;
+        mTier3IdentityObservedAt = 0;
+        mColorCodeTS1 = null;
+        mColorCodeTS2 = null;
     }
 
     /**
@@ -190,6 +203,11 @@ public class DMRNetworkConfigurationMonitor
         mDMRNetwork = snapshot.network() != null ? DMRNetwork.create(snapshot.network()) : null;
         mDMRSite = snapshot.site() != null ? DMRSite.create(snapshot.site()) : null;
         mTier3Model = model(snapshot.model());
+        if(isTier3Family(family) && mTier3Model != null && mDMRNetwork != null && mDMRSite != null)
+        {
+            mTier3Identity = new Tier3Identity(mTier3Model, mDMRNetwork.getValue(), mDMRSite.getValue());
+            mTier3IdentityObservedAt = latestObservation(snapshot);
+        }
         mBrand = snapshot.brand();
         mMode = snapshot.mode();
         mChannelType = snapshot.channelType();
@@ -404,14 +422,14 @@ public class DMRNetworkConfigurationMonitor
                 if(linkControl instanceof ControlChannelSystemParameters cc)
                 {
                     SystemIdentityCode sic = cc.getSystemIdentityCode();
-                    mTier3Model = sic.getModel();
-                    mDMRNetwork = sic.getNetwork();
-                    mDMRSite = sic.getSite();
-                    mChannelType = CHANNEL_TYPE_CONTROL;
-
-                    if(mBrand == null)
+                    if(applyTier3Identity(sic, linkControl.getTimestamp()))
                     {
-                        mBrand = BRAND_TIER_3_TRUNKING;
+                        mChannelType = CHANNEL_TYPE_CONTROL;
+
+                        if(mBrand == null)
+                        {
+                            mBrand = BRAND_TIER_3_TRUNKING;
+                        }
                     }
                 }
                 break;
@@ -419,15 +437,15 @@ public class DMRNetworkConfigurationMonitor
                 if(linkControl instanceof TrafficChannelSystemParameters tc)
                 {
                     SystemIdentityCode sic = tc.getSystemIdentityCode();
-                    mTier3Model = sic.getModel();
-                    mDMRNetwork = sic.getNetwork();
-                    mDMRSite = sic.getSite();
-                    mChannelType = CHANNEL_TYPE_TRAFFIC;
-                }
+                    if(applyTier3Identity(sic, linkControl.getTimestamp()))
+                    {
+                        mChannelType = CHANNEL_TYPE_TRAFFIC;
 
-                if(mBrand == null)
-                {
-                    mBrand = BRAND_TIER_3_TRUNKING;
+                        if(mBrand == null)
+                        {
+                            mBrand = BRAND_TIER_3_TRUNKING;
+                        }
+                    }
                 }
                 break;
             default:
@@ -452,22 +470,10 @@ public class DMRNetworkConfigurationMonitor
             case STANDARD_ALOHA:
                 if(csbk instanceof Aloha aloha)
                 {
-                    if(mDMRNetwork == null || mDMRSite == null)
+                    if(mDMRNetwork == null || mDMRSite == null || mTier3Model == null)
                     {
                         SystemIdentityCode sic = aloha.getSystemIdentityCode();
-
-                        if(mDMRNetwork == null)
-                        {
-                            mDMRNetwork = sic.getNetwork();
-                        }
-                        if(mDMRSite == null)
-                        {
-                            mDMRSite = sic.getSite();
-                        }
-                        if(mTier3Model == null)
-                        {
-                            mTier3Model = sic.getModel();
-                        }
+                        applyTier3Identity(sic, csbk.getTimestamp());
                     }
 
                     if(mBrand == null)
@@ -493,17 +499,9 @@ public class DMRNetworkConfigurationMonitor
                         mBrand = BRAND_HYTERA_TIER_3_TRUNKING;
                     }
 
-                    if(mDMRNetwork == null)
+                    if(mDMRNetwork == null || mDMRSite == null || mTier3Model == null)
                     {
-                        mDMRNetwork = ha.getSystemIdentityCode().getNetwork();
-                    }
-                    if(mDMRSite == null)
-                    {
-                        mDMRSite = ha.getSystemIdentityCode().getSite();
-                    }
-                    if(mTier3Model == null)
-                    {
-                        mTier3Model = ha.getSystemIdentityCode().getModel();
+                        applyTier3Identity(ha.getSystemIdentityCode(), csbk.getTimestamp());
                     }
 
                     mBrand = BRAND_HYTERA_TIER_3_TRUNKING;
@@ -520,22 +518,10 @@ public class DMRNetworkConfigurationMonitor
             case MOTOROLA_CAPMAX_ALOHA:
                 if(csbk instanceof CapacityMaxAloha capacityMaxAloha)
                 {
-                    if(mDMRNetwork == null || mDMRSite == null)
+                    if(mDMRNetwork == null || mDMRSite == null || mTier3Model == null)
                     {
                         SystemIdentityCode sic = capacityMaxAloha.getSystemIdentityCode();
-
-                        if(mDMRNetwork == null)
-                        {
-                            mDMRNetwork = sic.getNetwork();
-                        }
-                        if(mDMRSite == null)
-                        {
-                            mDMRSite = sic.getSite();
-                        }
-                        if(mTier3Model == null)
-                        {
-                            mTier3Model = sic.getModel();
-                        }
+                        applyTier3Identity(sic, csbk.getTimestamp());
                     }
 
                     mChannelType = CHANNEL_TYPE_CONTROL;
@@ -853,7 +839,7 @@ public class DMRNetworkConfigurationMonitor
 
         if(result == StableFactTracker.Result.PROMOTED && previous != null && previous != current)
         {
-            clearFamilySpecificFacts();
+            clearFamilySpecificFacts(timestamp);
         }
 
         return current == family;
@@ -872,6 +858,39 @@ public class DMRNetworkConfigurationMonitor
         mBrand = null;
         mMode = null;
         mChannelType = null;
+    }
+
+    /** Clears one family generation while retaining a floor that delayed Tier III identity cannot cross. */
+    private void clearFamilySpecificFacts(long generationTimestamp)
+    {
+        clearFamilySpecificFacts();
+        mTier3Identity = null;
+        mTier3IdentityObservedAt = Math.max(mTier3IdentityObservedAt, generationTimestamp);
+    }
+
+    /** Applies one complete Tier III site tuple without allowing delayed messages to rewind the current generation. */
+    private boolean applyTier3Identity(SystemIdentityCode identity, long timestamp)
+    {
+        Tier3Identity candidate = Tier3Identity.from(identity);
+        if(candidate == null || mTier3Identity == null && timestamp < mTier3IdentityObservedAt ||
+            mTier3Identity != null && (!mTier3Identity.equals(candidate) && timestamp <= mTier3IdentityObservedAt ||
+                mTier3Identity.equals(candidate) && timestamp < mTier3IdentityObservedAt))
+        {
+            return false;
+        }
+
+        mTier3Identity = candidate;
+        mTier3IdentityObservedAt = Math.max(mTier3IdentityObservedAt, timestamp);
+        mTier3Model = candidate.model();
+        mDMRNetwork = DMRNetwork.create(candidate.network());
+        mDMRSite = DMRSite.create(candidate.site());
+        return true;
+    }
+
+    private static boolean isTier3Family(NetworkFamily family)
+    {
+        return family == NetworkFamily.TIER_III || family == NetworkFamily.CAPACITY_MAX ||
+            family == NetworkFamily.HYTERA_TIER_III;
     }
 
     private static NetworkFamily classify(LCMessage message)
@@ -933,6 +952,16 @@ public class DMRNetworkConfigurationMonitor
         CAPACITY_PLUS,
         CAPACITY_MAX,
         HYTERA_TIER_III
+    }
+
+    private record Tier3Identity(Model model, int network, int site)
+    {
+        private static Tier3Identity from(SystemIdentityCode identity)
+        {
+            return identity != null && identity.getModel() != null && identity.getNetwork() != null &&
+                identity.getSite() != null ? new Tier3Identity(identity.getModel(), identity.getNetwork().getValue(),
+                    identity.getSite().getValue()) : null;
+        }
     }
 
     private record ChannelFactKey(int logicalChannelNumber, int timeslot, long downlink, long uplink,

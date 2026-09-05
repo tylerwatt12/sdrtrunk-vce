@@ -24,43 +24,45 @@ package io.github.dsheirer.module.decode.nxdn.layer3.type;
  */
 public enum CallTimer
 {
-    UNSPECIFIED("UNSPECIFIED"),
-    CT1("15 SECONDS"),
-    CT2("30 SECONDS"),
-    CT3("45 SECONDS"),
-    CT4("60 SECONDS"),
-    CT5("75 SECONDS"),
-    CT6("90 SECONDS"),
-    CT7("105 SECONDS"),
-    CT8("120 SECONDS"),
-    CT9("135 SECONDS"),
-    CT10("150 SECONDS"),
-    CT11("165 SECONDS"),
-    CT12("180 SECONDS"),
-    CT13("210 SECONDS"),
-    CT14("240 SECONDS"),
-    CT15("270 SECONDS"),
-    CT16("300 SECONDS"),
-    CT17("330 SECONDS"),
-    CT18("360 SECONDS"),
-    CT19("390 SECONDS"),
-    CT20("420 SECONDS"),
-    CT21("450 SECONDS"),
-    CT22("480 SECONDS"),
-    CT23("510 SECONDS"),
-    CT24("540 SECONDS"),
-    CT25("570 SECONDS"),
-    CT26("600 SECONDS");
+    UNSPECIFIED("UNSPECIFIED", 0),
+    CT1("15 SECONDS", 15),
+    CT2("30 SECONDS", 30),
+    CT3("45 SECONDS", 45),
+    CT4("60 SECONDS", 60),
+    CT5("75 SECONDS", 75),
+    CT6("90 SECONDS", 90),
+    CT7("105 SECONDS", 105),
+    CT8("120 SECONDS", 120),
+    CT9("135 SECONDS", 135),
+    CT10("150 SECONDS", 150),
+    CT11("165 SECONDS", 165),
+    CT12("180 SECONDS", 180),
+    CT13("210 SECONDS", 210),
+    CT14("240 SECONDS", 240),
+    CT15("270 SECONDS", 270),
+    CT16("300 SECONDS", 300),
+    CT17("330 SECONDS", 330),
+    CT18("360 SECONDS", 360),
+    CT19("390 SECONDS", 390),
+    CT20("420 SECONDS", 420),
+    CT21("450 SECONDS", 450),
+    CT22("480 SECONDS", 480),
+    CT23("510 SECONDS", 510),
+    CT24("540 SECONDS", 540),
+    CT25("570 SECONDS", 570),
+    CT26("600 SECONDS", 600);
 
-    private String mLabel;
+    private final String mLabel;
+    private final int mSeconds;
 
     /**
      * Constructs an instance
      * @param label to display
      */
-    CallTimer(String label)
+    CallTimer(String label, int seconds)
     {
         mLabel = label;
+        mSeconds = seconds;
     }
 
     public static CallTimer fromValue(int value)
@@ -95,6 +97,12 @@ public enum CallTimer
             case 26 -> CT26;
             default -> UNSPECIFIED;
         };
+    }
+
+    /** Numeric timer value used by structured telemetry and storage without parsing the display label. */
+    public int getSeconds()
+    {
+        return mSeconds;
     }
 
     @Override

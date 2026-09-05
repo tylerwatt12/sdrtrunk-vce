@@ -28,18 +28,21 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
@@ -47,6 +50,7 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
@@ -91,15 +95,19 @@ class StatsWebCallServiceTest
             assertNotNull(metadata);
             assertEquals("Test System", metadata.get("system"));
             assertEquals("Test Site", metadata.get("site"));
-            assertEquals("00000000-0000-0000-0000-000000000021", metadata.get("site_guid"));
-            assertEquals("00000000-0000-0000-0000-000000000737", metadata.get("channel_identity"));
+            assertEquals("00000000-0000-0000-0000-000000000737", metadata.get("configuration_id"));
+            assertFalse(metadata.containsKey("site_guid"));
+            assertFalse(metadata.containsKey("channel_identity"));
             assertEquals("4400", metadata.get("target_id"));
             assertEquals("TALKGROUP", metadata.get("target_form"));
             assertEquals("9001", metadata.get("source_id"));
             assertEquals("RADIO", metadata.get("source_form"));
             assertEquals("CAR 9001", metadata.get("talker_alias"));
             assertEquals("APCO25", metadata.get("protocol"));
-            assertEquals("apco25:test system:talkgroup:4400", metadata.get("conversation_key"));
+            assertEquals("p25:bee00:4a7", metadata.get("radio_system_key"));
+            assertEquals(Map.of("key", "system:p25:bee00:4a7:v1-g-bee00-4a7-4400", "kind", "talkgroup",
+                "radio_system_key", "p25:bee00:4a7", "label", "Talkgroup 4400"),
+                metadata.get("playback_target"));
             assertEquals(854_187_500L, metadata.get("frequency_hz"));
             assertEquals("0-737", metadata.get("lcn"));
             assertEquals(String.valueOf(0xBEE00), metadata.get("wacn"));
@@ -118,6 +126,24 @@ class StatsWebCallServiceTest
             assertEquals("RIFF", new String(cached.wave(), 0, 4, StandardCharsets.US_ASCII));
             assertEquals("WAVE", new String(cached.wave(), 8, 4, StandardCharsets.US_ASCII));
             assertEquals(44 + 800 * Short.BYTES, cached.wave().length);
+        }
+    }
+
+    @Test
+    void labelsAnalogPlaybackBySavedChannelInsteadOfSyntheticTalkgroup() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(conventionalCall("Fire Dispatch"));
+            Map<String,Object> metadata = client.awaitCall();
+            assertNotNull(metadata);
+            assertEquals("1", metadata.get("target_id"),
+                "The configured analog routing number remains available as raw metadata");
+            assertEquals(Map.of(
+                "key", "channel:00000000-0000-0000-0000-000000000737",
+                "kind", "channel",
+                "label", "Fire Dispatch"), metadata.get("playback_target"));
         }
     }
 
@@ -341,24 +367,17 @@ class StatsWebCallServiceTest
     }
 
     @Test
-    void fullyQualifiedP25AndNxdnDestinationsDoNotShareConversationKeys() throws Exception
+    void fullyQualifiedP25DestinationsDoNotSharePlaybackTargets() throws Exception
     {
         try(StatsWebCallService service = started(new StatsWebCallService());
             FeedClient client = listen(service, Set.of()))
         {
-            String firstP25 = conversationKey(client, service,
+            String firstP25 = playbackTargetKey(client, service,
                 APCO25FullyQualifiedTalkgroupIdentifier.createTo(4400, 0xBEE00, 0x4A7, 12345));
-            String secondP25 = conversationKey(client, service,
+            String secondP25 = playbackTargetKey(client, service,
                 APCO25FullyQualifiedTalkgroupIdentifier.createTo(4400, 0xABCDE, 0x123, 12345));
             assertNotEquals(firstP25, secondP25);
-            assertTrue(firstP25.contains("apco25:fq:781824:1191:12345"));
-
-            String firstNxdn = conversationKey(client, service,
-                NXDNFullyQualifiedTalkgroupIdentifier.createTo(11, 1200));
-            String secondNxdn = conversationKey(client, service,
-                NXDNFullyQualifiedTalkgroupIdentifier.createTo(12, 1200));
-            assertNotEquals(firstNxdn, secondNxdn);
-            assertTrue(firstNxdn.contains("nxdn:fq:11:1200"));
+            assertTrue(firstP25.contains("v1-g-bee00-4a7-12345"));
         }
     }
 
@@ -571,8 +590,11 @@ class StatsWebCallServiceTest
     void publishesLearnedP25SiteIdentity() throws Exception
     {
         CompletedAudioCall template = call();
-        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "configured-channel", "Traffic",
-            "learned-site-guid", 1L, new P25SiteIdentity(0xABCDE, 0x348, 0x02, 0x17), true);
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1,
+            "00000000-0000-0000-0000-000000000737", "Traffic",
+            "radioresolve-id", 1L, new P25SiteIdentity(0xABCDE, 0x348, 0x02, 0x17),
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = template.snapshot();
         AudioCallSnapshot learned = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
             snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
@@ -598,11 +620,10 @@ class StatsWebCallServiceTest
     void publishesOnlyCatalogOwnedNavigationReferences() throws Exception
     {
         String configurationId = "00000000-0000-0000-0000-000000000737";
-        String guid = "00000000-0000-0000-0000-000000000021";
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
             WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
-                configurationId, guid, WebEntityRef.site(guid),
-                WebEntityRef.system("p25:BEE00:4A7:alias-list:10"), 1, 0))));
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0, 0xBEE00, 0x4A7))));
         catalog.refreshNow();
 
         try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
@@ -610,13 +631,137 @@ class StatsWebCallServiceTest
         {
             service.receive(call());
             Map<String,Object> metadata = client.awaitCall();
-            assertEquals(Map.of("kind", "site", "key", guid), metadata.get("entity_ref"));
-            assertEquals(Map.of("kind", "system", "key", "p25:BEE00:4A7:alias-list:10"),
-                metadata.get("system_entity_ref"));
-            assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:4A7:alias-list:10", "id", 9001),
+            assertEquals(Map.of("kind", "channel", "key", configurationId), metadata.get("entity_ref"));
+            assertEquals(Map.of("kind", "radio_system", "key", "p25:bee00:4a7"),
+                metadata.get("radio_system_entity_ref"));
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:4a7",
+                "identity_key", "v1-r-bee00-4a7-9001"),
                 metadata.get("source_entity_ref"));
-            assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:4A7:alias-list:10", "id", 4400),
+            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:4a7",
+                "identity_key", "v1-g-bee00-4a7-4400"),
                 metadata.get("target_entity_ref"));
+        }
+    }
+
+    @Test
+    void omitsScopedNavigationWhenTheCatalogHasADifferentCurrentSystem() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000737";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:4a8"), 1, 0, 0xBEE00, 0x4A8))));
+        catalog.refreshNow();
+
+        try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call());
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("p25:bee00:4a7", metadata.get("radio_system_key"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId), metadata.get("entity_ref"));
+            assertFalse(metadata.containsKey("radio_system_entity_ref"));
+            assertFalse(metadata.containsKey("source_entity_ref"));
+            assertFalse(metadata.containsKey("target_entity_ref"));
+        }
+    }
+
+    @Test
+    void fullyQualifiedPrivateRadioUsesItsCanonicalHomeIdentityForNavigation() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000737";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0, 0xBEE00, 0x4A7))));
+        catalog.refreshNow();
+
+        try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call(APCO25FullyQualifiedRadioIdentifier.createTo(
+                404, 0xABCDE, 0x123, 1234567)));
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:4a7",
+                "identity_key", "v1-r-abcde-123-1234567"), metadata.get("target_entity_ref"));
+        }
+    }
+
+    @Test
+    void callLegSourceConfigurationIdOwnsLiveCallNavigation() throws Exception
+    {
+        String authoritativeId = "00000000-0000-0000-0000-000000000738";
+        CompletedAudioCall template = call();
+        AudioCallSnapshot snapshot = template.snapshot();
+        CallLegSource authoritativeSource = new CallLegSource(DecoderType.P25_PHASE1,
+            authoritativeId, "Test Site", null, 0,
+            new P25SiteIdentity(0xBEE00, 0x4A7, 1, 21),
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
+        AudioCallSnapshot replaced = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
+            snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
+            snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
+            snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
+            snapshot.burstActive(), snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality(), snapshot.callLegId(), authoritativeSource,
+            snapshot.callEncryptionEvidence());
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                authoritativeId, WebEntityRef.channel(authoritativeId),
+                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0, 0xBEE00, 0x4A7))));
+        catalog.refreshNow();
+
+        try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(new CompletedAudioCall(replaced, template.audioBuffers()));
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals(authoritativeId, metadata.get("configuration_id"));
+            assertEquals(Map.of("kind", "channel", "key", authoritativeId), metadata.get("entity_ref"));
+        }
+    }
+
+    @Test
+    void callLegSourceOwnsProtocolAndDecoderWhenTargetMetadataDisagrees() throws Exception
+    {
+        CompletedAudioCall p25WithDmrTarget = call(new DMRTalkgroup(4400));
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(p25WithDmrTarget);
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("APCO25", metadata.get("protocol"));
+            assertEquals("P25_PHASE1", metadata.get("decoder"));
+        }
+
+        CompletedAudioCall template = call(APCO25Talkgroup.create(4400));
+        CallLegSource dmrSource = new CallLegSource(DecoderType.DMR,
+            "00000000-0000-0000-0000-000000000737", "DMR conventional", null, 0, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false);
+        CompletedAudioCall conventionalDmr = withSource(template, dmrSource);
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(conventionalDmr);
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("DMR", metadata.get("protocol"));
+            assertEquals("DMR", metadata.get("decoder"));
+        }
+
+        CompletedAudioCall analogTemplate = conventionalCall("Source only");
+        IdentifierCollection withoutTarget = new IdentifierCollection(
+            analogTemplate.snapshot().identifierCollection().getIdentifiers().stream()
+                .filter(identifier -> identifier != analogTemplate.snapshot().identifierCollection().getToIdentifier())
+                .toList());
+        CompletedAudioCall sourceOnlyAnalog = withIdentifiers(analogTemplate, withoutTarget, null);
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(sourceOnlyAnalog);
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("NBFM", metadata.get("protocol"));
+            assertEquals("NBFM", metadata.get("decoder"));
         }
     }
 
@@ -773,8 +918,8 @@ class StatsWebCallServiceTest
     private static CompletedAudioCall call(Set<Long> matchedAliasIds)
     {
         CompletedAudioCall template = call();
-        ResolvedCallPolicy.MatchContext context = new ResolvedCallPolicy.MatchContext(null, 10, "County",
-            "Test System", List.of(), matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE,
+        ResolvedCallPolicy.MatchContext context = new ResolvedCallPolicy.MatchContext(null, 10, null,
+            List.of(), matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE,
             false, false, Set.of());
         return new CompletedAudioCall(template.snapshot(), template.audioBuffers(),
             new ResolvedCallPolicy(false, false, Set.of(), List.of(context)));
@@ -803,13 +948,13 @@ class StatsWebCallServiceTest
         return new CompletedAudioCall(captured, template.audioBuffers());
     }
 
-    private static String conversationKey(FeedClient client, StatsWebCallService service, Identifier<?> target)
+    private static String playbackTargetKey(FeedClient client, StatsWebCallService service, Identifier<?> target)
         throws InterruptedException
     {
         service.receive(call(target));
         Map<String,Object> metadata = client.awaitCall();
         assertNotNull(metadata);
-        return String.valueOf(metadata.get("conversation_key"));
+        return String.valueOf(((Map<?,?>)metadata.get("playback_target")).get("key"));
     }
 
     private static CompletedAudioCall call(Identifier<?> target)
@@ -849,7 +994,22 @@ class StatsWebCallServiceTest
             snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(), recordingMetadata,
             snapshot.voiceCallQuality(), snapshot.callLegId(), snapshot.callLegSource(),
             snapshot.callEncryptionEvidence());
-        return new CompletedAudioCall(replaced, template.audioBuffers(), template.resolvedPolicy());
+        return new CompletedAudioCall(template.logicalCallId(), replaced, template.audioBuffers(),
+            template.resolvedPolicy(), template.callLegSummaries());
+    }
+
+    private static CompletedAudioCall withSource(CompletedAudioCall template, CallLegSource source)
+    {
+        AudioCallSnapshot snapshot = template.snapshot();
+        AudioCallSnapshot replaced = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
+            snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
+            snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
+            snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
+            snapshot.burstActive(), snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality(), snapshot.callLegId(), source,
+            snapshot.callEncryptionEvidence());
+        return new CompletedAudioCall(template.logicalCallId(), replaced, template.audioBuffers(),
+            template.resolvedPolicy(), template.callLegSummaries());
     }
 
     private static CompletedAudioCall call()
@@ -857,7 +1017,7 @@ class StatsWebCallServiceTest
         List<Identifier> identifiers = new ArrayList<>();
         identifiers.add(SystemConfigurationIdentifier.create("Test System"));
         identifiers.add(SiteConfigurationIdentifier.create("Test Site"));
-        identifiers.add(SiteGuidConfigurationIdentifier.create("00000000-0000-0000-0000-000000000021"));
+        identifiers.add(RadioResolveConfigurationIdentifier.create("00000000-0000-0000-0000-000000000021"));
         identifiers.add(ChannelConfigurationIdentifier.create("00000000-0000-0000-0000-000000000737"));
         identifiers.add(FrequencyConfigurationIdentifier.create(854_187_500L));
         identifiers.add(APCO25RadioIdentifier.createFrom(9001));
@@ -874,7 +1034,12 @@ class StatsWebCallServiceTest
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             new IdentifierCollection(identifiers), Set.of(), 1_000L, 1_100L, 1, 1L, 1_000L, 1_100L,
             false, true, CallEncryptionState.CLEAR, true, null,
-            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850), CallLegId.from(callId), CallLegSource.UNKNOWN, null);
+            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850), CallLegId.from(callId),
+            new CallLegSource(DecoderType.P25_PHASE1, "00000000-0000-0000-0000-000000000737", "Test Site",
+                "00000000-0000-0000-0000-000000000021", 0,
+                new P25SiteIdentity(0xBEE00, 0x4A7, 1, 21),
+                io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+                ChannelConfigurationPolicy.ChannelKind.TRUNKED, true), null);
         float[] audio = new float[800];
 
         for(int index = 0; index < audio.length; index++)
@@ -883,6 +1048,31 @@ class StatsWebCallServiceTest
         }
 
         return new CompletedAudioCall(snapshot, List.of(audio));
+    }
+
+    private static CompletedAudioCall conventionalCall(String channelName)
+    {
+        CompletedAudioCall template = call();
+        AudioCallSnapshot original = template.snapshot();
+        List<Identifier> identifiers = new ArrayList<>(original.identifierCollection().getIdentifiers());
+        identifiers.removeIf(identifier -> identifier.getForm() == io.github.dsheirer.identifier.Form.TALKGROUP ||
+            identifier.getForm() == io.github.dsheirer.identifier.Form.TRAFFIC_CHANNEL ||
+            identifier.getForm() == io.github.dsheirer.identifier.Form.CHANNEL);
+        identifiers.add(new NBFMTalkgroup(1));
+        identifiers.add(ChannelNameConfigurationIdentifier.create(channelName));
+        IdentifierCollection collection = new IdentifierCollection(identifiers);
+        CallLegSource source = new CallLegSource(DecoderType.NBFM,
+            "00000000-0000-0000-0000-000000000737", channelName, null, 10, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(original.callId(), original.linkedCallId(),
+            original.aliasList(), collection, original.broadcastChannels(), original.startTimestamp(),
+            original.lastActivityTimestamp(), original.burstCount(), original.burstGeneration(),
+            original.lastBurstStartTimestamp(), original.lastBurstEndTimestamp(), original.burstActive(),
+            original.complete(), original.encryptionState(), original.recordAudio(),
+            AudioCallRecordingMetadata.captureAtSnapshot(null, collection), original.voiceCallQuality(),
+            original.callLegId(), source, original.callEncryptionEvidence());
+        return new CompletedAudioCall(snapshot, template.audioBuffers(), template.resolvedPolicy());
     }
 
     private static List<float[]> audioBuffers(int sampleCount)

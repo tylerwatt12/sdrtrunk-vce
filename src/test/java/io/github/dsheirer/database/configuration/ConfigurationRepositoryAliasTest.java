@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
@@ -98,9 +99,9 @@ class ConfigurationRepositoryAliasTest
 
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
-            insertChannel(connection, 41L, "County P25",
-                "{  \"aliasListName\" : \"County P25\", \"payload\" : \"channel bytes\"  }");
-            insertBroadcast(connection, 71L, "{  \"payload\" : \"broadcast bytes\"  }");
+            insertChannel(connection, 41L, baseline.definitions().getFirst().getId(),
+                "{ \"payload\" : \"channel bytes\" }");
+            insertBroadcast(connection, 71L, "{ \"payload\" : \"broadcast bytes\" }");
         }
 
         List<List<Object>> channelsBefore = rows(database, "configuration_channel");
@@ -126,10 +127,10 @@ class ConfigurationRepositoryAliasTest
 
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
-            insertChannel(connection, 41L, "cOuNtY p25",
-                "{\"aliasListName\":\"County P25\",\"payload\":\"matching channel\"}");
-            insertChannel(connection, 42L, "Other",
-                "{  \"aliasListName\" : \"Other\", \"payload\" : \"unrelated channel bytes\"  }");
+            insertChannel(connection, 41L, baseline.definitions().getFirst().getId(),
+                "{\"payload\":\"matching channel\"}");
+            insertChannel(connection, 42L, null,
+                "{ \"payload\" : \"unrelated channel bytes\" }");
             insertBroadcast(connection, 71L, "{  \"payload\" : \"broadcast bytes\"  }");
         }
 
@@ -139,14 +140,13 @@ class ConfigurationRepositoryAliasTest
             baseline.scanLists().scanLists(), Map.of(), Map.of());
 
         AliasConfigurationSnapshot committed = store.commitAliasConfiguration(new AliasConfigurationSnapshot(
-            List.of(), List.of(), retainedScanLists), Set.of("County P25"));
+            List.of(), List.of(), retainedScanLists), Set.of(baseline.definitions().getFirst().getId()));
 
         assertTrue(committed.definitions().isEmpty());
         assertTrue(committed.aliases().isEmpty());
         try(Connection connection = SdrTrunkDatabase.open(database);
             PreparedStatement statement = connection.prepareStatement("""
-                SELECT alias_list_name,
-                       json_extract(config_json, '$.aliasListName') AS json_alias_list_name,
+                SELECT alias_list_id,
                        json_extract(config_json, '$.payload') AS payload
                 FROM configuration_channel
                 WHERE id = 41
@@ -155,8 +155,7 @@ class ConfigurationRepositoryAliasTest
             try(ResultSet resultSet = statement.executeQuery())
             {
                 assertTrue(resultSet.next());
-                assertNull(resultSet.getString("alias_list_name"));
-                assertNull(resultSet.getString("json_alias_list_name"));
+                assertNull(resultSet.getObject("alias_list_id"));
                 assertEquals("matching channel", resultSet.getString("payload"));
             }
         }
@@ -180,11 +179,11 @@ class ConfigurationRepositoryAliasTest
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
         {
-            insertChannel(connection, 41L, "County P25",
-                "{\"aliasListName\":\"County P25\",\"payload\":\"must survive\"}");
+            insertChannel(connection, 41L, baseline.definitions().getFirst().getId(),
+                "{\"payload\":\"must survive\"}");
             statement.executeUpdate("""
                 CREATE TRIGGER reject_alias_list_clear
-                BEFORE UPDATE OF alias_list_name ON configuration_channel
+                BEFORE UPDATE OF alias_list_id ON configuration_channel
                 WHEN OLD.id = 41
                 BEGIN
                     SELECT RAISE(ABORT, 'forced late Alias-list clear failure');
@@ -198,7 +197,7 @@ class ConfigurationRepositoryAliasTest
             baseline.scanLists().scanLists(), Map.of(), Map.of());
 
         assertThrows(SQLException.class, () -> store.commitAliasConfiguration(new AliasConfigurationSnapshot(
-            List.of(), List.of(), proposedScanLists), Set.of("County P25")));
+            List.of(), List.of(), proposedScanLists), Set.of(baseline.definitions().getFirst().getId())));
 
         assertEquals(rowsBefore, aliasOwnedRows(database));
         assertEquals(channelBefore, row(database, "configuration_channel", 41L));
@@ -209,50 +208,30 @@ class ConfigurationRepositoryAliasTest
     }
 
     @Test
-    void lateBroadcastFailureRollsBackStreamAndAliasReferenceChanges() throws Exception
+    void broadcastRenameLeavesStableAliasReferencesUntouched() throws Exception
     {
-        Path database = database("broadcast-rollback.sqlite");
+        Path database = database("broadcast-rename.sqlite");
         ConfigurationRepository store = new ConfigurationRepository(database);
         AliasConfigurationSnapshot seeded = seedAlias(store, database, "County P25", 1001);
+        BroadcastifyCallConfiguration stream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+        stream.setName("Old Stream");
+        store.replaceChannelAndBroadcastConfiguration(List.of(), List.of(stream));
+        BroadcastChannel destination = new BroadcastChannel(stream.getConfigurationId(), stream.getName());
         seeded.definitions().getFirst().setUnmatchedTalkgroupPolicy(
-            new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")));
-        seeded.aliases().getFirst().addBroadcastChannel("Old Stream");
-        AliasConfigurationSnapshot baseline = store.commitAliasConfiguration(seeded, Set.of());
+            new UnmatchedTalkgroupPolicy(false, List.of(destination)));
+        seeded.aliases().getFirst().addBroadcastChannel(destination);
+        store.commitAliasConfiguration(seeded, Set.of());
+        List<List<Object>> aliasRowsBefore = rows(database, "alias_broadcast_channel");
 
-        try(Connection connection = SdrTrunkDatabase.open(database);
-            Statement statement = connection.createStatement())
-        {
-            insertBroadcast(connection, 71L, "{\"name\":\"Old Stream\",\"payload\":\"must survive\"}");
-            statement.executeUpdate("""
-                CREATE TRIGGER reject_new_stream
-                BEFORE UPDATE OF name ON configuration_broadcast_stream
-                WHEN NEW.name = 'New Stream'
-                BEGIN
-                    SELECT RAISE(ABORT, 'forced late broadcast failure');
-                END
-                """);
-        }
+        stream.setName("New Stream");
+        store.replaceChannelAndBroadcastConfiguration(List.of(), List.of(stream));
 
-        AliasListDefinition proposedDefinition = new AliasListDefinition("County P25", AliasListFamily.P25,
-            new UnmatchedTalkgroupPolicy(false, List.of("New Stream")));
-        proposedDefinition.setId(baseline.definitions().getFirst().getId());
-        Alias proposedAlias = AliasFactory.copyOf(baseline.aliases().getFirst());
-        proposedAlias.setId(baseline.aliases().getFirst().getId());
-        proposedAlias.removeBroadcastChannel("Old Stream");
-        proposedAlias.addBroadcastChannel("New Stream");
-        proposedAlias.setAliasListDefinition(proposedDefinition);
-        AliasConfigurationSnapshot proposed = new AliasConfigurationSnapshot(List.of(proposedDefinition),
-            List.of(proposedAlias), baseline.scanLists());
-        BroadcastifyCallConfiguration proposedStream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
-        proposedStream.setName("Old Stream");
-        Map<String,List<List<Object>>> aliasRowsBefore = aliasOwnedRows(database);
-        List<List<Object>> broadcastRowsBefore = rows(database, "configuration_broadcast_stream");
-
-        assertThrows(SQLException.class, () -> store.commitAliasConfigurationWithBroadcastRename(proposed, Set.of(),
-            List.of(proposedStream), "Old Stream", "New Stream"));
-
-        assertEquals(aliasRowsBefore, aliasOwnedRows(database));
-        assertEquals(broadcastRowsBefore, rows(database, "configuration_broadcast_stream"));
+        assertEquals(aliasRowsBefore, rows(database, "alias_broadcast_channel"));
+        AliasConfigurationSnapshot reloaded = store.loadAliasConfiguration();
+        assertEquals(stream.getConfigurationId(), reloaded.aliases().getFirst().getBroadcastChannels()
+            .iterator().next().getConfigurationId());
+        assertEquals("New Stream", reloaded.aliases().getFirst().getBroadcastChannels()
+            .iterator().next().getChannelName());
     }
 
     private Path database(String name) throws Exception
@@ -281,32 +260,32 @@ class ConfigurationRepositoryAliasTest
         return alias;
     }
 
-    private static void insertChannel(Connection connection, long id, String aliasListName, String configJson)
+    private static void insertChannel(Connection connection, long id, Long aliasListId, String configJson)
         throws SQLException
     {
         String configurationId = new UUID(0, id).toString();
-        String radresGuid = new UUID(1, id).toString();
+        String radioResolveId = new UUID(1, id).toString();
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO configuration_channel (
-                id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                radres_guid,
-                auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                frequency_count, recording_enabled, event_logging_enabled, config_json
-            ) VALUES (?, ?, 'TRUNKED', 7, 'Test System', 'Test Site', ?, ?, ?, 1, 3, 'P25_PHASE1', 'TUNER',
-                      851012500, 1, 0, 0,
-                      json_set(?, '$.configurationId', ?, '$.radresGuid', ?,
-                          '$.decodeConfiguration', json('{"type":"decodeConfigP25Phase1"}'),
-                          '$.sourceConfiguration', json('{"type":"sourceConfigTuner","frequency":851012500}')))
+                id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
+            ) VALUES (?, ?, 'TRUNKED', 7, 'Test System', 'Test Site', ?, ?, ?, 1, 3, 'P25_PHASE1',
+                      851012500, ?)
             """))
         {
             statement.setLong(1, id);
             statement.setString(2, configurationId);
             statement.setString(3, "Channel " + id);
-            statement.setString(4, aliasListName);
-            statement.setString(5, radresGuid);
+            if(aliasListId != null)
+            {
+                statement.setLong(4, aliasListId);
+            }
+            else
+            {
+                statement.setNull(4, java.sql.Types.INTEGER);
+            }
+            statement.setString(5, radioResolveId);
             statement.setString(6, configJson);
-            statement.setString(7, configurationId);
-            statement.setString(8, radresGuid);
             statement.executeUpdate();
         }
     }
@@ -315,13 +294,12 @@ class ConfigurationRepositoryAliasTest
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO configuration_broadcast_stream (
-                id, sort_order, name, server_type, enabled, host, port, delay_ms,
-                maximum_recording_age_ms, config_json
-            ) VALUES (?, 9, ?, 'BROADCASTIFY_CALL', 1, 'example.invalid', 443, 1500, 90000, ?)
+                id, configuration_id, sort_order, config_json
+            ) VALUES (?, ?, 9, ?)
             """))
         {
             statement.setLong(1, id);
-            statement.setString(2, "Stream " + id);
+            statement.setString(2, new UUID(2, id).toString());
             statement.setString(3, configJson);
             statement.executeUpdate();
         }

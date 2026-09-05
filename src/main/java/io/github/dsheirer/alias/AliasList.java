@@ -64,8 +64,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * List of aliases that share the same alias list name and provides convenient methods for looking up alias
- * objects that match an identifier.
+ * Runtime lookup index for aliases that reference one durable Alias List definition.
  */
 public class AliasList
 {
@@ -132,9 +131,9 @@ public class AliasList
     void replaceDefinition(AliasListDefinition definition)
     {
         if(definition == null || mDefinition == null || definition.getId() != mDefinition.getId() ||
-            !Objects.equals(definition.getName(), mDefinition.getName()))
+            definition.getId() <= AliasListDefinition.UNASSIGNED_ID)
         {
-            throw new IllegalArgumentException("Alias-list replacement must retain its durable identity and name");
+            throw new IllegalArgumentException("Alias-list replacement must retain its durable identity");
         }
 
         mDefinition = definition;

@@ -22,11 +22,12 @@ package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
 import io.github.dsheirer.module.decode.p25.reference.Response;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -65,22 +66,43 @@ public class UnitRegistrationResponse extends OSPMessage
     {
         if(mRegisteredRadio == null)
         {
-            int id = getMessage().getInt(SOURCE_ID);
-            int localAddress = getMessage().getInt(SOURCE_ADDRESS);
-
-            if(id == localAddress || localAddress == 0)
-            {
-                mRegisteredRadio = APCO25RadioIdentifier.createTo(id);
-            }
-            else
-            {
-                int wacn = 0; //We don't know what the wacn is from this message.
-                int systemId = getMessage().getInt(SYSTEM_ID);
-                mRegisteredRadio = APCO25FullyQualifiedRadioIdentifier.createTo(localAddress, wacn, systemId, id);
-            }
+            mRegisteredRadio = APCO25IncompleteRadioIdentifier.createTo(getSourceAddress());
         }
 
         return mRegisteredRadio;
+    }
+
+    /**
+     * Returns the complete subscriber identity when the decoder has already established the serving WACN.  The
+     * abbreviated message does not carry that value and must never substitute zero for it (TIA-102.AABC-B,
+     * Section 6.2.21.1).
+     */
+    public Identifier getRegisteredRadio(Integer servingWacn)
+    {
+        int workingAddress = getSourceAddress();
+        if(servingWacn == null || servingWacn < 0 || servingWacn > 0xFFFFF || workingAddress < 1 ||
+            workingAddress > RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
+        {
+            return getRegisteredRadio();
+        }
+
+        return APCO25FullyQualifiedRadioIdentifier.createTo(workingAddress, servingWacn,
+            getSourceSystemId(), getSourceId());
+    }
+
+    public int getSourceSystemId()
+    {
+        return getMessage().getInt(SYSTEM_ID);
+    }
+
+    public int getSourceId()
+    {
+        return getMessage().getInt(SOURCE_ID);
+    }
+
+    public int getSourceAddress()
+    {
+        return getMessage().getInt(SOURCE_ADDRESS);
     }
 
     public Response getResponse()

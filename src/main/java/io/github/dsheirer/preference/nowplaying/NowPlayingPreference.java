@@ -22,14 +22,14 @@ public class NowPlayingPreference extends Preference
 {
     private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
         "traffic.grant.age.out.milliseconds";
-    private static final String PREFERENCE_KEY_SITE_SETTINGS_REVISION = "site.settings.revision";
+    private static final String PREFERENCE_KEY_RECEIVER_SETTINGS_REVISION = "receiver.settings.revision";
 
     public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     public static final int MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15000;
     public static final int DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 1000;
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
-    private volatile SiteSettingsSnapshot mSiteSettings;
+    private volatile ReceiverSettingsSnapshot mReceiverSettings;
 
     /** Optional Java desktop views that can be independently shown or hidden. */
     public enum JavaInterfaceView
@@ -54,9 +54,9 @@ public class NowPlayingPreference extends Preference
     }
 
     /** One coherent snapshot of the setting that changes receiver behavior for everyone. */
-    public record SiteSettings(int trafficGrantAgeOutMilliseconds)
+    public record ReceiverSettings(int trafficGrantAgeOutMilliseconds)
     {
-        public SiteSettings
+        public ReceiverSettings
         {
             if(trafficGrantAgeOutMilliseconds < MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS ||
                 trafficGrantAgeOutMilliseconds > MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)
@@ -67,32 +67,32 @@ public class NowPlayingPreference extends Preference
     }
 
     /** Revisioned receiver-wide settings state used for optimistic web administration updates. */
-    public record SiteSettingsSnapshot(long revision, SiteSettings settings)
+    public record ReceiverSettingsSnapshot(long revision, ReceiverSettings settings)
     {
-        public SiteSettingsSnapshot
+        public ReceiverSettingsSnapshot
         {
             if(revision < 1)
             {
-                throw new IllegalArgumentException("Site-settings revision must be positive");
+                throw new IllegalArgumentException("Receiver-settings revision must be positive");
             }
-            Objects.requireNonNull(settings, "Site settings cannot be null");
+            Objects.requireNonNull(settings, "Receiver settings cannot be null");
         }
     }
 
     /** Result of an exact-revision replacement. */
-    public record SiteSettingsUpdate(boolean updated, SiteSettingsSnapshot snapshot)
+    public record ReceiverSettingsUpdate(boolean updated, ReceiverSettingsSnapshot snapshot)
     {
-        public SiteSettingsUpdate
+        public ReceiverSettingsUpdate
         {
-            Objects.requireNonNull(snapshot, "Site-settings snapshot cannot be null");
+            Objects.requireNonNull(snapshot, "Receiver-settings snapshot cannot be null");
         }
     }
 
     public NowPlayingPreference(Listener<PreferenceType> updateListener)
     {
         super(updateListener);
-        long revision = Math.max(1, mPreferences.getLong(PREFERENCE_KEY_SITE_SETTINGS_REVISION, 1));
-        mSiteSettings = new SiteSettingsSnapshot(revision, new SiteSettings(
+        long revision = Math.max(1, mPreferences.getLong(PREFERENCE_KEY_RECEIVER_SETTINGS_REVISION, 1));
+        mReceiverSettings = new ReceiverSettingsSnapshot(revision, new ReceiverSettings(
             clamp(mPreferences.getInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
                 DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS), MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
                 MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)));
@@ -106,43 +106,43 @@ public class NowPlayingPreference extends Preference
 
     public int getTrafficGrantAgeOutMilliseconds()
     {
-        return mSiteSettings.settings().trafficGrantAgeOutMilliseconds();
+        return mReceiverSettings.settings().trafficGrantAgeOutMilliseconds();
     }
 
-    public SiteSettingsSnapshot getSiteSettingsSnapshot()
+    public ReceiverSettingsSnapshot getReceiverSettingsSnapshot()
     {
-        return mSiteSettings;
+        return mReceiverSettings;
     }
 
     /** Persists and publishes one complete snapshot only when the caller has the current revision. */
-    public synchronized SiteSettingsUpdate replaceSiteSettings(long expectedRevision, SiteSettings settings)
+    public synchronized ReceiverSettingsUpdate replaceReceiverSettings(long expectedRevision, ReceiverSettings settings)
         throws BackingStoreException
     {
         if(settings == null)
         {
-            throw new IllegalArgumentException("Site settings cannot be null");
+            throw new IllegalArgumentException("Receiver settings cannot be null");
         }
 
-        SiteSettingsSnapshot previous = mSiteSettings;
+        ReceiverSettingsSnapshot previous = mReceiverSettings;
         if(expectedRevision != previous.revision())
         {
-            return new SiteSettingsUpdate(false, previous);
+            return new ReceiverSettingsUpdate(false, previous);
         }
-        SiteSettingsSnapshot updated = new SiteSettingsSnapshot(Math.incrementExact(previous.revision()), settings);
+        ReceiverSettingsSnapshot updated = new ReceiverSettingsSnapshot(Math.incrementExact(previous.revision()), settings);
         try
         {
-            writeSiteSettings(updated);
+            writeReceiverSettings(updated);
             mPreferences.flush();
-            mSiteSettings = updated;
+            mReceiverSettings = updated;
             notifyPreferenceUpdated();
-            return new SiteSettingsUpdate(true, updated);
+            return new ReceiverSettingsUpdate(true, updated);
         }
         catch(BackingStoreException | RuntimeException exception)
         {
-            mSiteSettings = previous;
+            mReceiverSettings = previous;
             try
             {
-                writeSiteSettings(previous);
+                writeReceiverSettings(previous);
                 mPreferences.flush();
             }
             catch(BackingStoreException | RuntimeException rollbackException)
@@ -153,12 +153,12 @@ public class NowPlayingPreference extends Preference
         }
     }
 
-    private void writeSiteSettings(SiteSettingsSnapshot snapshot)
+    private void writeReceiverSettings(ReceiverSettingsSnapshot snapshot)
     {
-        SiteSettings settings = snapshot.settings();
+        ReceiverSettings settings = snapshot.settings();
         mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
             settings.trafficGrantAgeOutMilliseconds());
-        mPreferences.putLong(PREFERENCE_KEY_SITE_SETTINGS_REVISION, snapshot.revision());
+        mPreferences.putLong(PREFERENCE_KEY_RECEIVER_SETTINGS_REVISION, snapshot.revision());
     }
 
     public boolean isJavaInterfaceViewEnabled(JavaInterfaceView view)

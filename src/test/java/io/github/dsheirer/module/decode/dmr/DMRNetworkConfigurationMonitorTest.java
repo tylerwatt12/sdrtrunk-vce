@@ -8,6 +8,7 @@ package io.github.dsheirer.module.decode.dmr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -51,6 +52,45 @@ class DMRNetworkConfigurationMonitorTest
         assertEquals("TINY", snapshot.model());
         assertEquals("Control", snapshot.channelType());
         assertEquals("Tier III Trunking", snapshot.brand());
+    }
+
+    @Test
+    void delayedTierThreeIdentityCannotRewindTheCurrentSystem()
+    {
+        DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor();
+
+        monitor.process(tierThreeIdentity(257, 5, 1_000L));
+        monitor.process(tierThreeIdentity(258, 6, 3_000L));
+        monitor.process(tierThreeIdentity(257, 5, 2_000L));
+        monitor.process(tierThreeIdentity(259, 7, 3_000L));
+
+        DMRNetworkConfigurationSnapshot snapshot = monitor.getSnapshot();
+        assertEquals(258, snapshot.network());
+        assertEquals(6, snapshot.site());
+        assertEquals("TINY", snapshot.model());
+    }
+
+    @Test
+    void resetRemovesStableAndCandidateFactsBeforeReuse()
+    {
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(32);
+        bits.load(0, 4, 2);
+        bits.load(6, 9, 257);
+        bits.load(15, 3, 5);
+        DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor();
+        monitor.process(new ControlChannelSystemParameters(bits, 1_000, 1));
+
+        assertEquals(257, monitor.getSnapshot().network());
+
+        monitor.reset();
+
+        DMRNetworkConfigurationSnapshot reset = monitor.getSnapshot();
+        assertEquals(0, reset.channels().size());
+        assertEquals(0, reset.neighborSites().size());
+        assertNull(reset.variant());
+        assertNull(reset.network());
+        assertNull(reset.site());
+        assertNull(reset.model());
     }
 
     @Test
@@ -238,6 +278,15 @@ class DMRNetworkConfigurationMonitorTest
     private static TalkgroupVoiceChannelGrant grant(int lcn, int timeslot)
     {
         return grant(lcn, timeslot, 1_000L);
+    }
+
+    private static ControlChannelSystemParameters tierThreeIdentity(int network, int site, long timestamp)
+    {
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(32);
+        bits.load(0, 4, 2);
+        bits.load(6, 9, network);
+        bits.load(15, 3, site);
+        return new ControlChannelSystemParameters(bits, timestamp, 1);
     }
 
     private static TalkgroupVoiceChannelGrant grant(int lcn, int timeslot, long timestamp)

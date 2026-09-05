@@ -16,6 +16,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -247,7 +248,8 @@ public class P25NetworkConfigurationStabilizerTest
         observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40003), 11_000L);
         observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40002), 21_000L);
 
-        assertEquals(List.of(40002, 40003), stabilizer.getSnapshot().patchGroups().getFirst().talkgroups());
+        assertEquals(List.of(40002, 40003),
+            stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
     }
 
     @Test
@@ -263,7 +265,23 @@ public class P25NetworkConfigurationStabilizerTest
         assertFalse(manager.addPatchGroup(repeated, 11_000L));
         stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(repeated, 11_000L), 11_000L);
 
-        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().talkgroups());
+        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
+    }
+
+    @Test
+    public void fullyQualifiedPatchRadioKeepsItsObservedWorkingAddress()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(65191), 9);
+        patchGroup.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createFrom(0xFFFD26, 0xBEE00, 0x954,
+            831_102));
+        PatchGroupIdentifier identifier = APCO25PatchGroup.create(patchGroup);
+
+        stabilizer.observePatchGroup(identifier, 1_000L);
+        stabilizer.observePatchGroup(identifier, 11_000L);
+
+        assertEquals(List.of(0xFFFD26),
+            stabilizer.getSnapshot().patchGroups().getFirst().localRadioIds());
     }
 
     private static void observeAccumulatedPatchGroup(PatchGroupManager manager,

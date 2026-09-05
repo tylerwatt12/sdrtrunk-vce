@@ -10,27 +10,54 @@
  */
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 /**
  * Immutable configured and learned source identity captured when a decoder call leg is created.
  *
  * <p>The Alias List database identifier is intentionally carried instead of relying only on the mutable Alias List
  * object or its display name.  A zero identifier means that the list has not been durably assigned.  Learned P25
- * identity is nullable because conventional channels and newly started trunked channels may not have one.</p>
+ * identity is nullable because conventional channels and newly started trunked channels may not have one. The
+ * RadioResolve identifier is external upload-correlation data; it is not the internal identity of a channel, site,
+ * or radio system.</p>
  */
 public record CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
-                            String siteGuid, long aliasListId, P25SiteIdentity p25SiteIdentity,
-                            boolean trafficChannel)
+                            String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                            TrunkedIdentityDomain identityDomain,
+                            ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
+                            String radioSystemKey)
 {
-    public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null, false);
+    public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null,
+        TrunkedIdentityDomain.STANDARD, null, false, null);
 
     public CallLegSource
     {
         channelConfigurationId = normalize(channelConfigurationId);
         channelName = normalize(channelName);
-        siteGuid = normalize(siteGuid);
+        radioResolveId = normalize(radioResolveId);
+        identityDomain = identityDomain != null ? identityDomain :
+            decoderType == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C :
+                TrunkedIdentityDomain.STANDARD;
+        radioSystemKey = normalize(radioSystemKey);
+        if(radioSystemKey != null)
+        {
+            radioSystemKey = RadioSystemKey.validateForReceiver(
+                decoderType != null ? decoderType.getProtocol() : null, identityDomain,
+                channelConfigurationId, radioSystemKey);
+        }
+    }
+
+    public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
+                         String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                         TrunkedIdentityDomain identityDomain,
+                         ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
+    {
+        this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
+            identityDomain, channelKind, trafficChannel, null);
     }
 
     public boolean hasDurableAliasListId()
@@ -43,6 +70,16 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
         return p25SiteIdentity != null;
     }
 
+    public boolean isTrunked()
+    {
+        return channelKind == ChannelConfigurationPolicy.ChannelKind.TRUNKED;
+    }
+
+    public boolean isConventional()
+    {
+        return channelKind == ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL;
+    }
+
     /**
      * Returns this source classified as a trunked traffic channel.  DMR Capacity Plus can convert an already-running
      * rest-channel processing chain into a traffic chain, so audio modules must be able to publish that committed
@@ -50,8 +87,16 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
      */
     public CallLegSource asTrafficChannel()
     {
-        return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName, siteGuid,
-            aliasListId, p25SiteIdentity, true);
+        return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
+            radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true,
+            radioSystemKey);
+    }
+
+    /** Returns a new source template for calls created after a processing-chain-local system identity change. */
+    public CallLegSource withRadioSystemKey(String radioSystemKey)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey);
     }
 
     private static String normalize(String value)

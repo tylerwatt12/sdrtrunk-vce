@@ -311,7 +311,7 @@ public final class WebAccessService
     {
         AccessTier actual = actualTier == null ? AccessTier.PUBLIC : actualTier;
         WebCapability required = Objects.requireNonNull(capability, "Web capability cannot be null");
-        if(required != WebCapability.SITE_ACCESS && !actual.allows(requiredTier(WebCapability.SITE_ACCESS)))
+        if(required != WebCapability.WEB_ACCESS && !actual.allows(requiredTier(WebCapability.WEB_ACCESS)))
         {
             return false;
         }

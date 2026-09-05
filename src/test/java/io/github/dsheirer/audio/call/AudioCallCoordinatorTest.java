@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.audio.call;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -77,11 +79,11 @@ class AudioCallCoordinatorTest
         try
         {
             emitLeg(coordinator, leg(1, aliasList, 0x1, 1, 10, 101, 9001, 1_000, 4_000,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("Calls"))), fingerprints(10));
+                GOOD_QUALITY, true, Set.of(route("Calls"))), fingerprints(10));
             emitLeg(coordinator, leg(2, aliasList, 0x1, 1, 11, 102, 9001, 1_100, 4_100,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("Calls"))), fingerprints(10));
+                GOOD_QUALITY, true, Set.of(route("Calls"))), fingerprints(10));
             emitLeg(coordinator, leg(3, aliasList, 0x1, 1, 12, 103, 9001, 1_200, 4_200,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("Calls"))), fingerprints(10));
+                GOOD_QUALITY, true, Set.of(route("Calls"))), fingerprints(10));
 
             await(() -> resolved.size() == 1 && recorded.size() == 1 && streamed.size() == 1 && web.size() == 1);
             CompletedAudioCall call = resolved.getFirst();
@@ -213,10 +215,10 @@ class AudioCallCoordinatorTest
             assertEquals(wacn, source.getWacn());
             assertEquals(system, source.getSystem());
             assertEquals(homeRadio, source.getRadio());
-            assertEquals("APCO25:fq:" + wacn + ':' + system + ':' + talkgroup,
+            assertEquals("v1-g-abcde-123-9101",
                 call.snapshot().recordingMetadata().destinationIdentity());
-            assertEquals(wacn + "." + system + "." + homeRadio,
-                call.snapshot().recordingMetadata().sourceValue());
+            assertEquals(Integer.toString(localRadio), call.snapshot().recordingMetadata().sourceValue(),
+                "Winner-owned display metadata keeps the winner site's observed local address");
         }
         finally
         {
@@ -313,7 +315,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void differentWacnSystemOrAliasListNeverCombines() throws Exception
+    void differentNativeSystemsStaySeparateWhileAliasListsDoNotDefineCallIdentity() throws Exception
     {
         AliasList aliasList = aliasList(74);
         AliasList otherAliasList = aliasList(75);
@@ -331,8 +333,9 @@ class AudioCallCoordinatorTest
             emitLeg(coordinator, leg(33, otherAliasList, 0x4, 4, 43, 44, 9300, 1_030, 2_530,
                 GOOD_QUALITY, true, Set.of()), fingerprints(50));
 
-            await(() -> resolved.size() == 4);
-            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+            await(() -> resolved.size() == 3);
+            assertEquals(1, resolved.stream().filter(call -> call.receiverLegCount() == 2).count());
+            assertEquals(2, resolved.stream().filter(call -> call.receiverLegCount() == 1).count());
         }
         finally
         {
@@ -503,6 +506,43 @@ class AudioCallCoordinatorTest
             await(() -> resolved.size() == 1);
             assertEquals(2, resolved.getFirst().receiverLegCount());
             assertEquals(good.callId(), resolved.getFirst().snapshot().callId());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void p25SpecialRangeRadiosCannotSupplyDuplicateSourceFallback() throws Exception
+    {
+        AliasList aliasList = aliasList(850);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            emitLeg(coordinator, leg(530, aliasList, 0xE, 14, 140, 141, 10_350, 10_000_000,
+                1_000, 10_000, GOOD_QUALITY, true, Set.of()), List.of());
+            emitLeg(coordinator, leg(531, aliasList, 0xE, 14, 141, 142, 10_350, 10_000_000,
+                7_000, 7_901, DAMAGED_QUALITY, true, Set.of()), List.of());
+            await(() -> resolved.size() == 2);
+
+            Leg first = leg(532, aliasList, 0xE, 14, 142, 143, 10_351, null,
+                20_000, 29_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(533, aliasList, 0xE, 14, 143, 144, 10_351, null,
+                26_000, 26_901, DAMAGED_QUALITY, true, Set.of());
+            IdentifierCollection firstIdentifiers = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(10_351),
+                APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, 10_000_000)));
+            IdentifierCollection secondIdentifiers = new IdentifierCollection(List.of(
+                APCO25Talkgroup.create(10_351),
+                APCO25FullyQualifiedRadioIdentifier.createFrom(123, 0xABCDE, 0x321, 10_000_000)));
+            emitLeg(coordinator, first, List.of(), firstIdentifiers);
+            emitLeg(coordinator, second, List.of(), secondIdentifiers);
+            await(() -> resolved.size() == 4);
+
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
         }
         finally
         {
@@ -710,15 +750,16 @@ class AudioCallCoordinatorTest
         try
         {
             emitLeg(coordinator, leg(90, aliasList, 0xB, 11, 110, 111, 9900, 1_000, 3_000,
-                GOOD_QUALITY, false, Set.of(new BroadcastChannel("North"))), fingerprints(120));
+                GOOD_QUALITY, false, Set.of(route("North"))), fingerprints(120));
             emitLeg(coordinator, leg(91, aliasList, 0xB, 11, 111, 112, 9900, 1_100, 3_100,
-                GOOD_QUALITY, true, Set.of(new BroadcastChannel("South"))), fingerprints(120));
+                GOOD_QUALITY, true, Set.of(route("South"))), fingerprints(120));
 
             await(() -> resolved.size() == 1);
             CompletedAudioCall call = resolved.getFirst();
             assertTrue(call.snapshot().recordAudio());
-            assertEquals(Set.of("North", "South"), call.resolvedPolicy().broadcastRoutingKeys());
-            assertEquals(Set.of(new BroadcastChannel("North"), new BroadcastChannel("South")),
+            assertEquals(Set.of(route("North").getConfigurationId(), route("South").getConfigurationId()),
+                call.resolvedPolicy().broadcastRoutingKeys());
+            assertEquals(Set.of(route("North"), route("South")),
                 call.snapshot().broadcastChannels());
         }
         finally
@@ -728,7 +769,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void tiedQualityUsesExistingSiteGuidDeterministically() throws Exception
+    void tiedQualityUsesChannelConfigurationIdDeterministically() throws Exception
     {
         AliasList aliasList = aliasList(82);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -744,7 +785,7 @@ class AudioCallCoordinatorTest
             emitLeg(coordinator, alpha, fingerprints(130));
 
             await(() -> resolved.size() == 1);
-            assertEquals(alpha.callId(), resolved.getFirst().snapshot().callId());
+            assertEquals(zulu.callId(), resolved.getFirst().snapshot().callId());
         }
         finally
         {
@@ -1168,9 +1209,9 @@ class AudioCallCoordinatorTest
         try
         {
             Leg damaged = leg(121, aliasList, 0x12345, 0x234, 18, 181, 10_119, 9_001,
-                1_000, 4_000, DAMAGED_QUALITY, true, Set.of(new BroadcastChannel("South")));
+                1_000, 4_000, DAMAGED_QUALITY, true, Set.of(route("South")));
             Leg good = leg(122, aliasList, 0x12345, 0x234, 18, 182, 10_119, 9_001,
-                1_080, 4_080, GOOD_QUALITY, true, Set.of(new BroadcastChannel("North")));
+                1_080, 4_080, GOOD_QUALITY, true, Set.of(route("North")));
             emitLeg(coordinator, damaged, fingerprints(145));
             emitLeg(coordinator, good, fingerprints(145));
 
@@ -1207,7 +1248,8 @@ class AudioCallCoordinatorTest
             assertEquals(2, decision.callIdentity().uniqueLearnedSiteCount());
 
             assertTrue(decision.outputPolicy().recordRequested());
-            assertEquals(List.of("North", "South"), decision.outputPolicy().streamRoutingKeys());
+            assertEquals(Set.of(route("North").getConfigurationId(), route("South").getConfigurationId()),
+                Set.copyOf(decision.outputPolicy().streamRoutingKeys()));
             assertEquals(2, decision.outputPolicy().streamRoutingKeyCount());
             assertTrue(decision.outputPolicy().browserOffered());
             assertNotEquals(Thread.currentThread(), sinkThread.get());
@@ -1271,7 +1313,7 @@ class AudioCallCoordinatorTest
 
             LogicalCallDiagnosticDecision missingIdentity = decisions.stream()
                 .filter(decision -> decision.decisionReasons()
-                    .contains(LogicalCallSeparationReason.MISSING_LEARNED_SITE_IDENTITY))
+                    .contains(LogicalCallSeparationReason.MISSING_RADIO_SYSTEM_IDENTITY))
                 .findFirst().orElseThrow();
             assertEquals(LogicalCallDecisionOutcome.FAIL_OPEN, missingIdentity.outcome());
             LogicalCallDiagnosticDecision nonP25 = decisions.stream()
@@ -1690,10 +1732,10 @@ class AudioCallCoordinatorTest
 
     private static Leg leg(long producerId, AliasList aliasList, Integer wacn, int system, int rfss, int site,
                            int talkgroup, long start, long end, VoiceCallQuality quality, boolean record,
-                           Set<BroadcastChannel> routes, String siteGuid)
+                           Set<BroadcastChannel> routes, String radioResolveId)
     {
         return leg(producerId, 1, new CallLegId(producerId, 1, 0), aliasList, wacn, system, rfss, site,
-            talkgroup, 9001, start, end, quality, record, routes, siteGuid);
+            talkgroup, 9001, start, end, quality, record, routes, radioResolveId);
     }
 
     private static Leg leg(long producerId, long callSequence, CallLegId callLegId, AliasList aliasList,
@@ -1708,12 +1750,14 @@ class AudioCallCoordinatorTest
     private static Leg leg(long producerId, long callSequence, CallLegId callLegId, AliasList aliasList,
                            Integer wacn, int system, int rfss, int site, int talkgroup, Integer radio,
                            long start, long end, VoiceCallQuality quality, boolean record,
-                           Set<BroadcastChannel> routes, String siteGuid)
+                           Set<BroadcastChannel> routes, String radioResolveId)
     {
         AudioCallId callId = new AudioCallId(producerId, callSequence, 0);
         P25SiteIdentity siteIdentity = wacn != null ? new P25SiteIdentity(wacn, system, rfss, site) : null;
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "channel-" + producerId,
-            "Site " + site, siteGuid, aliasList.getId(), siteIdentity, true);
+            "Site " + site, radioResolveId, aliasList.getId(), siteIdentity,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         return new Leg(callId, callLegId, aliasList, source, talkgroup, radio, start, end,
             quality, record, routes, false, null);
     }
@@ -1732,7 +1776,11 @@ class AudioCallCoordinatorTest
     private static Leg withDecoder(Leg leg, DecoderType decoderType)
     {
         CallLegSource source = new CallLegSource(decoderType, leg.source().channelConfigurationId(),
-            leg.source().channelName(), leg.source().siteGuid(), leg.source().aliasListId(), null, true);
+            leg.source().channelName(), leg.source().radioResolveId(), leg.source().aliasListId(), null,
+            decoderType == DecoderType.NXDN ?
+                io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.NXDN_TYPE_C :
+                io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), source, leg.talkgroup(), leg.radio(),
             leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(), leg.encrypted(),
             leg.callEncryptionEvidence());

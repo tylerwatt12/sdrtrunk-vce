@@ -35,8 +35,11 @@ import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterFree;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterHaltCWID;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterIdle;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.SiteID;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.ChannelAccessInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.ChannelStructure;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.LocationID;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.StationIDOption;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -69,6 +72,7 @@ public class NXDNNetworkConfigurationMonitor
     private Map<Integer, Long> mTypeDObservedRepeaters = new HashMap<>();
     private SiteID mTypeDSiteID;
     private Integer mRAN;
+    private long mRanObservedAt;
     private boolean mObservedTypeD;
 
     /**
@@ -78,29 +82,46 @@ public class NXDNNetworkConfigurationMonitor
     {
     }
 
+    /** Clears cumulative facts at a decoder generation boundary. */
+    public void reset()
+    {
+        clearSiteGeneration();
+        mRAN = null;
+        mRanObservedAt = 0;
+    }
+
     /**
      * Immutable structured snapshot of the network configuration observed so far.
      */
     public NXDNNetworkConfigurationSnapshot getSnapshot()
     {
         LocationID currentLocation = getCurrentLocation();
-        List<String> services = getServices();
+        List<Service> services = getServices();
         List<String> restrictions = getRestrictions();
         List<NXDNNetworkConfigurationSnapshot.Channel> controlChannels = getControlChannels();
         List<NXDNNetworkConfigurationSnapshot.NeighborSite> neighbors = getNeighbors();
         List<Integer> repeaters = mTypeDObservedRepeaters.keySet().stream().sorted().toList();
-        NXDNNetworkConfigurationSnapshot.Station station = mDigitalStationIDInformation != null ?
-            new NXDNNetworkConfigurationSnapshot.Station(mDigitalStationIDInformation.getCharacters(),
+        NXDNNetworkConfigurationSnapshot.Station station = null;
+
+        if(mDigitalStationIDInformation != null)
+        {
+            StationIDOption option = mDigitalStationIDInformation.getStationIDOption();
+            station = new NXDNNetworkConfigurationSnapshot.Station(mDigitalStationIDInformation.getCharacters(),
                 mDigitalStationIDInformation.isValidCharacterCRC(),
-                mDigitalStationIDInformation.getStationIDOption().toString()) : null;
+                new NXDNNetworkConfigurationSnapshot.StationOption(option.isStart(), option.isEnd(),
+                    option.isComplete(), option.getValue()));
+        }
+
         NXDNNetworkConfigurationSnapshot.SiteConfiguration siteConfiguration = null;
 
         if(mSiteInformation != null)
         {
             ChannelStructure structure = mSiteInformation.getChannelStructure();
+            ChannelAccessInformation access = mSiteInformation.getChannelAccessInformation();
             siteConfiguration = new NXDNNetworkConfigurationSnapshot.SiteConfiguration(
                 mSiteInformation.getVersionNumber(), mSiteInformation.getAdjacentSiteAllocation(),
-                mSiteInformation.getChannelAccessInformation().toString(),
+                new NXDNNetworkConfigurationSnapshot.ChannelAccess(access.isDFA(), access.getBaseFrequency(),
+                    access.getStepSize()),
                 structure.getNumberOfBCCHFramesPerSuperFrame(), structure.getNumberOfGroupsPerRCCH(),
                 structure.getNumberOfPagingFrames(), structure.getNumberOfMultiPurposeFrames(),
                 structure.getNumberOfGroupIterationsPerSuperframe());
@@ -108,7 +129,7 @@ public class NXDNNetworkConfigurationMonitor
 
         NXDNNetworkConfigurationSnapshot.FailureStatus failureStatus = mFailureStatusInformation != null ?
             new NXDNNetworkConfigurationSnapshot.FailureStatus(location(mFailureStatusInformation.getLocationID()),
-                mFailureStatusInformation.getCallTimer().toString()) : null;
+                mFailureStatusInformation.getCallTimer()) : null;
 
         return new NXDNNetworkConfigurationSnapshot("NXDN", getVariant(), mRAN, location(currentLocation),
             mTypeDSiteID != null ? mTypeDSiteID.getSite() : null,
@@ -151,17 +172,15 @@ public class NXDNNetworkConfigurationMonitor
         return null;
     }
 
-    private List<String> getServices()
+    private List<Service> getServices()
     {
         if(mServiceInformation != null)
         {
-            return mServiceInformation.getServiceInformation().getServices().stream()
-                .map(Object::toString).toList();
+            return List.copyOf(mServiceInformation.getServiceInformation().getServices());
         }
         else if(mSiteInformation != null)
         {
-            return mSiteInformation.getServiceInformation().getServices().stream()
-                .map(Object::toString).toList();
+            return List.copyOf(mSiteInformation.getServiceInformation().getServices());
         }
 
         return List.of();
@@ -413,7 +432,37 @@ public class NXDNNetworkConfigurationMonitor
     {
         if(layer3.hasRAN())
         {
-            mRAN = layer3.getRAN();
+            int observedRan = layer3.getRAN();
+            long observedAt = layer3.getTimestamp();
+
+            if(mRAN == null)
+            {
+                if(observedAt < mRanObservedAt)
+                {
+                    return;
+                }
+            }
+            else if(mRAN.equals(observedRan))
+            {
+                if(observedAt < mRanObservedAt)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                if(observedAt <= mRanObservedAt)
+                {
+                    return;
+                }
+
+                //A strictly newer changed RAN starts a site generation. The new watermark prevents a delayed message
+                //from the preceding generation from repopulating the cleared facts.
+                clearSiteGeneration();
+            }
+
+            mRAN = observedRan;
+            mRanObservedAt = Math.max(mRanObservedAt, observedAt);
         }
 
         mObservedTypeD |= layer3.isTypeD();
@@ -553,6 +602,28 @@ public class NXDNNetworkConfigurationMonitor
                 }
                 break;
         }
+    }
+
+    private void clearSiteGeneration()
+    {
+        mControlChannelInformation = null;
+        mControlChannelInformationObservedAt = 0;
+        mDigitalStationIDInformation = null;
+        mFailureStatusInformation = null;
+        mServiceInformation = null;
+        mSiteInformation = null;
+        mSiteInformationObservedAt = 0;
+        mNeighborMap.clear();
+        mNeighborObservedAtMap.clear();
+        mTypeDNeighborA = null;
+        mTypeDNeighborAObservedAt = 0;
+        mTypeDNeighborB = null;
+        mTypeDNeighborBObservedAt = 0;
+        mTypeDRepeater = null;
+        mTypeDRepeaterStatus = null;
+        mTypeDObservedRepeaters.clear();
+        mTypeDSiteID = null;
+        mObservedTypeD = false;
     }
 
     private void addObservedRepeater(int repeater, long observedAtEpochMilliseconds)

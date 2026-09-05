@@ -11,7 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -21,7 +24,7 @@ class ChannelActivitySnapshotTest
     @Test
     void normalizesNullTopLevelValues()
     {
-        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null, null,
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null,
             false, true, null, null);
 
         assertEquals("", snapshot.tableId());
@@ -43,21 +46,28 @@ class ChannelActivitySnapshotTest
 
         assertEquals("", snapshot.title());
         assertEquals("", snapshot.channelName());
+        assertEquals("transient-channel:" + owner.getChannelID(), table.getTableId());
+        assertEquals("transient-channel:" + owner.getChannelID(), snapshot.tableId());
+        assertEquals("", snapshot.configurationId());
     }
 
     @Test
     void carriesConfiguredSystemSiteAndChannelContext()
     {
+        String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
         Channel owner = new Channel();
+        owner.setConfigurationId(configurationId);
         owner.setSystem("County System");
         owner.setSite("Downtown Simulcast");
         owner.setName("Primary Control");
-        ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(
-            new ChannelActivityTableState("Decoded title", owner, null));
+        ChannelActivityTableState table = new ChannelActivityTableState("Decoded title", owner, null);
+        ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(table);
 
         assertEquals("County System", snapshot.systemName());
         assertEquals("Downtown Simulcast", snapshot.siteName());
         assertEquals("Primary Control", snapshot.channelName());
+        assertEquals("channel:" + configurationId, table.getTableId());
+        assertEquals("channel:" + configurationId, snapshot.tableId());
     }
 
     @Test
@@ -66,8 +76,9 @@ class ChannelActivitySnapshotTest
         String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
         Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
         channel.setConfigurationId(configurationId);
-        channel.setRadresGuid("86a927a5-fc21-4ee3-8bb3-6e8b943cc68f");
+        channel.setRadioResolveId("86a927a5-fc21-4ee3-8bb3-6e8b943cc68f");
         channel.setAliasListName("County Sheriff");
+        channel.setAliasListId(41L);
         Alias radio = new Alias("Car 12");
         radio.setId(301L);
         radio.setAliasListId(41L);
@@ -86,7 +97,8 @@ class ChannelActivitySnapshotTest
         ChannelActivitySnapshot.Row snapshotRow = table.getLatestSnapshot().rows().getFirst();
         ChannelActivitySnapshot.Navigation navigation = snapshotRow.navigation();
         assertEquals("CONVENTIONAL", snapshotRow.role());
-        assertEquals("CONFIGURATION:" + configurationId, navigation.contextKey());
+        assertEquals(configurationId, navigation.channelConfigurationId());
+        assertEquals(41L, navigation.aliasListId());
         assertEquals("County Sheriff", navigation.aliasListName());
         assertEquals("p25", navigation.protocol());
         assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12"),
@@ -97,6 +109,25 @@ class ChannelActivitySnapshotTest
             navigation.targetAliases().getFirst());
         assertEquals(new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400),
             navigation.targetMatcher());
+    }
+
+    @Test
+    void carriesCanonicalFullyQualifiedP25PatchGroupNavigation()
+    {
+        String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
+        Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        ChannelActivityTableState table = new ChannelActivityTableState("Site", channel, null);
+        ChannelActivityRow row = table.getOrCreate("traffic", channel,
+            ChannelActivityRow.Role.TRAFFIC, 851_262_500L, null);
+        row.setTarget(APCO25PatchGroup.create(new PatchGroup(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(4400, 0xBEE00, 0x49F, 4400))));
+        table.refresh(row);
+
+        ChannelActivitySnapshot.MatcherReference target =
+            table.getLatestSnapshot().rows().getFirst().navigation().targetMatcher();
+        assertEquals(new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", "phase_1", 4400,
+            "v1-p-bee00-49f-4400"), target);
     }
 
     @Test

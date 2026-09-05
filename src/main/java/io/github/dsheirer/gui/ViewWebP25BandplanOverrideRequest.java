@@ -13,12 +13,12 @@ import java.util.UUID;
 public final class ViewWebP25BandplanOverrideRequest extends JavaFxWindowRequest
 {
     private final P25SiteIdentity mIdentity;
-    private final String mSiteGuid;
+    private final String mConfigurationId;
 
-    public ViewWebP25BandplanOverrideRequest(P25SiteIdentity identity, String siteGuid)
+    public ViewWebP25BandplanOverrideRequest(P25SiteIdentity identity, String configurationId)
     {
         mIdentity = Objects.requireNonNull(identity, "P25 site identity cannot be null");
-        mSiteGuid = canonicalSiteGuid(siteGuid);
+        mConfigurationId = canonicalConfigurationId(configurationId);
     }
 
     public P25SiteIdentity getIdentity()
@@ -26,14 +26,14 @@ public final class ViewWebP25BandplanOverrideRequest extends JavaFxWindowRequest
         return mIdentity;
     }
 
-    public String getSiteGuid()
+    public String getConfigurationId()
     {
-        return mSiteGuid;
+        return mConfigurationId;
     }
 
-    private static String canonicalSiteGuid(String siteGuid)
+    private static String canonicalConfigurationId(String configurationId)
     {
-        String candidate = Objects.requireNonNull(siteGuid, "P25 site GUID cannot be null");
+        String candidate = Objects.requireNonNull(configurationId, "Channel configuration ID cannot be null");
 
         try
         {
@@ -49,6 +49,6 @@ public final class ViewWebP25BandplanOverrideRequest extends JavaFxWindowRequest
             //Report one stable validation error below.
         }
 
-        throw new IllegalArgumentException("P25 site GUID must be a canonical lowercase UUID");
+        throw new IllegalArgumentException("Channel configuration ID must be a canonical lowercase UUID");
     }
 }

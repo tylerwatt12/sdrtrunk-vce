@@ -21,8 +21,6 @@ package io.github.dsheirer.module.decode.nxdn.layer3.call;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
-import io.github.dsheirer.identifier.integer.IntegerIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.LocationID;
@@ -30,7 +28,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.LocationOrSystemIDOptio
 import io.github.dsheirer.module.decode.nxdn.layer3.type.SystemID;
 
 /**
- * Call message with optional location field for fully qualified source/destination identifiers.
+ * Call message with an optional location field.
  */
 public abstract class CallWithOptionalLocation extends Call
 {
@@ -52,46 +50,6 @@ public abstract class CallWithOptionalLocation extends Call
      * Offset to the location ID and option field within the message.  This is implemented by the subclass.
      */
     protected abstract int getLocationOffset();
-
-    /**
-     * Source identifier.  Overrides the default method to optionally create a fully qualified identifier that includes
-     * the visitor source system ID.
-     */
-    @Override
-    public NXDNRadioIdentifier getSource()
-    {
-//Disabling fully qualified identifier until we're sure we need this.
-//        if(mSourceIdentifier == null && getCallControlOption().hasLocationId() && getLocationIDOption().isSource())
-//        {
-//            mSourceIdentifier = NXDNFullyQualifiedRadioIdentifier.createFrom(getLocationID().getSystem().getValue(),
-//                    getMessage().getInt(IDENTIFIER_OCTET_3));
-//            mSourceIdentifier = NXDNRadioIdentifier.createFrom(getMessage().getInt(IDENTIFIER_OCTET_3));
-//        }
-
-        return super.getSource();
-    }
-
-    /**
-     * Destination identifier.  Overrides the default method to optionally create a fully qualified identifier that
-     * includes the visitor source system ID.
-     */
-    @Override
-    public IntegerIdentifier getDestination()
-    {
-//Disabling fully qualified identifier until we're sure we need this.
-//        if(mDestinationIdentifier == null && getCallControlOption().hasLocationId() && getLocationIDOption().isDestination())
-//        {
-//            mDestinationIdentifier = switch (getCallType())
-//            {
-//                case GROUP_BROADCAST, GROUP_CONFERENCE -> NXDNFullyQualifiedTalkgroupIdentifier
-//                        .createTo(getLocationID().getSystem().getValue(), getMessage().getInt(IDENTIFIER_OCTET_5));
-//                default -> NXDNFullyQualifiedRadioIdentifier.createTo(getLocationID().getSystem().getValue(),
-//                        getMessage().getInt(IDENTIFIER_OCTET_5));
-//            };
-//        }
-
-        return super.getDestination();
-    }
 
     /**
      * Location ID Option field.

@@ -54,13 +54,13 @@ async function main() {
     Object.assign(queuePlayer, {
       queuedCalls: [],
       queuedCount: 0,
-      conversationGrouping: false,
-      conversationBurstLimit: 2,
-      lastConversationKey: 'A',
-      consecutiveConversationCalls: 1
+      targetGrouping: false,
+      targetBurstLimit: 2,
+      lastPlaybackTargetKey: 'A',
+      consecutiveTargetCalls: 1
     });
-    const call = (id, started, conversation) => ({
-      _callId: id, _startedAtMs: started, _arrivalSequence: started, _conversationKey: conversation
+    const call = (id, started, target) => ({
+      _callId: id, _startedAtMs: started, _arrivalSequence: started, _playbackTargetKey: target
     });
     queuePlayer.insertQueuedCall(call('a-late', 30, 'A'));
     queuePlayer.insertQueuedCall(call('b-first', 10, 'B'));
@@ -70,9 +70,9 @@ async function main() {
 
     queuePlayer.queuedCalls = [];
     queuePlayer.queuedCount = 0;
-    queuePlayer.conversationGrouping = true;
-    queuePlayer.lastConversationKey = 'A';
-    queuePlayer.consecutiveConversationCalls = 1;
+    queuePlayer.targetGrouping = true;
+    queuePlayer.lastPlaybackTargetKey = 'A';
+    queuePlayer.consecutiveTargetCalls = 1;
     queuePlayer.insertQueuedCall(call('b-oldest', 10, 'B'));
     queuePlayer.insertQueuedCall(call('a-one', 20, 'A'));
     queuePlayer.insertQueuedCall(call('a-two', 30, 'A'));
@@ -83,19 +83,73 @@ async function main() {
     assert.equal(queuePlayer.takeNextCall()._callId, 'a-two');
     queuePlayer.queuedCalls = [];
     queuePlayer.queuedCount = 0;
-    queuePlayer.lastConversationKey = 'A';
-    queuePlayer.consecutiveConversationCalls = 0;
-    queuePlayer.conversationBurstLimit = 20;
+    queuePlayer.lastPlaybackTargetKey = 'A';
+    queuePlayer.consecutiveTargetCalls = 0;
+    queuePlayer.targetBurstLimit = 20;
     queuePlayer.insertQueuedCall(call('same-later', 30, 'A'));
     queuePlayer.insertQueuedCall(call('same-earlier', 20, 'A'));
     assert.deepEqual(queuePlayer.scheduledQueue().map((item) => item._callId), ['same-earlier', 'same-later'],
       'Calls from one conversation must remain chronological');
 
     const trunked = {
-      protocol: 'P25', system: 'Display name can change', system_identity: 'p25:BEE00:49F',
+      protocol: 'P25', system: 'Display name can change', radio_system_key: 'p25:bee00:49f',
       target_form: 'TALKGROUP', target_id: 56735, timeslot: 0,
-      conversation_key: 'p25|system:p25:BEE00:49F|talkgroup:56735|slot:0'
+      playback_target: {
+        key: 'system:p25:bee00:49f:talkgroup:56735', kind: 'talkgroup',
+        radio_system_key: 'p25:bee00:49f', label: 'Talkgroup 56735'
+      }
     };
+
+    const labels = Object.create(WebCallPlayer.prototype);
+    assert.equal(labels.callLabel({
+      channel: 'Fire Dispatch', decoder: 'NBFM', target_form: 'TALKGROUP', target_id: 1,
+      target_alias: 'Synthetic route', source_id: '',
+      playback_target: { key: 'channel:conventional-am', kind: 'channel', label: 'Fire Dispatch' }
+    }), 'Fire Dispatch', 'Analog calls must use the saved channel instead of the synthetic TGID');
+    assert.equal(labels.callLabel({
+      channel: 'DMR Repeater', protocol: 'DMR', target_form: 'TALKGROUP', target_id: 91,
+      target_alias: 'Operations', source_id: '',
+      playback_target: {
+        key: 'channel:conventional-dmr:timeslot:2', kind: 'channel_timeslot',
+        label: 'DMR Repeater · Timeslot 2'
+      }
+    }), 'Operations · TGID 91', 'A real conventional DMR target must remain visible in the call label');
+    assert.equal(labels.targetLabel({
+      protocol: 'DMR', target_alias: 'Operations', target_id: 91,
+      playback_target: {
+        key: 'channel:conventional-dmr:timeslot:2', kind: 'channel_timeslot',
+        label: 'DMR Repeater · Timeslot 2'
+      }
+    }), 'DMR Repeater · Timeslot 2', 'Hold and Avoid must describe their channel-and-timeslot scope');
+    assert.equal(labels.callLabel({
+      channel: 'P25 Conventional', protocol: 'P25', target_form: 'TALKGROUP', target_id: 1201,
+      source_id: '', playback_target: {
+        key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional'
+      }
+    }), 'TGID 1201', 'A real conventional P25 talkgroup must remain visible in the call label');
+    assert.equal(labels.targetLabel({
+      protocol: 'P25', target_id: 1201,
+      playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
+    }), 'P25 Conventional', 'Hold and Avoid must remain channel-scoped for conventional P25');
+    assert.equal(labels.callLabel({ target_id: 77, source_id: '' }), 'ID 77');
+    assert.equal(labels.callLabel({ target_form: 'UNKNOWN', target_id: 78, source_id: '' }), 'ID 78');
+    assert.equal(labels.callLabel({ target_form: 'TELEPHONE_NUMBER', target_id: 5551212, source_id: '' }),
+      'ID 5551212');
+    assert.equal(labels.targetLabel({ target_id: 77 }), 'ID 77');
+    assert.equal(labels.targetLabel({ target_form: 'TELEPHONE_NUMBER', target_id: 5551212 }), 'ID 5551212');
+    assert.equal(labels.targetLabel({}), 'Unknown identity');
+    const firstSystemScope = labels.avoidSystemScope(trunked);
+    const secondSystemScope = labels.avoidSystemScope({
+      ...trunked, system: 'Display name can change', radio_system_key: 'p25:bee00:4a0',
+      playback_target: { ...trunked.playback_target, radio_system_key: 'p25:bee00:4a0' }
+    });
+    assert.equal(firstSystemScope, 'Display name can change · p25:bee00:49f');
+    assert.equal(secondSystemScope, 'Display name can change · p25:bee00:4a0');
+    assert.notEqual(firstSystemScope, secondSystemScope,
+      'Avoid List scope must disambiguate colliding labels and numeric IDs on different systems');
+    assert.equal(labels.avoidSystemScope({
+      system: 'Conventional', playback_target: { kind: 'channel', radio_system_key: 'ignored' }
+    }), '', 'Channel-scoped avoids must not invent a radio-system scope');
 
     const normalized = Object.assign(Object.create(WebCallPlayer.prototype), { arrivalSequence: 0 });
     const normalizedCall = normalized.normalizeCall({
@@ -104,7 +158,7 @@ async function main() {
       started_at_ms: 100, completed_at_ms: 200, scan_list_ids: [1, 1, 2]
     });
     assert.deepEqual(normalizedCall._matchedScanListIds, ['1', '2']);
-    assert.equal(normalizedCall._conversationKey, trunked.conversation_key);
+    assert.equal(normalizedCall._playbackTargetKey, trunked.playback_target.key);
 
     const dedupe = Object.assign(Object.create(WebCallPlayer.prototype), {
       arrivalSequence: 0,
@@ -201,8 +255,8 @@ async function main() {
       currentStopped: 0,
       replayingLast: false,
       stopAfterReplay: false,
-      lastConversationKey: 'A',
-      consecutiveConversationCalls: 2,
+      lastPlaybackTargetKey: 'A',
+      consecutiveTargetCalls: 2,
       lastHeard: { _callId: 'retained' },
       lastHeardBuffer: { duration: 3 },
       audioContext: { state: 'running', async suspend() {} },
@@ -221,7 +275,7 @@ async function main() {
     assert.equal(stopped.lastHeard._callId, 'retained');
     assert.equal(stopped.lastHeardBuffer.duration, 3,
       'Stop must retain exactly the one local Replay Last buffer');
-    assert.equal(stopped.lastConversationKey, null);
+    assert.equal(stopped.lastPlaybackTargetKey, null);
     assert.equal(stopped.status, 'Ready');
 
     function playerReadyToStart(selectedScanListIds = []) {
@@ -292,21 +346,21 @@ async function main() {
       selectedScanListIds: new Set(['1']),
       ui: { volume: { value: '1' } },
       volume: 1,
-      conversationGrouping: true,
-      conversationBurstLimit: 4,
+      targetGrouping: true,
+      targetBurstLimit: 4,
       subscriptionChanges: 0,
       filterQueueForSelectedLists() {}, renderScanLists() {}, render() {},
       synchronizeSubscription() { this.subscriptionChanges++; }
     });
     preferencePlayer.applyPreferences({
-      volume: 0.5, selected_scan_list_ids: [1], conversation_grouping: false,
-      conversation_burst_limit: 2
+      volume: 0.5, selected_scan_list_ids: [1], target_grouping: false,
+      target_burst_limit: 2
     });
     assert.equal(preferencePlayer.subscriptionChanges, 0,
       'Unrelated preference saves must not restart a live call feed at a new cursor');
     preferencePlayer.applyPreferences({
-      volume: 0.5, selected_scan_list_ids: [2], conversation_grouping: false,
-      conversation_burst_limit: 2
+      volume: 0.5, selected_scan_list_ids: [2], target_grouping: false,
+      target_burst_limit: 2
     });
     assert.equal(preferencePlayer.subscriptionChanges, 1);
 
@@ -358,7 +412,7 @@ async function main() {
         stopped: false, paused: false, transportToken: 0, loadToken: 0, loadController: null,
         current: null, currentBuffer: null, source: null, lastHeard: heard, lastHeardBuffer: heardBuffer,
         replayingLast: false, stopAfterReplay: false, playbackStartedAt: 0,
-        queuedCalls: [], queuedCount: 0, maximumQueued: 100, conversationGrouping: false,
+        queuedCalls: [], queuedCount: 0, maximumQueued: 100, targetGrouping: false,
         seenCallIds: new Set(), seenCallOrder: [], arrivalSequence: 0,
         avoids: new Map(), holdTarget: null, selectedScanListIds: new Set(['1']),
         scanLists: [{ id: '1', name: 'Test', enabled: true, default: true }],
@@ -446,11 +500,13 @@ async function main() {
     selectionWhilePaused.currentBuffer = { duration: 20 };
     await selectionWhilePaused.togglePause();
     selectionWhilePaused.toggleHold();
-    assert.equal(selectionWhilePaused.holdTarget, overlap.conversation_key);
+    assert.equal(selectionWhilePaused.holdTarget, overlap.playback_target.key);
     selectionWhilePaused.avoidCurrent();
     assert.equal(selectionWhilePaused.current, null);
     assert.equal(selectionWhilePaused.paused, true);
     assert.equal(selectionWhilePaused.avoids.size, 1);
+    assert.equal([...selectionWhilePaused.avoids.values()][0].system_scope,
+      'Display name can change · p25:bee00:49f');
     selectionWhilePaused.setScanListSelected('1', false);
     assert.equal(selectionWhilePaused.stopped, true, 'Removing the last list also stops a paused feed');
     assert.equal(selectionWhilePaused.paused, false);

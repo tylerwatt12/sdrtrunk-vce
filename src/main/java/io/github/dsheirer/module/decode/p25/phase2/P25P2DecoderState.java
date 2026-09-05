@@ -1917,9 +1917,11 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_6C_UNIT_REGISTRATION_RESPONSE_ABBREVIATED:
                 if(mac instanceof UnitRegistrationResponseAbbreviated response)
                 {
-                    broadcastAffiliation(message, mac, DecodeEventType.REGISTER,
+                    Identifier target = response.getTargetAddress(
+                        mNetworkConfigurationStabilizer.getStableNetworkWacn());
+                    broadcastAffiliation(message, List.of(target), DecodeEventType.REGISTER,
                         "UNIT REGISTRATION " + response.getResponse(),
-                        P25AffiliationEvent.Outcome.from(response.getResponse()), response.getTargetAddress(), null);
+                        P25AffiliationEvent.Outcome.from(response.getResponse()), target, null);
                 }
                 break;
             case PHASE1_EC_UNIT_REGISTRATION_RESPONSE_EXTENDED:
@@ -1980,7 +1982,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                                       String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
                                       Identifier<?> talkgroup)
     {
-        MutableIdentifierCollection mic = getUpdatedMutableIdentifierCollection(structure);
+        broadcastAffiliation(message, structure.getIdentifiers(), eventType, details, outcome, radio, talkgroup);
+    }
+
+    private void broadcastAffiliation(MacMessage message, List<Identifier> identifiers, DecodeEventType eventType,
+                                      String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
+                                      Identifier<?> talkgroup)
+    {
+        MutableIdentifierCollection mic = getUpdatedMutableIdentifierCollection(identifiers);
         P25AffiliationEvent event = new P25AffiliationEvent(eventType, message.getTimestamp(), outcome, radio,
             talkgroup);
         event.setChannelDescriptor(getCurrentChannel());
@@ -1999,9 +2008,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private MutableIdentifierCollection getUpdatedMutableIdentifierCollection(MacStructure mac)
     {
+        return getUpdatedMutableIdentifierCollection(mac.getIdentifiers());
+    }
+
+    private MutableIdentifierCollection getUpdatedMutableIdentifierCollection(List<Identifier> identifiers)
+    {
         MutableIdentifierCollection mic = new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
         mic.remove(IdentifierClass.USER);
-        mic.update(mac.getIdentifiers());
+        mic.update(identifiers);
         mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
         return mic;
     }

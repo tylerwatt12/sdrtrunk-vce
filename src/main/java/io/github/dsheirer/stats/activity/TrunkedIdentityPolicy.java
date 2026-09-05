@@ -96,7 +96,7 @@ final class TrunkedIdentityPolicy
         return null;
     }
 
-    static boolean isDirectoryIdentity(int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    static boolean isDirectoryIdentity(int protocolCode, TrunkedIdentityDomain identityDomain,
                                        int identityKindCode, Integer identifier)
     {
         return switch(identityKindCode)
@@ -109,18 +109,37 @@ final class TrunkedIdentityPolicy
         };
     }
 
-    static boolean isDirectoryTalkgroup(int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    static boolean isDirectoryTalkgroup(int protocolCode, TrunkedIdentityDomain identityDomain,
                                         Integer talkgroup)
     {
-        return TrunkedIdentityEligibility.isEligible(protocol(protocolCode), domain(identityDomain),
+        return TrunkedIdentityEligibility.isEligible(protocol(protocolCode),
+            identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD,
             Form.TALKGROUP, talkgroup);
     }
 
-    static boolean isDirectoryRadio(int protocolCode, P25ActivityLogRecords.IdentityDomain identityDomain,
+    static boolean isDirectoryRadio(int protocolCode, TrunkedIdentityDomain identityDomain,
                                     Integer radio)
     {
-        return TrunkedIdentityEligibility.isEligible(protocol(protocolCode), domain(identityDomain),
+        return TrunkedIdentityEligibility.isEligible(protocol(protocolCode),
+            identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD,
             Form.RADIO, radio);
+    }
+
+    /** Validates an observed local address separately from the canonical directory identity. */
+    static boolean isObservedLocalIdentity(int protocolCode, TrunkedIdentityDomain identityDomain,
+                                           int identityKindCode, Integer identifier, boolean fullyQualified)
+    {
+        Form form = switch(identityKindCode)
+        {
+            case IDENTITY_KIND_TALKGROUP -> Form.TALKGROUP;
+            case IDENTITY_KIND_RADIO -> Form.RADIO;
+            case IDENTITY_KIND_PATCH_GROUP -> Form.PATCH_GROUP;
+            default -> null;
+        };
+
+        return form != null && TrunkedIdentityEligibility.isObservedLocalEligible(protocol(protocolCode),
+            identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD, form, identifier,
+            fullyQualified);
     }
 
     private static Protocol protocol(int protocolCode)
@@ -134,13 +153,4 @@ final class TrunkedIdentityPolicy
         };
     }
 
-    private static TrunkedIdentityDomain domain(P25ActivityLogRecords.IdentityDomain identityDomain)
-    {
-        return switch(identityDomain != null ? identityDomain : P25ActivityLogRecords.IdentityDomain.STANDARD)
-        {
-            case STANDARD -> TrunkedIdentityDomain.STANDARD;
-            case NXDN_TYPE_C -> TrunkedIdentityDomain.NXDN_TYPE_C;
-            case NXDN_TYPE_D -> TrunkedIdentityDomain.NXDN_TYPE_D;
-        };
-    }
 }

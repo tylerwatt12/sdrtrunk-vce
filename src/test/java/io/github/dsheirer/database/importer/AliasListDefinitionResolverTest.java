@@ -15,6 +15,9 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.hasRouteNamed;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.legacyRoute;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -57,7 +60,7 @@ class AliasListDefinitionResolverTest
         Alias dmrSource = alias("Dispatch", "Shared", new Radio(Protocol.DMR, 202));
         Alias sharedStatus = alias("Emergency", "Shared", unitStatus(3));
         sharedStatus.setRecordable(true);
-        sharedStatus.addBroadcastChannel("Calls");
+        sharedStatus.addBroadcastChannel(legacyRoute("Calls"));
         state.setAliases(List.of(p25Source, dmrSource, sharedStatus));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
@@ -85,7 +88,7 @@ class AliasListDefinitionResolverTest
         assertEquals(List.of("Shared [P25]", "Shared [DMR]"),
             statusAliases.stream().map(Alias::getAliasListName).toList());
         assertTrue(statusAliases.stream().allMatch(Alias::isRecordable));
-        assertTrue(statusAliases.stream().allMatch(alias -> alias.hasBroadcastChannel("Calls")));
+        assertTrue(statusAliases.stream().allMatch(alias -> hasRouteNamed(alias, "Calls")));
         assertTrue(statusAliases.stream().allMatch(alias -> alias.getMatchIdentifier() instanceof UnitStatusID));
     }
 
@@ -102,7 +105,7 @@ class AliasListDefinitionResolverTest
         alias.setAliasListName("Regional");
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 303));
         alias.setRecordable(true);
-        alias.addBroadcastChannel("Calls");
+        alias.addBroadcastChannel(legacyRoute("Calls"));
         state.setAliases(List.of(alias));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
@@ -111,7 +114,7 @@ class AliasListDefinitionResolverTest
         assertEquals(1, state.getAliases().size());
         assertEquals(42, state.getAliases().get(0).getId());
         assertTrue(state.getAliases().getFirst().isRecordable());
-        assertTrue(state.getAliases().getFirst().hasBroadcastChannel("Calls"));
+        assertTrue(hasRouteNamed(state.getAliases().getFirst(), "Calls"));
         assertEquals("Regional", north.getAliasListName());
         assertEquals("Regional", south.getAliasListName());
     }
@@ -224,7 +227,7 @@ class AliasListDefinitionResolverTest
     {
         LegacyConfigurationState state = new LegacyConfigurationState();
         Alias status = alias("Emergency", null, unitStatus(5));
-        status.addBroadcastChannel("Calls");
+        status.addBroadcastChannel(legacyRoute("Calls"));
         state.setAliases(List.of(status));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
@@ -232,7 +235,7 @@ class AliasListDefinitionResolverTest
         assertEquals(List.of("Imported Unassigned [P25]", "Imported Unassigned [DMR]"),
             state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
         assertEquals(2, state.getAliases().size());
-        assertTrue(state.getAliases().stream().allMatch(alias -> alias.hasBroadcastChannel("Calls")));
+        assertTrue(state.getAliases().stream().allMatch(alias -> hasRouteNamed(alias, "Calls")));
     }
 
     @Test
@@ -310,7 +313,7 @@ class AliasListDefinitionResolverTest
             state.getChannels().stream().map(Channel::getAliasListName).toList());
         assertEquals(3, state.getAliases().size());
         assertTrue(aliases(state, "Dispatch").stream()
-            .allMatch(alias -> alias.hasBroadcastChannel("Calls")));
+            .allMatch(alias -> hasRouteNamed(alias, "Calls")));
         assertEquals("Imported Unassigned [NXDN]", aliases(state, "Orphan").getFirst().getAliasListName());
     }
 
@@ -322,7 +325,7 @@ class AliasListDefinitionResolverTest
         Alias catchAll = alias("Unknown Talkgroups", "Metro",
             new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
         catchAll.setRecordable(true);
-        catchAll.addBroadcastChannel("Calls");
+        catchAll.addBroadcastChannel(legacyRoute("Calls"));
         state.setAliases(List.of(catchAll));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
@@ -331,7 +334,7 @@ class AliasListDefinitionResolverTest
         UnmatchedTalkgroupPolicy policy = state.getAliasListDefinitions().getFirst()
             .getUnmatchedTalkgroupPolicy();
         assertTrue(policy.isRecordEnabled());
-        assertEquals(List.of("Calls"), policy.getStreamDestinationNames());
+        assertEquals(List.of("Calls"), routeNames(policy));
     }
 
     @Test

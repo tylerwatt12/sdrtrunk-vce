@@ -23,11 +23,11 @@ receiver data before installing or upgrading.
 
 ## Highlights
 
-- **Stable browser activity screen:** Live Systems has one Conventional tab and stable tabs for each trunked site.
+- **Stable browser activity screen:** Live keeps conventional channels and each active trunked site in stable groups.
   Frequencies stay in place instead of constantly moving around.
 - **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
-  an operator's saved enabled or disabled choice. View live systems, sites, channels, talkgroups, radios, activity,
-  and statistics from a browser. Subscribe to one or more administrator-defined
+  an operator's saved enabled or disabled choice. View Live activity, Radio Systems, Channels, group identities,
+  radios, history, and statistics from a browser. Subscribe to one or more administrator-defined
   [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them. Those
   defaults also normally initialize new talkgroup Aliases consistently across the desktop, web, Discover, and
   RadioReference workflows. Overlapping routes are deduplicated before completed calls enter each browser's local
@@ -68,56 +68,6 @@ omit these newer features until they are deliberately included in that release l
 This section describes the rolling Nightly line, not Alpha 10. For shipped Alpha behavior, use the version-matched
 [Alpha release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases). The checked-in
 [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md) remains the historical document for that exact release.
-
-## Screenshots
-
-Click any screenshot to view it at full size.
-
-<p align="center">
-  <a href="docs/screenshots/web-live-systems.png"><img src="docs/screenshots/web-live-systems.png" width="85%" alt="Live Systems view showing stable conventional and trunked channel activity"></a>
-  <br>
-  <strong>Live Systems</strong> — stable channel rows with current calls, signal level, and decode quality.
-</p>
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-system-overview.png"><img src="docs/screenshots/web-system-overview.png" alt="P25 system overview with site and activity totals"></a>
-      <p align="center"><strong>System overview</strong></p>
-    </td>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-control-channel-quality.png"><img src="docs/screenshots/web-control-channel-quality.png" alt="Control-channel signal and decode-quality charts"></a>
-      <p align="center"><strong>Signal and decode quality</strong></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-systems-sites-directory.png"><img src="docs/screenshots/web-systems-sites-directory.png" alt="Systems and Sites directory"></a>
-      <p align="center"><strong>Systems and Sites directory</strong></p>
-    </td>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-site-overview.png"><img src="docs/screenshots/web-site-overview.png" alt="Site overview with decoded information and top talkgroups"></a>
-      <p align="center"><strong>Site overview</strong></p>
-    </td>
-  </tr>
-</table>
-
-<details>
-  <summary><strong>More screenshots</strong></summary>
-  <br>
-  <table>
-    <tr>
-      <td width="50%" valign="top">
-        <a href="docs/screenshots/web-dashboard-overview.png"><img src="docs/screenshots/web-dashboard-overview.png" alt="Dashboard with signal health, call volume, sites, talkgroups, and radios"></a>
-        <p align="center"><strong>Operations dashboard</strong></p>
-      </td>
-      <td width="50%" valign="top">
-        <a href="docs/screenshots/web-site-activity.png"><img src="docs/screenshots/web-site-activity.png" alt="Detailed site activity with calls, radios, talkgroups, frequencies, and security status"></a>
-        <p align="center"><strong>Detailed site activity</strong></p>
-      </td>
-    </tr>
-  </table>
-</details>
 
 ## Which Release Channel Should I Use?
 

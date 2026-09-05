@@ -24,9 +24,11 @@ package io.github.dsheirer.alias.id.broadcast;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
+import java.util.UUID;
 
 public class BroadcastChannel extends AliasID implements Comparable<BroadcastChannel>
 {
+    private String mConfigurationId;
     private String mChannelName;
 
     public BroadcastChannel()
@@ -37,18 +39,22 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
     @Override
     public int compareTo(BroadcastChannel other)
     {
-        if(mChannelName != null && other.getChannelName() != null)
+        if(mConfigurationId != null && other.getConfigurationId() != null)
         {
-            return mChannelName.compareTo(other.getChannelName());
+            return mConfigurationId.compareTo(other.getConfigurationId());
         }
-        else if(mChannelName != null)
+        else if(mConfigurationId != null)
         {
             return -1;
         }
-        else
+        else if(other.getConfigurationId() != null)
         {
             return 1;
         }
+
+        String name = mChannelName != null ? mChannelName : "";
+        String otherName = other.getChannelName() != null ? other.getChannelName() : "";
+        return name.compareTo(otherName);
     }
 
     @Override
@@ -65,21 +71,61 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
 
         BroadcastChannel that = (BroadcastChannel)o;
 
+        if(getConfigurationId() != null || that.getConfigurationId() != null)
+        {
+            return getConfigurationId() != null && getConfigurationId().equals(that.getConfigurationId());
+        }
+
         return getChannelName() != null ? getChannelName().equals(that.getChannelName()) : that.getChannelName() == null;
     }
 
     @Override
     public int hashCode()
     {
-        return getChannelName() != null ? getChannelName().hashCode() : 0;
+        return getConfigurationId() != null ? getConfigurationId().hashCode() :
+            getChannelName() != null ? getChannelName().hashCode() : 0;
     }
 
     /**
-     * Creates a named broadcast channel
+     * Creates an unresolved legacy XML route. Current configuration must resolve this display name to a provider
+     * identity before it can be persisted or used for delivery.
      */
     public BroadcastChannel(String channelName)
     {
         setChannelName(channelName);
+    }
+
+    /** Creates a current provider route with stable identity and presentation text. */
+    public BroadcastChannel(String configurationId, String channelName)
+    {
+        setConfigurationId(configurationId);
+        setChannelName(channelName);
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "configuration_id")
+    public String getConfigurationId()
+    {
+        return mConfigurationId;
+    }
+
+    public void setConfigurationId(String configurationId)
+    {
+        if(configurationId == null || configurationId.isBlank())
+        {
+            mConfigurationId = null;
+            return;
+        }
+
+        try
+        {
+            String normalized = configurationId.strip();
+            String canonical = UUID.fromString(normalized).toString();
+            mConfigurationId = canonical.equals(normalized) ? canonical : normalized;
+        }
+        catch(IllegalArgumentException exception)
+        {
+            mConfigurationId = configurationId.strip();
+        }
     }
 
     /**
@@ -109,7 +155,25 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
     @Override
     public boolean isValid()
     {
-        return mChannelName != null;
+        if(mConfigurationId == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return UUID.fromString(mConfigurationId).toString().equals(mConfigurationId);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return false;
+        }
+    }
+
+    /** True for a named legacy route that still needs import-time resolution. */
+    public boolean hasDisplayName()
+    {
+        return mChannelName != null && !mChannelName.isBlank();
     }
 
     @Override
@@ -121,6 +185,6 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
     @Override
     public String toString()
     {
-        return isValid() ? mChannelName : "(invalid)";
+        return hasDisplayName() ? mChannelName : isValid() ? mConfigurationId : "(invalid)";
     }
 }

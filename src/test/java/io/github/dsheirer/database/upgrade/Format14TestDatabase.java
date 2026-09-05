@@ -1,5 +1,6 @@
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
@@ -13,6 +14,13 @@ public final class Format14TestDatabase
         {
             new Format13To14DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 14);
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
+            if(detected.version() != 14 ||
+                !DatabaseFormatCatalog.requireVersion(14).fingerprint().equals(fingerprint))
+            {
+                throw new IllegalStateException("Global format 14 fixture fingerprint mismatch: " + fingerprint);
+            }
         }
         return database;
     }
