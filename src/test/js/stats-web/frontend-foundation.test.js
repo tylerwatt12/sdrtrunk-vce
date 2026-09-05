@@ -460,14 +460,43 @@ async function main() {
     `(function(row) ${functionBinding(appSource, 'trunkedVariant')})`);
   const identityDomainLabel = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'identityDomainLabel')})`);
+  const semanticLabel = vm.runInNewContext(
+    `(function(value) ${functionBinding(appSource, 'semanticLabel')})`);
+  const isSavedChannelRadioSystem = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'isSavedChannelRadioSystem')})`);
   const radioSystemsDirectoryDetails = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'radioSystemsDirectoryDetails')})`, {
       channelDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
-      trunkedVariant, identityDomainLabel, identifierNumber
+      trunkedVariant, identityDomainLabel, identifierNumber, semanticLabel,
+      isSavedChannelRadioSystem, protocolFamily: (row) => row.protocol
     });
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
-    address_domain: 'nxdn_type_c', network_id: 1, system_id: 2 }),
+    address_domain: 'nxdn_type_c', network_id: 1, system_id: 2,
+    radio_system_key: 'nxdn-c:channel:728d2d66-de4e-476b-a696-919f32dd4d12' }),
   'Scoped to this saved channel · Type-C');
+  assert.equal(radioSystemsDirectoryDetails({ protocol: 'DMR', variant: 'TIER_III', model: 'small',
+    network_id: 42, radio_system_key: 'dmr:tier3:small:42' }),
+  'Tier III · Small · Network 42');
+  assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
+    location_category: 'local', system_id: 303, radio_system_key: 'nxdn-c:local:303' }),
+  'Type-C · Local · System 303');
+
+  const savedChannelScopeLabel = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'savedChannelScopeLabel')})`, {
+      protocolFamily: (row) => row.protocol
+    });
+  const radioSystemLabel = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'radioSystemLabel')})`, {
+      isP25: (row) => row.protocol === 'P25', hex, isSavedChannelRadioSystem,
+      savedChannelScopeLabel, protocolFamily: (row) => row.protocol, semanticLabel, identifierNumber
+    });
+  assert.equal(radioSystemLabel({ protocol: 'DMR', model: 'small', network_id: 42,
+    radio_system_key: 'dmr:tier3:small:42' }), 'DMR Tier III · Small model · Network 42');
+  assert.equal(radioSystemLabel({ protocol: 'NXDN', location_category: 'local', system_id: 303,
+    radio_system_key: 'nxdn-c:local:303' }), 'NXDN Type-C · Local · System 303');
+  assert.equal(radioSystemLabel({ protocol: 'DMR',
+    radio_system_key: 'dmr:channel:728d2d66-de4e-476b-a696-919f32dd4d12' }),
+  'DMR saved channel scope');
 
   const receiverHealthSeverity = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'receiverHealthSeverity')})`);
