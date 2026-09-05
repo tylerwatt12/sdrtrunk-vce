@@ -2806,8 +2806,7 @@ class StatsWebDatabase
                  AND current.foreign_system_id = summary.foreign_system_id
                  AND current.band = summary.band
                 WHERE summary.channel_id = ?
-                ORDER BY CASE WHEN current.band IS NULL THEN 1 ELSE 0 END,
-                    summary.foreign_wacn, summary.foreign_system_id, summary.band
+                ORDER BY summary.foreign_wacn, summary.foreign_system_id, summary.band
                 LIMIT ? OFFSET ?
                 """, currentSince, configured.channelId(), request.limit() + 1, request.offset());
             boolean hasMore = foreignRows.size() > request.limit();
@@ -4336,20 +4335,12 @@ class StatsWebDatabase
                 CASE system.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
                     WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
                 system.p25_wacn AS wacn,
-                coalesce(system.p25_system_id, (SELECT CASE WHEN count(DISTINCT trunked.system_id) = 1
-                    THEN min(trunked.system_id) END
-                    FROM receiver_channel channel
-                    JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
-                    WHERE channel.radio_system_id = system.id)) AS system_id,
-                (SELECT CASE WHEN count(DISTINCT trunked.network_id) = 1 THEN min(trunked.network_id) END
-                    FROM receiver_channel channel
-                    JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
-                    WHERE channel.radio_system_id = system.id) AS network_id,
-                coalesce((SELECT CASE WHEN count(DISTINCT trunked.variant_code) = 1
-                    THEN min(trunked.variant_code) END
-                    FROM receiver_channel channel
-                    JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
-                    WHERE channel.radio_system_id = system.id), 0) AS variant_code,
+                CASE system.protocol_code WHEN 1 THEN system.p25_system_id
+                    WHEN 4 THEN system.nxdn_system_id END AS system_id,
+                system.dmr_network_id AS network_id,
+                system.dmr_model_code, system.nxdn_location_category_code,
+                CASE WHEN system.dmr_model_code IS NOT NULL THEN 'TIER_III'
+                    WHEN system.nxdn_location_category_code IS NOT NULL THEN 'TYPE_C' END AS variant,
                 (SELECT CASE WHEN count(DISTINCT lower(trim(config.system_name))) = 1
                     THEN min(trim(config.system_name)) END
                     FROM receiver_channel channel
