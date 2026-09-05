@@ -2756,7 +2756,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-active-flag {
-  width: 12px;
+  width: 6px;
   height: 12px;
   min-height: 12px;
   position: absolute;
