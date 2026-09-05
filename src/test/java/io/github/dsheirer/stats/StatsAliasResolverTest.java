@@ -321,6 +321,86 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void sharedDmrAndNxdnSystemsRequireAliasAgreementAcrossAssignedLists() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("shared-native-system-alias.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'DMR North', 'DMR'), (2, 'DMR South', 'DMR'),
+                       (3, 'NXDN North', 'NXDN'), (4, 'NXDN South', 'NXDN')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(
+                    id, alias_list_id, name, description, group_name, color, matcher_type, protocol, value
+                ) VALUES
+                    (1, 1, 'Dispatch', 'Shared dispatch', 'Operations', 123,
+                        'TALKGROUP', 'DMR', 91),
+                    (2, 2, 'Dispatch', 'Shared dispatch', 'Operations', 123,
+                        'TALKGROUP', 'DMR', 91),
+                    (3, 3, 'Dispatch', 'Shared dispatch', 'Operations', 123,
+                        'TALKGROUP', 'NXDN', 91),
+                    (4, 4, 'Dispatch', 'Shared dispatch', 'Operations', 123,
+                        'TALKGROUP', 'NXDN', 91)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
+                ) VALUES
+                    ('30000000-0000-4000-8000-000000000001', 'TRUNKED', 1, 'DMR', 'North', 'North', 1,
+                        0, 'DMR', 0, 451000000, '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'),
+                    ('30000000-0000-4000-8000-000000000002', 'TRUNKED', 2, 'DMR', 'South', 'South', 2,
+                        0, 'DMR', 0, 452000000, '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'),
+                    ('40000000-0000-4000-8000-000000000001', 'TRUNKED', 3, 'NXDN', 'North', 'North', 3,
+                        0, 'NXDN', 1, 153000000, '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'),
+                    ('40000000-0000-4000-8000-000000000002', 'TRUNKED', 4, 'NXDN', 'South', 'South', 4,
+                        0, 'NXDN', 1, 154000000, '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system(
+                    id, system_key, protocol_code, address_domain_code,
+                    dmr_model_code, dmr_network_id, nxdn_location_category_code, nxdn_system_id,
+                    first_seen_ms, last_seen_ms
+                ) VALUES
+                    (81, 'dmr:tier3:small:42', 3, 0, 2, 42, NULL, NULL, 1, 2),
+                    (82, 'nxdn-c:local:303', 4, 1, NULL, NULL, 3, 303, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms
+                ) VALUES
+                    (81, '30000000-0000-4000-8000-000000000001', 1, 2, 81, 1),
+                    (82, '30000000-0000-4000-8000-000000000002', 1, 2, 81, 1),
+                    (83, '40000000-0000-4000-8000-000000000001', 1, 2, 82, 1),
+                    (84, '40000000-0000-4000-8000-000000000002', 1, 2, 82, 1)
+                """);
+
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> dmr = canonicalNativeRow("dmr:tier3:small:42", 3, 91);
+            Map<String,Object> nxdn = canonicalNativeRow("nxdn-c:local:303", 4, 91);
+            resolver.enrichCanonicalSystemTalkgroups(connection, rows(dmr, nxdn),
+                "identity_summary_id", "identity_id", "alias_");
+            assertEquals("Dispatch", dmr.get("alias_name"));
+            assertEquals("Dispatch", nxdn.get("alias_name"));
+
+            statement.executeUpdate("UPDATE alias SET name='South Dispatch' WHERE id IN (2, 4)");
+            Map<String,Object> conflictingDmr = canonicalNativeRow("dmr:tier3:small:42", 3, 91);
+            Map<String,Object> conflictingNxdn = canonicalNativeRow("nxdn-c:local:303", 4, 91);
+            resolver.enrichCanonicalSystemTalkgroups(connection, rows(conflictingDmr, conflictingNxdn),
+                "identity_summary_id", "identity_id", "alias_");
+            assertNull(conflictingDmr.get("alias_name"));
+            assertNull(conflictingNxdn.get("alias_name"));
+        }
+    }
+
+    @Test
     void p25AliasesUseEachChannelsObservedLocalAddressAndWithholdAmbiguousSystemMetrics() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-local-alias-evidence.sqlite");
@@ -601,6 +681,15 @@ class StatsAliasResolverTest
         row.put("topology", "TRUNKED");
         row.put("identity_summary_id", summaryId);
         row.put("identity_kind_code", identityKind);
+        row.put("identity_id", identityId);
+        return row;
+    }
+
+    private static Map<String,Object> canonicalNativeRow(String radioSystemKey, int protocolCode, int identityId)
+    {
+        Map<String,Object> row = new LinkedHashMap<>();
+        row.put("radio_system_key", radioSystemKey);
+        row.put("protocol_code", protocolCode);
         row.put("identity_id", identityId);
         return row;
     }

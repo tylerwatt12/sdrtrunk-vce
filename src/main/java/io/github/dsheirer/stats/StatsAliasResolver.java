@@ -90,8 +90,8 @@ class StatsAliasResolver
 
     /**
      * Resolves a canonical group identity shown at radio-system scope. P25 identities use the local address observed
-     * by each exact saved channel and only present an Alias when every applicable channel/list pair agrees. DMR and
-     * NXDN radio systems are owned by one saved channel, so their one assigned Alias List is authoritative.
+     * by each exact saved channel. Native DMR Tier III and NXDN Type-C systems can also span several saved channels.
+     * A system-level Alias is shown only when every applicable channel/list pair agrees on its presentation.
      */
     void enrichCanonicalSystemTalkgroups(Connection connection, List<Map<String,Object>> rows,
                                          String summaryIdColumn, String identifierColumn, String prefix)
@@ -1273,8 +1273,8 @@ class StatsAliasResolver
             {
                 Rule candidate = best(identifier, aliasListId);
 
-                //A shared P25 system can be received by channels assigned to different Alias Lists.  A system-level
-                //label is safe only when every applicable list resolves to the same effective alias.  Missing or
+                //A native radio system can be received by channels assigned to different Alias Lists. A system-level
+                //label is safe only when every applicable list resolves to the same effective Alias. Missing or
                 //conflicting definitions deliberately leave the label blank rather than depending on set order.
                 if(candidate == null || best != null && !candidate.hasSamePresentationAs(best))
                 {
