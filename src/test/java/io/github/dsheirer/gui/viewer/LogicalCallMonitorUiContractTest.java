@@ -384,7 +384,7 @@ class LogicalCallMonitorUiContractTest
     private static LogicalCallDiagnosticLeg leg(String id, String channelName, long start, long end,
                                                  boolean selected)
     {
-        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, channelName, "site-guid-" + id, 42L,
+        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, channelName, "radioresolve-id-" + id, 42L,
             0xBEE00, 0x123, 1, 2, start, end, Math.max(0L, end - start), 0L, 0L, 0L, 0L, 0L, 0L, 0L,
             0L, 0L, 0.0d, 0.0d, 0.0d, 0.0d, 0L, false, false, selected);
     }
@@ -395,7 +395,7 @@ class LogicalCallMonitorUiContractTest
                                                         long fecProtectedBits, long retainedSamples, boolean selected)
     {
         long expected = 180L;
-        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, channelName, "site-guid-" + id, 42L,
+        return new LogicalCallDiagnosticLeg(id, "P25P2", "channel-" + id, channelName, "radioresolve-id-" + id, 42L,
             0xBEE00, 0x123, 1, site, start, end, Math.max(0L, end - start), expected, observed, usable, decoded,
             repeated, concealed, missing, fecErrors, fecProtectedBits, 100.0d * usable / expected,
             (double)(missing + concealed) / expected, (double)repeated / expected,

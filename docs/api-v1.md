@@ -121,8 +121,8 @@ Alias blank. Channel resources resolve Aliases through that exact channel's `ali
 
 ### Channels and protocol features
 
-The channel directory accepts `type` and `protocol` filters and reports a `channel_kind` of `TRUNKED` or
-`CONVENTIONAL`. Protocol-specific child resources are advertised in the channel's `capabilities`; unsupported
+The channel directory accepts `type` and `protocol` filters and reports a `channel_kind` of `trunked` or
+`conventional`. Protocol-specific child resources are advertised in the channel's `capabilities`; unsupported
 features are false or absent. There is no separate conventional information architecture.
 
 AM and NBFM use the channel as the primary user-facing identity. Their configured numeric destination can still be

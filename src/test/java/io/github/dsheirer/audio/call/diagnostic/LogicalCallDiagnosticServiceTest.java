@@ -429,7 +429,7 @@ class LogicalCallDiagnosticServiceTest
     {
         long expected = 500;
         return new LogicalCallDiagnosticLeg("leg-" + index, "P25P2", "channel-" + index,
-            "MARCS Site " + (index + 1), "learned-site-guid-" + index, 42, 0xBEE00, 0x123, 1, index + 1,
+            "MARCS Site " + (index + 1), "radioresolve-id-" + index, 42, 0xBEE00, 0x123, 1, index + 1,
             start, end, Math.max(0L, end - start),
             expected, 498, 490, 490, 1, 3, 2, 10, 5_000, 98.0, 0.01, 0.002, 0.002,
             40_000, false, false, selected);

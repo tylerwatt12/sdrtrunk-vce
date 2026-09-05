@@ -33,7 +33,7 @@ class ApiHttpResponseTest
     {
         HttpServer server = server();
         server.createContext("/collection", exchange -> ApiHttpResponse.sendDataWithMeta(exchange, 206,
-            List.of(new SiteRow(101, new ChannelState("Control", Map.of("lastSeenAt", 1234L)))), Map.of(
+            List.of(new SampleRow(101, new ChannelState("Control", Map.of("lastSeenAt", 1234L)))), Map.of(
             "totalCount", 42,
             "hasMore", true,
             "nextBeforeId", 100)));
@@ -50,7 +50,7 @@ class ApiHttpResponseTest
             assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
             assertEquals("nosniff", response.headers().firstValue("X-Content-Type-Options").orElseThrow());
             assertTrue(body.get("data").isArray());
-            assertEquals(101, body.at("/data/0/site_guid").longValue());
+            assertEquals(101, body.at("/data/0/sample_id").longValue());
             assertEquals("Control", body.at("/data/0/channel_state/display_name").textValue());
             assertEquals(1234, body.at("/data/0/channel_state/observations/last_seen_at").longValue());
             assertEquals(42, body.at("/meta/total_count").intValue());
@@ -141,7 +141,7 @@ class ApiHttpResponseTest
             .send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    private record SiteRow(long siteGuid, ChannelState channelState)
+    private record SampleRow(long sampleId, ChannelState channelState)
     {
     }
 

@@ -43,7 +43,7 @@ class WebEntityRefTest
     void rejectsPartialOrInvalidReferencesAndOmitsAnUnresolvedReference()
     {
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem(" "));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("site-guid"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("not-a-channel-uuid"));
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("1-1-1-1-1"));
         assertThrows(IllegalArgumentException.class,
             () -> WebEntityRef.channel("728D2D66-DE4E-476B-A696-919F32DD4D12"));

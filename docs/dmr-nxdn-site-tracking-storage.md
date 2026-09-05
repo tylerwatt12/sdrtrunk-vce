@@ -22,9 +22,9 @@ current display or configuration data.
 
 Within `configuration_channel`, the row owns the channel UUID, trunked/conventional classification, display fields,
 Alias List ID, optional RadioResolve ID, and auto-start settings; those fields are forbidden in `config_json`.
-`decoder_type` and `primary_frequency_hz` are the only JSON-authoritative indexed projections and must match the
-decoder/source document exactly. The row-owned `channel_kind` is derived through the shared classification policy on
-save and checked against that same decoded document on load.
+`decoder_type`, `address_domain_code`, and `primary_frequency_hz` are JSON-authoritative indexed projections and must
+match the decoder/source document exactly. The row-owned `channel_kind` is derived through the shared classification
+policy on save and checked against that same decoded document on load.
 
 No table described here stores raw decoder messages, a complete JSON object, or an unbounded immutable call log.
 Optional detailed Activity is retention-bound. Its P25 source/target references preserve canonical roaming identity,

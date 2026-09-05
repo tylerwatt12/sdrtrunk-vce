@@ -422,6 +422,15 @@ async function main() {
   assert.equal(channelDetailsColumn.render({ protocol: 'P25', site: 1 }), '',
     'Legacy site fields must not be inferred');
 
+  const dashboardChannelKind = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'dashboardChannelKind')})`);
+  assert.equal(dashboardChannelKind({ channel_kind: 'trunked' }), 'TRUNKED');
+  assert.equal(dashboardChannelKind({ channel_kind: 'conventional' }), 'CONVENTIONAL');
+  assert.equal(dashboardChannelKind({ channel_type: 'trunked' }), '',
+    'Legacy channel_type topology must not be inferred');
+  assert.equal(dashboardChannelKind({ channel_type: 'traffic' }), '',
+    'Protocol channel types must not be interpreted as channel topology');
+
   const dashboardChannelContext = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'dashboardChannelContext')})`, {
       dashboardChannelKind: (row) => String(row.channel_kind || '').toUpperCase(),

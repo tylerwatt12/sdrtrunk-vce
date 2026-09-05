@@ -5411,7 +5411,7 @@ function withoutGrantActions(rows) {
 }
 
 function dashboardChannelKind(row) {
-  const value = String(row?.channel_kind || row?.channel_type || '').trim().toUpperCase();
+  const value = String(row?.channel_kind || '').trim().toUpperCase();
   if (value === 'TRUNKED' || value === 'CONVENTIONAL') return value;
   return '';
 }
