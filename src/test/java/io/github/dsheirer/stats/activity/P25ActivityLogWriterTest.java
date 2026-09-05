@@ -3451,7 +3451,7 @@ class P25ActivityLogWriterTest
     {
         assertCount(connection, "alias", 1);
         assertCount(connection, "configuration_channel", 1);
-        assertCount(connection, "application_settings", 2); //Administrator sentinel plus bounded wizard progress.
+        assertCount(connection, "application_settings", 3); //Administrator sentinel plus two bounded settings rows.
     }
 
     private static void assertCount(Connection connection, String table, int expected) throws Exception

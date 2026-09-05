@@ -187,7 +187,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String live = function(source, "async function renderLive()");
         String channel = function(source, "function liveChannelPane()");
-        String tuner = function(source, "function tunerSpectrumPanel()");
+        String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument)");
 
         assertTrue(live.contains("liveEventsPanel"));
         assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
@@ -607,7 +607,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=92"));
+        assertTrue(html.contains("/assets/app.css?v=94"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1288,8 +1288,11 @@ class StatsWebInteractionUiContractTest
         String subscribeActivity = function(source, "function subscribeLiveChannelActivity(callbacks = {})");
         String frequencyMapping = function(source, "function tunerFrequencyAtBin(domain, coordinate)");
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
-        String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
-        String tuner = function(source, "function tunerSpectrumPanel()");
+        String snapCandidate = function(source, "function tunerScopeSnapCandidate(scope, frequencyHz)");
+        String snapper = function(source, "function tunerSnapFrequency(frequencyHz, scopes = [])");
+        String snapMatches = function(source, "function tunerSnapMatches(frequencyHz, scopes)");
+        String visibleScopes = function(source, "function tunerVisibleScopes(viewport, scopes = [])");
+        String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument)");
         String parameters = function(tuner, "function diagnosticParameters()");
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
@@ -1422,7 +1425,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("options.addEventListener('toggle'"));
         assertTrue(tuner.contains("displayControls.append(refiningBadge, flagLegend)"));
         assertFalse(tuner.contains("displayControls.append(options"));
-        assertTrue(tuner.contains("const snap = snapInput.checked ? tunerSnapFrequency(pointerHz) : null"));
+        assertTrue(tuner.contains("const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null"));
         assertTrue(tuner.contains("const displayHz = snap?.frequencyHz ?? pointerHz"));
         assertTrue(tuner.contains("cursorFrequency.textContent = `${(displayHz / 1_000_000).toFixed(6)} MHz`"));
         assertTrue(tuner.contains("cursorSnap.hidden = true"));
@@ -1496,18 +1499,21 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const resolution = frameDomain.sentBinWidthHz"));
         assertTrue(tuner.contains("['Analysis span'"));
         assertTrue(tuner.contains("['Displayed resolution'"));
-        assertTrue(source.contains("const TUNER_FREQUENCY_RASTERS = Object.freeze(["));
-        assertTrue(source.contains("id: 'vhf-land-mobile', minHz: 150_000_000, maxHz: 173_997_500"));
-        assertTrue(source.contains("originHz: 150_000_000, stepHz: 2_500"));
-        assertTrue(source.contains("id: 'uhf-land-mobile-421', minHz: 421_000_000, maxHz: 429_993_750"));
-        assertTrue(source.contains("originHz: 421_000_000, stepHz: 6_250"));
-        assertTrue(source.contains("id: 'uhf-land-mobile-450', minHz: 450_000_000, maxHz: 511_993_750"));
-        assertTrue(source.contains("originHz: 450_000_000, stepHz: 6_250"));
-        assertTrue(source.contains("originHz: 769_006_250, stepHz: 6_250"));
-        assertTrue(source.contains("originHz: 851_006_250, stepHz: 6_250"));
-        assertTrue(source.contains("originHz: 935_012_500, stepHz: 12_500"));
-        assertTrue(snapper.contains("Math.round((frequencyHz - raster.originHz) / raster.stepHz)"));
-        assertTrue(snapper.contains("source: 'raster'"));
+        assertTrue(source.contains("function decodeSpectrumSnapPresetDocument(value)"));
+        assertTrue(source.contains("'/api/v1/spectrum-snap-presets'"));
+        assertTrue(source.contains("'/api/v1/admin/spectrum-snap-presets'"));
+        assertTrue(snapCandidate.contains("Math.round((frequencyHz - scope.snap.originHz) / scope.snap.stepHz)"));
+        assertTrue(snapCandidate.contains("scope.snap.frequenciesHz.forEach"));
+        assertTrue(snapper.contains("tunerSnapMatches(frequencyHz, scopes)"));
+        assertTrue(snapMatches.contains("smallestSpanHz"));
+        assertTrue(snapMatches.contains("match.scope.maxHz - match.scope.minHz === smallestSpanHz"));
+        assertTrue(visibleScopes.contains("scope.minHz >= viewport.startHz"));
+        assertTrue(visibleScopes.contains("scope.maxHz <= viewport.endHz"));
+        assertTrue(tuner.contains("tuner-spectrum-band-readout"));
+        assertTrue(tuner.contains("tuner-spectrum-scope-layer"));
+        assertTrue(tuner.contains("function renderFrequencyScopes()"));
+        assertTrue(tuner.contains("scope.snap ? ', snap enabled' : ', display only'"));
+        assertTrue(tuner.contains("snapPresetDocument.countryLabel"));
         assertFalse(source.contains("activeToleranceHz"));
         assertFalse(source.contains("activeOverlayRows"));
         assertFalse(source.contains("function tunerSignalCandidates"));

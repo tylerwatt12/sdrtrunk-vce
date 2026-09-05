@@ -92,7 +92,8 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode(), result.error());
-        assertTrue(result.error().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13]"), result.error());
+        assertTrue(result.error().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13, 14]"),
+            result.error());
         assertFalse(result.output().contains("adopt-global-format-marker"));
         assertFalse(result.output().contains("format-1-to-2"));
         assertFalse(result.output().contains("format-2-to-3"));

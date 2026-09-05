@@ -67,10 +67,12 @@ import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.WebSiteSettingsHttpController;
 import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
+import io.github.dsheirer.web.http.SpectrumSnapPresetHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
 import io.github.dsheirer.web.settings.WebSiteSettingsService;
+import io.github.dsheirer.web.settings.SpectrumSnapSettingsService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -177,6 +179,7 @@ public class StatsWebServerService implements AutoCloseable
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final Path mWebAccessDatabasePath;
     private final WebSiteSettingsService mWebSiteSettingsService;
+    private final SpectrumSnapSettingsService mSpectrumSnapSettingsService;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
     private volatile ListenerRuntime mListener;
@@ -256,6 +259,7 @@ public class StatsWebServerService implements AutoCloseable
         mLiveService = new StatsLiveService(channelProcessingManager, entityCatalog);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
         mWebSiteSettingsService = new WebSiteSettingsService(mUserPreferences.getNowPlayingPreference());
+        mSpectrumSnapSettingsService = new SpectrumSnapSettingsService(mWebAccessDatabasePath);
         mTlsMaterialService = new WebTlsMaterialService(
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
         mTlsMaintenanceExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -689,6 +693,13 @@ public class StatsWebServerService implements AutoCloseable
             new WebSiteSettingsHttpController(mWebSiteSettingsService);
         server.createContext(WebSiteSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, siteSettingsController::handle));
+
+        SpectrumSnapPresetHttpController spectrumSnapController =
+            new SpectrumSnapPresetHttpController(mSpectrumSnapSettingsService);
+        server.createContext(SpectrumSnapPresetHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.TUNER_SPECTRUM_VIEW, spectrumSnapController::handleRead));
+        server.createContext(SpectrumSnapPresetHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, spectrumSnapController::handleAdmin));
 
         P25BandplanOverrideHttpController bandplanOverrideController =
             new P25BandplanOverrideHttpController(mUserPreferences.getP25BandplanOverrideRegistry());

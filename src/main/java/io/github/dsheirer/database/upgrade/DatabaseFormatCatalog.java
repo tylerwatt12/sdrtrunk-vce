@@ -31,7 +31,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 13;
+    public static final int CURRENT_VERSION = 14;
 
     private static final String FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
@@ -50,6 +50,7 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_10_FINGERPRINT = FORMAT_9_FINGERPRINT;
     private static final String FORMAT_11_FINGERPRINT = FORMAT_10_FINGERPRINT;
     private static final String FORMAT_12_FINGERPRINT = FORMAT_11_FINGERPRINT;
+    private static final String FORMAT_13_FINGERPRINT = FORMAT_12_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -174,9 +175,15 @@ public final class DatabaseFormatCatalog
         List.of("main format 13"), "src/test/java/io/github/dsheirer/database/upgrade/Format13TestDatabase.java",
         List.of("Preserve existing configuration and add a single bounded setup progress record"));
 
+    private static final FormatDescriptor FORMAT_14 = descriptor(14, "country-spectrum-frequency-scopes-v1",
+        "Receiver-wide country selection for code-owned frequency scopes and snap rules", FORMAT_13_FINGERPRINT,
+        new SubsystemVersions(6, 3, 3, 2, 29, 2, 1), List.of("main format 14"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format14TestDatabase.java",
+        List.of("Preserve all existing configuration and select the United States frequency-scope catalog"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
-            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13);
+            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -292,7 +299,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_13;
+        return FORMAT_14;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -432,6 +439,11 @@ public final class DatabaseFormatCatalog
             try { io.github.dsheirer.gui.setup.SetupProgress.read(connection); }
             catch(SQLException e) { throw new FormatRejectionException("Invalid or missing bounded setup progress"); }
         }
+        if(descriptor.version() >= 14)
+        {
+            try { io.github.dsheirer.web.settings.SpectrumSnapSettings.read(connection); }
+            catch(SQLException e) { throw new FormatRejectionException("Invalid or missing spectrum-snap country selection"); }
+        }
         if(descriptor.version() <= 3)
         {
             requirePositiveMetadata(connection, "p25_call_output_metrics_started_at_ms", descriptor);
@@ -493,7 +505,7 @@ public final class DatabaseFormatCatalog
             case 7 -> 2;
             case 8 -> 3;
             case 9, 10, 11 -> 4;
-            case 12, 13 -> 5;
+            case 12, 13, 14 -> 5;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

@@ -30,7 +30,7 @@ class Format12To13DatabaseMigrationTest
             assertThrows(SQLException.class,()->SetupProgress.read(connection));
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(13,DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(14,DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(before,settings(connection));
             assertTrue(SetupProgress.read(connection).isComplete());
         }
@@ -51,7 +51,7 @@ class Format12To13DatabaseMigrationTest
 
     private String settings(java.sql.Connection connection) throws Exception
     {
-        try(var statement=connection.createStatement(); var rows=statement.executeQuery("SELECT group_concat(key || ':' || settings_json, '|') FROM (SELECT * FROM application_settings WHERE key <> 'setup_wizard' ORDER BY key)"))
+        try(var statement=connection.createStatement(); var rows=statement.executeQuery("SELECT group_concat(key || ':' || settings_json, '|') FROM (SELECT * FROM application_settings WHERE key NOT IN ('setup_wizard', 'spectrum_snap_country') ORDER BY key)"))
         { rows.next(); return rows.getString(1); }
     }
 }

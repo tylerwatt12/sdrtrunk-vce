@@ -51,7 +51,8 @@ omit these newer features until they are deliberately included in that release l
 - **Alias management moves into the website**, including bulk editing, per-list unmatched-talkgroup behavior, observed
   talkgroup discovery, and a RadioReference **Import All** action in JavaFX.
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
-  FFT and waterfall with zoom, smoothing, frequency snapping, and channel flags.
+  FFT and waterfall with zoom, smoothing, nested country-aware band bounds and labels, optional frequency snapping,
+  and channel flags.
 - **Receiver-health alerts are personal to each administrator:** every alert type can be turned on or off for that
   account's header indicator while shared monitoring, measurements, and incident history continue unchanged.
 - **The Java receiver window is deliberately smaller:** Map (when enabled) and Tuners remain, while the old Systems

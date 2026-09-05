@@ -10409,26 +10409,6 @@ const TUNER_SPECTRUM_PROFILES = Object.freeze({
 const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000;
 const TUNER_CHANNEL_MINIMUM_WIDTH_PX = 3.5;
 const TUNER_CHANNEL_MAXIMUM_WIDTH_PX = 14;
-const TUNER_FREQUENCY_RASTERS = Object.freeze([
-  Object.freeze({ id: 'vhf-land-mobile', minHz: 150_000_000, maxHz: 173_997_500,
-    originHz: 150_000_000, stepHz: 2_500, label: 'VHF land mobile' }),
-  Object.freeze({ id: 'uhf-land-mobile-421', minHz: 421_000_000, maxHz: 429_993_750,
-    originHz: 421_000_000, stepHz: 6_250, label: 'UHF land mobile' }),
-  Object.freeze({ id: 'uhf-land-mobile-450', minHz: 450_000_000, maxHz: 511_993_750,
-    originHz: 450_000_000, stepHz: 6_250, label: 'UHF land mobile' }),
-  Object.freeze({ id: '700-base', minHz: 769_006_250, maxHz: 774_993_750,
-    originHz: 769_006_250, stepHz: 6_250, label: '700 MHz base' }),
-  Object.freeze({ id: '700-mobile', minHz: 799_006_250, maxHz: 804_993_750,
-    originHz: 799_006_250, stepHz: 6_250, label: '700 MHz mobile' }),
-  Object.freeze({ id: '800-mobile', minHz: 806_006_250, maxHz: 823_993_750,
-    originHz: 806_006_250, stepHz: 6_250, label: '800 MHz mobile' }),
-  Object.freeze({ id: '800-base', minHz: 851_006_250, maxHz: 868_993_750,
-    originHz: 851_006_250, stepHz: 6_250, label: '800 MHz base' }),
-  Object.freeze({ id: '900-mobile', minHz: 896_012_500, maxHz: 900_987_500,
-    originHz: 896_012_500, stepHz: 12_500, label: '900 MHz mobile' }),
-  Object.freeze({ id: '900-base', minHz: 935_012_500, maxHz: 939_987_500,
-    originHz: 935_012_500, stepHz: 12_500, label: '900 MHz base' })
-]);
 const TUNER_ACTIVITY_PRIORITY = Object.freeze({
   ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2, IDLE: 1
 });
@@ -10755,17 +10735,112 @@ function tunerBinAtFrequency(domain, frequencyHz) {
   return lower;
 }
 
-function tunerSnapFrequency(frequencyHz) {
-  if (!Number.isFinite(Number(frequencyHz))) return null;
-  const raster = TUNER_FREQUENCY_RASTERS.find((candidate) =>
-    frequencyHz >= candidate.minHz && frequencyHz <= candidate.maxHz);
-  if (!raster) return null;
-  const snappedHz = raster.originHz + Math.round((frequencyHz - raster.originHz) / raster.stepHz) * raster.stepHz;
-  if (snappedHz < raster.minHz || snappedHz > raster.maxHz) return null;
-  return { source: 'raster', frequencyHz: snappedHz, raster, label: raster.label };
+function decodeSpectrumSnapPresetDocument(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      !Number.isInteger(value.revision) || value.revision < 1 ||
+      typeof value.country_code !== 'string' || !value.country_code ||
+      typeof value.country_label !== 'string' || !value.country_label ||
+      !Array.isArray(value.countries) || !Array.isArray(value.scopes)) {
+    throw new Error('The server returned invalid spectrum snap presets.');
+  }
+  const countries = value.countries.map((country) => {
+    if (!country || typeof country.code !== 'string' || !country.code ||
+        typeof country.label !== 'string' || !country.label) throw new Error('Invalid spectrum snap country.');
+    return Object.freeze({ code: country.code, label: country.label });
+  });
+  const scopes = value.scopes.map((scope) => {
+    if (!scope || typeof scope.id !== 'string' || !scope.id ||
+        typeof scope.label !== 'string' || !scope.label ||
+        !Number.isSafeInteger(scope.min_hz) || !Number.isSafeInteger(scope.max_hz) ||
+        scope.min_hz <= 0 || scope.max_hz < scope.min_hz) {
+      throw new Error('Invalid spectrum frequency scope.');
+    }
+    let snap = null;
+    if (scope.snap !== null && scope.snap !== undefined) {
+      const kind = String(scope.snap?.kind || '');
+      const frequenciesHz = Array.isArray(scope.snap?.frequencies_hz) ?
+        scope.snap.frequencies_hz.map(Number) : [];
+      if (!['RASTER', 'CHANNELS'].includes(kind) ||
+          !Number.isSafeInteger(scope.snap.origin_hz) || !Number.isSafeInteger(scope.snap.step_hz) ||
+          !Number.isSafeInteger(scope.snap.match_tolerance_hz) ||
+          !frequenciesHz.every((frequency) => Number.isSafeInteger(frequency) && frequency > 0) ||
+          (kind === 'RASTER' && (scope.snap.origin_hz <= 0 || scope.snap.step_hz <= 0 ||
+            scope.snap.match_tolerance_hz !== 0 || frequenciesHz.length)) ||
+          (kind === 'CHANNELS' && (scope.snap.origin_hz !== 0 || scope.snap.step_hz !== 0 ||
+            scope.snap.match_tolerance_hz <= 0 || !frequenciesHz.length))) {
+        throw new Error('Invalid spectrum frequency snap rule.');
+      }
+      snap = Object.freeze({ kind, originHz: scope.snap.origin_hz, stepHz: scope.snap.step_hz,
+        matchToleranceHz: scope.snap.match_tolerance_hz, frequenciesHz: Object.freeze(frequenciesHz) });
+    }
+    return Object.freeze({ id: scope.id, label: scope.label,
+      minHz: scope.min_hz, maxHz: scope.max_hz, snap });
+  });
+  if (!countries.some((country) => country.code === value.country_code)) {
+    throw new Error('The active spectrum snap country is unavailable.');
+  }
+  return Object.freeze({ revision: value.revision, countryCode: value.country_code,
+    countryLabel: value.country_label, countries: Object.freeze(countries), scopes: Object.freeze(scopes) });
 }
 
-function tunerSpectrumPanel() {
+function tunerScopeSnapCandidate(scope, frequencyHz) {
+  if (!scope?.snap || !Number.isFinite(Number(frequencyHz))) return null;
+  if (scope.snap.kind === 'RASTER') {
+    if (frequencyHz < scope.minHz || frequencyHz > scope.maxHz) return null;
+    const snappedHz = scope.snap.originHz +
+      Math.round((frequencyHz - scope.snap.originHz) / scope.snap.stepHz) * scope.snap.stepHz;
+    return snappedHz < scope.minHz || snappedHz > scope.maxHz ? null : snappedHz;
+  }
+  if (frequencyHz < scope.minHz - scope.snap.matchToleranceHz ||
+      frequencyHz > scope.maxHz + scope.snap.matchToleranceHz) return null;
+  let nearestHz = null;
+  let distanceHz = Number.POSITIVE_INFINITY;
+  scope.snap.frequenciesHz.forEach((candidateHz) => {
+    const candidateDistance = Math.abs(candidateHz - frequencyHz);
+    if (candidateDistance < distanceHz) {
+      nearestHz = candidateHz;
+      distanceHz = candidateDistance;
+    }
+  });
+  return distanceHz <= scope.snap.matchToleranceHz ? nearestHz : null;
+}
+
+function tunerSnapMatches(frequencyHz, scopes) {
+  const matches = (scopes || []).map((scope) => ({
+    scope, frequencyHz: tunerScopeSnapCandidate(scope, frequencyHz)
+  })).filter((match) => match.frequencyHz !== null);
+  if (!matches.length) return [];
+  const smallestSpanHz = Math.min(...matches.map((match) => match.scope.maxHz - match.scope.minHz));
+  return matches.filter((match) => match.scope.maxHz - match.scope.minHz === smallestSpanHz);
+}
+
+function tunerSnapFrequency(frequencyHz, scopes = []) {
+  if (!Number.isFinite(Number(frequencyHz))) return null;
+  const matches = tunerSnapMatches(frequencyHz, scopes);
+  if (!matches.length) return null;
+  matches.sort((left, right) => Math.abs(left.frequencyHz - frequencyHz) -
+    Math.abs(right.frequencyHz - frequencyHz));
+  const selected = matches[0];
+  return { source: selected.scope.snap.kind.toLowerCase(), frequencyHz: selected.frequencyHz,
+    scope: selected.scope, label: selected.scope.label };
+}
+
+function tunerFrequencyScopes(frequencyHz, scopes = []) {
+  if (!Number.isFinite(Number(frequencyHz))) return [];
+  return scopes.filter((scope) => frequencyHz >= scope.minHz && frequencyHz <= scope.maxHz)
+    .sort((left, right) => (left.maxHz - left.minHz) - (right.maxHz - right.minHz) ||
+      left.minHz - right.minHz || left.label.localeCompare(right.label));
+}
+
+function tunerVisibleScopes(viewport, scopes = []) {
+  if (!viewport || !(viewport.endHz > viewport.startHz)) return [];
+  return scopes.filter((scope) => scope.minHz >= viewport.startHz && scope.maxHz <= viewport.endHz)
+    .sort((left, right) => (right.maxHz - right.minHz) - (left.maxHz - left.minHz) ||
+      left.minHz - right.minHz || left.label.localeCompare(right.label));
+}
+
+function tunerSpectrumPanel(snapPresetDocument) {
+  const frequencyScopes = snapPresetDocument?.scopes || [];
   const layout = node('div', 'tuner-spectrum-layout');
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
@@ -10950,6 +11025,13 @@ function tunerSpectrumPanel() {
   };
   const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
   const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
+  const bandReadout = node('div', 'tuner-spectrum-band-readout');
+  bandReadout.setAttribute('aria-live', 'polite');
+  spectrum.card.append(bandReadout);
+  const waterfallScopeLayer = node('div', 'tuner-spectrum-scope-layer');
+  waterfallScopeLayer.setAttribute('role', 'img');
+  waterfallScopeLayer.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency scopes`);
+  waterfall.host.insertBefore(waterfallScopeLayer, waterfall.guide);
   const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
   const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags');
   waterfallActiveFlags.hidden = true;
@@ -11021,6 +11103,60 @@ function tunerSpectrumPanel() {
   let retainedWaterfallRows = 0;
   let readoutTimer = null;
   let lastReadoutAt = 0;
+  let frequencyScopeSignature = '';
+
+  function formatScopeFrequency(frequencyHz) {
+    const megahertz = frequencyHz / 1_000_000;
+    return `${megahertz.toFixed(megahertz >= 100 ? 3 : 4).replace(/\.0+$/, '')} MHz`;
+  }
+
+  function renderFrequencyScopes() {
+    const visibleScopes = tunerVisibleScopes(viewport, frequencyScopes);
+    const signature = JSON.stringify([viewport?.startHz, viewport?.endHz,
+      visibleScopes.map((scope) => scope.id)]);
+    if (signature === frequencyScopeSignature) return;
+    frequencyScopeSignature = signature;
+    if (!viewport || !visibleScopes.length) {
+      waterfallScopeLayer.hidden = true;
+      waterfallScopeLayer.replaceChildren();
+      return;
+    }
+    waterfallScopeLayer.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency scopes: ${
+      visibleScopes.map((scope) => `${scope.label}, ${formatScopeFrequency(scope.minHz)} to ${
+        formatScopeFrequency(scope.maxHz)}`).join('; ')}`);
+    const spanHz = viewport.endHz - viewport.startHz;
+    const rows = visibleScopes.map((scope, index) => {
+      const marker = node('div', 'tuner-spectrum-scope');
+      const start = formatScopeFrequency(scope.minHz);
+      const end = formatScopeFrequency(scope.maxHz);
+      marker.style.left = `${((scope.minHz - viewport.startHz) / spanHz * 100).toFixed(4)}%`;
+      marker.style.width = `${((scope.maxHz - scope.minHz) / spanHz * 100).toFixed(4)}%`;
+      marker.style.bottom = `${index * 22}px`;
+      marker.setAttribute('aria-label', `${scope.label}, ${start} to ${end}${
+        scope.snap ? ', snap enabled' : ', display only'}`);
+      marker.title = `${scope.label} · ${start}–${end}${scope.snap ? '' : ' · display only'}`;
+      marker.append(node('span', 'tuner-spectrum-scope-bound', start),
+        node('span', 'tuner-spectrum-scope-label', scope.label),
+        node('span', 'tuner-spectrum-scope-bound', end));
+      return marker;
+    });
+    waterfallScopeLayer.style.height = `${visibleScopes.length * 22}px`;
+    waterfallScopeLayer.hidden = false;
+    waterfallScopeLayer.replaceChildren(...rows);
+  }
+
+  function updateBandReadout(frequencyHz = null) {
+    const selectedHz = Number.isFinite(Number(frequencyHz)) ? Number(frequencyHz) :
+      (viewport ? (viewport.startHz + viewport.endHz) / 2 : null);
+    const scopes = selectedHz === null ? [] : tunerFrequencyScopes(selectedHz, frequencyScopes);
+    const labels = [...new Set(scopes.map((scope) => scope.label))];
+    bandReadout.textContent = labels.length ?
+      `${snapPresetDocument.countryLabel} · ${labels.join(' / ')}` :
+      `${snapPresetDocument.countryLabel} · No frequency scope`;
+    bandReadout.title = labels.length ? `Frequency scopes: ${labels.join(' / ')}` :
+      'No frequency scope covers the selected frequency.';
+    renderFrequencyScopes();
+  }
 
   const controller = {
     element: layout,
@@ -11498,6 +11634,7 @@ function tunerSpectrumPanel() {
       const changed = fullViewport && !sameViewport(fullViewport, nextFull);
       fullViewport = nextFull;
       if (!viewport || changed) viewport = { ...nextFull };
+      updateBandReadout();
       if (changed) {
         analysisViewport = null;
         waterfallHistoryRows.length = 0;
@@ -11744,6 +11881,7 @@ function tunerSpectrumPanel() {
     const previous = viewport;
     transformPlots(previous, nextViewport);
     viewport = nextViewport;
+    updateBandReadout();
     setRefining(true);
     setReadouts(true);
     renderActiveChannels();
@@ -11782,7 +11920,7 @@ function tunerSpectrumPanel() {
     if (!(rect.width > 0)) return null;
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const rawFrequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
-    const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz) : null;
+    const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz, frequencyScopes) : null;
     const target = targetsById.get(selectedTargetId());
     return Object.freeze({
       targetId: selectedTargetId(),
@@ -11832,9 +11970,10 @@ function tunerSpectrumPanel() {
     const spanHz = viewport.endHz - viewport.startHz;
     const pointerHz = viewport.startHz + ratio * spanHz;
     const viewingHistory = hoverCanvas === waterfall.canvas;
-    const snap = snapInput.checked ? tunerSnapFrequency(pointerHz) : null;
+    const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null;
     const displayHz = snap?.frequencyHz ?? pointerHz;
     setCursorGuide(displayHz);
+    updateBandReadout(pointerHz);
 
     cursorFrequency.textContent = `${(displayHz / 1_000_000).toFixed(6)} MHz`;
     cursorSnap.hidden = true;
@@ -11903,6 +12042,7 @@ function tunerSpectrumPanel() {
     spectrum.guide.hidden = true;
     waterfall.guide.hidden = true;
     cursorPopup.hidden = true;
+    updateBandReadout();
   }
 
   function cancelDrag(releaseCapture = true) {
@@ -12280,6 +12420,7 @@ function tunerSpectrumPanel() {
       viewport = null;
       analysisViewport = null;
     }
+    updateBandReadout();
   }
 
   targetSelect.addEventListener('change', () => {
@@ -12386,6 +12527,7 @@ function tunerSpectrumPanel() {
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
   resetPlots('Loading tuners…');
+  updateBandReadout();
 
   api('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed) return;
@@ -13256,9 +13398,37 @@ async function renderLive() {
   beginPage(renderContext, split);
 }
 
+async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-presets', method = 'GET',
+    countryCode = null, revision = null) {
+  const headers = { Accept: 'application/json' };
+  const options = { method, headers };
+  if (method === 'PUT') {
+    if (!Number.isInteger(revision) || revision < 1) throw new Error('Spectrum snap settings must be loaded before saving.');
+    headers['Content-Type'] = 'application/json';
+    headers['If-Match'] = `"${revision}"`;
+    options.body = JSON.stringify({ country_code: countryCode });
+  }
+  const response = await jsonDocumentFetch(path, options);
+  let value = null;
+  try { value = await response.json(); } catch (_) { }
+  if (!response.ok) {
+    const failure = value?.error && typeof value.error === 'object' ? value.error : null;
+    const error = new Error(failure?.message || 'Spectrum snap presets could not be loaded.');
+    error.status = response.status;
+    error.code = failure?.code || 'spectrum_snap_settings_failed';
+    if (response.status === 409) {
+      try { error.current = decodeSpectrumSnapPresetDocument(value); } catch (_) { }
+    }
+    throw error;
+  }
+  return decodeSpectrumSnapPresetDocument(value);
+}
+
 async function renderTunerSpectrum() {
   const renderContext = captureRenderContext();
-  const spectrum = tunerSpectrumPanel();
+  const snapPresetDocument = await requestSpectrumSnapPresetDocument();
+  if (!renderIsCurrent(renderContext)) return;
+  const spectrum = tunerSpectrumPanel(snapPresetDocument);
   pageConnections.add(spectrum);
   beginPage(renderContext, pageHeader('Tuner Spectrum',
     'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
@@ -15330,7 +15500,80 @@ async function renderSiteSettings() {
   const renderContext = captureRenderContext();
   await renderAdminSiteBehaviorSettings();
   if (!renderIsCurrent(renderContext)) return;
+  await renderAdminSpectrumSnapSettings();
+  if (!renderIsCurrent(renderContext)) return;
   await renderAdminRadioReferenceSettings();
+}
+
+async function renderAdminSpectrumSnapSettings() {
+  const body = node('div', 'admin-section-body spectrum-snap-settings');
+  const form = node('form', 'admin-form settings-page-form');
+  const country = node('select');
+  country.required = true;
+  country.disabled = true;
+  country.append(node('option', '', 'Loading countries…'));
+  const message = node('div', 'admin-form-message', 'Loading spectrum snap settings…');
+  message.setAttribute('role', 'status');
+  const save = node('button', '', 'Save Spectrum Country');
+  save.type = 'submit';
+  save.disabled = true;
+  const actions = node('div', 'admin-form-actions');
+  actions.append(save);
+  const presetSummary = node('p', 'settings-card-description');
+  const card = settingsCard('Country frequency scopes',
+    'Select the regulatory catalog used for waterfall bounds, band labels, and optional cursor snapping.',
+    formField('Country', country,
+      'The selected catalog applies receiver-wide. Only the United States catalog is currently bundled.'),
+    presetSummary);
+  const footer = node('div', 'settings-form-footer');
+  footer.append(message, actions);
+  form.append(settingsCardGrid(card), footer);
+  body.append(form);
+  content.append(section('Spectrum frequency scopes', body));
+
+  let confirmed = null;
+  const apply = (documentValue) => {
+    confirmed = documentValue;
+    country.replaceChildren(...documentValue.countries.map((item) => {
+      const option = node('option', '', item.label);
+      option.value = item.code;
+      return option;
+    }));
+    country.value = documentValue.countryCode;
+    const snapping = documentValue.scopes.filter((scope) => scope.snap).length;
+    presetSummary.textContent = `${number(documentValue.scopes.length)} frequency scopes are available for ${
+      documentValue.countryLabel}; ${number(snapping)} include snap rules.`;
+    country.disabled = false;
+    save.disabled = true;
+  };
+  country.addEventListener('change', () => {
+    save.disabled = !confirmed || country.value === confirmed.countryCode;
+    message.textContent = save.disabled ? 'Spectrum snap country is unchanged.' :
+      'Save to apply this spectrum snap country to every user.';
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!confirmed || !form.reportValidity() || save.disabled) return;
+    country.disabled = true;
+    save.disabled = true;
+    message.textContent = 'Saving spectrum snap country…';
+    try {
+      apply(await requestSpectrumSnapPresetDocument('/api/v1/admin/spectrum-snap-presets', 'PUT',
+        country.value, confirmed.revision));
+      message.textContent = 'Spectrum snap country saved.';
+    } catch (error) {
+      if (error.current) apply(error.current);
+      message.textContent = error.message;
+      country.disabled = false;
+      save.disabled = !confirmed || country.value === confirmed.countryCode;
+    }
+  });
+  try {
+    apply(await requestSpectrumSnapPresetDocument('/api/v1/admin/spectrum-snap-presets'));
+    message.textContent = 'Spectrum snap country loaded.';
+  } catch (error) {
+    message.textContent = error.message;
+  }
 }
 
 function decodeSiteSettingsEnvelope(value) {

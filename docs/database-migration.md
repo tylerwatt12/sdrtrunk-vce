@@ -73,7 +73,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -178,6 +178,15 @@ whether required setup work remains. New databases begin incomplete. Copy import
 destination before validation/promotion, without changing the selected source. The record never stores credential
 drafts, hardware inventories, benchmark data, or transcripts. Its absence or malformed contents in format 13 are
 validation errors, not permission for startup to repair the database.
+
+Format 14 adds one bounded `spectrum_snap_country` record in `application_settings`. Existing profiles are assigned
+the `US` catalog explicitly; the step preserves every other setting and all receiver configuration. The country is
+administrator-owned configuration with one row for the lifetime of the profile. Built-in regulatory scopes and their
+optional snap rules remain
+code-owned rather than copied into mutable database rows, so adding or correcting a shipped country catalog does not
+create append-only storage or require pruning. The website reads the selected catalog once when opening the tuner
+spectrum or its administration form; both queries are primary-key lookups through `application_settings`. Missing,
+malformed, or unsupported country selections in format 14 are validation errors and are never repaired at startup.
 
 ## Schema-Change Rule
 

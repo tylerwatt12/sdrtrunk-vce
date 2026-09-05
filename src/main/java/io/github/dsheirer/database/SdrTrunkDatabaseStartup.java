@@ -16,6 +16,7 @@ import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.web.settings.SpectrumSnapSettings;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,6 +61,7 @@ public final class SdrTrunkDatabaseStartup
             InitialAdminSetup.markRequired(connection);
             io.github.dsheirer.gui.setup.SetupProgress.write(connection,
                 new io.github.dsheirer.gui.setup.SetupProgress(false, false));
+            SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
             //The whole-file marker is authoritative only after every current schema, seed row, and required
             //fresh-profile marker has been installed successfully.
             DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);

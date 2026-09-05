@@ -76,7 +76,7 @@ class StatsWebFrequencyActionsUiContractTest
     void searchesRadioReferenceServerSideFromOneFutureProofFrequencyActionModal() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String tuner = block(source, "function tunerSpectrumPanel()");
+        String tuner = block(source, "function tunerSpectrumPanel(snapPresetDocument)");
         String actions = block(source, "function openTunerFrequencyActions(selection)");
         String results = block(source, "function radioReferenceResultView(");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");

@@ -202,7 +202,8 @@ class Format11To12DatabaseMigrationTest
             """))
         {
             while(rows.next()) queries.add("SELECT * FROM \"" + rows.getString(1).replace("\"", "\"\"") + "\"" +
-                ("application_settings".equals(rows.getString(1)) ? " WHERE key <> 'setup_wizard'" : ""));
+                ("application_settings".equals(rows.getString(1)) ?
+                    " WHERE key NOT IN ('setup_wizard','spectrum_snap_country')" : ""));
         }
         queries.add("""
             SELECT id, username, tier, primary_admin, credential_version, password_algorithm, password_iterations,

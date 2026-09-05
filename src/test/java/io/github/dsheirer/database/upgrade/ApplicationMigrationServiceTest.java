@@ -306,7 +306,10 @@ class ApplicationMigrationServiceTest
             statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
             statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
             assertEquals(1, statement.executeUpdate());
-            try(var remove = connection.createStatement()) { remove.executeUpdate("DELETE FROM application_settings WHERE key='setup_wizard'"); }
+            try(var remove = connection.createStatement())
+            {
+                remove.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
+            }
         }
 
         IOException exception = assertThrows(IOException.class,
@@ -474,7 +477,10 @@ class ApplicationMigrationServiceTest
                     statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
                     statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
                     assertEquals(1, statement.executeUpdate());
-            try(var remove = connection.createStatement()) { remove.executeUpdate("DELETE FROM application_settings WHERE key='setup_wizard'"); }
+                    try(var remove = connection.createStatement())
+                    {
+                        remove.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
+                    }
                 }
             },
             (staged, source, target) ->
@@ -507,7 +513,10 @@ class ApplicationMigrationServiceTest
             statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
             statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
             assertEquals(1, statement.executeUpdate());
-            try(var remove = connection.createStatement()) { remove.executeUpdate("DELETE FROM application_settings WHERE key='setup_wizard'"); }
+            try(var remove = connection.createStatement())
+            {
+                remove.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
+            }
         }
 
         Path targetRoot = mTemporaryFolder.resolve("approved-plan-target");
