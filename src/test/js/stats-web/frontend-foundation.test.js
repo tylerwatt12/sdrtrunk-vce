@@ -700,9 +700,9 @@ async function main() {
     'dmr:tier3:small:0', 'dmr:tier3:small:127',
     'dmr:tier3:large:0', 'dmr:tier3:large:15',
     'dmr:tier3:huge:0', 'dmr:tier3:huge:3',
-    'nxdn-c:global:0', 'nxdn-c:global:1023',
-    'nxdn-c:regional:0', 'nxdn-c:regional:16383',
-    'nxdn-c:local:0', 'nxdn-c:local:131071',
+    'nxdn-c:global:1', 'nxdn-c:global:1022',
+    'nxdn-c:regional:1', 'nxdn-c:regional:16382',
+    'nxdn-c:local:1', 'nxdn-c:local:131070',
     `nxdn-c:channel:${channelUuid}`, `nxdn-d:channel:${channelUuid}`
   ];
   for (const systemKey of canonicalRadioSystemKeys) {
@@ -727,9 +727,9 @@ async function main() {
     'dmr:tier3:tiny:999999999999999999999999999999999999',
     'dmr:tier3:tiny:512', 'dmr:tier3:small:128', 'dmr:tier3:large:16',
     'dmr:tier3:huge:4', 'dmr:tier3:tiny:1:extra',
-    'nxdn-c:GLOBAL:1', 'nxdn-c:reserved:1', 'nxdn-c:global:-1',
+    'nxdn-c:GLOBAL:1', 'nxdn-c:reserved:1', 'nxdn-c:global:0', 'nxdn-c:global:-1',
     'nxdn-c:global:-0', 'nxdn-c:global:+1', 'nxdn-c:global:01',
-    'nxdn-c:global:1024', 'nxdn-c:regional:16384', 'nxdn-c:local:131072',
+    'nxdn-c:global:1023', 'nxdn-c:regional:16383', 'nxdn-c:local:131071',
     'nxdn-c:local:999999999999999999999999999999999999',
     'nxdn-d:global:1', `nxdn-c:channel:${channelUuid.toUpperCase()}`,
     `nxdn-d:channel:${channelUuid.toUpperCase()}`, `nxdn:channel:${channelUuid}`,

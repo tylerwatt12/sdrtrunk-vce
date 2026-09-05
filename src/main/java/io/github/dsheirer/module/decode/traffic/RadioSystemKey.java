@@ -21,7 +21,7 @@ public final class RadioSystemKey
     private static final Pattern DMR_TIER_3_KEY = Pattern.compile(
         "dmr:tier3:(tiny|small|large|huge):(0|[1-9][0-9]*)");
     private static final Pattern NXDN_TYPE_C_KEY = Pattern.compile(
-        "nxdn-c:(global|regional|local):(0|[1-9][0-9]*)");
+        "nxdn-c:(global|regional|local):([1-9][0-9]*)");
 
     private RadioSystemKey()
     {
@@ -63,7 +63,7 @@ public final class RadioSystemKey
         String canonicalCategory = canonicalToken(locationCategory);
         int maximum = nxdnSystemMaximum(canonicalCategory);
 
-        return system != null && system >= 0 && system <= maximum ?
+        return system != null && system >= 1 && system <= maximum ?
             "nxdn-c:" + canonicalCategory + ':' + system : null;
     }
 

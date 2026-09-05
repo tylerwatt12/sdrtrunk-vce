@@ -41,10 +41,10 @@
       const maximum = { tiny: 511, small: 127, large: 15, huge: 3 }[dmr[1]];
       return Number.isSafeInteger(network) && network <= maximum ? value : '';
     }
-    const nxdn = /^nxdn-c:(global|regional|local):(0|[1-9][0-9]*)$/.exec(value);
+    const nxdn = /^nxdn-c:(global|regional|local):([1-9][0-9]*)$/.exec(value);
     if (nxdn) {
       const system = Number(nxdn[2]);
-      const maximum = { global: 1023, regional: 16383, local: 131071 }[nxdn[1]];
+      const maximum = { global: 1022, regional: 16382, local: 131070 }[nxdn[1]];
       return Number.isSafeInteger(system) && system <= maximum ? value : '';
     }
     return '';

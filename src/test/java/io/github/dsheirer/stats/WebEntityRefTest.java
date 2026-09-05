@@ -30,8 +30,8 @@ class WebEntityRefTest
             WebEntityRef.radioSystem("p25:bee00:49f").toMap());
         assertEquals(Map.of("kind", "radio_system", "key", "dmr:tier3:tiny:511"),
             WebEntityRef.radioSystem("dmr:tier3:tiny:511").toMap());
-        assertEquals(Map.of("kind", "radio_system", "key", "nxdn-c:regional:16383"),
-            WebEntityRef.radioSystem("nxdn-c:regional:16383").toMap());
+        assertEquals(Map.of("kind", "radio_system", "key", "nxdn-c:regional:16382"),
+            WebEntityRef.radioSystem("nxdn-c:regional:16382").toMap());
         assertEquals(Map.of("kind", "channel", "key", CHANNEL_ID),
             WebEntityRef.channel(CHANNEL_ID).toMap());
         assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "dmr:channel:" + CHANNEL_ID,
@@ -52,7 +52,7 @@ class WebEntityRefTest
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("p25:bee00:49f "));
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("p25:bee00:49F"));
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("dmr:tier3:tiny:512"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("nxdn-c:global:1024"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem("nxdn-c:global:1023"));
         assertThrows(IllegalArgumentException.class,
             () -> WebEntityRef.radioSystem("dmr:channel:728D2D66-DE4E-476B-A696-919F32DD4D12"));
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("not-a-channel-uuid"));

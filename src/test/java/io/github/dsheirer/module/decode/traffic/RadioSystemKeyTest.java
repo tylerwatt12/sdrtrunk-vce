@@ -84,22 +84,22 @@ class RadioSystemKeyTest
     @Test
     void createsNativeNxdnTypeCKeysAtEachCategoryBoundary()
     {
-        assertEquals("nxdn-c:global:0", RadioSystemKey.nxdnTypeC("GLOBAL", 0));
-        assertEquals("nxdn-c:global:1023", RadioSystemKey.nxdnTypeC("global", 1023));
-        assertEquals("nxdn-c:regional:0", RadioSystemKey.nxdnTypeC("REGIONAL", 0));
-        assertEquals("nxdn-c:regional:16383", RadioSystemKey.nxdnTypeC("REGIONAL", 16383));
-        assertEquals("nxdn-c:local:0", RadioSystemKey.nxdnTypeC("LOCAL", 0));
-        assertEquals("nxdn-c:local:131071", RadioSystemKey.nxdnTypeC("LOCAL", 131071));
+        assertEquals("nxdn-c:global:1", RadioSystemKey.nxdnTypeC("GLOBAL", 1));
+        assertEquals("nxdn-c:global:1022", RadioSystemKey.nxdnTypeC("global", 1022));
+        assertEquals("nxdn-c:regional:1", RadioSystemKey.nxdnTypeC("REGIONAL", 1));
+        assertEquals("nxdn-c:regional:16382", RadioSystemKey.nxdnTypeC("REGIONAL", 16382));
+        assertEquals("nxdn-c:local:1", RadioSystemKey.nxdnTypeC("LOCAL", 1));
+        assertEquals("nxdn-c:local:131070", RadioSystemKey.nxdnTypeC("LOCAL", 131070));
 
         assertNull(RadioSystemKey.nxdnTypeC(null, 1));
         assertNull(RadioSystemKey.nxdnTypeC("", 1));
         assertNull(RadioSystemKey.nxdnTypeC("GLOBAL ", 1));
         assertNull(RadioSystemKey.nxdnTypeC("TYPE_D", 1));
         assertNull(RadioSystemKey.nxdnTypeC("GLOBAL", null));
-        assertNull(RadioSystemKey.nxdnTypeC("GLOBAL", -1));
-        assertNull(RadioSystemKey.nxdnTypeC("GLOBAL", 1024));
-        assertNull(RadioSystemKey.nxdnTypeC("REGIONAL", 16384));
-        assertNull(RadioSystemKey.nxdnTypeC("LOCAL", 131072));
+        assertNull(RadioSystemKey.nxdnTypeC("GLOBAL", 0));
+        assertNull(RadioSystemKey.nxdnTypeC("GLOBAL", 1023));
+        assertNull(RadioSystemKey.nxdnTypeC("REGIONAL", 16383));
+        assertNull(RadioSystemKey.nxdnTypeC("LOCAL", 131071));
     }
 
     @Test
@@ -114,10 +114,10 @@ class RadioSystemKeyTest
             "dmr:tier3:small:127",
             "dmr:tier3:large:15",
             "dmr:tier3:huge:3",
-            "nxdn-c:global:0",
-            "nxdn-c:global:1023",
-            "nxdn-c:regional:16383",
-            "nxdn-c:local:131071",
+            "nxdn-c:global:1",
+            "nxdn-c:global:1022",
+            "nxdn-c:regional:16382",
+            "nxdn-c:local:131070",
             "nxdn-c:channel:" + CHANNEL_ID,
             "nxdn-d:channel:" + CHANNEL_ID))
         {
@@ -166,14 +166,15 @@ class RadioSystemKeyTest
             "dmr:tier3:huge:4",
             "nxdn-c:GLOBAL:1",
             "nxdn-c:wide:1",
+            "nxdn-c:global:0",
             "nxdn-c:global:-1",
             "nxdn-c:global:+1",
             "nxdn-c:global:01",
             "nxdn-c:global:1.0",
             "nxdn-c:local:999999999999999999999999999999999999",
-            "nxdn-c:global:1024",
-            "nxdn-c:regional:16384",
-            "nxdn-c:local:131072",
+            "nxdn-c:global:1023",
+            "nxdn-c:regional:16383",
+            "nxdn-c:local:131071",
             "nxdn-d:global:1",
             "nxdn-c:channel:" + upperUuid,
             "nxdn-d:channel:" + upperUuid,
