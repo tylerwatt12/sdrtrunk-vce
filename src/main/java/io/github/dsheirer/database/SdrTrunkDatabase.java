@@ -79,6 +79,19 @@ public final class SdrTrunkDatabase
         }
     }
 
+    /**
+     * Commits and completes a caller-owned one-shot write transaction.
+     *
+     * <p>The SQLite JDBC driver's {@link Connection#commit()} immediately starts another transaction using the
+     * configured transaction mode.  For an {@link SQLiteConfig.TransactionMode#IMMEDIATE} connection that would
+     * reserve the database writer again after the intended write is already durable.  Returning to auto-commit mode
+     * commits without opening that replacement transaction.</p>
+     */
+    public static void commitWriteTransaction(Connection connection) throws SQLException
+    {
+        connection.setAutoCommit(true);
+    }
+
     private static void requireDatabase(Path databasePath) throws IOException
     {
         if(!java.nio.file.Files.isRegularFile(databasePath))

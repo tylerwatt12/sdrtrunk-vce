@@ -2141,7 +2141,7 @@ class ReceiverActivityServiceLifecycleTest
         {
             new ConfigurationDatabaseStore(database).replace(connection,
                 new ChannelAndBroadcastConfiguration(List.of(channels), List.of()));
-            connection.commit();
+            SdrTrunkDatabase.commitWriteTransaction(connection);
         }
     }
 

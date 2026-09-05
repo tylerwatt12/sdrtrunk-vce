@@ -258,7 +258,7 @@ public final class ConfigurationRepository
             try
             {
                 T result = operation.apply(connection);
-                connection.commit();
+                SdrTrunkDatabase.commitWriteTransaction(connection);
                 return result;
             }
             catch(IOException | SQLException | RuntimeException | Error exception)

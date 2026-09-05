@@ -26,6 +26,10 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteConfig;
@@ -52,6 +56,47 @@ class SdrTrunkDatabaseStartupTest
                 scalar(statement, "PRAGMA busy_timeout"));
             assertEquals("1", scalar(statement, "PRAGMA foreign_keys"));
             connection.rollback();
+        }
+    }
+
+    @Test
+    void completedImmediateWriteDoesNotReserveTheWriterAgain() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("completed-immediate-write.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try(Connection first = SdrTrunkDatabase.openWriteTransaction(database);
+            Statement firstStatement = first.createStatement())
+        {
+            firstStatement.executeUpdate("""
+                UPDATE database_metadata
+                SET updated_at_ms = updated_at_ms + 1
+                WHERE key = 'database_format_version'
+                """);
+            SdrTrunkDatabase.commitWriteTransaction(first);
+            assertTrue(first.getAutoCommit());
+
+            Future<?> competingWriter = executor.submit(() ->
+            {
+                try(Connection second = SdrTrunkDatabase.open(database);
+                    Statement secondStatement = second.createStatement())
+                {
+                    secondStatement.execute("PRAGMA busy_timeout=0");
+                    secondStatement.executeUpdate("""
+                        UPDATE database_metadata
+                        SET updated_at_ms = updated_at_ms + 1
+                        WHERE key = 'database_format_version'
+                        """);
+                }
+                return null;
+            });
+
+            competingWriter.get(2, TimeUnit.SECONDS);
+        }
+        finally
+        {
+            executor.shutdownNow();
         }
     }
 
