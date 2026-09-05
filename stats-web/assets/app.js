@@ -11060,18 +11060,31 @@ function tunerSnapFrequency(frequencyHz, scopes = []) {
     scope: selected.scope, label: selected.scope.label };
 }
 
-function tunerFrequencyScopes(frequencyHz, scopes = []) {
-  if (!Number.isFinite(Number(frequencyHz))) return [];
-  return scopes.filter((scope) => frequencyHz >= scope.minHz && frequencyHz <= scope.maxHz)
-    .sort((left, right) => (left.maxHz - left.minHz) - (right.maxHz - right.minHz) ||
-      left.minHz - right.minHz || left.label.localeCompare(right.label));
-}
-
-function tunerVisibleScopes(viewport, scopes = []) {
+function tunerResolvedScopeSegments(viewport, scopes = []) {
   if (!viewport || !(viewport.endHz > viewport.startHz)) return [];
-  return scopes.filter((scope) => scope.minHz >= viewport.startHz && scope.maxHz <= viewport.endHz)
-    .sort((left, right) => (right.maxHz - right.minHz) - (left.maxHz - left.minHz) ||
-      left.minHz - right.minHz || left.label.localeCompare(right.label));
+  const intersecting = scopes.filter((scope) =>
+    scope.maxHz > viewport.startHz && scope.minHz < viewport.endHz);
+  const boundaries = [...new Set([viewport.startHz, viewport.endHz,
+    ...intersecting.flatMap((scope) => [Math.max(viewport.startHz, scope.minHz),
+      Math.min(viewport.endHz, scope.maxHz)])])].sort((left, right) => left - right);
+  const segments = [];
+  for (let index = 1; index < boundaries.length; index += 1) {
+    const startHz = boundaries[index - 1];
+    const endHz = boundaries[index];
+    if (!(endHz > startHz)) continue;
+    const midpointHz = startHz + (endHz - startHz) / 2;
+    const covering = intersecting.filter((scope) =>
+      scope.minHz <= midpointHz && scope.maxHz >= midpointHz);
+    if (!covering.length) continue;
+    const smallestSpanHz = Math.min(...covering.map((scope) => scope.maxHz - scope.minHz));
+    const winners = covering.filter((scope) => scope.maxHz - scope.minHz === smallestSpanHz)
+      .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
+    const key = winners.map((scope) => scope.id).join('|');
+    const previous = segments.at(-1);
+    if (previous?.key === key && previous.endHz === startHz) previous.endHz = endHz;
+    else segments.push({ key, startHz, endHz, scopes: winners });
+  }
+  return segments;
 }
 
 function tunerSpectrumPanel(snapPresetDocument) {
@@ -11260,13 +11273,10 @@ function tunerSpectrumPanel(snapPresetDocument) {
   };
   const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
   const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
-  const bandReadout = node('div', 'tuner-spectrum-band-readout');
-  bandReadout.setAttribute('aria-live', 'polite');
-  spectrum.card.append(bandReadout);
-  const waterfallScopeLayer = node('div', 'tuner-spectrum-scope-layer');
-  waterfallScopeLayer.setAttribute('role', 'img');
-  waterfallScopeLayer.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency scopes`);
-  waterfall.host.insertBefore(waterfallScopeLayer, waterfall.guide);
+  const fftBandRail = node('div', 'tuner-spectrum-band-rail');
+  fftBandRail.setAttribute('role', 'img');
+  fftBandRail.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency bands`);
+  spectrum.card.append(fftBandRail);
   const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
   const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags');
   waterfallActiveFlags.hidden = true;
@@ -11338,59 +11348,54 @@ function tunerSpectrumPanel(snapPresetDocument) {
   let retainedWaterfallRows = 0;
   let readoutTimer = null;
   let lastReadoutAt = 0;
-  let frequencyScopeSignature = '';
+  let frequencyBandSignature = '';
 
   function formatScopeFrequency(frequencyHz) {
     const megahertz = frequencyHz / 1_000_000;
     return `${megahertz.toFixed(megahertz >= 100 ? 3 : 4).replace(/\.0+$/, '')} MHz`;
   }
 
-  function renderFrequencyScopes() {
-    const visibleScopes = tunerVisibleScopes(viewport, frequencyScopes);
+  function renderFrequencyBands() {
+    const segments = tunerResolvedScopeSegments(viewport, frequencyScopes);
     const signature = JSON.stringify([viewport?.startHz, viewport?.endHz,
-      visibleScopes.map((scope) => scope.id)]);
-    if (signature === frequencyScopeSignature) return;
-    frequencyScopeSignature = signature;
-    if (!viewport || !visibleScopes.length) {
-      waterfallScopeLayer.hidden = true;
-      waterfallScopeLayer.replaceChildren();
+      segments.map((segment) => [segment.startHz, segment.endHz,
+        segment.scopes.map((scope) => scope.id)])]);
+    if (signature === frequencyBandSignature) return;
+    frequencyBandSignature = signature;
+    if (!viewport || !segments.length) {
+      fftBandRail.setAttribute('aria-label', `${snapPresetDocument.countryLabel}: no frequency band in view`);
+      fftBandRail.replaceChildren(node('span', 'tuner-spectrum-band-empty',
+        `${snapPresetDocument.countryLabel} · No frequency band in view`));
       return;
     }
-    waterfallScopeLayer.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency scopes: ${
-      visibleScopes.map((scope) => `${scope.label}, ${formatScopeFrequency(scope.minHz)} to ${
-        formatScopeFrequency(scope.maxHz)}`).join('; ')}`);
+    fftBandRail.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency bands: ${
+      segments.map((segment) => `${segment.scopes.map((scope) => scope.label).join(' and ')}, ${
+        formatScopeFrequency(segment.startHz)} to ${formatScopeFrequency(segment.endHz)}`).join('; ')}`);
     const spanHz = viewport.endHz - viewport.startHz;
-    const rows = visibleScopes.map((scope, index) => {
-      const marker = node('div', 'tuner-spectrum-scope');
-      const start = formatScopeFrequency(scope.minHz);
-      const end = formatScopeFrequency(scope.maxHz);
-      marker.style.left = `${((scope.minHz - viewport.startHz) / spanHz * 100).toFixed(4)}%`;
-      marker.style.width = `${((scope.maxHz - scope.minHz) / spanHz * 100).toFixed(4)}%`;
-      marker.style.bottom = `${index * 22}px`;
-      marker.setAttribute('aria-label', `${scope.label}, ${start} to ${end}${
-        scope.snap ? ', snap enabled' : ', display only'}`);
-      marker.title = `${scope.label} · ${start}–${end}${scope.snap ? '' : ' · display only'}`;
-      marker.append(node('span', 'tuner-spectrum-scope-bound', start),
-        node('span', 'tuner-spectrum-scope-label', scope.label),
-        node('span', 'tuner-spectrum-scope-bound', end));
+    const markers = segments.map((segment) => {
+      const marker = node('div', 'tuner-spectrum-band-segment');
+      const paletteIndex = [...segment.key].reduce((hash, character) =>
+        (hash * 31 + character.codePointAt(0)) >>> 0, 0) % 4;
+      marker.classList.add(`palette-${paletteIndex}`);
+      const labels = segment.scopes.map((scope) => scope.label);
+      const start = formatScopeFrequency(segment.startHz);
+      const end = formatScopeFrequency(segment.endHz);
+      const visibleStart = segment.startHz === viewport.startHz &&
+        segment.scopes.some((scope) => scope.minHz < viewport.startHz) ? '←' : start;
+      const visibleEnd = segment.endHz === viewport.endHz &&
+        segment.scopes.some((scope) => scope.maxHz > viewport.endHz) ? '→' : end;
+      const fullBounds = segment.scopes.map((scope) => `${scope.label} ${formatScopeFrequency(scope.minHz)}–${
+        formatScopeFrequency(scope.maxHz)}`).join('; ');
+      marker.style.left = `${((segment.startHz - viewport.startHz) / spanHz * 100).toFixed(4)}%`;
+      marker.style.width = `${((segment.endHz - segment.startHz) / spanHz * 100).toFixed(4)}%`;
+      marker.setAttribute('aria-label', `${labels.join(' and ')}, ${start} to ${end}`);
+      marker.title = fullBounds;
+      marker.append(node('span', 'tuner-spectrum-band-bound', visibleStart),
+        node('span', 'tuner-spectrum-band-label', labels.join(' / ')),
+        node('span', 'tuner-spectrum-band-bound', visibleEnd));
       return marker;
     });
-    waterfallScopeLayer.style.height = `${visibleScopes.length * 22}px`;
-    waterfallScopeLayer.hidden = false;
-    waterfallScopeLayer.replaceChildren(...rows);
-  }
-
-  function updateBandReadout(frequencyHz = null) {
-    const selectedHz = Number.isFinite(Number(frequencyHz)) ? Number(frequencyHz) :
-      (viewport ? (viewport.startHz + viewport.endHz) / 2 : null);
-    const scopes = selectedHz === null ? [] : tunerFrequencyScopes(selectedHz, frequencyScopes);
-    const labels = [...new Set(scopes.map((scope) => scope.label))];
-    bandReadout.textContent = labels.length ?
-      `${snapPresetDocument.countryLabel} · ${labels.join(' / ')}` :
-      `${snapPresetDocument.countryLabel} · No frequency scope`;
-    bandReadout.title = labels.length ? `Frequency scopes: ${labels.join(' / ')}` :
-      'No frequency scope covers the selected frequency.';
-    renderFrequencyScopes();
+    fftBandRail.replaceChildren(...markers);
   }
 
   const controller = {
@@ -11869,7 +11874,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
       const changed = fullViewport && !sameViewport(fullViewport, nextFull);
       fullViewport = nextFull;
       if (!viewport || changed) viewport = { ...nextFull };
-      updateBandReadout();
+      renderFrequencyBands();
       if (changed) {
         analysisViewport = null;
         waterfallHistoryRows.length = 0;
@@ -12116,7 +12121,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const previous = viewport;
     transformPlots(previous, nextViewport);
     viewport = nextViewport;
-    updateBandReadout();
+    renderFrequencyBands();
     setRefining(true);
     setReadouts(true);
     renderActiveChannels();
@@ -12208,7 +12213,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null;
     const displayHz = snap?.frequencyHz ?? pointerHz;
     setCursorGuide(displayHz);
-    updateBandReadout(pointerHz);
 
     cursorFrequency.textContent = `${(displayHz / 1_000_000).toFixed(6)} MHz`;
     cursorSnap.hidden = true;
@@ -12277,7 +12281,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
     spectrum.guide.hidden = true;
     waterfall.guide.hidden = true;
     cursorPopup.hidden = true;
-    updateBandReadout();
   }
 
   function cancelDrag(releaseCapture = true) {
@@ -12656,7 +12659,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
       viewport = null;
       analysisViewport = null;
     }
-    updateBandReadout();
+    renderFrequencyBands();
   }
 
   targetSelect.addEventListener('change', () => {
@@ -12763,7 +12766,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
   resetPlots('Loading tuners…');
-  updateBandReadout();
+  renderFrequencyBands();
 
   api('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed) return;
@@ -15875,7 +15878,7 @@ async function renderAdminSpectrumSnapSettings() {
   actions.append(save);
   const presetSummary = node('p', 'settings-card-description');
   const card = settingsCard('Country frequency scopes',
-    'Select the regulatory catalog used for waterfall bounds, band labels, and optional cursor snapping.',
+    'Select the regulatory catalog used for FFT band indicators and optional cursor snapping.',
     formField('Country', country,
       'The selected catalog applies receiver-wide. Only the United States catalog is currently bundled.'),
     presetSummary);

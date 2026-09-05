@@ -285,7 +285,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"113\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"115\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -616,7 +616,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=94"));
+        assertTrue(html.contains("/assets/app.css?v=95"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1321,11 +1321,12 @@ class StatsWebInteractionUiContractTest
         String snapCandidate = function(source, "function tunerScopeSnapCandidate(scope, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz, scopes = [])");
         String snapMatches = function(source, "function tunerSnapMatches(frequencyHz, scopes)");
-        String visibleScopes = function(source, "function tunerVisibleScopes(viewport, scopes = [])");
+        String resolvedSegments = function(source, "function tunerResolvedScopeSegments(viewport, scopes = [])");
         String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument)");
         String parameters = function(tuner, "function diagnosticParameters()");
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
+        String updateCursor = function(tuner, "function updateCursor(ratio)");
         String acceptState = function(tuner, "function acceptTunerState(frame)");
         String acceptFrame = function(tuner, "function acceptTunerFrame(frame)");
         String visibleValues = function(tuner, "function visibleSpectrumValues(useSmoothing = true)");
@@ -1537,12 +1538,23 @@ class StatsWebInteractionUiContractTest
         assertTrue(snapper.contains("tunerSnapMatches(frequencyHz, scopes)"));
         assertTrue(snapMatches.contains("smallestSpanHz"));
         assertTrue(snapMatches.contains("match.scope.maxHz - match.scope.minHz === smallestSpanHz"));
-        assertTrue(visibleScopes.contains("scope.minHz >= viewport.startHz"));
-        assertTrue(visibleScopes.contains("scope.maxHz <= viewport.endHz"));
-        assertTrue(tuner.contains("tuner-spectrum-band-readout"));
-        assertTrue(tuner.contains("tuner-spectrum-scope-layer"));
-        assertTrue(tuner.contains("function renderFrequencyScopes()"));
-        assertTrue(tuner.contains("scope.snap ? ', snap enabled' : ', display only'"));
+        assertTrue(resolvedSegments.contains("scope.maxHz > viewport.startHz"));
+        assertTrue(resolvedSegments.contains("scope.minHz < viewport.endHz"));
+        assertTrue(resolvedSegments.contains("smallestSpanHz"));
+        assertTrue(resolvedSegments.contains("scope.maxHz - scope.minHz === smallestSpanHz"));
+        assertTrue(resolvedSegments.contains("previous?.key === key"));
+        assertTrue(tuner.contains("tuner-spectrum-band-rail"));
+        assertTrue(tuner.contains("spectrum.card.append(fftBandRail)"));
+        assertFalse(tuner.contains("waterfall.host.insertBefore(fftBandRail"));
+        assertFalse(tuner.contains("tuner-spectrum-scope-layer"));
+        assertTrue(tuner.contains("function renderFrequencyBands()"));
+        assertTrue(tuner.contains("viewport = nextViewport;\n    renderFrequencyBands();"));
+        assertTrue(tuner.contains("scope.minHz < viewport.startHz) ? '←' : start"));
+        assertTrue(tuner.contains("scope.maxHz > viewport.endHz) ? '→' : end"));
+        assertFalse(updateCursor.contains("renderFrequencyBands"));
+        assertTrue(css.contains(".tuner-spectrum-band-rail"));
+        assertTrue(css.contains(".tuner-spectrum-band-segment"));
+        assertFalse(css.contains(".tuner-spectrum-scope-layer"));
         assertTrue(tuner.contains("snapPresetDocument.countryLabel"));
         assertFalse(source.contains("activeToleranceHz"));
         assertFalse(source.contains("activeOverlayRows"));
