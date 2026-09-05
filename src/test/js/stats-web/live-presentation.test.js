@@ -48,8 +48,10 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('livePresentedTableRows')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
+  ${functionSource('identityKind')}
+  ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
-    liveIdentityType, liveIdentityLabel };
+    liveIdentityType, liveIdentityLabel, activityTargetKind };
 })()`);
 
 const preferences = {
@@ -67,6 +69,10 @@ assert.equal(behavior.liveIdentityType({
 }, 'target'), 'patch_group');
 assert.equal(behavior.liveIdentityLabel({ target_matcher: { type: 'patch_group' } }, 'target'), 'patch group');
 assert.equal(behavior.liveIdentityLabel({ target_form: 'PATCH_GROUP' }, 'target', true), 'Patch Group');
+assert.equal(behavior.activityTargetKind({ target_kind: 'patch_group' }), 'patch_group');
+assert.equal(behavior.activityTargetKind({ target_kind: 'talkgroup' }), 'talkgroup');
+assert.equal(behavior.activityTargetKind({ target_kind: 'radio' }), 'radio');
+assert.equal(behavior.activityTargetKind({ target_kind: 'channel' }), '');
 
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);

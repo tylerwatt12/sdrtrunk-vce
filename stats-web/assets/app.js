@@ -14316,16 +14316,21 @@ function activityIdentifier(row, value, kind, reference) {
       `${specialLabel}, ${protocol} system or special signaling identifier ${identifier}`);
     return result;
   }
-  if (kind === 'talkgroup') return groupIdentityLink(row, value, identifier, reference);
+  if (['talkgroup', 'patch_group'].includes(kind)) {
+    return groupIdentityLink(row, value, identifier, reference);
+  }
   if (kind === 'radio') return radioLink(row, value, identifier, reference);
   return identifier;
 }
 
+function activityTargetKind(row) {
+  const kind = identityKind(row?.target_kind);
+  return ['talkgroup', 'patch_group', 'radio'].includes(kind) ? kind : '';
+}
+
 function activityTargetIdentifier(row) {
   if (isAnalogChannel(row)) return '';
-  const targetKind = identityKind(row.target_kind);
-  const kind = targetKind === 'radio' ? 'radio' :
-    ['talkgroup', 'patch_group'].includes(targetKind) ? 'talkgroup' : '';
+  const kind = activityTargetKind(row);
   return activityIdentifier(row, row.target_id, kind, row.target_entity_ref);
 }
 
@@ -14340,11 +14345,11 @@ function activityTargetAlias(row) {
   if (isAnalogChannel(row)) return '';
   const alias = row.target_alias_name || '';
   if (!alias) return '';
-  const targetKind = identityKind(row.target_kind);
-  const kind = targetKind === 'radio' ? 'radio' :
-    ['talkgroup', 'patch_group'].includes(targetKind) ? 'talkgroup' : '';
+  const kind = activityTargetKind(row);
   if (specialIdentifierLabel(row, row.target_id, kind)) return alias;
-  if (kind === 'talkgroup') return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref);
+  if (['talkgroup', 'patch_group'].includes(kind)) {
+    return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref);
+  }
   if (kind === 'radio') return radioLink(row, row.target_id, alias, row.target_entity_ref);
   return alias;
 }
