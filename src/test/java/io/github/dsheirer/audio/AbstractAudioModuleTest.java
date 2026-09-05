@@ -129,7 +129,9 @@ class AbstractAudioModuleTest
     void carriesImmutableSourceCarrierTimestampsAndVoiceFingerprint()
     {
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE2, "configuration-id", "MARCS Site",
-            "site-guid", 42, new P25SiteIdentity(0xBEE00, 0x348, 2, 19), true);
+            "site-guid", 42, new P25SiteIdentity(0xBEE00, 0x348, 2, 19),
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 2_000, source);
         List<AudioCallEvent> events = new ArrayList<>();
         module.setAudioCallEventListener(events::add);
@@ -175,7 +177,9 @@ class AbstractAudioModuleTest
     void classifiesCallsAsTrunkedAfterDmrRestChannelConversion()
     {
         CallLegSource initialSource = new CallLegSource(DecoderType.DMR, "configuration-id", "DMR Site",
-            "site-guid", 42, null, false);
+            "site-guid", 42, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, false);
         TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 2_000, initialSource);
         EventBus eventBus = new EventBus("audio-module-channel-conversion-test");
         module.setInterModuleEventBus(eventBus);

@@ -45,9 +45,9 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.stats.activity.P25ActivityLogPath;
-import io.github.dsheirer.stats.activity.P25ActivityLogService;
-import io.github.dsheirer.stats.activity.P25ActivityLogStatus;
+import io.github.dsheirer.stats.activity.ReceiverActivityPath;
+import io.github.dsheirer.stats.activity.ReceiverActivityService;
+import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.stats.health.ReceiverHealthService;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialException;
@@ -173,7 +173,7 @@ public class StatsWebServerService implements AutoCloseable
     private final AtomicLong mMultiplexSlowDisconnects = new AtomicLong();
     private final AtomicLong mMultiplexEventDrops = new AtomicLong();
     private final ChannelProcessingManager mChannelProcessingManager;
-    private final P25ActivityLogService mActivityLogService;
+    private final ReceiverActivityService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
@@ -201,20 +201,20 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService)
+                                 ReceiverActivityService activityLogService)
     {
         this(userPreferences, channelProcessingManager, activityLogService, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService)
     {
         this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService)
     {
@@ -223,7 +223,7 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager)
     {
@@ -232,7 +232,7 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
+                                 ReceiverActivityService activityLogService,
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
                                  ScanListModel scanListModel)
@@ -933,7 +933,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private Map<String,Object> statsLoggingStatusResponse()
     {
-        P25ActivityLogStatus current = statsLoggingStatus();
+        ReceiverActivityStatus current = statsLoggingStatus();
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("summaryConfigured", current.summaryConfigured());
         response.put("detailedHistoryConfigured", current.detailedHistoryConfigured());
@@ -949,7 +949,7 @@ public class StatsWebServerService implements AutoCloseable
         return response;
     }
 
-    private P25ActivityLogStatus statsLoggingStatus()
+    private ReceiverActivityStatus statsLoggingStatus()
     {
         if(mActivityLogService != null)
         {
@@ -958,9 +958,9 @@ public class StatsWebServerService implements AutoCloseable
 
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
         boolean summaryConfigured = preference.isStatsLoggingEnabled();
-        return new P25ActivityLogStatus(summaryConfigured, preference.isStatsDetailedHistoryEnabled(), false, false,
-            preference.getStatsLoggingRetentionDays(), summaryConfigured ? P25ActivityLogStatus.State.STOPPED :
-            P25ActivityLogStatus.State.DISABLED, P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(),
+        return new ReceiverActivityStatus(summaryConfigured, preference.isStatsDetailedHistoryEnabled(), false, false,
+            preference.getStatsLoggingRetentionDays(), summaryConfigured ? ReceiverActivityStatus.State.STOPPED :
+            ReceiverActivityStatus.State.DISABLED, ReceiverActivityPath.getDatabasePath(mUserPreferences).toString(),
             0, 0, 0, null);
     }
 
@@ -969,7 +969,7 @@ public class StatsWebServerService implements AutoCloseable
      */
     public synchronized StatsWebNavigationState getNavigationState()
     {
-        P25ActivityLogStatus loggingStatus = statsLoggingStatus();
+        ReceiverActivityStatus loggingStatus = statsLoggingStatus();
         WebServerRuntimeState runtimeState = mRuntimeState;
         return new StatsWebNavigationState(runtimeState.running(), runtimeState.port(), runtimeState.https(),
             loggingStatus.summaryActive(),
@@ -1024,9 +1024,10 @@ public class StatsWebServerService implements AutoCloseable
      * Arms the one-use local administrator sign-in and opens a site-scoped P25 bandplan override draft.
      */
     public synchronized URI createDesktopAdministratorP25BandplanOverrideHandoffUri(P25SiteIdentity identity,
-                                                                                     String siteGuid)
+                                                                                     String radioResolveId)
     {
-        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity, siteGuid);
+        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity,
+            radioResolveId);
         StatsWebNavigationState navigation = getNavigationState();
 
         if(!navigation.running() || mWebAuthenticationService == null ||

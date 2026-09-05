@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.configuration.channel;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.Editor;
@@ -85,14 +86,14 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private TextField mSystemField;
     private TextField mSiteField;
     private TextField mNameField;
-    private TextField mRadresGuidField;
+    private TextField mRadioResolveIdField;
     private ComboBox<String> mAliasListComboBox;
     private FilteredList<String> mCompatibleAliasLists;
     private GridPane mTextFieldPane;
     private Button mSaveButton;
     private Button mResetButton;
-    private Button mClearSiteStatisticsButton;
-    private boolean mSiteStatisticsMaintenanceRunning;
+    private Button mClearChannelStatisticsButton;
+    private boolean mChannelStatisticsMaintenanceRunning;
     private VBox mButtonBox;
     private ScrollPane mTitledPanesScrollPane;
     private VBox mTitledPanesBox;
@@ -188,17 +189,17 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         getSystemField().setDisable(disable);
         getSiteField().setDisable(disable);
         getNameField().setDisable(disable);
-        getRadresGuidField().setDisable(disable || channel.isProcessing());
+        getRadioResolveIdField().setDisable(disable || channel.isProcessing());
         getAliasListComboBox().setDisable(disable);
         getAutoStartSwitch().setDisable(disable);
-        updateClearSiteStatisticsButtonState();
+        updateClearChannelStatisticsButtonState();
 
         if(channel != null)
         {
             getSystemField().setText(channel.getSystem());
             getSiteField().setText(channel.getSite());
             getNameField().setText(channel.getName());
-            getRadresGuidField().setText(channel.getRadresGuid());
+            getRadioResolveIdField().setText(channel.getRadioResolveId());
             updateAliasListCompatibility();
             String aliasListName = channel.getAliasListName();
 
@@ -251,7 +252,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getSystemField().setText(null);
             getSiteField().setText(null);
             getNameField().setText(null);
-            getRadresGuidField().setText(null);
+            getRadioResolveIdField().setText(null);
             getAliasListComboBox().getSelectionModel().select(null);
             getAutoStartSwitch().selectedProperty().set(false);
             getAutoStartOrderSpinner().setDisable(true);
@@ -273,7 +274,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     {
         if(modifiedProperty().get())
         {
-            if(!validateSiteGuid())
+            if(!validateRadioResolveId())
             {
                 return;
             }
@@ -286,8 +287,10 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             //Hack - change the name to something else and then set it to the real value to trigger change events
             getItem().setName(" ");
             getItem().setName(getNameField().getText());
-            getItem().setRadresGuid(getRadresGuidField().getText());
-            getItem().setAliasListName(getAliasListComboBox().getSelectionModel().getSelectedItem());
+            getItem().setRadioResolveId(getRadioResolveIdField().getText());
+            String aliasListName = getAliasListComboBox().getSelectionModel().getSelectedItem();
+            getItem().setAliasListDefinition(aliasListName != null ?
+                mConfigurationManager.getAliasModel().getAliasListDefinition(aliasListName) : null);
             getItem().setAutoStart(getAutoStartSwitch().isSelected());
 
             Integer order = getAutoStartOrderSpinner().getValue();
@@ -309,7 +312,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
 
             modifiedProperty().set(false);
             updateAliasListCompatibility();
-            updateClearSiteStatisticsButtonState();
+            updateClearChannelStatisticsButtonState();
         }
     }
 
@@ -605,14 +608,14 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             GridPane.setHgrow(getAliasListComboBox(), Priority.ALWAYS);
             mTextFieldPane.getChildren().add(getAliasListComboBox());
 
-            Label radresGuidLabel = new Label("Site GUID");
-            GridPane.setHalignment(radresGuidLabel, HPos.RIGHT);
-            GridPane.setConstraints(radresGuidLabel, 0, ++row);
-            mTextFieldPane.getChildren().add(radresGuidLabel);
+            Label radioResolveIdLabel = new Label("RadioResolve ID");
+            GridPane.setHalignment(radioResolveIdLabel, HPos.RIGHT);
+            GridPane.setConstraints(radioResolveIdLabel, 0, ++row);
+            mTextFieldPane.getChildren().add(radioResolveIdLabel);
 
-            GridPane.setConstraints(getRadresGuidField(), 1, row);
-            GridPane.setHgrow(getRadresGuidField(), Priority.ALWAYS);
-            mTextFieldPane.getChildren().add(getRadresGuidField());
+            GridPane.setConstraints(getRadioResolveIdField(), 1, row);
+            GridPane.setHgrow(getRadioResolveIdField(), Priority.ALWAYS);
+            mTextFieldPane.getChildren().add(getRadioResolveIdField());
         }
 
         return mTextFieldPane;
@@ -657,40 +660,40 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mNameField;
     }
 
-    protected TextField getRadresGuidField()
+    protected TextField getRadioResolveIdField()
     {
-        if(mRadresGuidField == null)
+        if(mRadioResolveIdField == null)
         {
-            mRadresGuidField = new TextField();
-            mRadresGuidField.setDisable(true);
-            mRadresGuidField.setMaxWidth(Double.MAX_VALUE);
-            mRadresGuidField.setPrefColumnCount(22);
-            mRadresGuidField.textProperty().addListener(mEditorModificationListener);
+            mRadioResolveIdField = new TextField();
+            mRadioResolveIdField.setDisable(true);
+            mRadioResolveIdField.setMaxWidth(Double.MAX_VALUE);
+            mRadioResolveIdField.setPrefColumnCount(22);
+            mRadioResolveIdField.textProperty().addListener(mEditorModificationListener);
         }
 
-        return mRadresGuidField;
+        return mRadioResolveIdField;
     }
 
-    private boolean validateSiteGuid()
+    private boolean validateRadioResolveId()
     {
-        String guid = getRadresGuidField().getText();
+        String radioResolveId = getRadioResolveIdField().getText();
 
-        if(guid == null || guid.isBlank())
+        if(radioResolveId == null || radioResolveId.isBlank())
         {
             return true;
         }
 
         try
         {
-            UUID.fromString(guid.trim());
+            UUID.fromString(radioResolveId.trim());
             return true;
         }
         catch(IllegalArgumentException e)
         {
             Alert alert = new Alert(Alert.AlertType.ERROR,
-                "Site GUID must be blank or a valid UUID.", ButtonType.OK);
-            alert.setTitle("Invalid Site GUID");
-            alert.setHeaderText("Invalid Site GUID");
+                "RadioResolve ID must be blank or a valid UUID.", ButtonType.OK);
+            alert.setTitle("Invalid RadioResolve ID");
+            alert.setHeaderText("Invalid RadioResolve ID");
 
             if(getPlayButton().getScene() != null)
             {
@@ -775,7 +778,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         {
             mButtonBox = new VBox();
             mButtonBox.setSpacing(10);
-            mButtonBox.getChildren().addAll(getSaveButton(), getResetButton(), getClearSiteStatisticsButton());
+            mButtonBox.getChildren().addAll(getSaveButton(), getResetButton(), getClearChannelStatisticsButton());
         }
 
         return mButtonBox;
@@ -843,45 +846,46 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mResetButton;
     }
 
-    private Button getClearSiteStatisticsButton()
+    private Button getClearChannelStatisticsButton()
     {
-        if(mClearSiteStatisticsButton == null)
+        if(mClearChannelStatisticsButton == null)
         {
-            mClearSiteStatisticsButton = new Button("Clear Statistics for This Site");
-            mClearSiteStatisticsButton.setMaxWidth(Double.MAX_VALUE);
-            mClearSiteStatisticsButton.setTooltip(new Tooltip(
-                "Deletes Stats Server history and learned site observations owned by this trunked site."));
-            mClearSiteStatisticsButton.setVisible(false);
-            mClearSiteStatisticsButton.setManaged(false);
-            mClearSiteStatisticsButton.setOnAction(event -> clearSiteStatistics());
+            mClearChannelStatisticsButton = new Button("Clear Statistics for This Channel");
+            mClearChannelStatisticsButton.setMaxWidth(Double.MAX_VALUE);
+            mClearChannelStatisticsButton.setTooltip(new Tooltip(
+                "Deletes Stats Server history and learned observations owned by this saved channel."));
+            mClearChannelStatisticsButton.setVisible(false);
+            mClearChannelStatisticsButton.setManaged(false);
+            mClearChannelStatisticsButton.setOnAction(event -> clearChannelStatistics());
         }
 
-        return mClearSiteStatisticsButton;
+        return mClearChannelStatisticsButton;
     }
 
-    private void clearSiteStatistics()
+    private void clearChannelStatistics()
     {
         Channel channel = getItem();
-        String guid = channel != null ? channel.getRadresGuid() : null;
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
-        if(channel == null || channel.isProcessing() || guid == null || guid.isBlank())
+        if(channel == null || channel.isProcessing() || configurationId == null)
         {
-            updateClearSiteStatisticsButtonState();
+            updateClearChannelStatisticsButtonState();
             return;
         }
 
-        String siteName = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : guid;
+        String channelName = channel.getName() != null && !channel.getName().isBlank() ?
+            channel.getName() : configurationId;
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
-            "Delete this site's learned channels, frequencies, neighbors, activity history, snapshots, and signal " +
-                "quality history?\n\nOther sites, shared system-wide radio/talkgroup summaries, and administrator " +
-                "configuration will not be changed. The site will reappear as new observations arrive.",
+            "Delete this channel's learned site and frequency observations, activity history, snapshots, and signal " +
+                "quality history?\n\nOther channels, shared system-wide radio/talkgroup summaries, and administrator " +
+                "configuration will not be changed. Statistics will be collected again as new observations arrive.",
             ButtonType.YES, ButtonType.NO);
-        confirmation.setTitle("Clear Site Statistics");
-        confirmation.setHeaderText("Clear statistics for " + siteName + "?");
+        confirmation.setTitle("Clear Channel Statistics");
+        confirmation.setHeaderText("Clear statistics for " + channelName + "?");
 
-        if(getClearSiteStatisticsButton().getScene() != null)
+        if(getClearChannelStatisticsButton().getScene() != null)
         {
-            confirmation.initOwner(getClearSiteStatisticsButton().getScene().getWindow());
+            confirmation.initOwner(getClearChannelStatisticsButton().getScene().getWindow());
         }
 
         Optional<ButtonType> result = confirmation.showAndWait();
@@ -891,57 +895,56 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             return;
         }
 
-        mSiteStatisticsMaintenanceRunning = true;
-        getClearSiteStatisticsButton().setText("Clearing Site Statistics...");
-        getClearSiteStatisticsButton().setDisable(true);
-        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearSite(guid);
+        mChannelStatisticsMaintenanceRunning = true;
+        getClearChannelStatisticsButton().setText("Clearing Channel Statistics...");
+        getClearChannelStatisticsButton().setDisable(true);
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearChannel(configurationId);
         MyEventBus.getGlobalEventBus().post(request);
 
         request.result().whenComplete((maintenanceResult, throwable) -> Platform.runLater(() -> {
-            mSiteStatisticsMaintenanceRunning = false;
-            getClearSiteStatisticsButton().setText("Clear Statistics for This Site");
-            updateClearSiteStatisticsButtonState();
+            mChannelStatisticsMaintenanceRunning = false;
+            getClearChannelStatisticsButton().setText("Clear Statistics for This Channel");
+            updateClearChannelStatisticsButtonState();
 
             if(throwable != null)
             {
                 Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
                 Alert alert = new Alert(Alert.AlertType.ERROR,
-                    "Unable to clear site statistics: " + cause.getMessage(), ButtonType.OK);
-                alert.setTitle("Clear Site Statistics Failed");
-                alert.setHeaderText("Site statistics were not cleared");
+                    "Unable to clear channel statistics: " + cause.getMessage(), ButtonType.OK);
+                alert.setTitle("Clear Channel Statistics Failed");
+                alert.setHeaderText("Channel statistics were not cleared");
                 initOwner(alert);
                 alert.showAndWait();
             }
             else
             {
                 Alert alert = new Alert(Alert.AlertType.INFORMATION,
-                    maintenanceResult.summary() + "\n\nThe site will reappear as new observations arrive.",
+                    maintenanceResult.summary() + "\n\nStatistics will be collected again as new observations arrive.",
                     ButtonType.OK);
-                alert.setTitle("Site Statistics Cleared");
-                alert.setHeaderText("Cleared statistics for " + siteName);
+                alert.setTitle("Channel Statistics Cleared");
+                alert.setHeaderText("Cleared statistics for " + channelName);
                 initOwner(alert);
                 alert.showAndWait();
             }
         }));
     }
 
-    private void updateClearSiteStatisticsButtonState()
+    private void updateClearChannelStatisticsButtonState()
     {
-        boolean supported = getDecoderType() == DecoderType.P25_PHASE1 || getDecoderType() == DecoderType.P25_PHASE2 ||
-            getDecoderType() == DecoderType.DMR || getDecoderType() == DecoderType.NXDN;
+        boolean supported = DecoderType.PRIMARY_DECODERS.contains(getDecoderType());
         Channel channel = getItem();
-        String guid = channel != null ? channel.getRadresGuid() : null;
-        getClearSiteStatisticsButton().setVisible(supported);
-        getClearSiteStatisticsButton().setManaged(supported);
-        getClearSiteStatisticsButton().setDisable(mSiteStatisticsMaintenanceRunning || !supported || channel == null ||
-            channel.isProcessing() || guid == null || guid.isBlank());
+        String configurationId = ChannelConfigurationKey.configured(channel);
+        getClearChannelStatisticsButton().setVisible(supported);
+        getClearChannelStatisticsButton().setManaged(supported);
+        getClearChannelStatisticsButton().setDisable(mChannelStatisticsMaintenanceRunning || !supported || channel == null ||
+            channel.isProcessing() || configurationId == null);
     }
 
     private void initOwner(Alert alert)
     {
-        if(alert != null && getClearSiteStatisticsButton().getScene() != null)
+        if(alert != null && getClearChannelStatisticsButton().getScene() != null)
         {
-            alert.initOwner(getClearSiteStatisticsButton().getScene().getWindow());
+            alert.initOwner(getClearChannelStatisticsButton().getScene().getWindow());
         }
     }
 
@@ -966,8 +969,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             if(getItem() != null && newValue != null)
             {
                 setPlayButtonState(newValue);
-                getRadresGuidField().setDisable(newValue);
-                updateClearSiteStatisticsButtonState();
+                getRadioResolveIdField().setDisable(newValue);
+                updateClearChannelStatisticsButtonState();
                 channelProcessingStateChanged(newValue);
             }
         }

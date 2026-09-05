@@ -27,9 +27,12 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -44,7 +47,7 @@ import java.util.Set;
  * context and frozen output decisions, so a losing receiver copy cannot silently remove a recording destination,
  * configured stream, or scan-list match.</p>
  */
-public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgroupRecordEnabled,
+public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordEnabled,
                                  Set<String> broadcastRoutingKeys, List<MatchContext> matchContexts)
 {
     public ResolvedCallPolicy
@@ -74,7 +77,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
 
                 AudioCallRecordingMetadata metadata = snapshot.recordingMetadata();
                 boolean destinationRecord =
-                    metadata != null && metadata.destinationTalkgroupRecordEnabled();
+                    metadata != null && metadata.destinationRecordEnabled();
                 Set<String> memberDestinations = broadcastRoutingKeys(snapshot.broadcastChannels());
                 MatchContext context = MatchContext.capture(snapshot, snapshot.recordAudio(), destinationRecord,
                     memberDestinations);
@@ -99,8 +102,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
     }
 
     /**
-     * Captures the current {@link BroadcastChannel#getChannelName()} values used by the runtime as routing keys.
-     * These names are not stable provider/configuration UUIDs and must not be treated as such by persistence code.
+     * Captures stable broadcast-configuration UUIDs used by the runtime as routing keys.
      */
     private static Set<String> broadcastRoutingKeys(Collection<BroadcastChannel> broadcastChannels)
     {
@@ -110,7 +112,8 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
         {
             for(BroadcastChannel broadcastChannel : broadcastChannels)
             {
-                String destination = normalize(broadcastChannel != null ? broadcastChannel.getChannelName() : null);
+                String destination = normalize(broadcastChannel != null ?
+                    broadcastChannel.getConfigurationId() : null);
 
                 if(destination != null)
                 {
@@ -161,7 +164,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
                                String systemName, List<DestinationIdentity> destinationIdentities,
                                Set<Long> matchedAliasIds, AliasList.TalkgroupMatchStatus talkgroupMatchStatus,
                                boolean recordAudio,
-                               boolean destinationTalkgroupRecordEnabled, Set<String> broadcastRoutingKeys)
+                               boolean destinationRecordEnabled, Set<String> broadcastRoutingKeys)
     {
         public MatchContext
         {
@@ -197,10 +200,10 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
             {
                 for(Identifier<?> identifier : snapshot.identifierCollection().getIdentifiers())
                 {
-                    if(identifier instanceof TalkgroupIdentifier talkgroup &&
+                    if((identifier instanceof TalkgroupIdentifier || identifier instanceof RadioIdentifier) &&
                         AudioCallRecordingMetadata.isDestination(identifier))
                     {
-                        addTalkgroupIdentity(destinations, talkgroup);
+                        addDestinationIdentity(destinations, identifier);
                     }
                     else if(identifier instanceof PatchGroupIdentifier patchIdentifier)
                     {
@@ -208,11 +211,11 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
 
                         if(patchGroup != null)
                         {
-                            addTalkgroupIdentity(destinations, patchGroup.getPatchGroup());
+                            addDestinationIdentity(destinations, patchIdentifier);
 
                             for(TalkgroupIdentifier patchedTalkgroup : patchGroup.getPatchedTalkgroupIdentifiers())
                             {
-                                addTalkgroupIdentity(destinations, patchedTalkgroup);
+                                addDestinationIdentity(destinations, patchedTalkgroup);
                             }
                         }
                     }
@@ -258,7 +261,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
 
         public boolean hasOutputPolicy()
         {
-            return recordAudio || destinationTalkgroupRecordEnabled || !broadcastRoutingKeys.isEmpty();
+            return recordAudio || destinationRecordEnabled || !broadcastRoutingKeys.isEmpty();
         }
 
         private static String configurationValue(AudioCallSnapshot snapshot, Form form)
@@ -274,10 +277,10 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
                 normalize(identifier.getValue().toString()) : null;
         }
 
-        private static void addTalkgroupIdentity(Set<DestinationIdentity> destinations,
-                                                 TalkgroupIdentifier talkgroup)
+        private static void addDestinationIdentity(Set<DestinationIdentity> destinations,
+                                                   Identifier<?> identifier)
         {
-            DestinationIdentity destination = DestinationIdentity.from(talkgroup);
+            DestinationIdentity destination = DestinationIdentity.from(identifier);
 
             if(destination != null)
             {
@@ -287,29 +290,43 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
     }
 
     /**
-     * Immutable protocol-aware talkgroup identity. The qualifier is null for an ordinary talkgroup.
+     * Immutable protocol-aware destination identity. The qualifier is null for an ordinary local identity.
      */
-    public record DestinationIdentity(Protocol protocol, int talkgroup, DestinationQualifier qualifier)
+    public record DestinationIdentity(Protocol protocol, Form kind, int localAddress, int canonicalIdentity,
+                                      DestinationQualifier qualifier)
     {
         /**
          * Creates the canonical identity represented by a runtime talkgroup identifier.
          */
-        public static DestinationIdentity from(TalkgroupIdentifier talkgroup)
+        public static DestinationIdentity from(Identifier<?> destination)
         {
-            if(talkgroup instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+            Form kind = destination instanceof PatchGroupIdentifier ? Form.PATCH_GROUP :
+                destination != null ? destination.getForm() : null;
+            Identifier<?> primary = destination instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
+                patch.getValue().getPatchGroup() : destination;
+
+            if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
             {
-                return new DestinationIdentity(normalizeProtocol(talkgroup.getProtocol()),
-                    fullyQualified.getTalkgroup(),
-                    DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem()));
+                Protocol protocol = normalizeProtocol(primary.getProtocol());
+                return eligible(protocol, kind, fullyQualified.getTalkgroup()) ?
+                    new DestinationIdentity(protocol, kind, fullyQualified.getValue(), fullyQualified.getTalkgroup(),
+                        DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem())) :
+                    null;
             }
-            else if(talkgroup instanceof NXDNFullyQualifiedTalkgroupIdentifier fullyQualified)
+            else if(primary instanceof FullyQualifiedRadioIdentifier fullyQualified)
             {
-                return new DestinationIdentity(normalizeProtocol(talkgroup.getProtocol()), fullyQualified.getValue(),
-                    DestinationQualifier.system(fullyQualified.getSystem()));
+                Protocol protocol = normalizeProtocol(primary.getProtocol());
+                return eligible(protocol, Form.RADIO, fullyQualified.getRadio()) ?
+                    new DestinationIdentity(protocol, Form.RADIO, fullyQualified.getValue(), fullyQualified.getRadio(),
+                        DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem())) :
+                    null;
             }
-            else if(talkgroup != null && talkgroup.getValue() != null)
+            else if(primary != null && primary.getValue() instanceof Number number &&
+                (kind == Form.TALKGROUP || kind == Form.PATCH_GROUP || kind == Form.RADIO))
             {
-                return new DestinationIdentity(normalizeProtocol(talkgroup.getProtocol()), talkgroup.getValue(), null);
+                Protocol protocol = normalizeProtocol(primary.getProtocol());
+                return eligible(protocol, kind, number.intValue()) ?
+                    new DestinationIdentity(protocol, kind, number.intValue(), number.intValue(), null) : null;
             }
 
             return null;
@@ -326,33 +343,39 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
          */
         public boolean matches(DestinationIdentity other)
         {
-            return other != null && protocol == other.protocol && talkgroup == other.talkgroup &&
-                (qualifier == null || other.qualifier == null || qualifier.equals(other.qualifier));
+            if(other == null || protocol != other.protocol || kind != other.kind)
+            {
+                return false;
+            }
+
+            if(qualifier != null && other.qualifier != null)
+            {
+                return canonicalIdentity == other.canonicalIdentity && qualifier.equals(other.qualifier);
+            }
+
+            return localAddress > 0 && localAddress == other.localAddress;
         }
 
         private static Protocol normalizeProtocol(Protocol protocol)
         {
             return protocol == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : protocol;
         }
+
+        private static boolean eligible(Protocol protocol, Form kind, int identifier)
+        {
+            return protocol != Protocol.APCO25 || TrunkedIdentityEligibility.isEligible(protocol,
+                TrunkedIdentityDomain.STANDARD, kind, identifier);
+        }
     }
 
     /**
-     * Protocol-neutral home-system qualifier for a destination.
-     *
-     * <p>The optional network ID is a protocol-native network namespace when one exists. P25 therefore supplies its
-     * WACN as the network ID plus its system ID, while NXDN supplies only its system ID. Keeping these values in a
-     * separate qualifier avoids treating an NXDN system as a P25 WACN.</p>
+     * P25 home-system qualifier for a fully-qualified destination.
      */
     public record DestinationQualifier(Integer networkId, int systemId)
     {
         public static DestinationQualifier networkAndSystem(int networkId, int systemId)
         {
             return new DestinationQualifier(networkId, systemId);
-        }
-
-        public static DestinationQualifier system(int systemId)
-        {
-            return new DestinationQualifier(null, systemId);
         }
 
         public boolean hasNetwork()

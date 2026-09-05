@@ -35,7 +35,7 @@ import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifie
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
@@ -238,9 +238,9 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         {
             mIdentifierCollection.update(ChannelNameConfigurationIdentifier.create(channel.getName()));
         }
-        if(channel.hasRadresGuid())
+        if(channel.hasRadioResolveId())
         {
-            mIdentifierCollection.update(SiteGuidConfigurationIdentifier.create(channel.getRadresGuid()));
+            mIdentifierCollection.update(RadioResolveConfigurationIdentifier.create(channel.getRadioResolveId()));
         }
         AliasListConfigurationIdentifier existingAliasList =
             mIdentifierCollection.getAliasListConfiguration();

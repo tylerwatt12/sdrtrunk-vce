@@ -364,12 +364,12 @@ public class AudioStreamingManager
 
         private String normalizeRoutingKey(BroadcastChannel broadcastChannel)
         {
-            if(broadcastChannel == null || broadcastChannel.getChannelName() == null)
+            if(broadcastChannel == null || broadcastChannel.getConfigurationId() == null)
             {
                 return null;
             }
 
-            String routingKey = broadcastChannel.getChannelName().trim();
+            String routingKey = broadcastChannel.getConfigurationId().trim();
             return routingKey.isEmpty() ? null : routingKey;
         }
 

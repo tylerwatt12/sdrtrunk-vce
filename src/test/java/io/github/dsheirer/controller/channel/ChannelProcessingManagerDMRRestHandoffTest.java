@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 
 import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.Subscribe;
@@ -1640,7 +1641,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.DMR, 91));
         alias.setRecordable(true);
-        alias.addBroadcastChannel(AUDIO_STREAM_NAME);
+        alias.addBroadcastChannel(route(AUDIO_STREAM_NAME));
         AliasModel aliasModel = new AliasModel();
         aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(alias));
         return aliasModel;

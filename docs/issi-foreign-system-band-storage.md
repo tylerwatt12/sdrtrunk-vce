@@ -15,7 +15,7 @@ Home and foreign systems can reuse the same four-bit band ID, and multiple forei
 ## Compact schema and cardinality
 
 `p25_foreign_system_band` holds current stabilized facts. `p25_foreign_system_band_summary` retains first/last seen and
-an observation counter. Both use the natural key `(guid, foreign_wacn, foreign_system_id, band)` and `WITHOUT ROWID`.
+an observation counter. Both use the natural key `(channel_id, foreign_wacn, foreign_system_id, band)` and `WITHOUT ROWID`.
 The payload is numeric: channel type, base frequency, spacing, offset, and timestamps. Mode, bandwidth, timeslots, and
 voice rate are derived from the channel-type code at presentation time; no repeated labels or decoded messages are
 stored.
@@ -25,7 +25,7 @@ observed. A foreign system can advertise at most 16 band IDs, producing at most 
 home-site/foreign-system pair. A typical site advertising two foreign systems with one or two bands uses four to eight
 rows total. The absolute protocol-space ceiling is 4,096 foreign System IDs times 16 bands per table per home site,
 although real networks are expected to remain several orders of magnitude below that ceiling. Each row contains four
-key integers, four value/timestamp integers, and SQLite B-tree overhead, with no secondary index.
+key integers, four value/timestamp integers, and SQLite B-tree overhead. Each table has one time-first retention index.
 
 ## Retention and write path
 
@@ -42,10 +42,11 @@ retain the boundary documented by their version-matched release notes. See
 
 ## Query access path
 
-Both website queries constrain `guid`. Because `guid` is the leading primary-key column, SQLite uses the table primary
-key directly and no additional index is needed. Representative-volume tests assert plans equivalent to:
+Both website queries constrain `channel_id`. Because `channel_id` is the leading primary-key column, SQLite uses the
+table primary key directly; the separate time-first index exists only for retention. Representative-volume tests
+assert plans equivalent to:
 
 ```text
-SEARCH p25_foreign_system_band_summary USING PRIMARY KEY (guid=?)
-SEARCH p25_foreign_system_band USING PRIMARY KEY (guid=? AND foreign_wacn=? AND foreign_system_id=? AND band=?)
+SEARCH p25_foreign_system_band_summary USING PRIMARY KEY (channel_id=?)
+SEARCH p25_foreign_system_band USING PRIMARY KEY (channel_id=? AND foreign_wacn=? AND foreign_system_id=? AND band=?)
 ```

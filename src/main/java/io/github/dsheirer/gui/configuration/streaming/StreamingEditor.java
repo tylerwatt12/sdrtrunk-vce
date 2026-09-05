@@ -325,7 +325,8 @@ public class StreamingEditor extends SplitPane
                 for(UserFeedBroadcast feed: mBroadcastifyFeeds)
                 {
                     //Only show a menu item for the feed if it's not already defined
-                    if(mConfigurationManager.getBroadcastModel().getBroadcastConfiguration(feed.getDescription()) == null)
+                    if(mConfigurationManager.getBroadcastModel()
+                        .getBroadcastConfigurationByName(feed.getDescription()) == null)
                     {
                         mNewButton.getItems().add(new CreateBroadcastifyMenuItem(feed));
                     }
@@ -372,6 +373,19 @@ public class StreamingEditor extends SplitPane
 
                 if(config != null)
                 {
+                    if(mConfigurationManager.getAliasModel()
+                        .hasBroadcastConfigurationReferences(config.getConfigurationId()))
+                    {
+                        Alert referenced = new Alert(Alert.AlertType.WARNING,
+                            "Remove this destination from its aliases and Alias List Defaults before deleting it.",
+                            ButtonType.OK);
+                        referenced.setTitle("Stream Is In Use");
+                        referenced.setHeaderText("This stream is still used by one or more aliases");
+                        referenced.initOwner(((Node)getDeleteButton()).getScene().getWindow());
+                        referenced.showAndWait();
+                        return;
+                    }
+
                     Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
                         "Do you want to delete the selected stream?", ButtonType.NO, ButtonType.YES);
                     alert.setTitle("Delete Stream Configuration");

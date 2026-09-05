@@ -66,13 +66,14 @@ class StatsLiveServiceBoundsTest
             List.of("VOICE"), 1L, "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 4_321L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
             "Engine 1 · TA: Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
-            "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation("GUID:site-guid", "County",
+            "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation(
+            "728d2d66-de4e-476b-a696-919f32dd4d12", 41L, "County",
             "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1")),
             new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
             List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch")),
             new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)), "TRAFFIC");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", null, null, true, true,
+            "Primary", null, true, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
                 new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")), List.of(row));
 
@@ -92,7 +93,8 @@ class StatsLiveServiceBoundsTest
             assertEquals("Primary dispatch", projected.get("target_alias_description"));
             assertEquals(4_321L, projected.get("cc_last_valid_decode_ms"));
             assertEquals(true, table.get("channel_running"));
-            assertEquals("GUID:site-guid", projected.get("context_key"));
+            assertEquals("728d2d66-de4e-476b-a696-919f32dd4d12", projected.get("configuration_id"));
+            assertEquals(41L, projected.get("alias_list_id"));
             assertEquals("County", projected.get("alias_list_name"));
             assertEquals("p25", projected.get("protocol"));
             List<Map<String,Object>> sourceAliases =
@@ -175,7 +177,7 @@ class StatsLiveServiceBoundsTest
         List<ChannelActivitySnapshot.AliasReference> aliases = IntStream.range(0, 20)
             .mapToObj(index -> new ChannelActivitySnapshot.AliasReference(index + 1L, 41L,
                 "Alias " + index)).toList();
-        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, "County",
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
             "dmr", aliases, new ChannelActivitySnapshot.MatcherReference("radio", "dmr", null, 1201),
             aliases, new ChannelActivitySnapshot.MatcherReference("talkgroup", "dmr", null, 4400));
 
@@ -204,12 +206,12 @@ class StatsLiveServiceBoundsTest
         catalog.refreshNow();
         TestChannelActivitySource source = new TestChannelActivitySource();
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
-        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, "County",
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
             "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
             List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row));
 
         try
         {
@@ -243,7 +245,7 @@ class StatsLiveServiceBoundsTest
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("CONTROL"), null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, guid, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row));
 
         try
         {
@@ -326,7 +328,7 @@ class StatsLiveServiceBoundsTest
             try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
             {
                 ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("blocked", "Live", "System", "Site",
-                    "Control", null, null, true, true, List.of(),
+                    "Control", null, true, true, List.of(),
                     List.of(activityRow("blocked", null, blockingTags, null)));
                 service.receiveChannelActivity(
                     new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, blocked, 1));
@@ -402,7 +404,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
-            "Control", null, null, true, true, List.of(), rows);
+            "Control", null, true, true, List.of(), rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

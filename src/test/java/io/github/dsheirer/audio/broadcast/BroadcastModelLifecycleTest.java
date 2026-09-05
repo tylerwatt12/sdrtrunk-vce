@@ -50,7 +50,7 @@ public class BroadcastModelLifecycleTest
         model.addBroadcastConfiguration(configuration);
         model.runAllStarts();
         TestAudioBroadcaster broadcaster = model.getCreatedBroadcasters().getFirst();
-        AudioRecording recording = recordingFor(configuration.getName());
+        AudioRecording recording = recordingFor(configuration);
 
         model.receive(recording);
 
@@ -69,7 +69,7 @@ public class BroadcastModelLifecycleTest
         model.addBroadcastConfiguration(configuration);
         model.runAllStarts();
         TestAudioBroadcaster broadcaster = model.getCreatedBroadcasters().getFirst();
-        AudioRecording recording = recordingFor(configuration.getName());
+        AudioRecording recording = recordingFor(configuration);
 
         model.receive(recording);
 
@@ -95,7 +95,7 @@ public class BroadcastModelLifecycleTest
         assertEquals(1, broadcaster.getStopCount());
         assertEquals(1, broadcaster.getDisposeCount());
         assertFalse(broadcaster.isActive());
-        assertNull(model.getBroadcaster(configuration.getName()));
+        assertNull(model.getBroadcaster(configuration.getConfigurationId()));
     }
 
     @Test
@@ -116,7 +116,7 @@ public class BroadcastModelLifecycleTest
         {
             assertTrue(startEntered.await(2, TimeUnit.SECONDS));
             model.removeBroadcastConfiguration(configuration);
-            assertNull(model.getBroadcaster(configuration.getName()));
+            assertNull(model.getBroadcaster(configuration.getConfigurationId()));
             assertTrue(broadcaster.awaitStartInterrupted(2, TimeUnit.SECONDS));
         }
         finally
@@ -161,7 +161,7 @@ public class BroadcastModelLifecycleTest
         assertFalse(originalBroadcaster.isActive());
         assertEquals(1, currentBroadcaster.getStartCount());
         assertTrue(currentBroadcaster.isActive());
-        assertSame(currentBroadcaster, model.getBroadcaster(configuration.getName()));
+        assertSame(currentBroadcaster, model.getBroadcaster(configuration.getConfigurationId()));
 
         model.removeBroadcastConfiguration(configuration);
         assertFalse(currentBroadcaster.isActive());
@@ -224,7 +224,7 @@ public class BroadcastModelLifecycleTest
         assertEquals(1, racedBroadcaster.getStopCount());
         assertEquals(1, racedBroadcaster.getDisposeCount());
         assertFalse(racedBroadcaster.isActive());
-        assertNull(model.getBroadcaster(configuration.getName()));
+        assertNull(model.getBroadcaster(configuration.getConfigurationId()));
     }
 
     private static boolean awaitThreadState(Thread thread, Thread.State state, long timeout, TimeUnit timeUnit)
@@ -253,10 +253,10 @@ public class BroadcastModelLifecycleTest
         return configuration;
     }
 
-    private static AudioRecording recordingFor(String route)
+    private static AudioRecording recordingFor(BroadcastConfiguration configuration)
     {
-        return new AudioRecording(null, List.of(new BroadcastChannel(route)), new IdentifierCollection(),
-            1L, 1L);
+        return new AudioRecording(null, List.of(new BroadcastChannel(configuration.getConfigurationId(),
+            configuration.getName())), new IdentifierCollection(), 1L, 1L);
     }
 
     private static class TestBroadcastModel extends BroadcastModel

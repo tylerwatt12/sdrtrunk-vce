@@ -131,7 +131,7 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
     @JsonIgnore
     public boolean hasSiteSelection()
     {
-        return getAliasListId() > AliasListDefinition.UNASSIGNED_ID && getAliasListName() != null &&
+        return getAliasListId() > AliasListDefinition.UNASSIGNED_ID &&
             isValidConfigurationId(getChannelConfigurationId());
     }
 
@@ -194,8 +194,7 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
     public static boolean isEligibleChannel(Channel channel, AliasListDefinition aliasList)
     {
         if(channel == null || aliasList == null || !channel.isStandardChannel() ||
-            !ChannelConfigurationPolicy.isActive(channel) || channel.getAliasListName() == null ||
-            !channel.getAliasListName().equalsIgnoreCase(aliasList.getName()))
+            !ChannelConfigurationPolicy.isActive(channel) || channel.getAliasListId() != aliasList.getId())
         {
             return false;
         }

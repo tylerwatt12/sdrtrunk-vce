@@ -18,8 +18,7 @@ package io.github.dsheirer.module.decode.dmr;
  * that call closes so downstream statistics can count it without time-window deduplication.</p>
  */
 public record DMRConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
-                                       String guid, String channelName, String aliasListName, long frequencyHertz,
-                                       int timeslot, TargetKind targetKind, Integer talkgroupId,
+                                       long frequencyHertz, int timeslot, TargetKind targetKind, Integer talkgroupId,
                                        Integer sourceRadioId, Integer targetRadioId, boolean encrypted)
 {
     public enum TargetKind

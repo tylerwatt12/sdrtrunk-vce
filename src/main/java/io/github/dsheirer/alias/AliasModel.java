@@ -381,7 +381,7 @@ public class AliasModel
 
         if(definition != null)
         {
-            channel.setAliasListName(definition.getName());
+            channel.setAliasListDefinition(definition);
             return true;
         }
 
@@ -536,12 +536,12 @@ public class AliasModel
      */
     public AliasList getAliasListForChannel(Channel channel)
     {
-        if(channel == null || channel.getAliasListName() == null || channel.getAliasListName().isBlank())
+        if(channel == null || channel.getAliasListId() <= AliasListDefinition.UNASSIGNED_ID)
         {
             return AliasList.empty(channel != null ? channel.getAliasListName() : null);
         }
 
-        AliasListDefinition definition = getAliasListDefinition(channel.getAliasListName());
+        AliasListDefinition definition = getAliasListDefinition(channel.getAliasListId());
 
         if(isAliasListCompatible(channel, definition))
         {
@@ -560,7 +560,7 @@ public class AliasModel
     public boolean isAliasListCompatible(Channel channel)
     {
         return channel != null && isAliasListCompatible(channel,
-            getAliasListDefinition(channel.getAliasListName()));
+            getAliasListDefinition(channel.getAliasListId()));
     }
 
     private boolean isAliasListCompatible(Channel channel, AliasListDefinition definition)
@@ -791,20 +791,20 @@ public class AliasModel
 
     /**
      * Indicates that an Alias or an Alias List unmatched-talkgroup policy references the specified broadcast stream.
-     * @param broadcastChannel to check
+     * @param configurationId stable broadcast-configuration identity to check
      * @return true if the broadcast channel is non-null, non-empty and at least one alias is configured to stream to
      * the specified stream name.
      */
-    public boolean hasBroadcastChannelReferences(String broadcastChannel)
+    public boolean hasBroadcastConfigurationReferences(String configurationId)
     {
-        if(broadcastChannel == null || broadcastChannel.isEmpty())
+        if(configurationId == null || configurationId.isBlank())
         {
             return false;
         }
 
         for(Alias alias: mAliases)
         {
-            if(alias.hasBroadcastChannel(broadcastChannel))
+            if(alias.hasBroadcastConfiguration(configurationId))
             {
                 return true;
             }
@@ -812,7 +812,8 @@ public class AliasModel
 
         for(AliasListDefinition definition: mAliasListDefinitions)
         {
-            if(definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames().contains(broadcastChannel))
+            if(definition.getUnmatchedTalkgroupPolicy().getStreamDestinations().stream()
+                .anyMatch(destination -> configurationId.equals(destination.getConfigurationId())))
             {
                 return true;
             }

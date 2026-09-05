@@ -104,6 +104,24 @@ final class LegacyConfigurationState
             alias.setAliasListDefinition(definition);
         }
 
+        for(Channel channel: mChannels)
+        {
+            String aliasListName = channel.getAliasListName();
+            if(aliasListName == null || aliasListName.isBlank())
+            {
+                channel.setAliasListDefinition(null);
+                continue;
+            }
+
+            AliasListDefinition definition = definitionsByName.get(normalizeAliasListName(aliasListName));
+            if(definition == null)
+            {
+                throw new IllegalStateException("Legacy channel [" + channel.getName() +
+                    "] has no resolved Alias List");
+            }
+            channel.setAliasListDefinition(definition);
+        }
+
         List<Alias> missingAliases = mAliases.stream()
             .filter(alias -> alias.getId() <= Alias.UNASSIGNED_ID).toList();
         List<Long> aliasIds = repository.nextAliasIds(mAliases.stream().map(Alias::getId).toList(),

@@ -16,11 +16,11 @@ import io.github.dsheirer.preference.UserPreferences;
 import java.nio.file.Path;
 
 /**
- * Path helper for P25 activity tables in the global SQLite database.
+ * Path helper for receiver activity tables in the global SQLite database.
  */
-public final class P25ActivityLogPath
+public final class ReceiverActivityPath
 {
-    private P25ActivityLogPath()
+    private ReceiverActivityPath()
     {
     }
 

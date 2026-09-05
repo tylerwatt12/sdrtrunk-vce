@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.audio.broadcast;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
+
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -194,7 +196,7 @@ public class AudioStreamingManagerTest
         RoutingFixture fixture = getMergedRoutingFixture();
 
         //This current alias addition happens after the completed call froze its merged route set and must be ignored.
-        fixture.firstPatchedAlias().addBroadcastChannel(new BroadcastChannel("Late Addition"));
+        fixture.firstPatchedAlias().addBroadcastChannel(route("Late Addition"));
         manager.start();
         manager.receive(fixture.call());
 
@@ -584,8 +586,8 @@ public class AudioStreamingManagerTest
         identifierCollection.update(getRadio());
 
         Set<BroadcastChannel> broadcastChannels = new HashSet<>();
-        broadcastChannels.add(new BroadcastChannel("Stream B"));
-        broadcastChannels.add(new BroadcastChannel("Stream C"));
+        broadcastChannels.add(route("Stream B"));
+        broadcastChannels.add(route("Stream C"));
 
         long now = System.currentTimeMillis();
         AudioCallId callId = new AudioCallId(1L, 1L, TimeslotMessage.TIMESLOT_0);
@@ -618,13 +620,13 @@ public class AudioStreamingManagerTest
         AliasList aliasList = p25AliasList("merged-routing-test");
         Alias firstPatchedAlias = new Alias("talkgroup 200");
         firstPatchedAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, TALKGROUP_2));
-        firstPatchedAlias.addBroadcastChannel(new BroadcastChannel("Route A"));
-        firstPatchedAlias.addBroadcastChannel(new BroadcastChannel("Shared"));
+        firstPatchedAlias.addBroadcastChannel(route("Route A"));
+        firstPatchedAlias.addBroadcastChannel(route("Shared"));
         aliasList.addAlias(firstPatchedAlias);
 
         Alias secondPatchedAlias = new Alias("talkgroup 300");
         secondPatchedAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, TALKGROUP_3));
-        secondPatchedAlias.addBroadcastChannel(new BroadcastChannel("Shared"));
+        secondPatchedAlias.addBroadcastChannel(route("Shared"));
         aliasList.addAlias(secondPatchedAlias);
 
         PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(TALKGROUP_1));
@@ -635,8 +637,7 @@ public class AudioStreamingManagerTest
         identifierCollection.setTimeslot(TimeslotMessage.TIMESLOT_0);
         identifierCollection.update(APCO25PatchGroup.create(patchGroup));
         identifierCollection.update(getRadio());
-        Set<BroadcastChannel> frozenRoutes = Set.of(new BroadcastChannel("Route A"),
-            new BroadcastChannel("Route B"), new BroadcastChannel("Shared"));
+        Set<BroadcastChannel> frozenRoutes = Set.of(route("Route A"), route("Route B"), route("Shared"));
         List<float[]> audioBuffers = new ArrayList<>();
         ScalarRealOscillator oscillator = new ScalarRealOscillator(1000, 8000);
 
@@ -660,17 +661,17 @@ public class AudioStreamingManagerTest
 
         Alias patchAlias = new Alias("patch");
         patchAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
-        patchAlias.addBroadcastChannel(new BroadcastChannel("Stream A"));
+        patchAlias.addBroadcastChannel(route("Stream A"));
         aliasList.addAlias(patchAlias);
 
         Alias talkgroupAlias1 = new Alias("talkgroup1");
         talkgroupAlias1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 200));
-        talkgroupAlias1.addBroadcastChannel(new BroadcastChannel("Stream B"));
+        talkgroupAlias1.addBroadcastChannel(route("Stream B"));
         aliasList.addAlias(talkgroupAlias1);
 
         Alias talkgroupAlias2 = new Alias("talkgroup2");
         talkgroupAlias2.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 300));
-        talkgroupAlias2.addBroadcastChannel(new BroadcastChannel("Stream C"));
+        talkgroupAlias2.addBroadcastChannel(route("Stream C"));
         aliasList.addAlias(talkgroupAlias2);
 
         return aliasList;

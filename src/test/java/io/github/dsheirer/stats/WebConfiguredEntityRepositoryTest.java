@@ -38,14 +38,14 @@ class WebConfiguredEntityRepositoryTest
             WebConfiguredEntityRepository repository = new WebConfiguredEntityRepository();
 
             WebConfiguredEntityRepository.ConfiguredChannel site = repository.requireSite(connection, SITE_ID);
-            assertNull(site.contextId());
+            assertNull(site.channelId());
             assertEquals(Map.of("kind", "site", "key", SITE_ID), site.toApiMap().get("entity_ref"));
             assertFalse(site.toApiMap().containsKey("alias_list_id"),
                 "internal exact-scope ownership must not leak into the configured-channel DTO");
 
             WebConfiguredEntityRepository.ConfiguredChannel conventional =
                 repository.requireConventional(connection, CONVENTIONAL_ID);
-            assertNull(conventional.contextId());
+            assertNull(conventional.channelId());
             assertEquals(Map.of("kind", "conventional", "key", CONVENTIONAL_ID),
                 conventional.toApiMap().get("entity_ref"));
             StatsApiException uppercase = assertThrows(StatsApiException.class,
@@ -86,7 +86,7 @@ class WebConfiguredEntityRepositoryTest
                 """.formatted(CONVENTIONAL_ID, CONVENTIONAL_RADRES_GUID));
             WebConfiguredEntityRepository.ConfiguredChannel configured =
                 new WebConfiguredEntityRepository().requireConventional(connection, CONVENTIONAL_ID);
-            assertEquals(10L, configured.contextId());
+            assertEquals(10L, configured.channelId());
             assertEquals(451012500L, configured.observedPrimaryFrequencyHz());
         }
     }

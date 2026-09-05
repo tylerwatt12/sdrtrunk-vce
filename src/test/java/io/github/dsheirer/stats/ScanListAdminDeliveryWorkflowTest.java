@@ -330,7 +330,7 @@ class ScanListAdminDeliveryWorkflowTest
         JsonNode result = data(send(client, jsonRequest(origin, AliasAdminHttpController.ALIAS_LISTS_PATH + "/" +
             aliasListId + "/unmatched-talkgroups").PUT(HttpRequest.BodyPublishers.ofString(
             OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "recordable", false,
-                "broadcast_channels", List.of(), "scan_list_ids", scanListIds))))));
+                "broadcast_configuration_ids", List.of(), "scan_list_ids", scanListIds))))));
         return new Resource(aliasListId, result.get("revision").longValue(), null);
     }
 
@@ -364,7 +364,7 @@ class ScanListAdminDeliveryWorkflowTest
         alias.put("color", 0);
         alias.put("icon_name", null);
         alias.put("recordable", false);
-        alias.put("broadcast_channels", List.of());
+        alias.put("broadcast_configuration_ids", List.of());
         alias.put("stream_as_talkgroup", null);
         alias.put("matcher", Map.of("type", "talkgroup", "protocol", "p25", "variant", "phase_2",
             "value", talkgroup));

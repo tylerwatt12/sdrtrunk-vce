@@ -15,6 +15,7 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
@@ -33,6 +34,7 @@ import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -62,9 +64,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Owns statistics collection and maintenance and keeps SQLite work off decoder/UI threads.
  */
-public class P25ActivityLogService implements SiteMetadataListener, ProtocolSiteMetadataListener
+public class ReceiverActivityService implements SiteMetadataListener, ProtocolSiteMetadataListener
 {
-    private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogService.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ReceiverActivityService.class);
     private static final long DEDUPE_RETENTION_MILLISECONDS = 60000;
     private static final long LOGICAL_NOTIFICATION_RETENTION_MILLISECONDS = TimeUnit.HOURS.toMillis(24);
     private static final int MAXIMUM_LOGICAL_NOTIFICATIONS = 65_536;
@@ -76,7 +78,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private static final long DRAIN_BARRIER_RETRY_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
 
     private final UserPreferences mUserPreferences;
-    private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
+    private final ReceiverActivityMapper mMapper = new ReceiverActivityMapper();
     private final TrunkedCallActivityMapper mTrunkedCallMapper = new TrunkedCallActivityMapper();
     private final P25GrantFactConfirmationTracker mGrantFactConfirmationTracker =
         new P25GrantFactConfirmationTracker();
@@ -97,44 +99,44 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private final AtomicBoolean mWriterTransitionActive = new AtomicBoolean();
     private final AtomicReference<WriterTransition> mWriterTransition = new AtomicReference<>();
     /* Includes active, retired, and not-yet-installed candidates until their executor is confirmed terminated. */
-    private final Set<P25ActivityLogWriter> mStartedWriters = ConcurrentHashMap.newKeySet();
+    private final Set<ReceiverActivityWriter> mStartedWriters = ConcurrentHashMap.newKeySet();
     private final long mDisposeTimeoutMilliseconds;
     private final Runnable mAfterIngressSnapshotForTest;
     private final Runnable mBeforeWriterActivationForTest;
     private final WriterFactory mWriterFactory;
-    private volatile P25ActivityLogWriter mWriter;
+    private volatile ReceiverActivityWriter mWriter;
     private volatile boolean mCollectionEnabled;
     private volatile boolean mObservationWorkerStarted;
     private BoundedMpscPairQueue<Object,Object> mWorkerObservationIngress;
     private Path mCurrentDatabasePath;
-    private P25ActivityLogWriter.WriterStatus mLastWriterStatus;
+    private ReceiverActivityWriter.WriterStatus mLastWriterStatus;
 
-    public P25ActivityLogService(UserPreferences userPreferences)
+    public ReceiverActivityService(UserPreferences userPreferences)
     {
         this(userPreferences, DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS, null, null,
-            P25ActivityLogWriter::new);
+            ReceiverActivityWriter::new);
     }
 
-    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit)
+    ReceiverActivityService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit)
     {
-        this(userPreferences, disposeTimeout, unit, null, null, P25ActivityLogWriter::new);
+        this(userPreferences, disposeTimeout, unit, null, null, ReceiverActivityWriter::new);
     }
 
-    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+    ReceiverActivityService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
                           Runnable afterIngressSnapshotForTest)
     {
         this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest, null,
-            P25ActivityLogWriter::new);
+            ReceiverActivityWriter::new);
     }
 
-    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+    ReceiverActivityService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
                           Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest)
     {
         this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest, beforeWriterActivationForTest,
-            P25ActivityLogWriter::new);
+            ReceiverActivityWriter::new);
     }
 
-    P25ActivityLogService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+    ReceiverActivityService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
                           Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest,
                           WriterFactory writerFactory)
     {
@@ -214,15 +216,15 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     public void receiveRecordedCall(CompletedAudioCall call)
     {
-        receiveCallOutput(call, P25ActivityLogRecords.CallOutput.RECORDED);
+        receiveCallOutput(call, ReceiverActivityRecords.CallOutput.RECORDED);
     }
 
     public void receiveStreamedCall(CompletedAudioCall call)
     {
-        receiveCallOutput(call, P25ActivityLogRecords.CallOutput.STREAMED);
+        receiveCallOutput(call, ReceiverActivityRecords.CallOutput.STREAMED);
     }
 
-    private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
+    private void receiveCallOutput(CompletedAudioCall call, ReceiverActivityRecords.CallOutput output)
     {
         offerObservation(withoutAudio(call), output);
     }
@@ -314,33 +316,33 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processResolvedCall(CompletedAudioCall call)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
+        ReceiverActivityRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
         if(resolved != null && firstLogicalNotification(resolved.logicalCallId().toString() + "|resolved"))
         {
             enqueueObservation(writer, resolved);
         }
     }
 
-    private void processCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
+    private void processCallOutput(CompletedAudioCall call, ReceiverActivityRecords.CallOutput output)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
-        P25ActivityLogRecords.ConventionalCallOutput conventional = resolved == null ?
+        ReceiverActivityRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
+        ReceiverActivityRecords.ConventionalCallOutput conventional = resolved == null ?
             mMapper.mapConventionalCallOutput(call, output) : null;
         if(resolved != null && firstLogicalNotification(resolved.logicalCallId() + "|" + output.name()))
         {
-            enqueueObservation(writer, new P25ActivityLogRecords.LogicalCallOutput(resolved, output));
+            enqueueObservation(writer, new ReceiverActivityRecords.LogicalCallOutput(resolved, output));
         }
         else if(conventional != null && call != null &&
             firstLogicalNotification(call.logicalCallId() + "|conventional|" + output.name()))
@@ -389,28 +391,42 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
-        if(snapshot != null && !snapshot.active() && snapshot.guid() != null)
+        if(snapshot != null && !snapshot.active() && snapshot.configurationId() != null)
         {
-            mObservedTrunkedSites.computeIfPresent(snapshot.guid(), (guid, evidence) ->
+            mObservedTrunkedSites.computeIfPresent(snapshot.configurationId(), (_, evidence) ->
                 evidence.channel() == snapshot.channel() ? null : evidence);
         }
 
-        TrunkedSiteEvidence evidence = snapshot != null && snapshot.guid() != null ?
-            mObservedTrunkedSites.get(snapshot.guid()) : null;
+        TrunkedSiteEvidence evidence = snapshot != null && snapshot.configurationId() != null ?
+            mObservedTrunkedSites.get(snapshot.configurationId()) : null;
         boolean observedTrunkedSite = hasCurrentTrunkedSiteEvidence(snapshot, evidence);
 
         if(evidence != null && !observedTrunkedSite)
         {
-            mObservedTrunkedSites.remove(snapshot.guid(), evidence);
+            mObservedTrunkedSites.remove(snapshot.configurationId(), evidence);
         }
 
         if(writer != null && shouldPersistControlChannelQuality(snapshot, observedTrunkedSite) &&
-            snapshot.active() && snapshot.guid() != null && !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
+            snapshot.active() && snapshot.configurationId() != null && !snapshot.configurationId().isBlank() &&
+                snapshot.frequencyHz() > 0)
         {
-            enqueueObservation(writer, new P25ActivityLogRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
-                snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
+            DecoderType decoderType = decoderType(snapshot.channel());
+            TrunkedIdentityDomain identityDomain =
+                TrunkedIdentityDomain.STANDARD;
+
+            if(snapshot.channel().getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn)
+            {
+                identityDomain = nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
+                    TrunkedIdentityDomain.NXDN_TYPE_D :
+                    TrunkedIdentityDomain.NXDN_TYPE_C;
+            }
+
+            enqueueObservation(writer, new ReceiverActivityRecords.ControlChannelQuality(snapshot.observedAtMs(),
+                snapshot.configurationId(), decoderType != null && decoderType.getProtocol() != null ?
+                    decoderType.getProtocol().name() : "UNKNOWN", identityDomain, snapshot.frequencyHz(),
+                snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
                 snapshot.minimumSignalDbfs(), snapshot.maximumSignalDbfs(), snapshot.decodeHealthPercent(),
                 snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
                 snapshot.droppedBits(), snapshot.lastValidDecodeMs()));
@@ -419,7 +435,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     /**
      * Requires metadata evidence from the same running channel and decoder configuration. Explicit DMR and NXDN modes
-     * are also checked so a conventional channel cannot inherit evidence through a reused GUID. The quality monitor's
+     * are also checked so a conventional channel cannot inherit evidence through a reused configuration UUID. The quality monitor's
      * inactive snapshot clears this evidence when the channel stops.
      */
     static boolean hasCurrentTrunkedSiteEvidence(ControlChannelQualitySnapshot snapshot,
@@ -450,9 +466,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     }
 
     /**
-     * Identifies control-channel decoders that publish the shared trunked-site quality contract.  The existing
-     * GUID-keyed quality bucket table is structurally protocol-neutral; its historical P25 name is retained for
-     * deployed-schema compatibility.
+     * Identifies control-channel decoders that publish the shared trunked-site quality contract.
      */
     static boolean isTrunkedControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
@@ -562,14 +576,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     {
         while(true)
         {
-            P25ActivityLogWriter[] writers = mStartedWriters.toArray(P25ActivityLogWriter[]::new);
+            ReceiverActivityWriter[] writers = mStartedWriters.toArray(ReceiverActivityWriter[]::new);
 
             if(writers.length == 0)
             {
                 return true;
             }
 
-            for(P25ActivityLogWriter writer: writers)
+            for(ReceiverActivityWriter writer: writers)
             {
                 if(writer.isWorkerTerminated())
                 {
@@ -623,16 +637,16 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
         boolean collectionEnabled = preference.isStatsLoggingEnabled();
-        Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
+        Path databasePath = ReceiverActivityPath.getDatabasePath(mUserPreferences);
         int retentionDays = preference.getStatsLoggingRetentionDays();
         boolean detailedEventHistoryEnabled = preference.isStatsDetailedHistoryEnabled();
         WriterTransition transition = new WriterTransition(databasePath, retentionDays,
             detailedEventHistoryEnabled, collectionEnabled);
-        P25ActivityLogWriter writer = mWriter;
+        ReceiverActivityWriter writer = mWriter;
         boolean replaceWriter = mWriterTransitionActive.get() || writer == null ||
             !databasePath.equals(mCurrentDatabasePath) ||
-            writer.getStatus().state() == P25ActivityLogStatus.State.FAILED ||
-            writer.getStatus().state() == P25ActivityLogStatus.State.STOPPED;
+            writer.getStatus().state() == ReceiverActivityStatus.State.FAILED ||
+            writer.getStatus().state() == ReceiverActivityStatus.State.STOPPED;
 
         if(replaceWriter)
         {
@@ -655,7 +669,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void installInitialWriter(WriterTransition transition)
     {
-        P25ActivityLogWriter writer = startWriter(transition);
+        ReceiverActivityWriter writer = startWriter(transition);
         mCurrentDatabasePath = transition.databasePath();
         mWriter = writer;
         mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
@@ -703,7 +717,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             return;
         }
 
-        P25ActivityLogWriter nextWriter = startWriter(transition);
+        ReceiverActivityWriter nextWriter = startWriter(transition);
         boolean installed = false;
 
         try
@@ -742,9 +756,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         mObservationWakeup.release();
     }
 
-    private P25ActivityLogWriter startWriter(WriterTransition transition)
+    private ReceiverActivityWriter startWriter(WriterTransition transition)
     {
-        P25ActivityLogWriter writer = java.util.Objects.requireNonNull(
+        ReceiverActivityWriter writer = java.util.Objects.requireNonNull(
             mWriterFactory.create(transition.databasePath(), transition.retentionDays(),
                 transition.detailedEventHistoryEnabled()), "writerFactory returned null");
         mStartedWriters.add(writer);
@@ -769,7 +783,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
     }
 
-    private void closeTrackedWriter(P25ActivityLogWriter writer)
+    private void closeTrackedWriter(ReceiverActivityWriter writer)
     {
         try
         {
@@ -786,7 +800,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private synchronized void stopWriter()
     {
-        P25ActivityLogWriter writer = mWriter;
+        ReceiverActivityWriter writer = mWriter;
 
         if(writer != null)
         {
@@ -830,14 +844,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processDecodeEvent(Channel channel, IDecodeEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
-        if(writer == null || P25ActivityLogMapper.isTypedCallOwnedObservation(channel, event))
+        if(writer == null || ReceiverActivityMapper.isTypedCallOwnedObservation(channel, event))
         {
             return;
         }
 
-        P25ActivityLogRecords.ActivityEvent record = mMapper.map(channel, event);
+        ReceiverActivityRecords.ActivityEvent record = mMapper.map(channel, event);
 
         if(record != null && shouldLog(record))
         {
@@ -952,7 +966,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
                     processDecodeEvent(channel, event);
                 }
                 else if(observation.first() instanceof CompletedAudioCall call &&
-                    observation.second() instanceof P25ActivityLogRecords.CallOutput output)
+                    observation.second() instanceof ReceiverActivityRecords.CallOutput output)
                 {
                     processCallOutput(call, output);
                 }
@@ -964,7 +978,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
     }
 
-    private void enqueueObservation(P25ActivityLogWriter writer, P25ActivityLogRecord record)
+    private void enqueueObservation(ReceiverActivityWriter writer, ReceiverActivityRecord record)
     {
         synchronized(this)
         {
@@ -1075,14 +1089,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processCallStart(P25CallStartEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.ActivityEvent record = mMapper.map(event);
+        ReceiverActivityRecords.ActivityEvent record = mMapper.map(event);
 
         if(record != null)
         {
@@ -1102,14 +1116,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processTrunkedCallStart(TrunkedCallStartEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.ActivityEvent record = mTrunkedCallMapper.map(event);
+        ReceiverActivityRecords.ActivityEvent record = mTrunkedCallMapper.map(event);
 
         if(record != null)
         {
@@ -1128,14 +1142,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processTrunkedCallAttribution(TrunkedCallAttributionEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.TrunkedCallAttribution record = mTrunkedCallMapper.map(event);
+        ReceiverActivityRecords.TrunkedCallAttribution record = mTrunkedCallMapper.map(event);
 
         if(record != null)
         {
@@ -1154,14 +1168,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processDmrConventionalCall(DMRConventionalCallEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.DmrConventionalCall record = mMapper.map(event);
+        ReceiverActivityRecords.DmrConventionalCall record = mMapper.map(event);
 
         if(record != null)
         {
@@ -1180,14 +1194,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processNxdnConventionalCall(NXDNConventionalCallEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.NxdnConventionalCall record = mMapper.map(event);
+        ReceiverActivityRecords.NxdnConventionalCall record = mMapper.map(event);
 
         if(record != null)
         {
@@ -1203,11 +1217,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processTrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer != null)
         {
-            for(P25ActivityLogRecords.ChannelFact channelFact: mGrantFactConfirmationTracker.confirm(event))
+            for(ReceiverActivityRecords.ChannelFact channelFact: mGrantFactConfirmationTracker.confirm(event))
             {
                 enqueueObservation(writer, channelFact);
             }
@@ -1222,19 +1236,19 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processGrantObservation(P25GrantObservationEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.ActivityEvent record = mMapper.map(event);
+        ReceiverActivityRecords.ActivityEvent record = mMapper.map(event);
 
         if(record != null)
         {
             enqueueObservation(writer, record);
-            P25ActivityLogRecords.ChannelFact channelFact =
+            ReceiverActivityRecords.ChannelFact channelFact =
                 mGrantFactConfirmationTracker.observe(event, record);
 
             if(channelFact != null)
@@ -1252,14 +1266,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processTalkerAlias(TrunkedTalkerAliasEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.TalkerAliasUpdate update = mMapper.map(event);
+        ReceiverActivityRecords.TalkerAliasUpdate update = mMapper.map(event);
 
         if(update != null && shouldLogTalkerAlias(update))
         {
@@ -1275,14 +1289,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processSiteMetadata(SiteMetadataEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
             return;
         }
 
-        P25ActivityLogRecords.SiteSnapshot record = mMapper.map(event);
+        ReceiverActivityRecords.SiteSnapshot record = mMapper.map(event);
 
         if(record != null)
         {
@@ -1298,7 +1312,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void processProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
-        P25ActivityLogWriter writer = getCollectionWriter();
+        ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -1307,15 +1321,15 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         var snapshot = TrunkedSiteMetadataMapper.map(event);
         Channel channel = event != null ? event.channel() : null;
-        String guid = channel != null ? channel.getRadresGuid() : null;
+        String configurationId = ChannelConfigurationKey.configured(channel);
 
         if(channel != null &&
             (channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isConventional() ||
                 channel.getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn && nxdn.isConventional()))
         {
-            if(guid != null && !guid.isBlank())
+            if(configurationId != null)
             {
-                mObservedTrunkedSites.remove(guid);
+                mObservedTrunkedSites.remove(configurationId);
             }
 
             return;
@@ -1323,19 +1337,19 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(snapshot != null)
         {
-            if(snapshot.guid() != null && !snapshot.guid().isBlank())
+            if(snapshot.configurationId() != null)
             {
-                mObservedTrunkedSites.put(snapshot.guid(),
+                mObservedTrunkedSites.put(snapshot.configurationId(),
                     new TrunkedSiteEvidence(channel,
                         channel != null ? channel.getDecodeConfiguration() : null, decoderType(channel)));
             }
 
-            enqueueObservation(writer, new P25ActivityLogRecords.TrunkedSiteSnapshot(
+            enqueueObservation(writer, new ReceiverActivityRecords.TrunkedSiteSnapshot(
                 snapshot.observedAtEpochMilliseconds(), snapshot));
         }
-        else if(guid != null && !guid.isBlank())
+        else if(configurationId != null)
         {
-            mObservedTrunkedSites.remove(guid);
+            mObservedTrunkedSites.remove(configurationId);
         }
     }
 
@@ -1349,7 +1363,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Subscribe
     public void receiveMaintenanceRequest(StatsDatabaseMaintenanceRequest request)
     {
-        P25ActivityLogWriter writer = !mDisposed.get() ? mWriter : null;
+        ReceiverActivityWriter writer = !mDisposed.get() ? mWriter : null;
 
         if(writer != null)
         {
@@ -1362,12 +1376,12 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
     }
 
-    private P25ActivityLogWriter getCollectionWriter()
+    private ReceiverActivityWriter getCollectionWriter()
     {
         return mCollectionEnabled && !mDisposed.get() ? mWriter : null;
     }
 
-    private boolean shouldLog(P25ActivityLogRecords.ActivityEvent record)
+    private boolean shouldLog(ReceiverActivityRecords.ActivityEvent record)
     {
         if(record.dedupeKey() == null)
         {
@@ -1391,15 +1405,15 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
      */
     static boolean isWithinDedupeWindow(String key, long previous, long now)
     {
-        long window = key != null && key.startsWith(P25ActivityLogMapper.PROTOCOL_SIGNAL_DEDUPE_PREFIX) ?
+        long window = key != null && key.startsWith(ReceiverActivityMapper.PROTOCOL_SIGNAL_DEDUPE_PREFIX) ?
             PROTOCOL_SIGNAL_DEDUPE_WINDOW_MILLISECONDS : DEDUPE_RETENTION_MILLISECONDS;
         return now >= previous && now - previous <= window;
     }
 
-    private boolean shouldLogTalkerAlias(P25ActivityLogRecords.TalkerAliasUpdate update)
+    private boolean shouldLogTalkerAlias(ReceiverActivityRecords.TalkerAliasUpdate update)
     {
         long now = System.currentTimeMillis();
-        String key = String.join("|", "talker-alias", update.contextKey(), Integer.toString(update.radioId()),
+        String key = String.join("|", "talker-alias", update.configurationId(), Integer.toString(update.radioId()),
             update.talkerAlias(), update.identityDomain().name());
 
         synchronized(mRecentDedupeKeys)
@@ -1432,14 +1446,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     /**
      * Configured preferences and current effective writer health for the web status API and desktop diagnostics.
      */
-    public synchronized P25ActivityLogStatus getStatus()
+    public synchronized ReceiverActivityStatus getStatus()
     {
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
         boolean summaryConfigured = preference.isStatsLoggingEnabled();
         boolean historyConfigured = preference.isStatsDetailedHistoryEnabled();
-        P25ActivityLogWriter.WriterStatus writerStatus = mWriter != null ? mWriter.getStatus() : mLastWriterStatus;
-        P25ActivityLogStatus.State state = summaryConfigured ? P25ActivityLogStatus.State.STOPPED :
-            P25ActivityLogStatus.State.DISABLED;
+        ReceiverActivityWriter.WriterStatus writerStatus = mWriter != null ? mWriter.getStatus() : mLastWriterStatus;
+        ReceiverActivityStatus.State state = summaryConfigured ? ReceiverActivityStatus.State.STOPPED :
+            ReceiverActivityStatus.State.DISABLED;
         long lastSuccessfulWriteMs = 0;
         long recordsWritten = 0;
         long recordsDropped = 0;
@@ -1448,7 +1462,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(writerStatus != null)
         {
-            if(summaryConfigured || writerStatus.state() == P25ActivityLogStatus.State.FAILED)
+            if(summaryConfigured || writerStatus.state() == ReceiverActivityStatus.State.FAILED)
             {
                 state = writerStatus.state();
             }
@@ -1460,11 +1474,11 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             historyWriterEnabled = writerStatus.detailedHistoryEnabled();
         }
 
-        boolean summaryActive = summaryConfigured && state == P25ActivityLogStatus.State.RUNNING;
+        boolean summaryActive = summaryConfigured && state == ReceiverActivityStatus.State.RUNNING;
         boolean historyActive = summaryActive && historyConfigured && historyWriterEnabled;
-        return new P25ActivityLogStatus(summaryConfigured, historyConfigured, summaryActive, historyActive,
+        return new ReceiverActivityStatus(summaryConfigured, historyConfigured, summaryActive, historyActive,
             preference.getStatsLoggingRetentionDays(), state,
-            P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(), lastSuccessfulWriteMs,
+            ReceiverActivityPath.getDatabasePath(mUserPreferences).toString(), lastSuccessfulWriteMs,
             recordsWritten, recordsDropped, lastError);
     }
 
@@ -1476,7 +1490,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @FunctionalInterface
     interface WriterFactory
     {
-        P25ActivityLogWriter create(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled);
+        ReceiverActivityWriter create(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled);
     }
 
     private static final class ObservationDrainBarrier

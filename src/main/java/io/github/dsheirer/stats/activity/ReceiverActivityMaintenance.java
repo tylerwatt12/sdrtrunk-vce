@@ -26,9 +26,9 @@ import org.apache.commons.io.FileUtils;
 /**
  * SQLite maintenance actions for the sdrtrunk-vce stats database.
  */
-public final class P25ActivityLogMaintenance
+public final class ReceiverActivityMaintenance
 {
-    private P25ActivityLogMaintenance()
+    private ReceiverActivityMaintenance()
     {
     }
 
@@ -38,7 +38,7 @@ public final class P25ActivityLogMaintenance
         SHRINK,
         CHECK,
         RESET_STATS,
-        CLEAR_SITE_STATS
+        CLEAR_CHANNEL_STATS
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
@@ -59,13 +59,13 @@ public final class P25ActivityLogMaintenance
                 case SHRINK -> sb.append("Shrink complete");
                 case CHECK -> sb.append(checkOk() ? "Database check passed" : "Database check failed");
                 case RESET_STATS -> sb.append("Lifetime stats reset");
-                case CLEAR_SITE_STATS -> sb.append("Site statistics cleared");
+                case CLEAR_CHANNEL_STATS -> sb.append("Channel statistics cleared");
             }
 
             if(operation != Operation.CHECK)
             {
                 sb.append(". Deleted ").append(rowsDeleted).append(
-                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_SITE_STATS ?
+                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_CHANNEL_STATS ?
                     " stats row(s)" : " expired row(s)");
             }
 
@@ -120,9 +120,9 @@ public final class P25ActivityLogMaintenance
             case CHECK ->
             {
                 checkResult = quickCheck(connection);
-                P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_ms",
+                ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_ms",
                     Long.toString(System.currentTimeMillis()));
-                P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_result", checkResult);
+                ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_result", checkResult);
             }
             case RESET_STATS ->
             {
@@ -130,8 +130,8 @@ public final class P25ActivityLogMaintenance
                 checkpoint(connection);
                 optimize(connection);
             }
-            case CLEAR_SITE_STATS -> throw new IllegalArgumentException(
-                "CLEAR_SITE_STATS requires a site GUID");
+            case CLEAR_CHANNEL_STATS -> throw new IllegalArgumentException(
+                "CLEAR_CHANNEL_STATS requires a channel configuration ID");
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
@@ -139,79 +139,87 @@ public final class P25ActivityLogMaintenance
     }
 
     /**
-     * Clears statistics and history owned by one configured site without changing its channel configuration or
-     * system-wide summaries that may be shared by other sites.
+     * Clears statistics and history owned by one saved channel without changing its configuration or system-wide
+     * summaries that may be shared by other channels.
      */
-    public static Result clearSiteStats(Path databasePath, String guid) throws IOException, SQLException
+    public static Result clearChannelStats(Path databasePath, String configurationId) throws IOException, SQLException
     {
         try(Connection connection = SdrTrunkDatabase.open(databasePath))
         {
-            return clearSiteStats(connection, databasePath, guid);
+            return clearChannelStats(connection, databasePath, configurationId);
         }
     }
 
     /**
-     * Clears one site's statistics on the caller-owned writer connection.
+     * Clears one saved channel's statistics on the caller-owned writer connection.
      */
-    static Result clearSiteStats(Connection connection, Path databasePath, String guid)
+    static Result clearChannelStats(Connection connection, Path databasePath, String configurationId)
         throws IOException, SQLException
     {
-        if(guid == null || guid.isBlank())
+        if(configurationId == null || configurationId.isBlank())
         {
-            throw new IllegalArgumentException("Site GUID is required");
+            throw new IllegalArgumentException("Channel configuration ID is required");
         }
 
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
-        int rowsDeleted = clearSiteStats(connection, guid);
+        int rowsDeleted = clearChannelStats(connection, configurationId);
         checkpoint(connection);
         optimize(connection);
-        return new Result(Operation.CLEAR_SITE_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
+        return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
             walBytesBefore, size(walPath(databasePath)));
     }
 
     static int runLightMaintenance(Connection connection, int retentionDays) throws SQLException
     {
-        int deleted = cleanupRetention(connection, retentionDays);
+        return runLightMaintenancePass(connection, retentionDays).deletedRows();
+    }
+
+    static RetentionResult runLightMaintenancePass(Connection connection, int retentionDays) throws SQLException
+    {
+        RetentionResult retention = cleanupRetentionPass(connection, retentionDays);
+        int deleted = retention.deletedRows();
         checkpoint(connection);
         optimize(connection);
         updateStatus(connection, "last_maintenance_ms");
-        P25ActivityLogSchema.updateStatus(connection, "last_maintenance_deleted_rows", Integer.toString(deleted));
-        return deleted;
+        ReceiverActivitySchema.updateStatus(connection, "last_maintenance_deleted_rows", Integer.toString(deleted));
+        return retention;
     }
 
-    static int cleanupRetention(Connection connection, int retentionDays) throws SQLException
+    static RetentionResult cleanupRetentionPass(Connection connection, int retentionDays) throws SQLException
     {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
-        int deleted = P25ActivityLogSchema.deleteOlderThan(connection, cutoff) +
-            TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total() +
-            DmrActivitySchema.deleteOlderThan(connection, cutoff).total();
-        deleted += P25ActivityLogSchema.pruneInactiveTrunkedContexts(connection);
+        ReceiverActivityRetention.Pass pass = ReceiverActivityRetention.runPass(connection, cutoff);
+        int deleted = pass.deletedRows();
 
-        P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
-        P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
+        ReceiverActivitySchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
+        ReceiverActivitySchema.updateStatus(connection, "last_retention_cleanup_ms",
             Long.toString(System.currentTimeMillis()));
-        P25ActivityLogSchema.updateStatus(connection, "last_retention_deleted_rows", Integer.toString(deleted));
-        return deleted;
+        ReceiverActivitySchema.updateStatus(connection, "last_retention_deleted_rows", Integer.toString(deleted));
+        return new RetentionResult(deleted, pass.moreWorkLikely());
+    }
+
+    record RetentionResult(int deletedRows, boolean moreWorkLikely)
+    {
     }
 
     private static int resetStats(Connection connection) throws SQLException
     {
         return inTransaction(connection, () -> {
-            int deleted = DmrActivitySchema.resetStats(connection) + P25ActivityLogSchema.resetStats(connection) +
+            int deleted = DmrActivitySchema.resetStats(connection) + ReceiverActivitySchema.resetStats(connection) +
                 TrunkedSiteSchema.resetStats(connection);
             updateStatus(connection, "last_stats_reset_ms");
             return deleted;
         });
     }
 
-    private static int clearSiteStats(Connection connection, String guid) throws SQLException
+    private static int clearChannelStats(Connection connection, String configurationId) throws SQLException
     {
         return inTransaction(connection, () -> {
-            int deleted = DmrActivitySchema.clearSiteStats(connection, guid) +
-                P25ActivityLogSchema.clearSiteStats(connection, guid) +
-                TrunkedSiteSchema.clearSiteStats(connection, guid);
-            P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
+            int deleted = DmrActivitySchema.clearChannelStats(connection, configurationId) +
+                ReceiverActivitySchema.clearChannelStats(connection, configurationId) +
+                TrunkedSiteSchema.clearChannelStats(connection, configurationId);
+            ReceiverActivitySchema.updateStatus(connection, "last_channel_stats_clear_ms",
                 Long.toString(System.currentTimeMillis()));
             return deleted;
         });
@@ -294,7 +302,7 @@ public final class P25ActivityLogMaintenance
 
     private static void updateStatus(Connection connection, String key) throws SQLException
     {
-        P25ActivityLogSchema.updateStatus(connection, key, Long.toString(System.currentTimeMillis()));
+        ReceiverActivitySchema.updateStatus(connection, key, Long.toString(System.currentTimeMillis()));
     }
 
     private static long size(Path path) throws IOException

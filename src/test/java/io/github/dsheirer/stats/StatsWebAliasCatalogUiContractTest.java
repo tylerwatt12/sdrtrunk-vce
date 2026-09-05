@@ -54,7 +54,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(limits.contains("`${name}_truncated`"));
         assertTrue(source.contains("aliasOptionLimitNotice(options, 'group_names'"));
         assertTrue(source.contains("aliasOptionLimitNotice(options, 'icon_names'"));
-        assertTrue(source.contains("aliasOptionLimitNotice(options, 'stream_names'"));
+        assertTrue(source.contains("aliasOptionLimitNotice(options, 'streams'"));
     }
 
     @Test
@@ -225,7 +225,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(selectedIds.contains("Select no more than ${maximum} aliases"));
         assertFalse(source.contains("slice(0, 500)"));
         for(String operation: new String[]{"group_operation", "recordable",
-            "stream_operation", "broadcast_channels", "alias_list_id", "icon_name", "delete",
+            "stream_operation", "broadcast_configuration_ids", "alias_list_id", "icon_name", "delete",
             "/api/v1/admin/scan-lists/", "alias_ids"})
         {
             assertTrue(bulk.contains(operation), () -> "Missing bulk contract " + operation);
@@ -447,7 +447,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(policy.contains("selectedList?.unmatched_talkgroup_policy"));
         assertTrue(prefill.contains("selectedList?.unmatched_talkgroup_policy"));
         assertTrue(policy.contains("/unmatched-talkgroups"));
-        for(String field: new String[]{"recordable", "broadcast_channels", "scan_list_ids"})
+        for(String field: new String[]{"recordable", "broadcast_configuration_ids", "scan_list_ids"})
         {
             assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
         }

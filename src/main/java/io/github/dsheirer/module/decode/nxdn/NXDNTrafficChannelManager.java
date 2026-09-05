@@ -177,10 +177,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                 {
                     Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), Channel.ChannelType.TRAFFIC);
                     trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+                    trafficChannel.setAliasListId(mParentChannel.getAliasListId());
                     trafficChannel.setSystem(mParentChannel.getSystem());
                     trafficChannel.setSite(mParentChannel.getSite());
                     trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
-                    trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
+                    trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
                     trafficChannel.setDecodeConfiguration(copyDecodeConfiguration(decodeConfig));
                     trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                     trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());

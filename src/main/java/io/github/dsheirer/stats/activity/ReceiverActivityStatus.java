@@ -14,7 +14,7 @@ package io.github.dsheirer.stats.activity;
 /**
  * Configured and effective state for summary statistics and detailed event history.
  */
-public record P25ActivityLogStatus(boolean summaryConfigured, boolean detailedHistoryConfigured,
+public record ReceiverActivityStatus(boolean summaryConfigured, boolean detailedHistoryConfigured,
                                    boolean summaryActive, boolean detailedHistoryActive, int retentionDays,
                                    State state, String databasePath, long lastSuccessfulWriteMs,
                                    long recordsWritten, long recordsDropped, String lastError)

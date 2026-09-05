@@ -6,10 +6,14 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
+import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,6 +28,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 class StatsAliasResolverTest
 {
+    private static final String P25_CONFIGURATION_ID = "10000000-0000-4000-8000-000000000001";
+    private static final String SECOND_P25_CONFIGURATION_ID = "10000000-0000-4000-8000-000000000002";
+    private static final String P25_RADIORESOLVE_ID = "20000000-0000-4000-8000-000000000001";
+    private static final String SECOND_P25_RADIORESOLVE_ID = "20000000-0000-4000-8000-000000000002";
+    private static final String P25_SYSTEM_KEY = "p25:bee00:348";
+
     @TempDir
     Path mTemporaryFolder;
 
@@ -31,7 +41,7 @@ class StatsAliasResolverTest
     void classifiesObservedTalkgroupsWithinOnlyTheSelectedAliasListAndObservesCommittedChanges() throws Exception
     {
         Path database = mTemporaryFolder.resolve("observed-talkgroups.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -114,7 +124,7 @@ class StatsAliasResolverTest
     void resolvesAssignedListDescriptionsWithoutChangingAliasPrecedence() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -153,18 +163,17 @@ class StatsAliasResolverTest
                 """);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
-            List<Map<String,Object>> nxdnTalkgroups = rows(
-                row("NXDN County", 91), row("NXDN Other", 91));
-            List<Map<String,Object>> nxdnRadios = rows(row("NXDN County", 123));
+            List<Map<String,Object>> nxdnTalkgroups = rows(row(1, 91), row(2, 91));
+            List<Map<String,Object>> nxdnRadios = rows(row(1, 123));
             List<Map<String,Object>> p25Talkgroups = rows(
-                row("P25 Conventional", 101), row("P25 Conventional", 102));
-            List<Map<String,Object>> p25Radios = rows(row("P25 Conventional", 456));
-            List<Map<String,Object>> dmrTalkgroups = rows(row("DMR County", 301));
-            List<Map<String,Object>> dmrRadios = rows(row("DMR County", 302));
-            Map<String,Object> dmrActivityRow = activityRow("DMR", 1, "DMR County", 302, 301, 1);
-            Map<String,Object> nxdnActivityRow = activityRow("NXDN", 1, "NXDN County", 123, 91, 1);
+                row(3, 101), row(3, 102));
+            List<Map<String,Object>> p25Radios = rows(row(3, 456));
+            List<Map<String,Object>> dmrTalkgroups = rows(row(4, 301));
+            List<Map<String,Object>> dmrRadios = rows(row(4, 302));
+            Map<String,Object> dmrActivityRow = activityRow("DMR", 1, 4, 302, 301, 1);
+            Map<String,Object> nxdnActivityRow = activityRow("NXDN", 1, 1, 123, 91, 1);
             Map<String,Object> p25ConventionalActivityRow =
-                activityRow("APCO25", 2, "P25 Conventional", 456, 101, 1);
+                activityRow("APCO25", 2, 3, 456, 101, 1);
             List<Map<String,Object>> activity = rows(dmrActivityRow, nxdnActivityRow,
                 p25ConventionalActivityRow);
 
@@ -209,7 +218,7 @@ class StatsAliasResolverTest
     void emitsDescriptionsForEveryNormalP25AliasPrefix() throws Exception
     {
         Path database = mTemporaryFolder.resolve("normal-p25.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -229,30 +238,7 @@ class StatsAliasResolverTest
                     (3, 1, 'Local Unit', 'Local radio fallback', 'Units',
                         'RADIO_ID', 'APCO25', 800)
                 """);
-            statement.executeUpdate("""
-                INSERT INTO p25_site_snapshot (
-                    guid, first_seen_ms, last_seen_ms, system_key, alias_list_name
-                ) VALUES ('alias-prefix-test', 1, 2, 77, 'P25 Trunked')
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_system (system_key, wacn, system_id, first_seen_ms, last_seen_ms)
-                VALUES (77, 0xBEE00, 0x348, 1, 2)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO receiver_context (
-                    id, context_key, guid, kind_code, protocol_code, first_seen_ms, last_seen_ms, system_key
-                ) VALUES (77, 'alias-prefix-context', 'alias-prefix-test', 1, 1, 1, 2, 77)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope (
-                    scope_id, scope_token, protocol_code, scope_kind_code, p25_system_key,
-                    alias_list_id, first_seen_ms, last_seen_ms
-                ) VALUES (77, 'p25:BEE00:348', 1, 1, 77, 1, 1, 2)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope_context (context_id, scope_id, first_seen_ms, last_seen_ms)
-                VALUES (77, 77, 1, 2)
-                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
             List<Map<String,Object>> talkgroups = rows(p25Row());
@@ -290,10 +276,108 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void sharedP25SystemAliasIsBlankWhenAssignedListsDisagree() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("shared-system-alias.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'North', 'P25'), (2, 'South', 'P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(
+                    id, alias_list_id, name, description, group_name, color, matcher_type, protocol, value
+                ) VALUES
+                    (1, 1, 'Dispatch', 'Shared dispatch', 'Operations', 123,
+                        'TALKGROUP', 'APCO25', 700),
+                    (2, 2, 'Dispatch', 'Shared dispatch', 'Operations', 123,
+                        'TALKGROUP', 'APCO25', 700)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            insertP25Channel(statement, 78, SECOND_P25_CONFIGURATION_ID, SECOND_P25_RADIORESOLVE_ID, 2);
+
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> unambiguous = p25Row();
+            unambiguous.put("talkgroup_id", 700);
+            resolver.enrichTalkgroups(connection, rows(unambiguous));
+            assertEquals("Dispatch", unambiguous.get("alias_name"));
+
+            statement.executeUpdate("UPDATE alias SET name='South Dispatch' WHERE id=2");
+            Map<String,Object> conflicting = p25Row();
+            conflicting.put("talkgroup_id", 700);
+            resolver.enrichTalkgroups(connection, rows(conflicting));
+            assertNull(conflicting.get("alias_name"),
+                "system-level views must not choose an arbitrary Alias List when labels conflict");
+
+            Map<String,Object> north = observedP25Row(700);
+            north.put("alias_list_id", 1L);
+            Map<String,Object> south = observedP25Row(700);
+            south.put("alias_list_id", 2L);
+            resolver.resolveObservedTalkgroups(connection, rows(north, south));
+            assertEquals("Dispatch", north.get("matched_alias_name"));
+            assertEquals("South Dispatch", south.get("matched_alias_name"),
+                "channel-level views continue to use that channel's exact Alias List");
+
+            statement.executeUpdate("DELETE FROM alias WHERE id=2");
+            Map<String,Object> missing = p25Row();
+            missing.put("talkgroup_id", 700);
+            resolver.enrichTalkgroups(connection, rows(missing));
+            assertNull(missing.get("alias_name"),
+                "system-level views require the identity to resolve in every assigned Alias List");
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aliasCatalogUsesCurrentChannelAndRadioSystemKeys() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("current-alias-catalog.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'County', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'Dispatch', 'TALKGROUP', 'APCO25', 700)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (77, 1, 700, 1, 2)
+                """);
+            statement.executeUpdate("UPDATE alias_list SET name='Renamed County' WHERE id=1");
+
+            Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
+            Map<String,Object> alias = (Map<String,Object>)response.get("alias");
+            List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
+            Map<String,Object> source = breakdown.getFirst();
+
+            assertEquals(1L, ((Number)alias.get("coverage_source_count")).longValue());
+            assertEquals(1L, ((Number)alias.get("observed_source_count")).longValue());
+            assertEquals("Renamed County", alias.get("alias_list_name"));
+            assertEquals(77L, ((Number)source.get("radio_system_id")).longValue());
+            assertEquals(P25_SYSTEM_KEY, source.get("radio_system_key"));
+            assertEquals("Metro", source.get("source_label"));
+            assertNull(source.get("channel_id"), "shared P25 systems do not select one arbitrary channel owner");
+            assertFalse(source.containsKey("scope_key"));
+            assertFalse(source.containsKey("scope_label"));
+        }
+    }
+
+    @Test
     void loadsOnlyRulesForTheBoundedPageIdentityAndAliasList() throws Exception
     {
         Path database = mTemporaryFolder.resolve("bounded-alias-rules.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -336,7 +420,7 @@ class StatsAliasResolverTest
             StatsAliasResolver resolver = new StatsAliasResolver();
             Map<String,Object> selected = observedP25Row(42);
             Map<String,Object> irrelevant = observedP25Row(99);
-            irrelevant.put("alias_list_name", "Irrelevant");
+            irrelevant.put("alias_list_id", 2L);
             resolver.resolveObservedTalkgroups(connection, rows(selected, irrelevant));
 
             assertEquals("exact", selected.get("match_kind"));
@@ -347,24 +431,24 @@ class StatsAliasResolverTest
     }
 
     @Test
-    void systemAliasListPairBudgetIsSharedAcrossSystemsAndCountsRepeatedListNames()
+    void systemAliasListPairBudgetIsSharedAcrossSystemsAndCountsRepeatedListIds()
     {
         StatsAliasResolver.AliasListPairBudget budget = new StatsAliasResolver.AliasListPairBudget(2);
-        budget.add(1, "Shared");
-        budget.add(2, "Shared");
+        budget.add("p25:bee00:001", 1);
+        budget.add("p25:bee00:002", 1);
         assertEquals(1, budget.queryLimit());
 
         StatsApiException overflow = assertThrows(StatsApiException.class,
-            () -> budget.add(3, "Shared"));
+            () -> budget.add("p25:bee00:003", 1));
         assertEquals(413, overflow.status());
         assertEquals("response_too_large", overflow.code());
     }
 
     @Test
-    void assignedAliasListLookupUsesCaseInsensitiveConfigurationNames() throws Exception
+    void assignedAliasListLookupSurvivesListRenameBecauseIdentityUsesId() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("alias-list-case.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path database = mTemporaryFolder.resolve("alias-list-rename.sqlite");
+        createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
@@ -377,12 +461,16 @@ class StatsAliasResolverTest
                 INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
                 VALUES (1, 1, 'Case Dispatch', 'TALKGROUP', 'DMR', 42)
                 """);
-            Map<String,Object> identity = row("mixed case", 42);
+            Map<String,Object> identity = row(1, 42);
+
+            statement.executeUpdate("UPDATE alias_list SET name='Renamed List' WHERE id=1");
 
             new StatsAliasResolver().enrichDmrTalkgroups(connection, rows(identity),
                 "identity_id", "alias_");
 
             assertEquals("Case Dispatch", identity.get("alias_name"));
+            assertEquals(1L, ((Number)identity.get("alias_list_id")).longValue());
+            assertEquals("Renamed List", identity.get("alias_list_name"));
         }
     }
 
@@ -390,12 +478,12 @@ class StatsAliasResolverTest
     void rejectsUnboundedEnrichmentInputBeforeQueryingAliases() throws Exception
     {
         Path database = mTemporaryFolder.resolve("bounded-alias-input.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database);
         List<Map<String,Object>> rows = new ArrayList<>();
 
         for(int x = 0; x <= StatsAliasResolver.MAX_INPUT_ROWS; x++)
         {
-            rows.add(row("P25", x + 1));
+            rows.add(row(1, x + 1));
         }
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -424,10 +512,10 @@ class StatsAliasResolverTest
         statement.executeUpdate("DELETE FROM alias_list");
     }
 
-    private static Map<String,Object> row(String aliasList, int identityId)
+    private static Map<String,Object> row(long aliasListId, int identityId)
     {
         Map<String,Object> row = new LinkedHashMap<>();
-        row.put("alias_list_name", aliasList);
+        row.put("alias_list_id", aliasListId);
         row.put("identity_id", identityId);
         return row;
     }
@@ -439,7 +527,7 @@ class StatsAliasResolverTest
         row.put("channel_kind_code", 1);
         row.put("wacn", 0xBEE00);
         row.put("system_id", 0x348);
-        row.put("system_key", 77);
+        row.put("radio_system_key", P25_SYSTEM_KEY);
         return row;
     }
 
@@ -447,23 +535,60 @@ class StatsAliasResolverTest
     {
         Map<String,Object> row = p25Row();
         row.put("topology", "TRUNKED");
-        row.put("alias_list_name", "Selected");
+        row.put("alias_list_id", 1L);
         row.put("talkgroup_id", talkgroup);
         row.put("protocol_code", 1);
         row.put("p25_identity_state_code", 1);
         return row;
     }
 
-    private static Map<String,Object> activityRow(String protocol, int channelKind, String aliasList,
+    private static Map<String,Object> activityRow(String protocol, int channelKind, long aliasListId,
                                                   int source, int target, int targetKind)
     {
         Map<String,Object> row = new LinkedHashMap<>();
         row.put("protocol", protocol);
         row.put("channel_kind_code", channelKind);
-        row.put("alias_list_name", aliasList);
+        row.put("alias_list_id", aliasListId);
         row.put("source_radio_id", source);
         row.put("target_id", target);
         row.put("target_kind_code", targetKind);
         return row;
+    }
+
+    private static void createDatabase(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverActivitySchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
+        }
+    }
+
+    private static void insertP25Channel(Statement statement, long receiverChannelId, String configurationId,
+                                         String radioResolveId, long aliasListId) throws Exception
+    {
+        statement.executeUpdate("""
+            INSERT INTO configuration_channel(
+                configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+            ) VALUES ('%s', 'TRUNKED', 0, 'Metro', 'Downtown', 'Control', %d,
+                '%s', 0, 'P25_PHASE1', 851000000, '{}')
+            """.formatted(configurationId, aliasListId, radioResolveId));
+        statement.executeUpdate("""
+            INSERT OR IGNORE INTO radio_system(
+                id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                first_seen_ms, last_seen_ms
+            ) VALUES (77, '%s', 1, 0, 0xBEE00, 0x348, 1, 2)
+            """.formatted(P25_SYSTEM_KEY));
+        statement.executeUpdate("""
+            INSERT INTO receiver_channel(
+                id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                radio_system_assigned_at_ms
+            ) VALUES (%d, '%s', 1, 2, 77, 1)
+            """.formatted(receiverChannelId, configurationId));
     }
 }

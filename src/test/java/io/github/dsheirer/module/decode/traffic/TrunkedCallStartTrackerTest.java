@@ -21,11 +21,24 @@ import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
 import org.junit.jupiter.api.Test;
 
 class TrunkedCallStartTrackerTest
 {
+    @Test
+    void rejectsUnsupportedP25InputsBecauseP25UsesItsOwnGrantTracker()
+    {
+        Channel parent = new Channel("P25 Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        APCO25Channel channel = APCO25Channel.create(0, 459);
+        assertNull(new TrunkedCallStartTracker(5_000).observe(parent, Protocol.APCO25, channel, 0,
+            identifiers(APCO25Talkgroup.create(1_200)), DecodeEventType.CALL_GROUP, 1_000L));
+    }
+
     @Test
     void countsTargetChangesButNotGrantOrTalkerUpdates()
     {
@@ -297,6 +310,13 @@ class TrunkedCallStartTrackerTest
             identifiers.update(DMRRadio.createFrom(radio));
         }
         identifiers.update(DMRTalkgroup.create(talkgroup));
+        return identifiers;
+    }
+
+    private static MutableIdentifierCollection identifiers(io.github.dsheirer.identifier.Identifier<?> target)
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(target);
         return identifiers;
     }
 

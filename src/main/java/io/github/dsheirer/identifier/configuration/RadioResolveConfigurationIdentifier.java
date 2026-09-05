@@ -16,18 +16,18 @@ import io.github.dsheirer.identifier.Form;
 import java.util.UUID;
 
 /**
- * Stable site GUID for a configured RF source.
+ * Stable identifier used to correlate a configured RF source with RadioResolve.
  */
-public class SiteGuidConfigurationIdentifier extends ConfigurationStringIdentifier
+public class RadioResolveConfigurationIdentifier extends ConfigurationStringIdentifier
 {
-    public SiteGuidConfigurationIdentifier()
+    public RadioResolveConfigurationIdentifier()
     {
         this(null);
     }
 
-    public SiteGuidConfigurationIdentifier(String value)
+    public RadioResolveConfigurationIdentifier(String value)
     {
-        super(value, Form.RADRES_GUID);
+        super(value, Form.RADIORESOLVE_ID);
     }
 
     @Override
@@ -42,15 +42,15 @@ public class SiteGuidConfigurationIdentifier extends ConfigurationStringIdentifi
             }
             catch(IllegalArgumentException _)
             {
-                //Invalid GUID string.
+                //Invalid UUID string.
             }
         }
 
         return false;
     }
 
-    public static SiteGuidConfigurationIdentifier create(String value)
+    public static RadioResolveConfigurationIdentifier create(String value)
     {
-        return new SiteGuidConfigurationIdentifier(value);
+        return new RadioResolveConfigurationIdentifier(value);
     }
 }

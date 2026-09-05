@@ -42,6 +42,11 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
@@ -572,14 +577,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             reasons.add(LogicalCallSeparationReason.MISSING_DECODER_TYPE);
         }
 
-        if(source.aliasListId() <= 0L)
+        if(p25SystemIdentity(leg.snapshot) == null)
         {
-            reasons.add(LogicalCallSeparationReason.MISSING_DURABLE_ALIAS_LIST_ID);
-        }
-
-        if(source.p25SiteIdentity() == null)
-        {
-            reasons.add(LogicalCallSeparationReason.MISSING_LEARNED_SITE_IDENTITY);
+            reasons.add(LogicalCallSeparationReason.MISSING_RADIO_SYSTEM_IDENTITY);
         }
 
         if(leg.destinationIdentity == null)
@@ -667,20 +667,15 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         CallLegSource firstSource = first.snapshot.callLegSource();
         CallLegSource secondSource = second.snapshot.callLegSource();
-        P25SiteIdentity firstSite = firstSource.p25SiteIdentity();
-        P25SiteIdentity secondSite = secondSource.p25SiteIdentity();
+        P25SystemIdentity firstSystem = p25SystemIdentity(first.snapshot);
+        P25SystemIdentity secondSystem = p25SystemIdentity(second.snapshot);
 
-        if(firstSource.aliasListId() != secondSource.aliasListId())
-        {
-            reasons.add(LogicalCallSeparationReason.ALIAS_LIST_MISMATCH);
-        }
-
-        if(firstSite.wacn() != secondSite.wacn())
+        if(firstSystem.wacn() != secondSystem.wacn())
         {
             reasons.add(LogicalCallSeparationReason.WACN_MISMATCH);
         }
 
-        if(firstSite.system() != secondSite.system())
+        if(firstSystem.system() != secondSystem.system())
         {
             reasons.add(LogicalCallSeparationReason.SYSTEM_ID_MISMATCH);
         }
@@ -1205,13 +1200,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         if(comparison == 0)
         {
-            comparison = compareNullable(first.snapshot.callLegSource().siteGuid(),
-                second.snapshot.callLegSource().siteGuid());
-            criterion = LogicalCallWinnerCriterion.SITE_GUID;
-        }
-
-        if(comparison == 0)
-        {
             comparison = compareNullable(first.snapshot.callLegSource().channelConfigurationId(),
                 second.snapshot.callLegSource().channelConfigurationId());
             criterion = LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID;
@@ -1293,11 +1281,15 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         IdentifierCollection identifiers = mergeWinnerIdentifiers(winner, legs);
-        AudioCallRecordingMetadata recordingMetadata = selectRecordingMetadata(winner, legs);
+        AudioCallRecordingMetadata recordingMetadata = winner.snapshot.recordingMetadata();
 
         if(recordingMetadata == null)
         {
-            recordingMetadata = AudioCallRecordingMetadata.captureAtSnapshot(winner.snapshot.aliasList(), identifiers);
+            //Presentation and Alias List decisions belong to the receiver leg that supplied the selected audio.
+            //Resolved identities can fill missing identity facts below, but another leg must never replace this
+            //winner-owned configuration and alias snapshot.
+            recordingMetadata = AudioCallRecordingMetadata.captureAtSnapshot(winner.snapshot.aliasList(),
+                winner.snapshot.identifierCollection());
         }
 
         recordingMetadata = recordingMetadata.withResolvedUserIdentifiers(identifiers.getToIdentifier(),
@@ -1316,7 +1308,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             .sorted((first, second) -> compareCallLegIds(first.snapshot.callLegId(), second.snapshot.callLegId()))
             .map(leg -> new CallLegSummary(leg.snapshot.callLegId(), leg.snapshot.callLegSource(),
                 leg.startTimestamp, leg.endTimestamp, leg.quality, leg.audioSampleCount, leg.ingressLoss,
-                leg.audioTruncated, leg == winner, leg.encryptionEvidence)).toList();
+                leg.audioTruncated, leg == winner, leg.encryptionEvidence,
+                leg.snapshot.identifierCollection() != null ?
+                    leg.snapshot.identifierCollection().getFromIdentifier() : null,
+                leg.snapshot.identifierCollection() != null ?
+                    leg.snapshot.identifierCollection().getToIdentifier() : null)).toList();
 
         return new CompletedAudioCall(new LogicalCallId(mCoordinatorId, mNextLogicalCallSequence++),
             resolvedSnapshot, winner.audioBuffers, policy, summaries);
@@ -1469,7 +1465,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             case INGRESS_LOSS_OR_AUDIO_TRUNCATION -> textValue(Boolean.toString(
                 leg.ingressLoss || leg.audioTruncated));
             case RETAINED_AUDIO_SAMPLE_COUNT -> wholeValue(leg.audioSampleCount);
-            case SITE_GUID -> textValue(leg.snapshot.callLegSource().siteGuid());
             case CHANNEL_CONFIGURATION_ID -> textValue(leg.snapshot.callLegSource().channelConfigurationId());
             case CALL_LEG_ID -> textValue(legId(leg));
             case SINGLE_LEG -> LogicalCallDiagnosticWinner.CriterionValue.empty();
@@ -1505,7 +1500,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return new LogicalCallDiagnosticLeg(legId(leg),
             source != null && source.decoderType() != null ? source.decoderType().name() : null,
             source != null ? source.channelConfigurationId() : null, source != null ? source.channelName() : null,
-            source != null ? source.siteGuid() : null,
+            source != null ? source.radioResolveId() : null,
             source != null ? source.aliasListId() : 0L, site != null ? site.wacn() : null,
             site != null ? site.system() : null, site != null ? site.rfss() : null,
             site != null ? site.site() : null, leg.startTimestamp, leg.endTimestamp,
@@ -1534,7 +1529,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return new LogicalCallDiagnosticLeg(callLegId,
             source != null && source.decoderType() != null ? source.decoderType().name() : null,
             source != null ? source.channelConfigurationId() : null, source != null ? source.channelName() : null,
-            source != null ? source.siteGuid() : null,
+            source != null ? source.radioResolveId() : null,
             source != null ? source.aliasListId() : 0L, site != null ? site.wacn() : null,
             site != null ? site.system() : null, site != null ? site.rfss() : null,
             site != null ? site.site() : null, snapshot.startTimestamp(), snapshot.lastActivityTimestamp(),
@@ -1614,7 +1609,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             identifiers.addAll(winner.snapshot.identifierCollection().getIdentifiers());
         }
 
-        ExactDestination exactDestination = mostExactDestination(legs);
+        ExactDestination exactDestination = mostExactDestination(winner, legs);
 
         if(exactDestination != null)
         {
@@ -1625,13 +1620,15 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         {
             addMissingUserIdentifier(identifiers, legs, Form.PATCH_GROUP, Role.TO);
             addMissingUserIdentifier(identifiers, legs, Form.TALKGROUP, Role.TO);
+            addMissingUserIdentifier(identifiers, legs, Form.RADIO, Role.TO);
         }
 
-        FullyQualifiedRadioIdentifier exactSource = mostExactSource(legs);
+        FullyQualifiedRadioIdentifier exactSource = mostExactSource(winner, legs);
 
         if(exactSource != null)
         {
-            replaceUserIdentifier(identifiers, Form.RADIO, Role.FROM, exactSource);
+            replaceUserIdentifier(identifiers, Form.RADIO, Role.FROM,
+                promotedSourceIdentifier(winner, exactSource));
         }
         else
         {
@@ -1648,20 +1645,39 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
      * Selects the single fully-qualified destination compatible with every confirmed cohort member.  Two different
      * qualified home identities can never be promoted, even if their local talkgroup values happen to match.
      */
-    private ExactDestination mostExactDestination(List<CompletedReceiverLeg> legs)
+    private ExactDestination mostExactDestination(CompletedReceiverLeg winner, List<CompletedReceiverLeg> legs)
     {
+        Identifier<?> winnerDestination = winner != null && winner.snapshot.identifierCollection() != null ?
+            winner.snapshot.identifierCollection().getToIdentifier() : null;
+        Identifier<?> winnerPrimary = primaryDestination(winnerDestination);
+
+        //When the winning receiver already supplied a fully-qualified identity, its local over-air alias is the
+        //only correct one for winner-owned display and Alias List matching. Other sites may use a different local
+        //alias for the same home identity.
+        if(winnerPrimary instanceof FullyQualifiedTalkgroupIdentifier ||
+            winnerPrimary instanceof FullyQualifiedRadioIdentifier)
+        {
+            DestinationIdentity winnerIdentity = destinationIdentity(winnerDestination);
+            if(winnerIdentity != null && legs.stream().allMatch(member -> member.destinationIdentity != null &&
+                winnerIdentity.matches(member.destinationIdentity)))
+            {
+                return new ExactDestination(winnerPrimary);
+            }
+            return null;
+        }
+
         ExactDestination selected = null;
 
         for(CompletedReceiverLeg leg : legs)
         {
             Identifier<?> destination = leg.snapshot.identifierCollection() != null ?
                 leg.snapshot.identifierCollection().getToIdentifier() : null;
-            PatchGroupIdentifier patch = destination instanceof PatchGroupIdentifier value ? value : null;
-            TalkgroupIdentifier primary = primaryTalkgroup(destination);
+            Identifier<?> primary = primaryDestination(destination);
 
-            if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+            if(primary instanceof FullyQualifiedTalkgroupIdentifier ||
+                primary instanceof FullyQualifiedRadioIdentifier)
             {
-                DestinationIdentity candidate = destinationIdentity(fullyQualified);
+                DestinationIdentity candidate = destinationIdentity(destination);
 
                 if(candidate == null || legs.stream().anyMatch(member -> member.destinationIdentity == null ||
                     !candidate.matches(member.destinationIdentity)))
@@ -1671,11 +1687,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
                 if(selected == null)
                 {
-                    selected = new ExactDestination(fullyQualified, patch);
+                    selected = new ExactDestination(primary);
                 }
                 else
                 {
-                    DestinationIdentity existing = destinationIdentity(selected.talkgroup);
+                    DestinationIdentity existing = destinationIdentity(selected.destination);
 
                     if(existing == null || !existing.matches(candidate))
                     {
@@ -1689,8 +1705,22 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     /** Selects one exact source only when every known source in the confirmed cohort agrees with it. */
-    private FullyQualifiedRadioIdentifier mostExactSource(List<CompletedReceiverLeg> legs)
+    private FullyQualifiedRadioIdentifier mostExactSource(CompletedReceiverLeg winner,
+                                                            List<CompletedReceiverLeg> legs)
     {
+        Identifier<?> winnerSource = winner != null && winner.snapshot.identifierCollection() != null ?
+            winner.snapshot.identifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) : null;
+        if(winnerSource instanceof FullyQualifiedRadioIdentifier fullyQualified)
+        {
+            SourceIdentity winnerIdentity = sourceIdentity(fullyQualified);
+            if(winnerIdentity != null && legs.stream().allMatch(member -> member.sourceIdentity == null ||
+                winnerIdentity.matches(member.sourceIdentity)))
+            {
+                return fullyQualified;
+            }
+            return null;
+        }
+
         FullyQualifiedRadioIdentifier selected = null;
 
         for(CompletedReceiverLeg leg : legs)
@@ -1732,43 +1762,80 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         Identifier<?> winnerDestination = winner.snapshot.identifierCollection() != null ?
             winner.snapshot.identifierCollection().getToIdentifier() : null;
+        Identifier<?> winnerPrimary = primaryDestination(winnerDestination);
+        Identifier<?> promotedPrimary = qualifiedWithLocalAddress(exactDestination.destination, winnerPrimary,
+            Role.TO);
 
         if(!(winnerDestination instanceof PatchGroupIdentifier winnerPatch))
         {
-            return exactDestination.talkgroup;
-        }
-
-        if(exactDestination.patch != null)
-        {
-            return exactDestination.patch;
+            return promotedPrimary;
         }
 
         PatchGroup original = winnerPatch.getValue();
 
         if(original == null)
         {
-            return exactDestination.talkgroup;
+            return promotedPrimary;
         }
 
-        PatchGroup promoted = new PatchGroup(exactDestination.talkgroup, original.getVersion());
+        if(!(promotedPrimary instanceof TalkgroupIdentifier talkgroup))
+        {
+            return winnerDestination;
+        }
+
+        PatchGroup promoted = new PatchGroup(talkgroup, original.getVersion());
         promoted.addPatchedTalkgroups(original.getPatchedTalkgroupIdentifiers());
         promoted.addPatchedRadios(original.getPatchedRadioIdentifiers());
         return APCO25PatchGroup.create(promoted);
     }
 
-    private static TalkgroupIdentifier primaryTalkgroup(Identifier<?> destination)
+    private static Identifier<?> promotedSourceIdentifier(CompletedReceiverLeg winner,
+                                                            FullyQualifiedRadioIdentifier exactSource)
+    {
+        Identifier<?> winnerSource = winner != null && winner.snapshot.identifierCollection() != null ?
+            winner.snapshot.identifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) : null;
+        return qualifiedWithLocalAddress(exactSource, winnerSource, Role.FROM);
+    }
+
+    /** Applies an agreed home tuple to the winner's local address without importing another site's alias. */
+    private static Identifier<?> qualifiedWithLocalAddress(Identifier<?> exact, Identifier<?> winnerLocal,
+                                                            Role role)
+    {
+        Integer local = winnerLocal != null && winnerLocal.getValue() instanceof Number number ?
+            number.intValue() : exact != null && exact.getValue() instanceof Number number ? number.intValue() : null;
+        if(local == null)
+        {
+            return exact;
+        }
+        if(exact instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+        {
+            return role == Role.TO ? APCO25FullyQualifiedTalkgroupIdentifier.createTo(local,
+                talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup()) :
+                APCO25FullyQualifiedTalkgroupIdentifier.createFrom(local, talkgroup.getWacn(),
+                    talkgroup.getSystem(), talkgroup.getTalkgroup());
+        }
+        if(exact instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            return role == Role.TO ? APCO25FullyQualifiedRadioIdentifier.createTo(local, radio.getWacn(),
+                radio.getSystem(), radio.getRadio()) : APCO25FullyQualifiedRadioIdentifier.createFrom(local,
+                    radio.getWacn(), radio.getSystem(), radio.getRadio());
+        }
+        return exact;
+    }
+
+    private static Identifier<?> primaryDestination(Identifier<?> destination)
     {
         if(destination instanceof PatchGroupIdentifier patch && patch.getValue() != null)
         {
             return patch.getValue().getPatchGroup();
         }
 
-        return destination instanceof TalkgroupIdentifier talkgroup ? talkgroup : null;
+        return destination instanceof TalkgroupIdentifier || destination instanceof RadioIdentifier ? destination : null;
     }
 
-    private static DestinationIdentity destinationIdentity(TalkgroupIdentifier talkgroup)
+    private static DestinationIdentity destinationIdentity(Identifier<?> destination)
     {
-        ResolvedCallPolicy.DestinationIdentity identity = ResolvedCallPolicy.DestinationIdentity.from(talkgroup);
+        ResolvedCallPolicy.DestinationIdentity identity = ResolvedCallPolicy.DestinationIdentity.from(destination);
         return identity != null ? new DestinationIdentity(identity) : null;
     }
 
@@ -1777,7 +1844,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         identifiers.removeIf(identifier -> identifier.getIdentifierClass() == IdentifierClass.USER &&
             identifier.getRole() == Role.TO &&
-            (identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.TALKGROUP));
+            (identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.TALKGROUP ||
+                identifier.getForm() == Form.RADIO));
 
         if(replacement != null)
         {
@@ -1823,31 +1891,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 return;
             }
         }
-    }
-
-    private AudioCallRecordingMetadata selectRecordingMetadata(CompletedReceiverLeg winner,
-                                                                List<CompletedReceiverLeg> legs)
-    {
-        AudioCallRecordingMetadata selected = winner.snapshot.recordingMetadata();
-
-        if(selected != null && hasText(selected.destinationValue()) && hasText(selected.sourceValue()))
-        {
-            return selected;
-        }
-
-        for(CompletedReceiverLeg leg : legs)
-        {
-            AudioCallRecordingMetadata candidate = leg.snapshot.recordingMetadata();
-
-            if(candidate != null && hasText(candidate.destinationValue()) &&
-                (!hasText(selected != null ? selected.destinationValue() : null) ||
-                    hasText(candidate.sourceValue())))
-            {
-                selected = candidate;
-            }
-        }
-
-        return selected;
     }
 
     private void releaseCoordinatorAudio(Collection<CompletedReceiverLeg> legs)
@@ -2304,7 +2347,35 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         IdentifierCollection identifiers = snapshot != null ? snapshot.identifierCollection() : null;
         Identifier<?> destination = identifiers != null ? identifiers.getToIdentifier() : null;
-        return destinationIdentity(primaryTalkgroup(destination));
+        return destinationIdentity(destination);
+    }
+
+    private static P25SystemIdentity p25SystemIdentity(AudioCallSnapshot snapshot)
+    {
+        CallLegSource source = snapshot != null ? snapshot.callLegSource() : null;
+        P25SiteIdentity learned = source != null ? source.p25SiteIdentity() : null;
+        if(learned != null && validP25System(learned.wacn(), learned.system()))
+        {
+            return new P25SystemIdentity(learned.wacn(), learned.system());
+        }
+
+        IdentifierCollection identifiers = snapshot != null ? snapshot.identifierCollection() : null;
+        Integer wacn = networkInteger(identifiers, Form.WACN);
+        Integer system = networkInteger(identifiers, Form.SYSTEM);
+        return wacn != null && system != null && validP25System(wacn, system) ?
+            new P25SystemIdentity(wacn, system) : null;
+    }
+
+    private static Integer networkInteger(IdentifierCollection identifiers, Form form)
+    {
+        Identifier<?> identifier = identifiers != null ?
+            identifiers.getIdentifier(IdentifierClass.NETWORK, form, Role.BROADCAST) : null;
+        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
+    }
+
+    private static boolean validP25System(int wacn, int system)
+    {
+        return wacn >= 0 && wacn <= 0xFFFFF && system >= 0 && system <= 0xFFF;
     }
 
     private static SourceIdentity sourceIdentity(AudioCallSnapshot snapshot)
@@ -2320,17 +2391,28 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         if(identifier instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
+            if(!eligibleP25Radio(identifier.getProtocol(), fullyQualified.getRadio()))
+            {
+                return null;
+            }
             return new SourceIdentity(identifier.getProtocol() != null ? identifier.getProtocol().name() : null,
                 fullyQualified.getValue(), fullyQualified.getWacn(), fullyQualified.getSystem(),
                 fullyQualified.getRadio());
         }
-        else if(identifier instanceof RadioIdentifier radio && radio.isValid())
+        else if(identifier instanceof RadioIdentifier radio && radio.isValid() &&
+            eligibleP25Radio(identifier.getProtocol(), radio.getValue()))
         {
             return new SourceIdentity(identifier.getProtocol() != null ? identifier.getProtocol().name() : null,
                 radio.getValue(), null, null, null);
         }
 
         return null;
+    }
+
+    private static boolean eligibleP25Radio(Protocol protocol, int radio)
+    {
+        return protocol != Protocol.APCO25 && protocol != Protocol.APCO25_PHASE2 ||
+            TrunkedIdentityEligibility.isEligible(protocol, TrunkedIdentityDomain.STANDARD, Form.RADIO, radio);
     }
 
     private static VoiceCallQuality addQuality(Collection<VoiceCallQuality> values)
@@ -2815,11 +2897,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     /** Immutable, compact subset needed only to decide whether an active leg could belong to a completed cohort. */
-    private record PreliminaryLegScope(boolean eligible, DecoderType decoderType, long aliasListId,
-                                       P25SiteIdentity siteIdentity, DestinationIdentity destinationIdentity,
+    private record PreliminaryLegScope(boolean eligible, DecoderType decoderType,
+                                       P25SystemIdentity systemIdentity, DestinationIdentity destinationIdentity,
                                        CallEncryptionState encryptionState, SourceIdentity sourceIdentity)
     {
-        private static final PreliminaryLegScope INELIGIBLE = new PreliminaryLegScope(false, null, 0L, null,
+        private static final PreliminaryLegScope INELIGIBLE = new PreliminaryLegScope(false, null, null,
             null, CallEncryptionState.UNKNOWN, null);
 
         private static PreliminaryLegScope from(AudioCallSnapshot snapshot, DestinationIdentity destinationIdentity,
@@ -2832,22 +2914,21 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
             CallLegSource source = snapshot.callLegSource();
             DecoderType decoderType = source != null ? source.decoderType() : null;
-            long aliasListId = source != null ? source.aliasListId() : 0L;
-            P25SiteIdentity siteIdentity = source != null ? source.p25SiteIdentity() : null;
+            P25SystemIdentity systemIdentity = p25SystemIdentity(snapshot);
             boolean eligible = source != null &&
                 (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2) &&
-                aliasListId > 0L && siteIdentity != null && destinationIdentity != null &&
+                systemIdentity != null && destinationIdentity != null &&
                 snapshot.isEncryptionKnown();
-            return new PreliminaryLegScope(eligible, decoderType, aliasListId, siteIdentity,
+            return new PreliminaryLegScope(eligible, decoderType, systemIdentity,
                 destinationIdentity, snapshot.encryptionState(), sourceIdentity);
         }
 
         private boolean compatible(PreliminaryLegScope other)
         {
             if(!eligible || other == null || !other.eligible || decoderType == null ||
-                other.decoderType == null || aliasListId != other.aliasListId || siteIdentity == null ||
-                other.siteIdentity == null || siteIdentity.wacn() != other.siteIdentity.wacn() ||
-                siteIdentity.system() != other.siteIdentity.system() ||
+                other.decoderType == null || systemIdentity == null || other.systemIdentity == null ||
+                systemIdentity.wacn() != other.systemIdentity.wacn() ||
+                systemIdentity.system() != other.systemIdentity.system() ||
                 destinationIdentity == null || !destinationIdentity.matches(other.destinationIdentity) ||
                 encryptionState != other.encryptionState)
             {
@@ -2859,7 +2940,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
     }
 
-    private record ExactDestination(FullyQualifiedTalkgroupIdentifier talkgroup, PatchGroupIdentifier patch)
+    private record ExactDestination(Identifier<?> destination)
+    {
+    }
+
+    /** Native P25 duplicate-resolution scope. RFSS/Site and Alias List are observation/policy facts, not identity. */
+    private record P25SystemIdentity(int wacn, int system)
     {
     }
 

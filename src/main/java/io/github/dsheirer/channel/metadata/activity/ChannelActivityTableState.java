@@ -49,7 +49,7 @@ public final class ChannelActivityTableState
 
     public String getTableId()
     {
-        return mOwnerChannel != null ? "channel-" + mOwnerChannel.getChannelID() : "conventional";
+        return ChannelActivitySnapshot.tableId(mOwnerChannel);
     }
 
     public String getTitle()

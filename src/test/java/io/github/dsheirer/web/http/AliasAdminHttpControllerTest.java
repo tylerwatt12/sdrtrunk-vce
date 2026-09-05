@@ -93,7 +93,7 @@ class AliasAdminHttpControllerTest
             JsonNode initialCustomPolicy = aliasList(initialCustomCatalog, aliasListId)
                 .get("unmatched_talkgroup_policy");
             assertFalse(initialCustomPolicy.get("recordable").booleanValue());
-            assertTrue(initialCustomPolicy.get("broadcast_channels").isEmpty());
+            assertTrue(initialCustomPolicy.get("broadcast_configuration_ids").isEmpty());
             assertTrue(initialCustomPolicy.get("scan_list_ids").isEmpty());
 
             JsonNode createdScanList = json(send(client, jsonRequest(origin,
@@ -108,7 +108,7 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "recordable", true,
-                    "broadcast_channels", java.util.List.of("Primary"),
+                    "broadcast_configuration_ids", java.util.List.of(primary.getConfigurationId()),
                     "scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId)))))));
             revision = policyChanged.get("revision").longValue();
             JsonNode policyCatalog = json(send(client,
@@ -119,7 +119,8 @@ class AliasAdminHttpControllerTest
             assertFalse(countyAliasList.has("id"));
             JsonNode policy = countyAliasList.get("unmatched_talkgroup_policy");
             assertTrue(policy.get("recordable").booleanValue());
-            assertEquals("Primary", policy.at("/broadcast_channels/0").textValue());
+            assertEquals(primary.getConfigurationId(),
+                policy.at("/broadcast_configuration_ids/0").textValue());
             assertEquals(2, policy.get("scan_list_ids").size());
             assertEquals(3, policy.size());
             assertTrue(aliasChanges.get() >= 2);
@@ -128,7 +129,7 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "recordable", true,
-                    "broadcast_channels", java.util.List.of("Primary"),
+                    "broadcast_configuration_ids", java.util.List.of(primary.getConfigurationId()),
                     "scan_list_ids", java.util.List.of(defaultScanListId)))))));
             revision = defaultPolicyChanged.get("revision").longValue();
             policyCatalog = json(send(client,
@@ -355,14 +356,15 @@ class AliasAdminHttpControllerTest
             bulk.put("group_operation", "set");
             bulk.put("group", "Fire Dispatch");
             bulk.put("stream_operation", "add");
-            bulk.put("broadcast_channels", java.util.List.of("Primary"));
+            bulk.put("broadcast_configuration_ids", java.util.List.of(primary.getConfigurationId()));
             JsonNode bulkResult = json(send(client, jsonRequest(origin, AliasAdminHttpController.BULK_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(bulk)))));
             revision = bulkResult.get("revision").longValue();
             live = json(send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET()));
             assertEquals("Fire Dispatch", live.at("/alias/group").textValue());
-            assertEquals("Primary", live.at("/alias/broadcast_channels/0").textValue());
+            assertEquals(primary.getConfigurationId(),
+                live.at("/alias/broadcast_configuration_ids/0").textValue());
 
             bulk = new java.util.LinkedHashMap<>();
             bulk.put("revision", revision);
@@ -375,7 +377,7 @@ class AliasAdminHttpControllerTest
             live = json(send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET()));
             assertTrue(live.at("/alias/group").isNull());
-            assertTrue(live.at("/alias/broadcast_channels").isEmpty());
+            assertTrue(live.at("/alias/broadcast_configuration_ids").isEmpty());
 
             JsonNode deleted = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId)
@@ -420,7 +422,7 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "recordable", false,
-                    "broadcast_channels", java.util.List.of(),
+                    "broadcast_configuration_ids", java.util.List.of(),
                     "scan_list_ids", java.util.List.of(clevelandScanListId)))))));
             revision = nbfmPolicyChanged.get("revision").longValue();
             JsonNode nbfmOptions = json(send(client, request(origin,
@@ -466,9 +468,11 @@ class AliasAdminHttpControllerTest
             }
             JsonNode boundedOptions = json(send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + nbfmListId).GET()));
-            assertEquals(500, boundedOptions.get("stream_names").size());
-            assertEquals(502, boundedOptions.get("stream_names_total").intValue());
-            assertTrue(boundedOptions.get("stream_names_truncated").booleanValue());
+            assertEquals(500, boundedOptions.get("streams").size());
+            assertEquals(502, boundedOptions.get("streams_total").intValue());
+            assertTrue(boundedOptions.get("streams_truncated").booleanValue());
+            assertTrue(boundedOptions.at("/streams/0").has("configuration_id"));
+            assertTrue(boundedOptions.at("/streams/0").has("name"));
             assertEquals(boundedOptions.get("icon_names").size(),
                 boundedOptions.get("icon_names_total").intValue());
             assertFalse(boundedOptions.get("icon_names_truncated").booleanValue());
@@ -650,7 +654,7 @@ class AliasAdminHttpControllerTest
         value.put("color", 0);
         value.put("icon_name", null);
         value.put("recordable", recordable);
-        value.put("broadcast_channels", java.util.List.of());
+        value.put("broadcast_configuration_ids", java.util.List.of());
         value.put("stream_as_talkgroup", null);
         value.put("matcher", Map.of("type", "talkgroup", "protocol", "p25", "variant", "phase_2",
             "value", 101));

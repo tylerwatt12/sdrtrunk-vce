@@ -3818,7 +3818,7 @@ function aliasEditorPayload(form, options) {
     icon_name: form.elements.iconName.value || null,
     scan_list_ids: selectedAliasScanListIds(form),
     recordable: form.elements.recordable.checked,
-    broadcast_channels: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
+    broadcast_configuration_ids: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
       .map((checkbox) => checkbox.value),
     stream_as_talkgroup: streamValue ? Number(streamValue) : null,
     matcher
@@ -3868,7 +3868,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       const defaults = options?.alias_list?.unmatched_talkgroup_policy || {};
       const inherits = ['talkgroup', 'talkgroup_range'].includes(initialType);
       source.recordable = inherits && Boolean(defaults.recordable);
-      source.broadcast_channels = inherits ? [...(defaults.broadcast_channels || [])] : [];
+      source.broadcast_configuration_ids = inherits ? [...(defaults.broadcast_configuration_ids || [])] : [];
       source.scan_list_ids = inherits ? [...(defaults.scan_list_ids || [])] : [];
     }
     const form = node('form', 'alias-editor-form');
@@ -3963,23 +3963,25 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     audioGrid.append(aliasCheckOption('Record calls', record));
     const streams = node('fieldset', 'alias-stream-options');
     streams.append(node('legend', '', 'Streaming destinations'));
-    const selectedStreams = new Set(source.broadcast_channels || []);
-    const configuredStreams = new Set(options.stream_names || []);
-    const streamNames = [...new Set([...(options.stream_names || []), ...(source.broadcast_channels || [])])];
-    if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
-    streamNames.forEach((streamName) => {
+    const selectedStreams = new Set(source.broadcast_configuration_ids || []);
+    const configuredStreams = new Map((options.streams || []).map((entry) =>
+      [entry.configuration_id, entry.name || entry.configuration_id]));
+    const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
+    if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+    streamIds.forEach((configurationId) => {
       const label = node('label', 'alias-check-option');
       const checkbox = node('input');
       checkbox.type = 'checkbox';
       checkbox.name = 'broadcastChannel';
-      checkbox.value = streamName;
-      checkbox.checked = aliasStreamOptionSelected(selectedStreams.has(streamName),
-        configuredStreams.has(streamName), editing, options.stream_names_truncated === true);
-      const missing = !configuredStreams.has(streamName);
+      checkbox.value = configurationId;
+      checkbox.checked = aliasStreamOptionSelected(selectedStreams.has(configurationId),
+        configuredStreams.has(configurationId), editing, options.streams_truncated === true);
+      const missing = !configuredStreams.has(configurationId);
       if (missing) label.classList.add('missing');
-      const missingLabel = options.stream_names_truncated === true ?
-        `Current (outside suggestion limit): ${streamName}` : `Missing: ${streamName}`;
-      label.append(checkbox, node('span', '', missing ? missingLabel : streamName));
+      const missingLabel = options.streams_truncated === true ?
+        `Current destination outside display limit (${configurationId})` :
+        `Missing destination (${configurationId})`;
+      label.append(checkbox, node('span', '', missing ? missingLabel : configuredStreams.get(configurationId)));
       streams.append(label);
     });
     updateCreationRoutingDefaults = (changedDescriptor) => {
@@ -3991,7 +3993,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) => {
         checkbox.checked = selectedScanLists.has(Number(checkbox.value));
       });
-      const selectedDestinations = new Set(inherits ? (defaults.broadcast_channels || []) : []);
+      const selectedDestinations = new Set(inherits ? (defaults.broadcast_configuration_ids || []) : []);
       streams.querySelectorAll('[name="broadcastChannel"]').forEach((checkbox) => {
         checkbox.checked = selectedDestinations.has(checkbox.value);
       });
@@ -4001,7 +4003,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     streamAs.max = '65535';
     streamAs.step = '1';
     audio.append(scanLists, audioGrid, streams);
-    const streamLimitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+    const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
       'Destinations already saved on this alias remain visible.');
     if (streamLimitNotice) audio.append(streamLimitNotice);
     audio.append(aliasFormField('Stream as talkgroup', streamAs,
@@ -4257,17 +4259,17 @@ function aliasBulkBar(onClear) {
 function aliasBulkStreamChoices(options) {
   const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams');
   fieldset.append(node('legend', '', 'Destinations'));
-  (options?.stream_names || []).forEach((streamName) => {
+  (options?.streams || []).forEach((stream) => {
     const label = node('label', 'alias-check-option');
     const checkbox = node('input');
     checkbox.type = 'checkbox';
     checkbox.name = 'broadcastChannel';
-    checkbox.value = streamName;
-    label.append(checkbox, node('span', '', streamName));
+    checkbox.value = stream.configuration_id;
+    label.append(checkbox, node('span', '', stream.name || stream.configuration_id));
     fieldset.append(label);
   });
-  if (!(options?.stream_names || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
-  const limitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+  if (!(options?.streams || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
+  const limitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
     'Open an alias individually if its saved destination is not listed.');
   if (limitNotice) fieldset.append(limitNotice);
   return fieldset;
@@ -4367,7 +4369,7 @@ function openAliasBulkModal(kind) {
       const channels = [...choices.querySelectorAll('input:checked')].map((input) => input.value);
       if (operation.value !== 'clear' && !channels.length) throw new Error('Select at least one destination');
       return { stream_operation: operation.value,
-        broadcast_channels: operation.value === 'clear' ? null : channels };
+        broadcast_configuration_ids: operation.value === 'clear' ? null : channels };
     };
   } else if (kind === 'appearance') {
     const colorOperation = aliasSelect('colorOperation', [
@@ -4620,23 +4622,25 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   streams.append(node('legend', '', 'Streaming'), node('p', 'muted',
     'Sends unmatched talkgroup calls to the selected external streaming destinations. New talkgroup Aliases are ' +
     'created with these defaults.'));
-  const selectedStreams = new Set(policy.broadcast_channels || []);
-  const configuredStreams = new Set(options.stream_names || []);
-  const streamNames = [...new Set([...(options.stream_names || []), ...(policy.broadcast_channels || [])])];
-  if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
-  streamNames.forEach((streamName) => {
+  const selectedStreams = new Set(policy.broadcast_configuration_ids || []);
+  const configuredStreams = new Map((options.streams || []).map((entry) =>
+    [entry.configuration_id, entry.name || entry.configuration_id]));
+  const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
+  if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+  streamIds.forEach((configurationId) => {
     const label = node('label', 'alias-check-option');
     const checkbox = node('input');
     checkbox.type = 'checkbox';
     checkbox.name = 'broadcastChannel';
-    checkbox.value = streamName;
-    checkbox.checked = selectedStreams.has(streamName);
-    const missing = !configuredStreams.has(streamName);
+    checkbox.value = configurationId;
+    checkbox.checked = selectedStreams.has(configurationId);
+    const missing = !configuredStreams.has(configurationId);
     if (missing) label.classList.add('missing');
-    label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
+    label.append(checkbox, node('span', '', missing ? `Missing destination (${configurationId})` :
+      configuredStreams.get(configurationId)));
     streams.append(label);
   });
-  const streamLimitNotice = aliasOptionLimitNotice(options, 'stream_names', 'stream destinations',
+  const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
     'Destinations already saved in these defaults remain visible.');
   if (streamLimitNotice) streams.append(streamLimitNotice);
 
@@ -4668,7 +4672,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
           recordable: record.checked,
-          broadcast_channels: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
+          broadcast_configuration_ids: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
             .map((checkbox) => checkbox.value),
           scan_list_ids: selectedAliasScanListIds(form)
         }
@@ -4813,7 +4817,7 @@ function observedTalkgroupPrefill(row, selectedList) {
     color: 0,
     icon_name: null,
     recordable: Boolean(policy.recordable),
-    broadcast_channels: [...(policy.broadcast_channels || [])],
+    broadcast_configuration_ids: [...(policy.broadcast_configuration_ids || [])],
     scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
     matcher,
@@ -4848,7 +4852,7 @@ function routedAliasPrefill(selectedList, options) {
     color: 0,
     icon_name: null,
     recordable: Boolean(policy.recordable),
-    broadcast_channels: [...(policy.broadcast_channels || [])],
+    broadcast_configuration_ids: [...(policy.broadcast_configuration_ids || [])],
     scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
     matcher: { type, protocol, ...(variant ? { variant } : {}), value }
@@ -16470,8 +16474,8 @@ function userPreferenceSummaryCards(preferences) {
       ['Playing call in every page title', settingsEnabled(preferences.page_titles.prepend_playing_call)],
       ['Playback volume', `${Math.round(preferences.playback.volume * 100)}%`],
       ['Selected scan lists', selectedScanListSummary(preferences.playback.selected_scan_list_ids)],
-      ['Conversation Mode', settingsEnabled(preferences.playback.conversation_grouping)],
-      ['Calls before switching', number(preferences.playback.conversation_burst_limit)],
+      ['Group calls by target', settingsEnabled(preferences.playback.target_grouping)],
+      ['Calls per target', number(preferences.playback.target_burst_limit)],
       ['Detail level', semanticLabel(preferences.scanner.detail_mode)]
     ])),
     settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
@@ -16704,30 +16708,30 @@ function openScannerSettings(returnFocusSelector = null) {
   const form = node('form', 'admin-form scanner-settings-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  const conversationGrouping = preferenceCheckbox('conversation-grouping', 'Conversation Mode',
-    current.playback.conversation_grouping,
-    'When calls are waiting, keep a conversation together before switching to another target.');
+  const targetGrouping = preferenceCheckbox('target-grouping', 'Group calls by playback target',
+    current.playback.target_grouping,
+    'When calls are waiting, keep related calls together before switching to another channel or talkgroup.');
   const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
     current.page_titles.prepend_playing_call,
     'The Scanner title always shows the audible target. Turn this on to add it to other pages too.');
-  const conversationBurstLimit = node('input');
-  conversationBurstLimit.type = 'number';
-  conversationBurstLimit.name = 'conversation-burst-limit';
-  conversationBurstLimit.min = '1';
-  conversationBurstLimit.max = '20';
-  conversationBurstLimit.required = true;
-  conversationBurstLimit.value = String(current.playback.conversation_burst_limit);
+  const targetBurstLimit = node('input');
+  targetBurstLimit.type = 'number';
+  targetBurstLimit.name = 'target-burst-limit';
+  targetBurstLimit.min = '1';
+  targetBurstLimit.max = '20';
+  targetBurstLimit.required = true;
+  targetBurstLimit.value = String(current.playback.target_burst_limit);
   const apply = (preferences) => {
-    conversationGrouping.input.checked = preferences.playback.conversation_grouping;
-    conversationBurstLimit.value = String(preferences.playback.conversation_burst_limit);
+    targetGrouping.input.checked = preferences.playback.target_grouping;
+    targetBurstLimit.value = String(preferences.playback.target_burst_limit);
     prependTitle.input.checked = preferences.page_titles.prepend_playing_call;
   };
   const fields = node('div', 'settings-field-grid');
-  fields.append(formField('Calls before switching', conversationBurstLimit,
-    'Play 1–20 waiting calls from the same conversation before another waiting conversation gets a turn.'));
-  const card = settingsCard('Conversation playback',
+  fields.append(formField('Calls before switching targets', targetBurstLimit,
+    'Play 1–20 waiting calls for the same channel or talkgroup before another waiting target gets a turn.'));
+  const card = settingsCard('Playback order',
     'These choices affect only calls that have already built up in this browser queue.',
-    conversationGrouping.control, fields);
+    targetGrouping.control, fields);
   const titleCard = settingsCard('Page titles',
     'Choose whether Scanner playback also appears in the title of other pages.', prependTitle.control);
   const save = node('button', '', 'Save Scanner Settings');
@@ -16747,18 +16751,18 @@ function openScannerSettings(returnFocusSelector = null) {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     const submitted = {
-      conversation_grouping: conversationGrouping.input.checked,
-      conversation_burst_limit: Number(conversationBurstLimit.value),
+      target_grouping: targetGrouping.input.checked,
+      target_burst_limit: Number(targetBurstLimit.value),
       prepend_playing_call: prependTitle.input.checked
     };
-    const controls = [conversationGrouping.input, conversationBurstLimit, prependTitle.input, save];
+    const controls = [targetGrouping.input, targetBurstLimit, prependTitle.input, save];
     controls.forEach((control) => { control.disabled = true; });
     modal.setBusy(true);
     message.textContent = 'Saving Scanner settings…';
     try {
       await updateUserPreferences((preferences) => {
-        preferences.playback.conversation_grouping = submitted.conversation_grouping;
-        preferences.playback.conversation_burst_limit = submitted.conversation_burst_limit;
+        preferences.playback.target_grouping = submitted.target_grouping;
+        preferences.playback.target_burst_limit = submitted.target_burst_limit;
         preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
       }, false);
       modal.setDirty(false);

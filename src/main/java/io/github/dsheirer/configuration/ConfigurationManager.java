@@ -415,7 +415,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     /** Database hook kept protected so failure-path tests can inject a failed commit. */
     protected synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-        AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
+        AliasConfigurationPublication publication)
     {
         if(mExternalConfigurationOperation)
         {
@@ -428,14 +428,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
-            List<BroadcastConfiguration> broadcastConfigurations = broadcastRename != null ?
-                new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()) : null;
-            return broadcastConfigurations != null ?
-                mConfigurationRepository.commitAliasConfigurationWithBroadcastRename(proposed,
-                publication.clearedChannelAliasListNames(), broadcastConfigurations,
-                broadcastRename.previousName(), broadcastRename.updatedName()) :
-                mConfigurationRepository.commitAliasConfiguration(proposed,
-                    publication.clearedChannelAliasListNames());
+            return mConfigurationRepository.commitAliasConfiguration(proposed,
+                publication.clearedChannelAliasListIds());
         }
         catch(Exception exception)
         {
@@ -448,16 +442,14 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      * observer fails after commit, the committed Alias state is reloaded before this command returns.
      */
     public synchronized AliasConfigurationSnapshot commitAndPublishAliasConfiguration(AliasConfigurationSnapshot proposed,
-        AliasConfigurationPublication publication, Runnable beforePublication,
-        BroadcastConfigurationRename broadcastRename)
+        AliasConfigurationPublication publication, Runnable beforePublication)
     {
         AliasConfigurationPublication requested = Objects.requireNonNull(publication,
             "Alias publication cannot be null");
-        AliasConfigurationSnapshot committed = commitAliasConfiguration(proposed, requested, broadcastRename);
+        AliasConfigurationSnapshot committed = commitAliasConfiguration(proposed, requested);
 
         try
         {
-            publishBroadcastConfigurationRename(broadcastRename);
             if(beforePublication != null)
             {
                 beforePublication.run();
@@ -470,13 +462,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             try
             {
                 AliasConfigurationSnapshot reloaded = loadCommittedAliasConfiguration();
-                publishBroadcastConfigurationRename(broadcastRename);
                 Set<Long> allAliasIds = new HashSet<>(requested.changedAliasIds());
                 mAliasModel.getAliases().stream().map(Alias::getId).forEach(allAliasIds::add);
                 reloaded.aliases().stream().map(Alias::getId).forEach(allAliasIds::add);
                 publishCommittedAliasConfiguration(reloaded,
                     new AliasConfigurationPublication(allAliasIds, true, true, true,
-                        requested.clearedChannelAliasListNames()));
+                        requested.clearedChannelAliasListIds()));
                 mLog.error("Alias configuration committed, but initial publication failed; reloaded committed state",
                     publicationFailure);
                 return reloaded;
@@ -512,44 +503,18 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mScanListModel.replaceConfiguration(committed.scanLists());
         }
 
-        if(!publication.clearedChannelAliasListNames().isEmpty())
+        if(!publication.clearedChannelAliasListIds().isEmpty())
         {
             for(Channel channel: mChannelModel.getChannels())
             {
-                if(channel.getAliasListName() != null && publication.clearedChannelAliasListNames().stream()
-                    .anyMatch(name -> name.equalsIgnoreCase(channel.getAliasListName())))
+                if(publication.clearedChannelAliasListIds().contains(channel.getAliasListId()))
                 {
-                    channel.setAliasListName(null);
+                    channel.setAliasListDefinition(null);
                 }
             }
         }
 
         mAliasConfigurationRevision.incrementAndGet();
-    }
-
-    private void publishBroadcastConfigurationRename(BroadcastConfigurationRename rename)
-    {
-        if(rename == null)
-        {
-            return;
-        }
-
-        List<BroadcastConfiguration> previousMatches = mBroadcastModel.getBroadcastConfigurations().stream()
-            .filter(configuration -> rename.previousName().equals(configuration.getName())).toList();
-        if(previousMatches.size() == 1)
-        {
-            previousMatches.getFirst().setName(rename.updatedName());
-            return;
-        }
-
-        long updatedMatches = mBroadcastModel.getBroadcastConfigurations().stream()
-            .filter(configuration -> rename.updatedName().equals(configuration.getName())).count();
-        if(previousMatches.isEmpty() && updatedMatches == 1)
-        {
-            return;
-        }
-
-        throw new IllegalStateException("Unable to publish committed broadcast stream rename");
     }
 
     private AliasConfigurationSnapshot loadCommittedAliasConfiguration()
@@ -566,27 +531,13 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     public record AliasConfigurationPublication(Set<Long> changedAliasIds, boolean definitionsChanged,
                                                 boolean scanListsChanged, boolean scanListsFirst,
-                                                Set<String> clearedChannelAliasListNames)
+                                                Set<Long> clearedChannelAliasListIds)
     {
         public AliasConfigurationPublication
         {
             changedAliasIds = changedAliasIds != null ? Set.copyOf(changedAliasIds) : Set.of();
-            clearedChannelAliasListNames = clearedChannelAliasListNames != null ?
-                Set.copyOf(clearedChannelAliasListNames) : Set.of();
-        }
-    }
-
-    /** One stream-name change that must commit and publish with its Alias references. */
-    public record BroadcastConfigurationRename(String previousName, String updatedName)
-    {
-        public BroadcastConfigurationRename
-        {
-            if(previousName == null || previousName.isBlank() || updatedName == null || updatedName.isBlank())
-            {
-                throw new IllegalArgumentException("Broadcast rename names must be nonblank");
-            }
-            previousName = previousName.strip();
-            updatedName = updatedName.strip();
+            clearedChannelAliasListIds = clearedChannelAliasListIds != null ?
+                Set.copyOf(clearedChannelAliasListIds) : Set.of();
         }
     }
 

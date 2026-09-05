@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
 import io.github.dsheirer.metadata.site.StableFactTracker;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -36,8 +37,8 @@ class P25GrantFactConfirmationTracker
         new FactConfirmationPolicy(2, 1L, CANDIDATE_TTL_MILLISECONDS, false);
     private final Map<FactIdentity,StableFactTracker<Candidate,FactValue>> mTrackers = new HashMap<>();
 
-    synchronized P25ActivityLogRecords.ChannelFact observe(P25GrantObservationEvent event,
-                                                           P25ActivityLogRecords.ActivityEvent activity)
+    synchronized ReceiverActivityRecords.ChannelFact observe(P25GrantObservationEvent event,
+                                                           ReceiverActivityRecords.ActivityEvent activity)
     {
         Candidate candidate = candidate(event, activity);
 
@@ -47,7 +48,7 @@ class P25GrantFactConfirmationTracker
         }
 
         prune(activity.observedAtEpochMilliseconds());
-        FactIdentity identity = new FactIdentity(candidate.fact().guid(), candidate.fact().lcn(),
+        FactIdentity identity = new FactIdentity(candidate.fact().configurationId(), candidate.fact().lcn(),
             candidate.fact().serviceTag());
         StableFactTracker<Candidate,FactValue> tracker = mTrackers.computeIfAbsent(identity,
             ignored -> new StableFactTracker<>(Candidate::value));
@@ -64,9 +65,9 @@ class P25GrantFactConfirmationTracker
         return null;
     }
 
-    synchronized List<P25ActivityLogRecords.ChannelFact> confirm(P25TrafficChannelConfirmationEvent event)
+    synchronized List<ReceiverActivityRecords.ChannelFact> confirm(P25TrafficChannelConfirmationEvent event)
     {
-        List<P25ActivityLogRecords.ChannelFact> confirmed = new ArrayList<>();
+        List<ReceiverActivityRecords.ChannelFact> confirmed = new ArrayList<>();
 
         if(event == null || event.channel() == null || event.frequencyHertz() <= 0)
         {
@@ -74,18 +75,19 @@ class P25GrantFactConfirmationTracker
         }
 
         prune(event.timestamp());
-        String guid = event.channel().getRadresGuid();
+        String configurationId = ChannelConfigurationKey.configured(event.channel());
 
         for(StableFactTracker<Candidate,FactValue> tracker: mTrackers.values())
         {
             Candidate candidate = tracker.getCandidateValue();
 
-            if(candidate != null && Objects.equals(guid, candidate.fact().guid()) &&
+            if(candidate != null && Objects.equals(configurationId, candidate.fact().configurationId()) &&
                 candidate.fact().frequencyHertz() == event.frequencyHertz() &&
                 candidate.timeslot() == event.timeslot() &&
                 tracker.confirmCandidate(event.timestamp(), ignored -> true) == StableFactTracker.Result.PROMOTED)
             {
-                confirmed.add(new P25ActivityLogRecords.ChannelFact(event.timestamp(), candidate.fact().guid(),
+                confirmed.add(new ReceiverActivityRecords.ChannelFact(event.timestamp(),
+                    candidate.fact().configurationId(),
                     candidate.fact().lcn(), candidate.fact().frequencyHertz(), candidate.fact().serviceTag(),
                     candidate.fact().tdma(), candidate.fact().timeslots()));
             }
@@ -116,29 +118,29 @@ class P25GrantFactConfirmationTracker
     }
 
     private static Candidate candidate(P25GrantObservationEvent event,
-                                       P25ActivityLogRecords.ActivityEvent activity)
+                                       ReceiverActivityRecords.ActivityEvent activity)
     {
         ChannelTag serviceTag = serviceTag(activity);
 
-        if(event == null || activity == null || activity.guid() == null || activity.guid().isBlank() ||
+        if(event == null || activity == null || activity.configurationId() == null ||
+            activity.configurationId().isBlank() ||
             activity.lcn() == null || activity.lcn().isBlank() || activity.frequencyHertz() == null ||
             activity.frequencyHertz() <= 0 || serviceTag == null)
         {
             return null;
         }
 
-        boolean tdma = "APCO25_PHASE2".equals(activity.protocol()) ||
-            (activity.decoder() != null && activity.decoder().contains("PHASE2")) ||
-            activity.lcn().contains("TS");
+        boolean tdma = "APCO25_PHASE2".equals(activity.protocol()) || activity.lcn().contains("TS");
         int timeslots = tdma ? 2 : 1;
         int timeslot = activity.timeslot() != null ? activity.timeslot() : 0;
-        P25ActivityLogRecords.ChannelFact fact = new P25ActivityLogRecords.ChannelFact(
-            activity.observedAtEpochMilliseconds(), activity.guid(), activity.lcn(), activity.frequencyHertz(),
+        ReceiverActivityRecords.ChannelFact fact = new ReceiverActivityRecords.ChannelFact(
+            activity.observedAtEpochMilliseconds(), activity.configurationId(), activity.lcn(),
+            activity.frequencyHertz(),
             serviceTag, tdma, timeslots);
         return new Candidate(fact, timeslot);
     }
 
-    private static ChannelTag serviceTag(P25ActivityLogRecords.ActivityEvent activity)
+    private static ChannelTag serviceTag(ReceiverActivityRecords.ActivityEvent activity)
     {
         if(activity == null || activity.eventType() == null)
         {
@@ -155,7 +157,7 @@ class P25GrantFactConfirmationTracker
         }
     }
 
-    private record FactIdentity(String guid, String lcn, ChannelTag serviceTag)
+    private record FactIdentity(String configurationId, String lcn, ChannelTag serviceTag)
     {
     }
 
@@ -163,7 +165,7 @@ class P25GrantFactConfirmationTracker
     {
     }
 
-    private record Candidate(P25ActivityLogRecords.ChannelFact fact, int timeslot)
+    private record Candidate(ReceiverActivityRecords.ChannelFact fact, int timeslot)
     {
         private FactValue value()
         {

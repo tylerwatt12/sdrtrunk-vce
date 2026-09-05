@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,7 +34,7 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
-import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
@@ -69,7 +71,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class P25ActivityLogServiceLifecycleTest
+class ReceiverActivityServiceLifecycleTest
 {
     @TempDir
     Path mTemporaryFolder;
@@ -82,7 +84,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         CompletedAudioCall call = learnedP25TrafficCall(8_001L, System.currentTimeMillis());
 
         try
@@ -121,12 +123,12 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
 
         disposeAndAwait(service);
         service.preferenceUpdated(PreferenceType.APPLICATION);
 
-        assertEquals(P25ActivityLogStatus.State.STOPPED, service.getStatus().state());
+        assertEquals(ReceiverActivityStatus.State.STOPPED, service.getStatus().state());
         assertFalse(service.getStatus().summaryActive());
     }
 
@@ -138,7 +140,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("Observer isolation", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -173,7 +175,7 @@ class P25ActivityLogServiceLifecycleTest
             assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
             long started = System.nanoTime();
 
-            for(int x = 0; x < P25ActivityLogService.OBSERVATION_QUEUE_SIZE + 16; x++)
+            for(int x = 0; x < ReceiverActivityService.OBSERVATION_QUEUE_SIZE + 16; x++)
             {
                 service.getDecodeEventListener().accept(channel, ordinary);
             }
@@ -198,7 +200,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("Drain barrier saturation", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -211,12 +213,12 @@ class P25ActivityLogServiceLifecycleTest
             service.getDecodeEventListener().accept(channel, blocked);
             assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
 
-            for(int index = 0; index < P25ActivityLogService.OBSERVATION_QUEUE_SIZE; index++)
+            for(int index = 0; index < ReceiverActivityService.OBSERVATION_QUEUE_SIZE; index++)
             {
                 service.getDecodeEventListener().accept(channel, filler);
             }
 
-            assertEquals(P25ActivityLogService.OBSERVATION_QUEUE_SIZE, service.getPendingObservationCount());
+            assertEquals(ReceiverActivityService.OBSERVATION_QUEUE_SIZE, service.getPendingObservationCount());
             long startedNanos = System.nanoTime();
             assertFalse(service.awaitObservationDrain(25, TimeUnit.MILLISECONDS),
                 "a full handoff must time out instead of accepting an unsequenced barrier");
@@ -239,7 +241,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("Interrupted drain barrier", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -284,7 +286,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("Retired drain epoch", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -339,10 +341,10 @@ class P25ActivityLogServiceLifecycleTest
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
         MonitorHeldCloseWriter initialWriter = new MonitorHeldCloseWriter(firstDatabase, 30, true);
         AtomicInteger writerCount = new AtomicInteger();
-        P25ActivityLogService.WriterFactory writerFactory = (databasePath, retentionDays, detailedHistory) ->
+        ReceiverActivityService.WriterFactory writerFactory = (databasePath, retentionDays, detailedHistory) ->
             writerCount.getAndIncrement() == 0 ? initialWriter :
-                new P25ActivityLogWriter(databasePath, retentionDays, detailedHistory);
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+                new ReceiverActivityWriter(databasePath, retentionDays, detailedHistory);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             null, null, writerFactory);
         AtomicReference<Boolean> disposeResult = new AtomicReference<>();
         AtomicLong disposeElapsedMillis = new AtomicLong(Long.MAX_VALUE);
@@ -394,7 +396,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel blockerChannel = new Channel("Logical output saturation", Channel.ChannelType.STANDARD);
         blockerChannel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -423,7 +425,7 @@ class P25ActivityLogServiceLifecycleTest
         {
             service.getDecodeEventListener().accept(blockerChannel, blocked);
             assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
-            for(int index = 0; index < P25ActivityLogService.OBSERVATION_QUEUE_SIZE; index++)
+            for(int index = 0; index < ReceiverActivityService.OBSERVATION_QUEUE_SIZE; index++)
             {
                 service.getDecodeEventListener().accept(blockerChannel, filler);
             }
@@ -458,7 +460,7 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 25, TimeUnit.MILLISECONDS);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences, 25, TimeUnit.MILLISECONDS);
         Channel channel = new Channel("Observer shutdown", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -545,10 +547,10 @@ class P25ActivityLogServiceLifecycleTest
                 }
             }
         };
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot);
         Channel channel = new Channel("Observation epochs", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000305");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000305");
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long oldTimestamp = System.currentTimeMillis();
         long disabledTimestamp = oldTimestamp + 5_000L;
@@ -608,9 +610,9 @@ class P25ActivityLogServiceLifecycleTest
             assertEquals(null, producerFailure.get());
 
             service.getDecodeEventListener().accept(channel, current);
-            awaitCount(database, "p25_activity_event", 1);
+            awaitCount(database, "receiver_activity_event", 1);
             assertEquals(newTimestamp, scalar(database,
-                "SELECT observed_at_ms FROM p25_activity_event"));
+                "SELECT observed_at_ms FROM receiver_activity_event"));
         }
         finally
         {
@@ -648,7 +650,7 @@ class P25ActivityLogServiceLifecycleTest
                 }
             }
         };
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot);
         Channel channel = new Channel("Completed-call epochs", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
@@ -659,9 +661,9 @@ class P25ActivityLogServiceLifecycleTest
             .identifiers(new IdentifierCollection())
             .build();
         CompletedAudioCall stale = conventionalCompletedCall(1, channel.getConfigurationId(),
-            channel.getRadresGuid(), frequency, start + 1_000L);
+            channel.getRadioResolveId(), frequency, start + 1_000L);
         CompletedAudioCall current = conventionalCompletedCall(2, channel.getConfigurationId(),
-            channel.getRadresGuid(), frequency, start + 2_000L);
+            channel.getRadioResolveId(), frequency, start + 2_000L);
         AtomicReference<Throwable> producerFailure = new AtomicReference<>();
         Thread staleProducer = new Thread(() -> {
             try
@@ -677,10 +679,10 @@ class P25ActivityLogServiceLifecycleTest
         try
         {
             service.getDecodeEventListener().accept(channel, context);
-            awaitCount(database, "p25_activity_event", 1);
-            assertEquals(new P25ActivityLogMapper().mapConventionalCallOutput(current.snapshot(),
-                    P25ActivityLogRecords.CallOutput.RECORDED).contextKey(),
-                scalarText(database, "SELECT context_key FROM receiver_context LIMIT 1"));
+            awaitCount(database, "receiver_activity_event", 1);
+            assertEquals(new ReceiverActivityMapper().mapConventionalCallOutput(current.snapshot(),
+                    ReceiverActivityRecords.CallOutput.RECORDED).configurationId(),
+                scalarText(database, "SELECT configuration_id FROM receiver_channel LIMIT 1"));
 
             var retiredIngress = service.getObservationIngressForTest();
             pauseNextOutput.set(true);
@@ -765,10 +767,10 @@ class P25ActivityLogServiceLifecycleTest
                 Thread.currentThread().interrupt();
             }
         };
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot, pauseBeforeActivation);
         Channel channel = new Channel("Writer transition epochs", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000306");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000306");
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long start = System.currentTimeMillis();
         DecodeEvent oldActive = conventionalEvent(start);
@@ -802,10 +804,10 @@ class P25ActivityLogServiceLifecycleTest
             assertEquals(null, producerFailure.get());
 
             service.getDecodeEventListener().accept(channel, current);
-            awaitCount(secondDatabase, "p25_activity_event", 1);
+            awaitCount(secondDatabase, "receiver_activity_event", 1);
             assertEquals(start + 10_000L, scalar(secondDatabase,
-                "SELECT observed_at_ms FROM p25_activity_event"));
-            assertEquals(0, count(firstDatabase, "p25_activity_event"));
+                "SELECT observed_at_ms FROM receiver_activity_event"));
+            assertEquals(0, count(firstDatabase, "receiver_activity_event"));
         }
         finally
         {
@@ -831,12 +833,12 @@ class P25ActivityLogServiceLifecycleTest
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
         DelayedTerminationWriter replacementWriter = new DelayedTerminationWriter(secondDatabase, 30, true);
         AtomicInteger writerCount = new AtomicInteger();
-        P25ActivityLogService.WriterFactory writerFactory = (databasePath, retentionDays, detailedHistory) -> {
+        ReceiverActivityService.WriterFactory writerFactory = (databasePath, retentionDays, detailedHistory) -> {
             int index = writerCount.getAndIncrement();
 
             if(index == 0)
             {
-                return new P25ActivityLogWriter(databasePath, retentionDays, detailedHistory);
+                return new ReceiverActivityWriter(databasePath, retentionDays, detailedHistory);
             }
 
             if(index == 1)
@@ -857,7 +859,7 @@ class P25ActivityLogServiceLifecycleTest
                 Thread.currentThread().interrupt();
             }
         };
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             null, pauseBeforeActivation, writerFactory);
 
         try
@@ -929,7 +931,7 @@ class P25ActivityLogServiceLifecycleTest
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
-        identifiers.update(SiteGuidConfigurationIdentifier.create(guid));
+        identifiers.update(RadioResolveConfigurationIdentifier.create(guid));
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
         AudioCallId callId = new AudioCallId(sequence, sequence + 1, 0);
@@ -946,7 +948,9 @@ class P25ActivityLogServiceLifecycleTest
         CallLegId callLegId = CallLegId.from(callId);
         IdentifierCollection identifiers = new IdentifierCollection();
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "uncertain-config",
-            "Uncertain Site", "uncertain-guid", 0, null, true);
+            "Uncertain Site", "uncertain-guid", 0, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
             timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
             CallEncryptionState.UNKNOWN, true,
@@ -963,7 +967,9 @@ class P25ActivityLogServiceLifecycleTest
         identifiers.update(APCO25RadioIdentifier.createFrom(1_234_567));
         P25SiteIdentity learnedSite = new P25SiteIdentity(0xBEE00, 0x348, 2, 1);
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "learned-config",
-            "Learned Site", "learned-guid", 77L, learnedSite, true);
+            "Learned Site", "learned-guid", 77L, learnedSite,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
             timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
             CallEncryptionState.CLEAR, true,
@@ -972,7 +978,7 @@ class P25ActivityLogServiceLifecycleTest
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 
-    private static void awaitObservationQueueEmpty(P25ActivityLogService service) throws Exception
+    private static void awaitObservationQueueEmpty(ReceiverActivityService service) throws Exception
     {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
         while(service.getPendingObservationCount() > 0 && System.currentTimeMillis() < deadline)
@@ -982,7 +988,7 @@ class P25ActivityLogServiceLifecycleTest
         assertEquals(0, service.getPendingObservationCount());
     }
 
-    private static void awaitPendingObservationCount(P25ActivityLogService service, int expected)
+    private static void awaitPendingObservationCount(ReceiverActivityService service, int expected)
         throws InterruptedException
     {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
@@ -996,7 +1002,7 @@ class P25ActivityLogServiceLifecycleTest
             "statistics observation queue did not reach the expected size");
     }
 
-    private static Thread observationProducer(P25ActivityLogService service, Channel channel, DecodeEvent event,
+    private static Thread observationProducer(ReceiverActivityService service, Channel channel, DecodeEvent event,
                                               AtomicReference<Throwable> failure, String name)
     {
         return new Thread(() -> {
@@ -1011,7 +1017,7 @@ class P25ActivityLogServiceLifecycleTest
         }, name);
     }
 
-    private static void awaitWriterTransition(P25ActivityLogService service, Path expectedPath)
+    private static void awaitWriterTransition(ReceiverActivityService service, Path expectedPath)
         throws InterruptedException
     {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
@@ -1026,7 +1032,7 @@ class P25ActivityLogServiceLifecycleTest
         assertEquals(expectedPath, service.getCurrentDatabasePathForTest());
     }
 
-    private static void awaitObservationWorkerTermination(P25ActivityLogService service) throws InterruptedException
+    private static void awaitObservationWorkerTermination(ReceiverActivityService service) throws InterruptedException
     {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
 
@@ -1038,14 +1044,14 @@ class P25ActivityLogServiceLifecycleTest
         assertTrue(service.isObservationWorkerTerminated(), "statistics observer did not terminate");
     }
 
-    private static void disposeAndAwait(P25ActivityLogService service) throws InterruptedException
+    private static void disposeAndAwait(ReceiverActivityService service) throws InterruptedException
     {
         assertTrue(service.disposeAndAwait(8, TimeUnit.SECONDS),
             "statistics observer and owned SQLite writer did not terminate");
         assertTrue(service.isObservationWorkerTerminated(), "statistics observer did not terminate");
     }
 
-    private static final class DelayedTerminationWriter extends P25ActivityLogWriter
+    private static final class DelayedTerminationWriter extends ReceiverActivityWriter
     {
         private final CountDownLatch mStarted = new CountDownLatch(1);
         private final CountDownLatch mCloseAttempted = new CountDownLatch(1);
@@ -1102,7 +1108,7 @@ class P25ActivityLogServiceLifecycleTest
         }
     }
 
-    private static final class MonitorHeldCloseWriter extends P25ActivityLogWriter
+    private static final class MonitorHeldCloseWriter extends ReceiverActivityWriter
     {
         private final CountDownLatch mCloseEntered = new CountDownLatch(1);
         private final CountDownLatch mReleaseClose = new CountDownLatch(1);
@@ -1169,9 +1175,9 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("LorainCountySO", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000302");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000302");
         channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
         manager.addDecodeEventListener(event -> service.getDecodeEventListener().accept(channel, event));
@@ -1189,7 +1195,7 @@ class P25ActivityLogServiceLifecycleTest
                 DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, start + 100L, null);
             manager.processP1TrafficCallEnd(frequency, start + 200L);
 
-            awaitCount(database, "p25_activity_event", 1);
+            awaitCount(database, "receiver_activity_event", 1);
             assertEquals(1, scalar(database,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1, scalar(database,
@@ -1211,9 +1217,9 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
         Channel channel = new Channel("County Fire", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000301");
+        channel.setRadioResolveId("00000000-0000-0000-0000-000000000301");
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
@@ -1236,7 +1242,7 @@ class P25ActivityLogServiceLifecycleTest
                 .build();
             service.getDecodeEventListener().accept(channel, second);
 
-            awaitCount(database, "p25_activity_event", 2);
+            awaitCount(database, "receiver_activity_event", 2);
             assertEquals(2, scalar(database,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(2, scalar(database,
@@ -1257,9 +1263,9 @@ class P25ActivityLogServiceLifecycleTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 activity(now - TimeUnit.DAYS.toMillis(40)), true);
-            P25ActivityLogSchema.recordActivity(connection,
+            ReceiverActivitySchema.recordActivity(connection,
                 activity(now - TimeUnit.DAYS.toMillis(2)), true);
 
             try(var statement = connection.prepareStatement("""
@@ -1283,17 +1289,17 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
 
         try
         {
             StatsDatabaseMaintenanceRequest initialCheck =
-                StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.CHECK);
+                StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.CHECK);
             service.receiveMaintenanceRequest(initialCheck);
             assertTrue(initialCheck.result().get(5, TimeUnit.SECONDS).checkOk());
-            assertEquals(P25ActivityLogStatus.State.DISABLED, service.getStatus().state());
+            assertEquals(ReceiverActivityStatus.State.DISABLED, service.getStatus().state());
             //Startup maintenance used the 30-day setting even though collection was disabled.
-            assertEquals(1, count(database, "p25_activity_event"));
+            assertEquals(1, count(database, "receiver_activity_event"));
             assertEquals(2, count(database, "trunked_site_snapshot"));
             assertEquals(1, countProtocol(database, TrunkedSiteSchema.PROTOCOL_DMR));
             assertEquals(1, countProtocol(database, TrunkedSiteSchema.PROTOCOL_NXDN));
@@ -1302,31 +1308,32 @@ class P25ActivityLogServiceLifecycleTest
             service.preferenceUpdated(PreferenceType.APPLICATION);
 
             long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-            int remainingP25 = 1;
+            int remainingReceiverActivity = 1;
             int remainingTrunked = 2;
 
-            while((remainingP25 != 0 || remainingTrunked != 0) && System.currentTimeMillis() < deadline)
+            while((remainingReceiverActivity != 0 || remainingTrunked != 0) &&
+                System.currentTimeMillis() < deadline)
             {
-                remainingP25 = count(database, "p25_activity_event");
+                remainingReceiverActivity = count(database, "receiver_activity_event");
                 remainingTrunked = count(database, "trunked_site_snapshot");
 
-                if(remainingP25 != 0 || remainingTrunked != 0)
+                if(remainingReceiverActivity != 0 || remainingTrunked != 0)
                 {
                     Thread.sleep(25);
                 }
             }
 
-            assertEquals(0, remainingP25);
+            assertEquals(0, remainingReceiverActivity);
             assertEquals(0, remainingTrunked);
 
             StatsDatabaseMaintenanceRequest finalCheck =
-                StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.CHECK);
+                StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.CHECK);
             service.receiveMaintenanceRequest(finalCheck);
             assertTrue(finalCheck.result().get(5, TimeUnit.SECONDS).checkOk());
-            assertEquals(P25ActivityLogStatus.State.DISABLED, service.getStatus().state());
+            assertEquals(ReceiverActivityStatus.State.DISABLED, service.getStatus().state());
 
             Channel channel = new Channel("Disabled collection", Channel.ChannelType.STANDARD);
-            channel.setRadresGuid("00000000-0000-0000-0000-000000000102");
+            channel.setRadioResolveId("00000000-0000-0000-0000-000000000102");
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(channel,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 1, 2, null, null, null, null,
                     null, null, List.of(), List.of()),
@@ -1346,19 +1353,19 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(mTemporaryFolder.resolve("missing-portable-data")));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
 
         try
         {
             long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
 
-            while(service.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+            while(service.getStatus().state() != ReceiverActivityStatus.State.FAILED &&
                 System.currentTimeMillis() < deadline)
             {
                 Thread.sleep(25);
             }
 
-            assertEquals(P25ActivityLogStatus.State.FAILED, service.getStatus().state());
+            assertEquals(ReceiverActivityStatus.State.FAILED, service.getStatus().state());
             assertTrue(service.getStatus().lastError() != null && !service.getStatus().lastError().isBlank());
         }
         finally
@@ -1375,27 +1382,27 @@ class P25ActivityLogServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
 
         try
         {
             long now = System.currentTimeMillis();
             Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201", DMRChannelMode.TRUNKED);
             service.getControlChannelQualityListener().receive(quality(trunked, now));
-            awaitCount(database, "p25_control_channel_quality", 1);
+            awaitCount(database, "trunked_control_channel_quality", 1);
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", null, 10, 20, null, null, null, null,
                     1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 10_000L));
-            awaitCount(database, "p25_control_channel_quality", 2);
+            awaitCount(database, "trunked_control_channel_quality", 2);
             assertEquals(0, count(database, "trunked_site_snapshot"));
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 20_000L));
-            awaitCount(database, "p25_control_channel_quality", 3);
+            awaitCount(database, "trunked_control_channel_quality", 3);
             assertEquals(1, count(database, "trunked_site_snapshot"));
 
             applicationPreference.setCollectionEnabled(false);
@@ -1407,14 +1414,14 @@ class P25ActivityLogServiceLifecycleTest
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
-            Channel reusedGuid = dmrChannel(trunked.getRadresGuid(), DMRChannelMode.TRUNKED);
+            Channel reusedGuid = dmrChannel(trunked.getRadioResolveId(), DMRChannelMode.TRUNKED);
             service.getControlChannelQualityListener().receive(quality(reusedGuid, now + 60_000L));
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 600_000L));
-            awaitCount(database, "p25_control_channel_quality", 6);
+            awaitCount(database, "trunked_control_channel_quality", 6);
 
             service.getControlChannelQualityListener().receive(quality(trunked, now + 610_000L, false));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 620_000L));
@@ -1429,7 +1436,7 @@ class P25ActivityLogServiceLifecycleTest
 
             Channel conventional = dmrChannel("00000000-0000-0000-0000-000000000202");
             service.getControlChannelQualityListener().receive(quality(conventional, now + 660_000L));
-            awaitCount(database, "p25_control_channel_quality", 8);
+            awaitCount(database, "trunked_control_channel_quality", 8);
         }
         finally
         {
@@ -1522,7 +1529,7 @@ class P25ActivityLogServiceLifecycleTest
     private static Channel dmrChannel(String guid, DMRChannelMode mode)
     {
         Channel channel = new Channel("DMR", Channel.ChannelType.STANDARD);
-        channel.setRadresGuid(guid);
+        channel.setRadioResolveId(guid);
         DecodeConfigDMR configuration = new DecodeConfigDMR();
         configuration.setChannelMode(mode);
         channel.setDecodeConfiguration(configuration);
@@ -1536,7 +1543,7 @@ class P25ActivityLogServiceLifecycleTest
 
     private static ControlChannelQualitySnapshot quality(Channel channel, long observedAt, boolean active)
     {
-        return new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(), 451_012_500L, observedAt,
+        return new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(), 451_012_500L, observedAt,
             active, -20.0, -21.0, -25.0, -18.0, 95.0, 100, 2, 1, 0, 0, observedAt);
     }
 
@@ -1551,13 +1558,15 @@ class P25ActivityLogServiceLifecycleTest
         statement.executeUpdate();
     }
 
-    private static P25ActivityLogRecords.ActivityEvent activity(long timestamp)
+    private static ReceiverActivityRecords.ActivityEvent activity(long timestamp)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
-            "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854_187_500L, "00-0509", 1, false,
-            null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null, false, null, null);
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, guid,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
+            "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
+            false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of());
     }
 
     private static class TestUserPreferences extends UserPreferences

@@ -1,14 +1,14 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 5,
+    version: 6,
     appearance: Object.freeze({ theme: 'light' }),
     page_titles: Object.freeze({ prepend_playing_call: false }),
     playback: Object.freeze({
       volume: 1,
       selected_scan_list_ids: Object.freeze([]),
-      conversation_grouping: true,
-      conversation_burst_limit: 4
+      target_grouping: true,
+      target_burst_limit: 4
     }),
     scanner: Object.freeze({ detail_mode: 'normal' }),
     presentation: Object.freeze({
@@ -122,11 +122,11 @@
   function validate(value) {
     exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
       'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 5) throw invalid('The user preference version is unsupported.');
+    if (value.version !== 6) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
-    exact(value.playback, ['volume', 'selected_scan_list_ids', 'conversation_grouping',
-      'conversation_burst_limit'], 'playback');
+    exact(value.playback, ['volume', 'selected_scan_list_ids', 'target_grouping',
+      'target_burst_limit'], 'playback');
     exact(value.scanner, ['detail_mode'], 'scanner');
     exact(value.presentation, ['show_encryption_details', 'show_control_decode_quality',
       'show_voice_decode_quality', 'decode_quality_display_mode', 'live_detail_row_limit',
@@ -151,16 +151,16 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 5,
+      version: 6,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme') },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
         'page_titles.prepend_playing_call') },
       playback: {
         volume: number(value.playback.volume, 0, 1, 'playback.volume'),
         selected_scan_list_ids: scanListIds.slice(),
-        conversation_grouping: bool(value.playback.conversation_grouping, 'playback.conversation_grouping'),
-        conversation_burst_limit: number(value.playback.conversation_burst_limit, 1, 20,
-          'playback.conversation_burst_limit', true)
+        target_grouping: bool(value.playback.target_grouping, 'playback.target_grouping'),
+        target_burst_limit: number(value.playback.target_burst_limit, 1, 20,
+          'playback.target_burst_limit', true)
       },
       scanner: { detail_mode: oneOf(value.scanner.detail_mode,
         ['simple', 'normal', 'advanced', 'engineer'], 'scanner.detail_mode') },

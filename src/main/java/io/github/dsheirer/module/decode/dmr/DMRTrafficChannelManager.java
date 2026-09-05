@@ -305,10 +305,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     {
                         Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), ChannelType.TRAFFIC);
                         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+                        trafficChannel.setAliasListId(mParentChannel.getAliasListId());
                         trafficChannel.setSystem(mParentChannel.getSystem());
                         trafficChannel.setSite(mParentChannel.getSite());
                         trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
-                        trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
+                        trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
                         trafficChannel.setDecodeConfiguration(decodeConfig);
                         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                         trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());

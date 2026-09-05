@@ -82,8 +82,6 @@ public abstract class GroupRegistration extends NXDNLayer3Message
         {
             if(getGroupRegistrationOption().hasLocationID())
             {
-//                mSourceIdentifier = NXDNFullyQualifiedRadioIdentifier.createFrom(getLocationID().getSystem().getValue(),
-//                        getMessage().getInt(UNIT_ID));
                 if(isTypeD())
                 {
                     mSourceIdentifier = NXDNRadioIdentifier.createTypeDFrom(getMessage().getInt(UNIT_ID));

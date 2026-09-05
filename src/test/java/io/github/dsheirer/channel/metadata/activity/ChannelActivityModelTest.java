@@ -90,6 +90,7 @@ class ChannelActivityModelTest
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
             155_730_000L);
         channel.setAliasListName(definition.getName());
+        channel.setAliasListId(definition.getId());
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         metadata.receive(new IdentifierUpdateNotification(AliasListConfigurationIdentifier.create(definition.getName()),
             Operation.ADD, 1));
@@ -144,6 +145,7 @@ class ChannelActivityModelTest
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
             155_730_000L);
         channel.setAliasListName(definition.getName());
+        channel.setAliasListId(definition.getId());
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         metadata.receive(new IdentifierUpdateNotification(AliasListConfigurationIdentifier.create(definition.getName()),
             Operation.ADD, 1));
@@ -207,6 +209,7 @@ class ChannelActivityModelTest
         Channel parent = trunkedChannel("Primary", "County", "North", new DecodeConfigP25Phase1(),
             851_012_500L);
         parent.setAliasListName(definition.getName());
+        parent.setAliasListId(definition.getId());
         APCO25Channel traffic = APCO25Channel.create(0, 459);
         traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
         IdentifierCollection identifiers = new IdentifierCollection(List.of(source, target, talker));
@@ -692,14 +695,14 @@ class ChannelActivityModelTest
         ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
         Channel channel = new Channel("Test Site", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        channel.setRadresGuid("123e4567-e89b-12d3-a456-426614174000");
+        channel.setRadioResolveId("123e4567-e89b-12d3-a456-426614174000");
         SourceConfigTuner source = new SourceConfigTuner();
         source.setFrequency(856_137_500L);
         channel.setSourceConfiguration(source);
 
         run(model, () -> {
             model.channelStarted(channel, List.of());
-            model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(),
+            model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(),
                 856_137_500L, 1_000L, true, -20.5, -21.0, -25.0, -18.0, 97.5,
                 100, 1, 3, 0, 0, 999L));
         });
@@ -716,7 +719,7 @@ class ChannelActivityModelTest
             .controlLastValidDecodeMs());
 
         run(model, () -> model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(
-            channel, channel.getRadresGuid(), 856_137_500L, 2_000L, false, -20.5, -21.0, -25.0, -18.0,
+            channel, channel.getRadioResolveId(), 856_137_500L, 2_000L, false, -20.5, -21.0, -25.0, -18.0,
             97.5, 100, 1, 3, 0, 0, 999L)));
         assertNull(row.getSignalDbfs());
         assertNull(row.getDecodeHealthPercent());
@@ -1022,7 +1025,7 @@ class ChannelActivityModelTest
     private static ControlChannelQualitySnapshot quality(Channel channel, long frequency, long timestamp,
                                                          boolean active)
     {
-        return new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(), frequency, timestamp, active,
+        return new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(), frequency, timestamp, active,
             -20.5, -21.0, -25.0, -18.0, 97.5, 100, 1, 3, 0, 0, timestamp - 1);
     }
 

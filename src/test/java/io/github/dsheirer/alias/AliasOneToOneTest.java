@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -80,7 +81,8 @@ class AliasOneToOneTest
         original.setDescription("Primary dispatch");
         original.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         original.setRecordable(true);
-        original.addBroadcastChannel("Stream A");
+        BroadcastChannel stream = route("Stream A");
+        original.addBroadcastChannel(stream);
         original.setStreamTalkgroupAlias(new StreamAsTalkgroup(900));
 
         Alias copy = AliasFactory.copyOf(original);
@@ -92,7 +94,7 @@ class AliasOneToOneTest
         assertNotSame(original.getMatchIdentifier(), copy.getMatchIdentifier());
         assertEquals(100, ((Talkgroup)copy.getMatchIdentifier()).getValue());
         assertTrue(copy.isRecordable());
-        assertTrue(copy.hasBroadcastChannel("Stream A"));
+        assertTrue(copy.hasBroadcastConfiguration(stream.getConfigurationId()));
         assertEquals(900, copy.getStreamTalkgroupAlias().getValue());
     }
 
@@ -416,8 +418,8 @@ class AliasOneToOneTest
         model.setAliasListDefinitions(List.of(definition));
         model.addAlias(alias);
 
-        Channel correct = channel("System A", "County");
-        Channel wrongSystem = channel("System B", "County");
+        Channel correct = channel("System A", definition);
+        Channel wrongSystem = channel("System B", definition);
 
         assertSame(alias, model.getAliasListForChannel(correct)
             .getAliases(APCO25Talkgroup.create(100)).getFirst());
@@ -426,11 +428,12 @@ class AliasOneToOneTest
         assertTrue(model.isAliasListCompatible(wrongSystem));
     }
 
-    private static Channel channel(String system, String aliasList)
+    private static Channel channel(String system, AliasListDefinition aliasList)
     {
         Channel channel = new Channel("Control");
         channel.setSystem(system);
-        channel.setAliasListName(aliasList);
+        channel.setAliasListId(aliasList.getId());
+        channel.setAliasListName(aliasList.getName());
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         return channel;
     }

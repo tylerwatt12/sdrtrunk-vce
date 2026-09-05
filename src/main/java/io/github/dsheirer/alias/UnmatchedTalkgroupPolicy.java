@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.alias;
 
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -30,32 +31,35 @@ public final class UnmatchedTalkgroupPolicy
     public static final UnmatchedTalkgroupPolicy DEFAULT = new UnmatchedTalkgroupPolicy(false, List.of());
 
     private final boolean mRecordEnabled;
-    private final List<String> mStreamDestinationNames;
+    private final List<BroadcastChannel> mStreamDestinations;
 
-    public UnmatchedTalkgroupPolicy(boolean recordEnabled, Collection<String> streamDestinationNames)
+    public UnmatchedTalkgroupPolicy(boolean recordEnabled, Collection<BroadcastChannel> streamDestinations)
     {
         Set<String> destinations = new LinkedHashSet<>();
+        List<BroadcastChannel> routes = new ArrayList<>();
 
-        if(streamDestinationNames != null)
+        if(streamDestinations != null)
         {
-            for(String destination: streamDestinationNames)
+            for(BroadcastChannel destination: streamDestinations)
             {
-                if(destination == null || destination.isBlank())
+                if(destination == null || !destination.isValid() && !destination.hasDisplayName())
                 {
-                    throw new IllegalArgumentException("Unmatched talkgroup stream destinations must be nonblank");
+                    throw new IllegalArgumentException("Unmatched talkgroup stream destinations must be valid");
                 }
 
-                String normalized = destination.strip();
-                if(!destinations.add(normalized))
+                String key = destination.getConfigurationId() != null ? destination.getConfigurationId() :
+                    "legacy-name:" + destination.getChannelName().strip();
+                if(!destinations.add(key))
                 {
                     throw new IllegalArgumentException("Duplicate unmatched talkgroup stream destination [" +
-                        normalized + "]");
+                        destination + "]");
                 }
+                routes.add(new BroadcastChannel(destination.getConfigurationId(), destination.getChannelName()));
             }
         }
 
         mRecordEnabled = recordEnabled;
-        mStreamDestinationNames = List.copyOf(new ArrayList<>(destinations));
+        mStreamDestinations = List.copyOf(routes);
     }
 
     public boolean isRecordEnabled()
@@ -63,9 +67,9 @@ public final class UnmatchedTalkgroupPolicy
         return mRecordEnabled;
     }
 
-    public List<String> getStreamDestinationNames()
+    public List<BroadcastChannel> getStreamDestinations()
     {
-        return mStreamDestinationNames;
+        return mStreamDestinations;
     }
 
     @Override
@@ -79,12 +83,12 @@ public final class UnmatchedTalkgroupPolicy
         {
             return false;
         }
-        return mRecordEnabled == other.mRecordEnabled && mStreamDestinationNames.equals(other.mStreamDestinationNames);
+        return mRecordEnabled == other.mRecordEnabled && mStreamDestinations.equals(other.mStreamDestinations);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(mRecordEnabled, mStreamDestinationNames);
+        return Objects.hash(mRecordEnabled, mStreamDestinations);
     }
 }

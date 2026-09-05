@@ -81,8 +81,6 @@ public abstract class Authentication extends NXDNLayer3Message
         {
             if(getAuthenticationOption().hasLocationID())
             {
-//                mSourceIdentifier = NXDNFullyQualifiedRadioIdentifier.createFrom(getLocationID().getSystem().getValue(),
-//                        getMessage().getInt(SOURCE_ID));
                 mSourceIdentifier = NXDNRadioIdentifier.createFrom(getMessage().getInt(SOURCE_ID));
             }
             else

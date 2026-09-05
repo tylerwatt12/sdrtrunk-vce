@@ -25,6 +25,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.filter.AllPassFilter;
@@ -93,6 +94,7 @@ import io.github.dsheirer.module.decode.tait.Tait1200Decoder;
 import io.github.dsheirer.module.decode.tait.Tait1200DecoderState;
 import io.github.dsheirer.module.decode.tait.Tait1200MessageFilter;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
@@ -367,12 +369,18 @@ public class DecoderFactory
     static CallLegSource createCallLegSource(Channel channel, AliasList aliasList)
     {
         DecodeConfiguration decodeConfiguration = channel != null ? channel.getDecodeConfiguration() : null;
+        TrunkedIdentityDomain identityDomain = decodeConfiguration instanceof DecodeConfigNXDN nxdn &&
+            nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
+            TrunkedIdentityDomain.NXDN_TYPE_D : decodeConfiguration instanceof DecodeConfigNXDN ?
+                TrunkedIdentityDomain.NXDN_TYPE_C : TrunkedIdentityDomain.STANDARD;
         return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
             channel != null ? channel.getConfigurationId() : null,
             channel != null ? channel.getName() : null,
-            channel != null ? channel.getRadresGuid() : null,
+            channel != null ? channel.getRadioResolveId() : null,
             aliasList != null ? aliasList.getId() : 0L,
             channel != null ? channel.getP25SiteIdentity() : null,
+            identityDomain,
+            channel != null ? ChannelConfigurationPolicy.requireChannelKind(channel) : null,
             channel != null && channel.getChannelType() == ChannelType.TRAFFIC);
     }
 

@@ -18,15 +18,12 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -112,7 +109,7 @@ public class TrunkedCallStartTracker
                                       IdentifierCollection identifiers, DecodeEventType eventType,
                                       long timestamp, boolean allowCallStart)
     {
-        if(parentChannel == null || protocol == null || protocol == Protocol.UNKNOWN || eventType == null ||
+        if(parentChannel == null || protocol != Protocol.DMR && protocol != Protocol.NXDN || eventType == null ||
             !eventType.isVoiceCallEvent() || timestamp <= 0)
         {
             return ObservationResult.EMPTY;
@@ -146,7 +143,12 @@ public class TrunkedCallStartTracker
             return ObservationResult.EMPTY;
         }
 
-        TrunkedIdentityDomain identityDomain = identityDomain(parentChannel, protocol, identifiers);
+        TrunkedIdentityDomain identityDomain = identityDomain(parentChannel, protocol);
+        if(protocol == Protocol.NXDN &&
+            !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers, identityDomain))
+        {
+            return ObservationResult.EMPTY;
+        }
         TargetIdentity target = TargetIdentity.fromTarget(protocol, identityDomain,
             identifiers != null ? identifiers.getToIdentifier() : null);
         TargetIdentity source = TargetIdentity.fromSource(protocol, identityDomain,
@@ -368,8 +370,7 @@ public class TrunkedCallStartTracker
         return existing != null ? existing : observed;
     }
 
-    private static TrunkedIdentityDomain identityDomain(Channel parentChannel, Protocol protocol,
-                                                        IdentifierCollection identifiers)
+    private static TrunkedIdentityDomain identityDomain(Channel parentChannel, Protocol protocol)
     {
         if(protocol != Protocol.NXDN)
         {
@@ -380,18 +381,6 @@ public class TrunkedCallStartTracker
             config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD())
         {
             return TrunkedIdentityDomain.NXDN_TYPE_D;
-        }
-
-        if(identifiers != null)
-        {
-            for(Identifier identifier: identifiers.getIdentifiers())
-            {
-                if(identifier instanceof NXDNTalkgroupIdentifier talkgroup && talkgroup.isTypeD() ||
-                    identifier instanceof NXDNRadioIdentifier radio && radio.isTypeD())
-                {
-                    return TrunkedIdentityDomain.NXDN_TYPE_D;
-                }
-            }
         }
 
         return TrunkedIdentityDomain.NXDN_TYPE_C;
@@ -432,34 +421,34 @@ public class TrunkedCallStartTracker
         }
     }
 
-    private record TargetIdentity(Form form, String value, Identifier identifier)
+    private record TargetIdentity(Form form, Integer observedLocalId, Identifier identifier)
     {
         private boolean isKnown()
         {
-            return form != null && value != null;
+            return form != null && observedLocalId != null;
         }
 
         private boolean sameIdentity(TargetIdentity other)
         {
-            return other != null && form == other.form() && Objects.equals(value, other.value());
+            if(other == null || form != other.form())
+            {
+                return false;
+            }
+
+            return observedLocalId != null && observedLocalId > 0 &&
+                observedLocalId.equals(other.observedLocalId());
         }
 
         private static TargetIdentity fromTarget(Protocol protocol, TrunkedIdentityDomain identityDomain,
                                                  Identifier identifier)
         {
-            return identifier != null && (identifier.getForm() == Form.TALKGROUP ||
-                identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO) &&
-                TrunkedIdentityEligibility.isEligible(protocol, identityDomain, identifier.getForm(),
-                    integerValue(identifier)) ? from(identifier) : new TargetIdentity(null, null, null);
+            return from(protocol, identityDomain, identifier, true);
         }
 
         private static TargetIdentity fromSource(Protocol protocol, TrunkedIdentityDomain identityDomain,
                                                  Identifier identifier)
         {
-            return identifier != null && identifier.getForm() == Form.RADIO &&
-                TrunkedIdentityEligibility.isEligible(protocol, identityDomain, Form.RADIO,
-                    integerValue(identifier)) ?
-                from(identifier) : new TargetIdentity(null, null, null);
+            return from(protocol, identityDomain, identifier, false);
         }
 
         private static Integer integerValue(Identifier identifier)
@@ -470,20 +459,28 @@ public class TrunkedCallStartTracker
                 return patch.getValue().getPatchGroup().getValue();
             }
 
-            if(identifier instanceof FullyQualifiedRadioIdentifier radio)
-            {
-                return radio.getValue() != null && radio.getValue() > 0 ? radio.getValue() : radio.getRadio();
-            }
-
             return identifier != null && identifier.getValue() instanceof Number number ?
                 number.intValue() : null;
         }
 
-        private static TargetIdentity from(Identifier identifier)
+        private static TargetIdentity from(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                           Identifier identifier, boolean destination)
         {
-            return identifier != null ? new TargetIdentity(identifier.getForm(),
-                identifier.getValue() != null ? identifier.getValue().toString() : null, identifier) :
-                new TargetIdentity(null, null, null);
+            if(identifier == null || destination && identifier.getForm() != Form.TALKGROUP &&
+                identifier.getForm() != Form.PATCH_GROUP && identifier.getForm() != Form.RADIO ||
+                !destination && identifier.getForm() != Form.RADIO)
+            {
+                return unknown();
+            }
+
+            Form form = identifier.getForm();
+            return TrunkedIdentityEligibility.isEligible(protocol, identityDomain, form, integerValue(identifier)) ?
+                new TargetIdentity(form, integerValue(identifier), identifier) : unknown();
+        }
+
+        private static TargetIdentity unknown()
+        {
+            return new TargetIdentity(null, null, null);
         }
     }
 

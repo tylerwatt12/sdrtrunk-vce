@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -12,7 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.audio.call.LogicalCallId;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
@@ -33,6 +36,8 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -60,14 +65,12 @@ class TrunkedCallActivityMapperTest
         TrunkedCallStartEvent start = new TrunkedCallStartTracker(5_000).observe(parent, Protocol.DMR,
             dmrChannel(451_012_500L, 2), 2, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L);
 
-        P25ActivityLogRecords.ActivityEvent record = new TrunkedCallActivityMapper().map(start);
+        ReceiverActivityRecords.ActivityEvent record = new TrunkedCallActivityMapper().map(start);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, record.contextKind());
+        assertEquals(ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, record.receiverKind());
         assertEquals("DMR", record.protocol());
-        assertEquals("GUID:" + DMR_GUID, record.contextKey());
-        assertEquals("Downtown", record.channelName());
-        assertEquals("Metro DMR", record.aliasListName());
+        assertEquals(parent.getConfigurationId().toString(), record.configurationId());
         assertEquals(451_012_500L, record.frequencyHertz());
         assertEquals(2, record.timeslot());
         assertEquals("101", record.sourceRadioId());
@@ -82,7 +85,7 @@ class TrunkedCallActivityMapperTest
     {
         Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
         parent.setDecodeConfiguration(new DecodeConfigNXDN(TransmissionMode.TYPE_D));
-        parent.setRadresGuid(NXDN_GUID);
+        parent.setRadioResolveId(NXDN_GUID);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
         identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
@@ -92,17 +95,17 @@ class TrunkedCallActivityMapperTest
         TrunkedCallStartEvent start = new TrunkedCallStartTracker(3_000).observe(parent, Protocol.NXDN,
             channel, null, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 2_000L);
 
-        P25ActivityLogRecords.ActivityEvent record = new TrunkedCallActivityMapper().map(start);
+        ReceiverActivityRecords.ActivityEvent record = new TrunkedCallActivityMapper().map(start);
 
         assertNotNull(record);
         assertEquals("NXDN", record.protocol());
-        assertEquals("GUID:" + NXDN_GUID, record.contextKey());
+        assertEquals(parent.getConfigurationId().toString(), record.configurationId());
         assertNull(record.timeslot());
         assertEquals(Integer.toString(0x1134), record.sourceRadioId());
         assertEquals(Integer.toString(0x2223), record.targetId());
         assertEquals(3, record.encryptionAlgorithmId());
         assertEquals(7, record.encryptionKeyId());
-        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, record.identityDomain());
+        assertEquals(TrunkedIdentityDomain.NXDN_TYPE_D, record.identityDomain());
     }
 
     @Test
@@ -120,24 +123,52 @@ class TrunkedCallActivityMapperTest
         TrunkedCallStartTracker.ObservationResult enriched = tracker.observeWithAttribution(parent, Protocol.DMR,
             channel, 2, identified, DecodeEventType.CALL_GROUP_ENCRYPTED, 3_601_000L);
         TrunkedCallActivityMapper mapper = new TrunkedCallActivityMapper();
-        P25ActivityLogRecords.ActivityEvent start = mapper.map(initial.callStart());
-        P25ActivityLogRecords.TrunkedCallAttribution attribution = mapper.map(enriched.attribution());
+        ReceiverActivityRecords.ActivityEvent start = mapper.map(initial.callStart());
+        ReceiverActivityRecords.TrunkedCallAttribution attribution = mapper.map(enriched.attribution());
         Path database = mTemporaryFolder.resolve("dmr-attribution.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        createDatabase(database, parent);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection, start, true);
-            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
-            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM trunked_identity_summary"));
+            ReceiverActivitySchema.recordActivity(connection, start, true);
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, attribution));
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary"));
             assertEquals(0, scalar(connection,
-                "SELECT SUM(logical_call_count) FROM trunked_identity_summary"));
+                "SELECT SUM(logical_call_count) FROM radio_system_identity_summary"));
             assertEquals(0, scalar(connection,
-                "SELECT SUM(encrypted_logical_call_count) FROM trunked_identity_summary"));
+                "SELECT SUM(encrypted_logical_call_count) FROM radio_system_identity_summary"));
+            assertEquals(0, scalar(connection,
+                "SELECT SUM(source_logical_call_count) FROM radio_system_identity_summary"));
+            assertEquals(0, scalar(connection,
+                "SELECT SUM(target_logical_call_count) FROM radio_system_identity_summary"));
             assertEquals(0x84, scalar(connection,
-                "SELECT last_encryption_algorithm_id FROM trunked_identity_summary WHERE identity_id=91"));
+                "SELECT last_encryption_algorithm_id FROM radio_system_identity_summary WHERE identity_id=91"));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
+
+            ReceiverActivityRecords.ResolvedLogicalCall completed =
+                new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(9, 1), 3_599_000L,
+                    parent.getConfigurationId().toString(), Protocol.DMR.name(), TrunkedIdentityDomain.STANDARD,
+                    null, null, 91, Form.TALKGROUP.name(), java.util.List.of(), 101, true, 0x84, 101,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN,
+                    java.util.List.of(), java.util.List.of());
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, completed));
+            assertEquals(1, scalar(connection, """
+                SELECT logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=91
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT target_logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=91
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=101
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT source_logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=101
+                """));
         }
     }
 
@@ -159,7 +190,7 @@ class TrunkedCallActivityMapperTest
         parent.setDecodeConfiguration(config);
         parent.setSite("Downtown");
         parent.setAliasListName("Metro DMR");
-        parent.setRadresGuid(DMR_GUID);
+        parent.setRadioResolveId(DMR_GUID);
         return parent;
     }
 
@@ -179,6 +210,26 @@ class TrunkedCallActivityMapperTest
         {
             @Override public boolean isEncrypted() { return true; }
         };
+    }
+
+    private static void createDatabase(Path database, Channel channel) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverActivitySchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                    radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+                ) VALUES ('%s', 'TRUNKED', 0, 'Metro', 'Downtown', 'DMR Site',
+                    '%s', 0, 'DMR', 451012500, '{}')
+                """.formatted(channel.getConfigurationId(), DMR_GUID));
+        }
     }
 
     private static long scalar(Connection connection, String sql) throws Exception

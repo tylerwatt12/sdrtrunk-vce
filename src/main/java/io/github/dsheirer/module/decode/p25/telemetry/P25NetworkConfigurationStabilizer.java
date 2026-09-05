@@ -15,10 +15,13 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
 import io.github.dsheirer.metadata.site.StableFactTracker;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -208,7 +211,11 @@ public class P25NetworkConfigurationStabilizer
     {
         if(patchGroupIdentifier != null)
         {
-            observePatchGroups(List.of(toSnapshot(patchGroupIdentifier)), timestamp);
+            P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
+            if(snapshot != null)
+            {
+                observePatchGroups(List.of(snapshot), timestamp);
+            }
         }
     }
 
@@ -228,7 +235,11 @@ public class P25NetworkConfigurationStabilizer
         {
             if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
             {
-                patchGroups.add(toSnapshot(patchGroupIdentifier));
+                P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
+                if(snapshot != null)
+                {
+                    patchGroups.add(snapshot);
+                }
             }
         }
 
@@ -243,8 +254,11 @@ public class P25NetworkConfigurationStabilizer
         if(patchGroupIdentifier != null)
         {
             P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
-            String key = patchGroupKey(snapshot);
-            mPatchGroups.remove(key);
+            if(snapshot != null)
+            {
+                String key = patchGroupKey(snapshot);
+                mPatchGroups.remove(key);
+            }
         }
     }
 
@@ -560,7 +574,8 @@ public class P25NetworkConfigurationStabilizer
 
     private static String patchGroupKey(P25NetworkConfigurationSnapshot.PatchGroup patchGroup)
     {
-        return patchGroup != null && patchGroup.patchGroup() != null ? String.valueOf(patchGroup.patchGroup()) : null;
+        return patchGroup != null && patchGroup.localPatchGroupId() != null ?
+            String.valueOf(patchGroup.localPatchGroupId()) : null;
     }
 
     private static String talkerAliasKey(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias)
@@ -611,9 +626,26 @@ public class P25NetworkConfigurationStabilizer
     private static P25NetworkConfigurationSnapshot.PatchGroup toSnapshot(PatchGroupIdentifier patchGroupIdentifier)
     {
         PatchGroup patchGroup = patchGroupIdentifier.getValue();
+        if(patchGroup == null || patchGroup.getPatchGroup() == null ||
+            patchGroup.getPatchGroup() instanceof FullyQualifiedTalkgroupIdentifier ||
+            patchGroup.getPatchGroup().getValue() == null || patchGroup.getPatchGroup().getValue() < 1 ||
+            patchGroup.getPatchGroup().getValue() > RadioSystemIdentityKey.MAX_P25_GROUP_ID)
+        {
+            //This projection is intentionally site-local. Never flatten a canonical home tuple into a false link.
+            return null;
+        }
+
         return new P25NetworkConfigurationSnapshot.PatchGroup(patchGroup.getPatchGroup().getValue(),
             patchGroup.getVersion(),
-            patchGroup.getPatchedTalkgroupIdentifiers().stream().map(TalkgroupIdentifier::getValue).sorted().toList(),
-            patchGroup.getPatchedRadioIdentifiers().stream().map(RadioIdentifier::getValue).sorted().toList());
+            patchGroup.getPatchedTalkgroupIdentifiers().stream()
+                .filter(member -> !(member instanceof FullyQualifiedTalkgroupIdentifier))
+                .map(TalkgroupIdentifier::getValue).filter(java.util.Objects::nonNull)
+                .filter(value -> value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_GROUP_ID)
+                .distinct().sorted().toList(),
+            patchGroup.getPatchedRadioIdentifiers().stream()
+                .filter(member -> !(member instanceof FullyQualifiedRadioIdentifier))
+                .map(RadioIdentifier::getValue).filter(java.util.Objects::nonNull)
+                .filter(value -> value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_RADIO_ID)
+                .distinct().sorted().toList());
     }
 }

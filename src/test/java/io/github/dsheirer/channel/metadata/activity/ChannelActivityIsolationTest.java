@@ -152,6 +152,7 @@ class ChannelActivityIsolationTest
         List<ChannelMetadata> targetMetadata = List.of(new ChannelMetadata(aliasModel, 1));
         CountDownLatch targetPublished = new CountDownLatch(1);
         String targetConfigurationId = target.getConfigurationId();
+        target.setConfigurationId(targetConfigurationId);
         model.addActivityListener(event -> {
             if(event.snapshot().rows().stream()
                 .anyMatch(row -> targetConfigurationId.equals(row.configurationId())))

@@ -10,7 +10,7 @@ package io.github.dsheirer.audio.call.diagnostic;
  * mutable identifier collection, alias object, or decoder object graph.
  */
 public record LogicalCallDiagnosticLeg(String legId, String decoder, String channelConfigurationId,
-                                       String channelName, String siteGuid, long durableAliasListId, Integer wacn,
+                                       String channelName, String radioResolveId, long durableAliasListId, Integer wacn,
                                        Integer system, Integer rfss, Integer site, long startTimestamp, long endTimestamp,
                                        long durationMilliseconds, long expectedFrameCount, long observedFrameCount,
                                        long usableFrameCount, long decodedFrameCount, long repeatedFrameCount,

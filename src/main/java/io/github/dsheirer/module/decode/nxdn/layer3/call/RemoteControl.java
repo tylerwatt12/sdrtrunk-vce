@@ -68,8 +68,6 @@ public abstract class RemoteControl extends CallControl
     {
         if(mSourceIdentifier == null && getCallControlOption().hasLocationId() && getLocationIDOption().isSource())
         {
-//            mSourceIdentifier = NXDNFullyQualifiedRadioIdentifier.createFrom(getLocationID().getSystem().getValue(),
-//                    getMessage().getInt(IDENTIFIER_OCTET_3));
             mSourceIdentifier = NXDNRadioIdentifier.createFrom(getMessage().getInt(IDENTIFIER_OCTET_3));
         }
 
@@ -91,8 +89,6 @@ public abstract class RemoteControl extends CallControl
             }
             else if(getCallControlOption().hasLocationId() && getLocationIDOption().isDestination())
             {
-//                mDestinationIdentifier = NXDNFullyQualifiedRadioIdentifier.createFrom(getLocationID().getSystem().getValue(),
-//                        getMessage().getInt(IDENTIFIER_OCTET_3));
                 mDestinationIdentifier = NXDNRadioIdentifier.createFrom(getMessage().getInt(IDENTIFIER_OCTET_3));
             }
         }

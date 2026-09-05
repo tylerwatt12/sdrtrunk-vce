@@ -133,7 +133,8 @@ public final class AliasFactory
 
         for(BroadcastChannel broadcastChannel: original.getBroadcastChannels())
         {
-            copy.addBroadcastChannel(new BroadcastChannel(broadcastChannel.getChannelName()));
+            copy.addBroadcastChannel(new BroadcastChannel(broadcastChannel.getConfigurationId(),
+                broadcastChannel.getChannelName()));
         }
 
         return copy;

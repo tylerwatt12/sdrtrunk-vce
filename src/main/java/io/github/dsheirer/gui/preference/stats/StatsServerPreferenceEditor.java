@@ -14,8 +14,8 @@ package io.github.dsheirer.gui.preference.stats;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
-import io.github.dsheirer.stats.activity.P25ActivityLogMaintenance;
-import io.github.dsheirer.stats.activity.P25ActivityLogPath;
+import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
+import io.github.dsheirer.stats.activity.ReceiverActivityPath;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import java.util.Optional;
 import javafx.application.Platform;
@@ -86,7 +86,7 @@ public class StatsServerPreferenceEditor extends HBox
             mEditorPane.add(getRetentionSpinner(), 1, row);
             mEditorPane.add(new Label("days"), 2, row++);
             mEditorPane.add(new Label("Database file"), 0, row);
-            Label path = new Label(P25ActivityLogPath.getDatabasePath(mUserPreferences).toString());
+            Label path = new Label(ReceiverActivityPath.getDatabasePath(mUserPreferences).toString());
             path.setWrapText(true);
             mEditorPane.add(path, 1, row++, 2, 1);
             mEditorPane.add(new Label("Database maintenance"), 0, row);
@@ -157,7 +157,7 @@ public class StatsServerPreferenceEditor extends HBox
         {
             mMaintainButton = new Button("Run Maintenance");
             mMaintainButton.setTooltip(new Tooltip("Runs retention cleanup, WAL checkpoint, and query optimization."));
-            mMaintainButton.setOnAction(event -> run(P25ActivityLogMaintenance.Operation.MAINTAIN));
+            mMaintainButton.setOnAction(event -> run(ReceiverActivityMaintenance.Operation.MAINTAIN));
         }
 
         return mMaintainButton;
@@ -178,7 +178,7 @@ public class StatsServerPreferenceEditor extends HBox
 
                 if(result.isPresent() && result.get() == ButtonType.YES)
                 {
-                    run(P25ActivityLogMaintenance.Operation.SHRINK);
+                    run(ReceiverActivityMaintenance.Operation.SHRINK);
                 }
             });
         }
@@ -192,7 +192,7 @@ public class StatsServerPreferenceEditor extends HBox
         {
             mCheckButton = new Button("Check Database");
             mCheckButton.setTooltip(new Tooltip("Runs SQLite quick_check and reports the result."));
-            mCheckButton.setOnAction(event -> run(P25ActivityLogMaintenance.Operation.CHECK));
+            mCheckButton.setOnAction(event -> run(ReceiverActivityMaintenance.Operation.CHECK));
         }
 
         return mCheckButton;
@@ -214,7 +214,7 @@ public class StatsServerPreferenceEditor extends HBox
 
                 if(result.isPresent() && result.get() == ButtonType.YES)
                 {
-                    run(P25ActivityLogMaintenance.Operation.RESET_STATS);
+                    run(ReceiverActivityMaintenance.Operation.RESET_STATS);
                 }
             });
         }
@@ -241,7 +241,7 @@ public class StatsServerPreferenceEditor extends HBox
         getRetentionSpinner().setDisable(false);
     }
 
-    private void run(P25ActivityLogMaintenance.Operation operation)
+    private void run(ReceiverActivityMaintenance.Operation operation)
     {
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(operation);
         setMaintenanceRunning(true, operation);
@@ -262,7 +262,7 @@ public class StatsServerPreferenceEditor extends HBox
         }));
     }
 
-    private void setMaintenanceRunning(boolean running, P25ActivityLogMaintenance.Operation operation)
+    private void setMaintenanceRunning(boolean running, ReceiverActivityMaintenance.Operation operation)
     {
         getMaintainButton().setDisable(running);
         getShrinkButton().setDisable(running);

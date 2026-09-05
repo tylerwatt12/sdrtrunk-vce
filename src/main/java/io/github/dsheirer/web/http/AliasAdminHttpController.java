@@ -49,6 +49,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -264,7 +265,9 @@ public final class AliasAdminHttpController
             requireMethod(exchange, "PUT");
             UnmatchedPolicyRequest request = readJson(exchange, UnmatchedPolicyRequest.class);
             UnmatchedTalkgroupPolicy replacement = new UnmatchedTalkgroupPolicy(
-                required(request.recordable(), "recordable"), requiredChannels(request.broadcastChannels()));
+                required(request.recordable(), "recordable"),
+                requiredConfigurationIds(request.broadcastConfigurationIds()).stream()
+                    .map(configurationId -> new BroadcastChannel(configurationId, null)).toList());
             sendData(exchange, 200, mutationResponse(changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId,
                 replacement, boundedIds(request.scanListIds(), "scan_list_ids"),
                 requiredRevision(request.revision())))));
@@ -486,7 +489,7 @@ public final class AliasAdminHttpController
         response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
             .map(descriptor -> matcherOption(descriptor, options.aliasList())).toList());
         putBoundedOptions(response, "iconNames", options.iconNames());
-        putBoundedOptions(response, "streamNames", options.streamNames());
+        putBoundedOptions(response, "streams", options.streams());
         putBoundedOptions(response, "groupNames", options.groupNames());
         response.put("scanLists", options.scanLists().stream().map(AliasAdminHttpController::scanListView).toList());
 
@@ -513,7 +516,8 @@ public final class AliasAdminHttpController
             optionalText(request.iconName(), "icon_name", MAXIMUM_TEXT_CHARACTERS),
             request.recordable(), groupOperation(request.groupOperation()),
             optionalText(request.group(), "group", MAXIMUM_TEXT_CHARACTERS),
-            streamOperation(request.streamOperation()), optionalChannels(request.broadcastChannels()),
+            streamOperation(request.streamOperation()),
+            optionalConfigurationIds(request.broadcastConfigurationIds()),
             Boolean.TRUE.equals(request.delete()));
         sendData(exchange, 200,
             mutationResponse(changed(mService.bulkEdit(edit, requiredRevision(request.revision())))));
@@ -549,8 +553,8 @@ public final class AliasAdminHttpController
         alias.setColor(required(payload.color(), "color"));
         alias.setIconName(optionalText(payload.iconName(), "icon_name", MAXIMUM_TEXT_CHARACTERS));
         alias.setRecordable(required(payload.recordable(), "recordable"));
-        alias.setBroadcastChannels(requiredChannels(payload.broadcastChannels()).stream()
-            .map(BroadcastChannel::new).toList());
+        alias.setBroadcastChannels(requiredConfigurationIds(payload.broadcastConfigurationIds()).stream()
+            .map(configurationId -> new BroadcastChannel(configurationId, null)).toList());
 
         if(payload.streamAsTalkgroup() != null)
         {
@@ -658,7 +662,7 @@ public final class AliasAdminHttpController
     {
         return new AliasView(alias.getId(), alias.getAliasListId(), alias.getName(), alias.getDescription(),
             alias.getGroup(), alias.getColor(), alias.getIconName(), alias.isRecordable(),
-            alias.getBroadcastChannels().stream().map(BroadcastChannel::getChannelName).toList(),
+            alias.getBroadcastChannels().stream().map(BroadcastChannel::getConfigurationId).toList(),
             alias.getStreamTalkgroupAlias() != null ? alias.getStreamTalkgroupAlias().getValue() : null,
             alias.overlapProperty().get(), matcherView(alias.getMatchIdentifier()), scanListIds);
     }
@@ -775,7 +779,8 @@ public final class AliasAdminHttpController
     {
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("recordable", policy.isRecordEnabled());
-        response.put("broadcastChannels", policy.getStreamDestinationNames());
+        response.put("broadcastConfigurationIds", policy.getStreamDestinations().stream()
+            .map(BroadcastChannel::getConfigurationId).toList());
         response.put("scanListIds", scanListIds.stream().sorted().toList());
         return response;
     }
@@ -1028,29 +1033,38 @@ public final class AliasAdminHttpController
         };
     }
 
-    private static List<String> requiredChannels(List<String> channels) throws RequestException
+    private static List<String> requiredConfigurationIds(List<String> configurationIds) throws RequestException
     {
-        if(channels == null || channels.size() > AliasAdministrationService.MAX_BROADCAST_CHANNELS)
+        if(configurationIds == null || configurationIds.size() > AliasAdministrationService.MAX_BROADCAST_CHANNELS)
         {
-            throw invalid("broadcast_channels is invalid");
+            throw invalid("broadcast_configuration_ids is invalid");
         }
 
         Set<String> unique = new HashSet<>();
-        for(String channel: channels)
+        List<String> canonical = new ArrayList<>(configurationIds.size());
+        for(String configurationId: configurationIds)
         {
-            String checked = requiredText(channel, "broadcast_channels",
-                AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH);
+            String checked = requiredText(configurationId, "broadcast_configuration_ids", 36);
+            try
+            {
+                checked = UUID.fromString(checked).toString();
+            }
+            catch(IllegalArgumentException exception)
+            {
+                throw invalid("broadcast_configuration_ids contains an invalid UUID");
+            }
             if(!unique.add(checked))
             {
-                throw invalid("broadcast_channels contains a duplicate");
+                throw invalid("broadcast_configuration_ids contains a duplicate");
             }
+            canonical.add(checked);
         }
-        return List.copyOf(channels);
+        return List.copyOf(canonical);
     }
 
-    private static List<String> optionalChannels(List<String> channels) throws RequestException
+    private static List<String> optionalConfigurationIds(List<String> configurationIds) throws RequestException
     {
-        return channels != null ? requiredChannels(channels) : null;
+        return configurationIds != null ? requiredConfigurationIds(configurationIds) : null;
     }
 
     private static List<Long> requiredIds(List<Long> ids) throws RequestException
@@ -1367,19 +1381,20 @@ public final class AliasAdminHttpController
 
     private record CreateListRequest(Long revision, String name, String family) {}
     private record DeleteListRequest(Long revision, Boolean confirmed) {}
-    private record UnmatchedPolicyRequest(Long revision, Boolean recordable, List<String> broadcastChannels,
+    private record UnmatchedPolicyRequest(Long revision, Boolean recordable,
+                                          List<String> broadcastConfigurationIds,
                                           List<Long> scanListIds) {}
     private record RevisionRequest(Long revision) {}
     private record AliasRequest(Long revision, AliasPayload alias) {}
     private record BulkRequest(Long revision, List<Long> aliasIds, Long aliasListId, Integer color, String iconName,
                                Boolean recordable, String groupOperation, String group, String streamOperation,
-                               List<String> broadcastChannels, Boolean delete) {}
+                               List<String> broadcastConfigurationIds, Boolean delete) {}
     private record AliasPayload(Long aliasListId, String name, String description, String group, Integer color,
-                                String iconName, Boolean recordable, List<String> broadcastChannels,
+                                String iconName, Boolean recordable, List<String> broadcastConfigurationIds,
                                 Integer streamAsTalkgroup, MatcherPayload matcher, List<Long> scanListIds) {}
     private record AliasView(long id, long aliasListId, String name, String description, String group, int color,
                              String iconName, boolean recordable,
-                             List<String> broadcastChannels, Integer streamAsTalkgroup, boolean overlap,
+                             List<String> broadcastConfigurationIds, Integer streamAsTalkgroup, boolean overlap,
                              Map<String,Object> matcher, Set<Long> scanListIds) {}
     private record ScanListRequest(Long revision, ScanListPayload scanList) {}
     private record ScanListPayload(Integer sortOrder, String name, String description, Boolean published,
