@@ -21,6 +21,7 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -161,8 +162,9 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
      * One cohort member's immutable scan-list and output-policy evidence. Site is deliberately absent: talkgroup
      * membership is site-independent, while exact channel membership uses the stable channel configuration identity.
      */
-    public record MatchContext(String channelConfigurationId, long aliasListId, String aliasListName,
-                               String systemName, List<DestinationIdentity> destinationIdentities,
+    public record MatchContext(String channelConfigurationId, long aliasListId,
+                               ChannelConfigurationPolicy.ChannelKind channelKind,
+                               List<DestinationIdentity> destinationIdentities,
                                Set<Long> matchedAliasIds, AliasList.TalkgroupMatchStatus talkgroupMatchStatus,
                                boolean recordAudio,
                                boolean destinationRecordEnabled, Set<String> broadcastRoutingKeys)
@@ -170,8 +172,6 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
         public MatchContext
         {
             channelConfigurationId = normalize(channelConfigurationId);
-            aliasListName = normalize(aliasListName);
-            systemName = normalize(systemName);
             destinationIdentities = destinationIdentities != null ?
                 List.copyOf(new LinkedHashSet<>(destinationIdentities)) : List.of();
             matchedAliasIds = matchedAliasIds != null ? Set.copyOf(matchedAliasIds) : Set.of();
@@ -225,31 +225,16 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
 
             AudioCallRecordingMetadata metadata = snapshot.recordingMetadata();
             String channelIdentity = configurationValue(snapshot, Form.UNIQUE_ID);
-            String aliasList = configurationValue(snapshot, Form.ALIAS_LIST);
-            String system = configurationValue(snapshot, Form.SYSTEM);
             long aliasListId = runtimeAliasList != null ? runtimeAliasList.getId() : 0L;
+            ChannelConfigurationPolicy.ChannelKind channelKind = snapshot.callLegSource() != null ?
+                snapshot.callLegSource().channelKind() : null;
 
             if(channelIdentity == null && metadata != null)
             {
                 channelIdentity = metadata.channelIdentity();
             }
 
-            if(aliasList == null && metadata != null)
-            {
-                aliasList = metadata.aliasListName();
-            }
-
-            if(aliasList == null && runtimeAliasList != null)
-            {
-                aliasList = runtimeAliasList.getName();
-            }
-
-            if(system == null && metadata != null)
-            {
-                system = metadata.systemName();
-            }
-
-            return new MatchContext(channelIdentity, aliasListId, aliasList, system, List.copyOf(destinations),
+            return new MatchContext(channelIdentity, aliasListId, channelKind, List.copyOf(destinations),
                 matchedAliasIds, talkgroupMatchStatus, recordAudio, destinationRecordEnabled,
                 broadcastRoutingKeys);
         }

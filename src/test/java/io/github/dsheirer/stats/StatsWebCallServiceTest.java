@@ -591,7 +591,7 @@ class StatsWebCallServiceTest
         CompletedAudioCall template = call();
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1,
             "00000000-0000-0000-0000-000000000737", "Traffic",
-            "learned-site-guid", 1L, new P25SiteIdentity(0xABCDE, 0x348, 0x02, 0x17),
+            "radioresolve-id", 1L, new P25SiteIdentity(0xABCDE, 0x348, 0x02, 0x17),
             io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = template.snapshot();
@@ -850,8 +850,8 @@ class StatsWebCallServiceTest
     private static CompletedAudioCall call(Set<Long> matchedAliasIds)
     {
         CompletedAudioCall template = call();
-        ResolvedCallPolicy.MatchContext context = new ResolvedCallPolicy.MatchContext(null, 10, "County",
-            "Test System", List.of(), matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE,
+        ResolvedCallPolicy.MatchContext context = new ResolvedCallPolicy.MatchContext(null, 10, null,
+            List.of(), matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE,
             false, false, Set.of());
         return new CompletedAudioCall(template.snapshot(), template.audioBuffers(),
             new ResolvedCallPolicy(false, false, Set.of(), List.of(context)));

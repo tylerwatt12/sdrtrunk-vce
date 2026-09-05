@@ -20,6 +20,7 @@
 package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -60,7 +61,7 @@ public record BroadcastDeliveryEvidence(List<Observation> observations)
             if(context != null)
             {
                 Observation observation = new Observation(context.channelConfigurationId(), context.aliasListId(),
-                    context.aliasListName(), context.broadcastRoutingKeys());
+                    context.channelKind(), context.broadcastRoutingKeys());
 
                 if(observation.hasDeliveryEvidence())
                 {
@@ -73,8 +74,8 @@ public record BroadcastDeliveryEvidence(List<Observation> observations)
     }
 
     /**
-     * Indicates if one individual channel observation simultaneously contains the requested provider route, alias
-     * list, and saved channel identity.  Evidence from separate duplicate copies is deliberately never combined.
+     * Indicates if one individual trunked-channel observation simultaneously contains the requested provider route,
+     * Alias List, and saved channel identity. Evidence from separate duplicate copies is deliberately never combined.
      */
     public boolean matches(String broadcastRoutingKey, long aliasListId, String channelConfigurationId)
     {
@@ -100,26 +101,27 @@ public record BroadcastDeliveryEvidence(List<Observation> observations)
     /**
      * One receiver/channel copy's site-bound broadcast routing evidence.
      */
-    public record Observation(String channelConfigurationId, long aliasListId, String aliasListName,
+    public record Observation(String channelConfigurationId, long aliasListId,
+                              ChannelConfigurationPolicy.ChannelKind channelKind,
                               Set<String> broadcastRoutingKeys)
     {
         public Observation
         {
             channelConfigurationId = normalizeChannelConfigurationId(channelConfigurationId);
-            aliasListName = normalize(aliasListName);
             broadcastRoutingKeys = immutableStrings(broadcastRoutingKeys);
         }
 
         private boolean hasDeliveryEvidence()
         {
-            return channelConfigurationId != null || aliasListName != null || aliasListId > 0 ||
+            return channelConfigurationId != null || aliasListId > 0 || channelKind != null ||
                 !broadcastRoutingKeys.isEmpty();
         }
 
         private boolean matches(String broadcastRoutingKey, long requiredAliasListId,
                                 String requiredChannelConfigurationId)
         {
-            return requiredChannelConfigurationId.equals(channelConfigurationId) &&
+            return channelKind == ChannelConfigurationPolicy.ChannelKind.TRUNKED &&
+                requiredChannelConfigurationId.equals(channelConfigurationId) &&
                 requiredAliasListId == aliasListId && broadcastRoutingKeys.contains(broadcastRoutingKey);
         }
     }

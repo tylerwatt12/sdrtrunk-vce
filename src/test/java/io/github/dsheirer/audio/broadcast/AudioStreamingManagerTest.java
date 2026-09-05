@@ -548,8 +548,9 @@ public class AudioStreamingManagerTest
     private static ResolvedCallPolicy.MatchContext deliveryContext(String channelConfigurationId,
                                                                    long aliasListId, String route)
     {
-        return new ResolvedCallPolicy.MatchContext(channelConfigurationId, aliasListId, "County", "System",
-            List.of(), Set.of(), AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, false, false, Set.of(route));
+        return new ResolvedCallPolicy.MatchContext(channelConfigurationId, aliasListId,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, List.of(), Set.of(),
+            AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, false, false, Set.of(route));
     }
 
     private static boolean awaitWaitingDrain(AudioStreamingManager manager, long timeout, TimeUnit unit)

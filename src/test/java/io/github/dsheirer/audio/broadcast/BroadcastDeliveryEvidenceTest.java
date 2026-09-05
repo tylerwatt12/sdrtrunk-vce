@@ -13,6 +13,7 @@ package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -70,6 +71,17 @@ class BroadcastDeliveryEvidenceTest
     }
 
     @Test
+    void conventionalObservationCannotSatisfyATrunkedSiteProvider()
+    {
+        ResolvedCallPolicy.MatchContext conventional = new ResolvedCallPolicy.MatchContext(WEST_CHANNEL,
+            COUNTY_ALIAS_LIST_ID, ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, List.of(), Set.of(),
+            AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, false, false, Set.of("bc-west"));
+
+        assertFalse(BroadcastDeliveryEvidence.from(policy(conventional))
+            .matches("bc-west", COUNTY_ALIAS_LIST_ID, WEST_CHANNEL));
+    }
+
+    @Test
     void projectedCollectionsAreImmutableAndNullPolicyIsEmpty()
     {
         BroadcastDeliveryEvidence evidence = BroadcastDeliveryEvidence.from(policy(
@@ -90,7 +102,8 @@ class BroadcastDeliveryEvidenceTest
     private static ResolvedCallPolicy.MatchContext context(String channelConfigurationId, long aliasListId,
                                                             String aliasListName, String route)
     {
-        return new ResolvedCallPolicy.MatchContext(channelConfigurationId, aliasListId, aliasListName, "System",
-            List.of(), Set.of(), AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, false, false, Set.of(route));
+        return new ResolvedCallPolicy.MatchContext(channelConfigurationId, aliasListId,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, List.of(), Set.of(),
+            AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, false, false, Set.of(route));
     }
 }

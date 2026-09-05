@@ -240,7 +240,7 @@ class CompletedCallScanListMatcherTest
     private static ResolvedCallPolicy.MatchContext context(long aliasListId, Set<Long> aliasIds,
                                                            AliasList.TalkgroupMatchStatus matchStatus)
     {
-        return new ResolvedCallPolicy.MatchContext(null, aliasListId, "List " + aliasListId, "System",
-            List.of(), aliasIds, matchStatus, false, false, Set.of());
+        return new ResolvedCallPolicy.MatchContext(null, aliasListId, null, List.of(), aliasIds, matchStatus,
+            false, false, Set.of());
     }
 }
