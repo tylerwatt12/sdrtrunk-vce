@@ -21,7 +21,7 @@ public final class ChannelConfigurationKey
             return null;
         }
 
-        return canonical(channel.getConfigurationId());
+        return canonical(channel.getPersistedConfigurationId());
     }
 
     public static String canonical(String configurationId)

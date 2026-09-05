@@ -28,6 +28,7 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.filter.AllPassFilter;
 import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.filter.IFilter;
@@ -374,7 +375,7 @@ public class DecoderFactory
             TrunkedIdentityDomain.NXDN_TYPE_D : decodeConfiguration instanceof DecodeConfigNXDN ?
                 TrunkedIdentityDomain.NXDN_TYPE_C : TrunkedIdentityDomain.STANDARD;
         return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
-            channel != null ? channel.getConfigurationId() : null,
+            ChannelConfigurationKey.configured(channel),
             channel != null ? channel.getName() : null,
             channel != null ? channel.getRadioResolveId() : null,
             aliasList != null ? aliasList.getId() : 0L,

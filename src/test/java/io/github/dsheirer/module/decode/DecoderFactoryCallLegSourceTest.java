@@ -7,6 +7,7 @@ package io.github.dsheirer.module.decode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasModel;
@@ -66,6 +67,17 @@ class DecoderFactoryCallLegSourceTest
         CallLegSource source = DecoderFactory.createCallLegSource(channel, AliasList.empty("test"));
 
         assertTrue(source.trafficChannel());
+    }
+
+    @Test
+    void doesNotPublishAnUnsavedCandidateAsDurableSourceIdentity()
+    {
+        Channel channel = new Channel("Draft");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+
+        CallLegSource source = DecoderFactory.createCallLegSource(channel, AliasList.empty("test"));
+
+        assertNull(source.channelConfigurationId());
     }
 
     @Test

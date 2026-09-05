@@ -75,6 +75,7 @@ class ReceiverActivityMapperTest
     void keepsAnIncompleteP25RegistrationAsRawEvidenceOnly()
     {
         Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         APCO25IncompleteRadioIdentifier radio = APCO25IncompleteRadioIdentifier.createTo(831_102);
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
@@ -95,6 +96,7 @@ class ReceiverActivityMapperTest
     void mapsAQualifiedP25RegistrationWithoutInventingARadioTarget()
     {
         Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         APCO25FullyQualifiedRadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26,
             0xBEE00, 0x954, 831_102);

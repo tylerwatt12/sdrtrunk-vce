@@ -59,6 +59,18 @@ class ChannelConfigurationIdentityTest
     }
 
     @Test
+    void exposesOnlyAnIdentityAcceptedByPersistentStorage()
+    {
+        Channel channel = new Channel("New draft");
+
+        assertNull(ChannelConfigurationKey.configured(channel));
+
+        channel.setConfigurationId("11111111-2222-3333-aaaa-bbbbbbbbbbbb");
+
+        assertEquals("11111111-2222-3333-aaaa-bbbbbbbbbbbb", ChannelConfigurationKey.configured(channel));
+    }
+
+    @Test
     void normalizesPersistedIdentityAndGivesCloneANewIdentity()
     {
         Channel channel = new Channel("Control");
