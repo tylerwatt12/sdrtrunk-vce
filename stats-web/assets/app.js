@@ -124,7 +124,7 @@ const GROUP_IDENTITY_SIGNALING_SERIES = Object.freeze([
 ]);
 const DASHBOARD_ACTIVITY_SERIES = Object.freeze([
   { action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' },
-  ...TALKGROUP_SIGNALING_SERIES.filter((series) => series.field !== 'continue_observation_count')
+  ...GROUP_IDENTITY_SIGNALING_SERIES.filter((series) => series.field !== 'continue_observation_count')
     .map((series) => ({
       action: series.field.replace(/_observation_count$/, '').toUpperCase(),
       label: series.label,

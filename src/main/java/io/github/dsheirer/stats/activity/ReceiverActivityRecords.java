@@ -671,6 +671,9 @@ final class ReceiverActivityRecords
             {
                 throw new IllegalArgumentException("Invalid trunked control-channel quality observation");
             }
+            // Decoder timestamps follow sample time and can lead the wall-clock snapshot slightly.
+            // A decode already included in this observation is no newer than the observation itself.
+            lastValidDecodeMs = Math.min(lastValidDecodeMs, observedAtEpochMilliseconds);
         }
     }
 

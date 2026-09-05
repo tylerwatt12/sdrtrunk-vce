@@ -80,6 +80,24 @@ class ReceiverActivitySchemaIntegrityTest
     }
 
     @Test
+    void qualityWithSampleTimeAheadOfObservationDoesNotStopPersistence() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertConfiguredChannel(connection);
+            for(long lastDecode: new long[]{1_400, 1_550, 0})
+            {
+                ReceiverActivitySchema.insertControlChannelQuality(connection,
+                    new ReceiverActivityRecords.ControlChannelQuality(1_500, CONFIGURATION_ID, "APCO25",
+                        TrunkedIdentityDomain.STANDARD, 851_012_500,
+                        -70.0, -71.0, -75.0, -68.0, 95.0, 100, 2, 3, 4, 5, lastDecode));
+                assertEquals(Math.min(lastDecode, 1_500), scalar(connection,
+                    "SELECT last_valid_decode_ms FROM trunked_control_channel_quality"));
+            }
+        }
+    }
+
+    @Test
     void configuredChannelOwnsAndCascadesEveryChannelFact() throws Exception
     {
         try(Connection connection = open())

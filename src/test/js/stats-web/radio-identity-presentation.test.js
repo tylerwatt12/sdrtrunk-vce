@@ -25,6 +25,14 @@ function closingBrace(start) {
   throw new Error('Unclosed function');
 }
 
+// Evaluate related declarations together so a stale dependency name fails at startup here too.
+const activitySeries = vm.runInNewContext(source.slice(
+  source.indexOf('const GROUP_IDENTITY_SIGNALING_SERIES ='),
+  source.indexOf('const DASHBOARD_ACTIVITY_RANGES =')) + '\nDASHBOARD_ACTIVITY_SERIES;');
+assert.ok(activitySeries.some(series => series.action === 'GRANT'));
+assert.ok(activitySeries.some(series => series.action === 'REGISTER'));
+assert.ok(!activitySeries.some(series => series.action === 'CONTINUE'));
+
 function functionSource(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `Missing ${name}`);
