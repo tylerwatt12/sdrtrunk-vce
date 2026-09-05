@@ -245,14 +245,27 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("protocol", "protocol"), text("system_name", "system_name"),
                 text("radio_system_key", "radio_system_key"),
                 text("configuration_id", "configuration_id"),
-                text("channel_name", "name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
-                number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
-                number("system_id", "system_id"), number("network_id", "network_id"),
-                text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
-                text("site_id_hex", row -> p25Hex(row, "site", 2)),
-                number("site_id", row -> firstValue(row, "site", "site_id")),
-                text("nac_hex", row -> p25Hex(row, "nac", 3)), number("nac", "nac"),
-                number("ran", "ran"), number("frequency_hz", "quality_frequency_hz"),
+                text("channel_name", "name"),
+                text("radio_system_variant", StatsCsvExport::radioSystemVariant),
+                text("radio_system_model", StatsCsvExport::dmrRadioSystemModel),
+                text("radio_system_location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
+                text("radio_system_wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                number("radio_system_wacn", "wacn"),
+                text("radio_system_system_id_hex", row -> p25Hex(row, "system_id", 3)),
+                number("radio_system_system_id", "system_id"),
+                number("radio_system_network_id", "network_id"),
+                text("observed_site_variant", StatsCsvExport::observedSiteVariant),
+                text("observed_site_model", StatsCsvExport::dmrObservedSiteModel),
+                text("observed_site_location_category", StatsCsvExport::nxdnObservedSiteLocationCategory),
+                number("observed_site_network_id", "site_network_id"),
+                number("observed_site_system_id", "site_system_id"),
+                text("observed_site_rfss_hex", row -> p25Hex(row, "rfss", 2)),
+                number("observed_site_rfss", "rfss"),
+                text("observed_site_id_hex", row -> p25Hex(row, "site_id", 2)),
+                number("observed_site_id", "site_id"),
+                text("observed_site_nac_hex", row -> p25Hex(row, "nac", 3)),
+                number("observed_site_nac", "nac"),
+                number("observed_site_ran", "ran"), number("frequency_hz", "quality_frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("quality_frequency_hz"))),
                 time("observed_utc", "last_observed_ms"), number("sample_age_seconds", "sample_age_seconds"),
                 number("signal_dbfs", "signal_dbfs"),
@@ -474,6 +487,25 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     {
         return apiProtocol(row) == StatsApiProtocol.NXDN &&
             row.get("nxdn_location_category_code") instanceof Number category ?
+            StatsApiProtocol.NXDN.siteClassification(category.longValue()) : "";
+    }
+
+    private static String observedSiteVariant(Map<String,Object> row)
+    {
+        return row.get("site_variant_code") instanceof Number variant ?
+            apiProtocol(row).variant(variant.longValue()) : "";
+    }
+
+    private static String dmrObservedSiteModel(Map<String,Object> row)
+    {
+        return apiProtocol(row) == StatsApiProtocol.DMR && row.get("site_model_code") instanceof Number model ?
+            StatsApiProtocol.DMR.siteClassification(model.longValue()) : "";
+    }
+
+    private static String nxdnObservedSiteLocationCategory(Map<String,Object> row)
+    {
+        return apiProtocol(row) == StatsApiProtocol.NXDN &&
+            row.get("site_location_category_code") instanceof Number category ?
             StatsApiProtocol.NXDN.siteClassification(category.longValue()) : "";
     }
 

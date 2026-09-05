@@ -1334,24 +1334,12 @@ function identityNumber(row, value) {
   return identifierNumber(value);
 }
 
-function trunkedSystemLabel(row) {
-  const configured = row.system_name || row.channel_names;
-  if (configured) return configured;
-  const identities = [];
-  if (row.network_id !== null && row.network_id !== undefined) {
-    identities.push(`Network ${identifierNumber(row.network_id)}`);
-  }
-  if (row.system_id !== null && row.system_id !== undefined) {
-    identities.push(`System ${identifierNumber(row.system_id)}`);
-  }
-  return identities.length ? `${protocolFamily(row)} ${identities.join(' · ')}` : `${protocolFamily(row)} system`;
-}
-
 function trunkedSiteLabel(row) {
-  const site = protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id;
+  const family = protocolFamily(row);
+  const site = identifierNumber(row.site_id) ||
+    (family === 'NXDN' ? identifierNumber(row.ran) : '');
   return row.name || row.system_name ||
-    `${protocolFamily(row)} site ${identifierNumber(site) || identifierNumber(row.ran) ||
-      row.configuration_id}`;
+    `${family} site ${site || row.configuration_id}`;
 }
 
 function trunkedVariant(row) {
@@ -7868,10 +7856,17 @@ function scannerNetworkSiteIdentity(call) {
     return [network, location].filter(Boolean).join(' · ');
   }
 
+  const family = String(call?.protocol || call?.decoder || '').toUpperCase();
   const values = [];
   const network = scannerIdentifierNumber(call?.network_id);
-  const system = scannerIdentifierNumber(call?.system_id);
   const site = scannerIdentifierNumber(call?.site_id);
+  if (family.includes('DMR')) {
+    if (network !== null) values.push(`Network ${network}`);
+    if (site !== null) values.push(`Site ${site}`);
+    return values.join(' · ');
+  }
+
+  const system = scannerIdentifierNumber(call?.system_id);
   const ran = scannerIdentifierNumber(call?.ran);
   if (network !== null && system !== null) values.push(`${network}-${system}`);
   else if (network !== null) values.push(`Network ${network}`);
@@ -8575,10 +8570,13 @@ function trunkedNeighborStatus(value) {
 }
 
 function channelDirectoryRfIdentity(row) {
-  if (!isP25(row)) {
-    const site = protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id;
+  const family = protocolFamily(row);
+  if (family === 'DMR') {
+    return row.site_id == null ? '' : `Site ${identifierNumber(row.site_id)}`;
+  }
+  if (family === 'NXDN') {
     return [
-      site == null ? '' : `Site ${identifierNumber(site)}`,
+      row.site_id == null ? '' : `Site ${identifierNumber(row.site_id)}`,
       row.ran == null ? '' : `RAN ${identifierNumber(row.ran)}`
     ].filter(Boolean).join(' · ');
   }
@@ -8611,13 +8609,12 @@ function dashboardChannelContext(row) {
   const values = [];
   const trunked = dashboardChannelKind(row) === 'TRUNKED';
   if (trunked) {
-    values.push(isP25(row) ? radioSystemLabel(row) : trunkedSystemLabel(row));
+    values.push(radioSystemLabel(row));
     if (isP25(row) && row.rfss != null) values.push(`RFSS ${hex(row.rfss, 2)}`);
-    const site = protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id;
-    if (site != null) {
-      values.push(`Site ${isP25(row) ? hex(site, 2) : identifierNumber(site)}`);
+    if (row.site_id != null) {
+      values.push(`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`);
     }
-    if (!isP25(row) && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
+    if (protocolFamily(row) === 'NXDN' && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
   }
   if (isP25(row) && row.nac != null) values.push(`NAC ${hex(row.nac, 3)}`);
   return values.join(' · ');
@@ -13880,7 +13877,7 @@ function channelLocationIdentity(channel) {
     return [
       model ? `${model} model` : '',
       channel.network_id == null ? '' : `Network ${identifierNumber(channel.network_id)}`,
-      channel.site_system_id == null ? '' : `Site ${identifierNumber(channel.site_system_id)}`
+      channel.site_id == null ? '' : `Site ${identifierNumber(channel.site_id)}`
     ].filter(Boolean).join(' · ');
   }
   if (protocolFamily(channel) === 'NXDN') {
@@ -13940,7 +13937,7 @@ function dmrChannelDetailRows(channel) {
     ['Radio System Variant', trunkedVariant(channel)],
     ['Radio System Network', identifierNumber(channel.network_id)],
     ['Radio System Model', semanticLabel(channel.model)],
-    ['Observed Site', identifierNumber(channel.site_system_id)]
+    ['Observed Site', identifierNumber(channel.site_id)]
   ];
   const siteVariant = distinctObservedVariant(channel);
   const siteModel = distinctObservedClassification(channel.site_model, channel.model);

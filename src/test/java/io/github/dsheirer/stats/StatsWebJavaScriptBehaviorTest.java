@@ -39,6 +39,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
         contract("P25 band-plan override prefill", "p25-bandplan-override-prefill.test.js", APP_JAVASCRIPT),
         contract("page lifecycle", "page-lifecycle.test.js", PAGE_LIFECYCLE),
+        contract("radio identity presentation", "radio-identity-presentation.test.js", APP_JAVASCRIPT),
         contract("receiver-health alert catalog", "receiver-health-alerts.test.js", CORE_MODULES),
         contract("receiver-health pagination", "receiver-health-pagination.test.js", APP_JAVASCRIPT),
         contract("status availability", "status-availability.test.js", APP_JAVASCRIPT),

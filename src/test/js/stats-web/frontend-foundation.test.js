@@ -419,7 +419,7 @@ async function main() {
   const channelDetailsColumn = channelDescriptors.find((column) => column.id === 'details');
   assert.equal(channelDetailsColumn.render({ protocol: 'P25', rfss: 1, site_id: 1, nac: 0x293, bands: 2 }),
     'RFSS 01 · Site 01 · NAC 293 · 2 band plans');
-  assert.equal(channelDetailsColumn.render({ protocol: 'DMR', site_system_id: 1, ran: 7 }), 'Site 1 · RAN 7');
+  assert.equal(channelDetailsColumn.render({ protocol: 'DMR', site_id: 1 }), 'Site 1');
   assert.equal(channelDetailsColumn.render({ protocol: 'P25', site: 1 }), '',
     'Legacy site fields must not be inferred');
 
@@ -436,15 +436,14 @@ async function main() {
     `(function(row) ${functionBinding(appSource, 'dashboardChannelContext')})`, {
       dashboardChannelKind: (row) => String(row.channel_kind || '').toUpperCase(),
       isP25: (row) => row.protocol === 'P25', radioSystemLabel: (row) => row.system || '',
-      trunkedSystemLabel: (row) => row.system || '', protocolFamily: (row) => row.protocol,
-      identifierNumber, hex
+      protocolFamily: (row) => row.protocol, identifierNumber, hex
     });
   assert.equal(dashboardChannelContext({ protocol: 'P25', channel_kind: 'trunked', system: 'BEE00-941',
     rfss: 1, site_id: 2, nac: 0x293 }), 'BEE00-941 · RFSS 01 · Site 02 · NAC 293');
   assert.equal(dashboardChannelContext({ protocol: 'NXDN', channel_kind: 'trunked', system: 'County',
     site_id: 4, ran: 7 }), 'County · Site 4 · RAN 7');
   assert.equal(dashboardChannelContext({ protocol: 'DMR', channel_kind: 'trunked', system: 'Metro',
-    site_system_id: 9, site_id: 99 }), 'Metro · Site 9');
+    site_id: 9 }), 'Metro · Site 9');
 
   const decoderLabel = vm.runInNewContext(
     `(function(value, compact = false) ${functionBinding(appSource, 'decoderLabel')})`);
@@ -514,8 +513,7 @@ async function main() {
     });
   const dmrDetails = Object.fromEntries(dmrChannelDetailRows({
     protocol: 'DMR', variant: 'TIER_III', model: 'small', network_id: 42,
-    site_variant: 'TIER_III', site_model: 'small', site_network_id: 7,
-    site_system_id: 9, system_id: 88, site_id: 99
+    site_variant: 'TIER_III', site_model: 'small', site_id: 9
   }));
   assert.equal(dmrDetails['Radio System Network'], '42');
   assert.equal(dmrDetails['Radio System Model'], 'Small');
@@ -526,7 +524,7 @@ async function main() {
   assert.equal(Object.hasOwn(dmrDetails, 'Observed Site Model'), false);
   const changedDmrObservation = Object.fromEntries(dmrChannelDetailRows({
     protocol: 'DMR', variant: 'TIER_III', model: 'small', network_id: 42,
-    site_variant: 'CAPACITY_PLUS', site_model: 'large', site_system_id: 9
+    site_variant: 'CAPACITY_PLUS', site_model: 'large', site_id: 9
   }));
   assert.equal(changedDmrObservation['Observed Site Variant'], 'Capacity Plus');
   assert.equal(changedDmrObservation['Observed Site Model'], 'Large');
@@ -561,7 +559,7 @@ async function main() {
       hex
     });
   assert.equal(channelLocationIdentity({ protocol: 'DMR', model: 'small', network_id: 42,
-    site_system_id: 9, site_network_id: 7, system_id: 88, site_id: 99 }),
+    site_id: 9 }),
   'Small model · Network 42 · Site 9');
   assert.equal(channelLocationIdentity({ protocol: 'NXDN', location_category: 'local', system_id: 303,
     site_id: 5, site_network_id: 7, site_system_id: 12, ran: 4 }),
@@ -572,7 +570,7 @@ async function main() {
       isP25: (row) => row.protocol === 'P25', protocolFamily: (row) => row.protocol,
       identifierNumber, hex
     });
-  assert.equal(nativeChannelDirectoryRfIdentity({ protocol: 'DMR', site_system_id: 9, site_id: 99 }), 'Site 9');
+  assert.equal(nativeChannelDirectoryRfIdentity({ protocol: 'DMR', site_id: 9 }), 'Site 9');
   assert.equal(nativeChannelDirectoryRfIdentity({ protocol: 'NXDN', site_system_id: 12, site_id: 5, ran: 4 }),
     'Site 5 · RAN 4');
 

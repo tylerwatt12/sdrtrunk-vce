@@ -69,16 +69,19 @@ class StatsWebTrunkedChannelUiContractTest
         String dmr = function(source, "function dmrChannelDetailRows(channel)");
         String nxdn = function(source, "function nxdnChannelDetailRows(channel)");
 
-        assertTrue(directoryIdentity.contains("protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id"));
-        assertTrue(locationIdentity.contains("channel.site_system_id"));
+        assertTrue(directoryIdentity.contains("family === 'DMR'"));
+        assertTrue(directoryIdentity.contains("row.site_id"));
+        assertFalse(directoryIdentity.contains("row.site_system_id"));
+        assertTrue(locationIdentity.contains("channel.site_id"));
         assertTrue(locationIdentity.contains("channel.site_network_id"));
 
         assertTrue(dmr.contains("['Radio System Network', identifierNumber(channel.network_id)]"));
         assertTrue(dmr.contains("['Radio System Model', semanticLabel(channel.model)]"));
-        assertTrue(dmr.contains("['Observed Site', identifierNumber(channel.site_system_id)]"));
+        assertTrue(dmr.contains("['Observed Site', identifierNumber(channel.site_id)]"));
         assertFalse(dmr.contains("channel.system_id"));
-        assertFalse(dmr.contains("channel.site_id"));
+        assertFalse(dmr.contains("channel.site_system_id"));
         assertFalse(dmr.contains("channel.site_network_id"));
+        assertFalse(dmr.contains("channel.ran"));
 
         assertTrue(nxdn.contains("['Radio System Category', semanticLabel(channel.location_category)]"));
         assertTrue(nxdn.contains("['Radio System ID', identifierNumber(channel.system_id)]"));

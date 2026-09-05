@@ -99,6 +99,52 @@ class StatsCsvExportTest
     }
 
     @Test
+    void separatesRadioSystemIdentityFromObservedSiteFactsInSignalHealth() throws Exception
+    {
+        StatsCsvExport dmrExport = StatsCsvExport.create("signal-health", "all", List.of(Map.ofEntries(
+            Map.entry("protocol", "DMR"), Map.entry("radio_system_key", "dmr:tier3:small:0"),
+            Map.entry("variant", "TIER_III"), Map.entry("dmr_model_code", 2),
+            Map.entry("network_id", 0), Map.entry("site_variant_code", 1),
+            Map.entry("site_model_code", 2), Map.entry("site_network_id", 0),
+            Map.entry("site_id", 12), Map.entry("quality_frequency_hz", 451_000_000L))));
+        CSVRecord dmr = firstRecord(dmrExport);
+
+        assertEquals("tier_iii", dmr.get("radio_system_variant"));
+        assertEquals("small", dmr.get("radio_system_model"));
+        assertEquals("", dmr.get("radio_system_system_id"));
+        assertEquals("0", dmr.get("radio_system_network_id"));
+        assertEquals("tier_iii", dmr.get("observed_site_variant"));
+        assertEquals("small", dmr.get("observed_site_model"));
+        assertEquals("0", dmr.get("observed_site_network_id"));
+        assertEquals("", dmr.get("observed_site_system_id"));
+        assertEquals("12", dmr.get("observed_site_id"));
+        assertEquals("", dmr.get("observed_site_ran"));
+        assertFalse(dmr.isMapped("network_id"));
+        assertFalse(dmr.isMapped("system_id"));
+        assertFalse(dmr.isMapped("site_id"));
+        assertFalse(dmr.isMapped("ran"));
+
+        StatsCsvExport nxdnExport = StatsCsvExport.create("signal-health", "all", List.of(Map.ofEntries(
+            Map.entry("protocol", "NXDN"), Map.entry("radio_system_key", "nxdn-c:local:303"),
+            Map.entry("variant", "TYPE_C"), Map.entry("nxdn_location_category_code", 3),
+            Map.entry("system_id", 303), Map.entry("site_variant_code", 1),
+            Map.entry("site_location_category_code", 3), Map.entry("site_network_id", 4),
+            Map.entry("site_system_id", 303), Map.entry("site_id", 15), Map.entry("ran", 1),
+            Map.entry("quality_frequency_hz", 461_000_000L))));
+        CSVRecord nxdn = firstRecord(nxdnExport);
+
+        assertEquals("type_c", nxdn.get("radio_system_variant"));
+        assertEquals("local", nxdn.get("radio_system_location_category"));
+        assertEquals("303", nxdn.get("radio_system_system_id"));
+        assertEquals("type_c", nxdn.get("observed_site_variant"));
+        assertEquals("local", nxdn.get("observed_site_location_category"));
+        assertEquals("4", nxdn.get("observed_site_network_id"));
+        assertEquals("303", nxdn.get("observed_site_system_id"));
+        assertEquals("15", nxdn.get("observed_site_id"));
+        assertEquals("1", nxdn.get("observed_site_ran"));
+    }
+
+    @Test
     void normalizesConventionalProtocolAndMissingTimeslot() throws Exception
     {
         StatsCsvExport export = StatsCsvExport.create("channels", "all", List.of(Map.of(

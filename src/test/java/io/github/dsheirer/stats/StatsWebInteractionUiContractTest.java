@@ -315,8 +315,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String systems = function(source, "async function renderRadioSystems()");
         String presenter = function(source, "function radioSystemsDirectoryContent(data)");
-        assertTrue(presenter.contains("row.system_name || 'P25 radio system'"));
-        assertTrue(presenter.contains("savedChannelScopeLabel(row)"));
+        assertTrue(presenter.contains("row.system_name || radioSystemLabel(row)"));
         assertTrue(presenter.contains("heading.append(radioSystemLink(row.entity_ref, label))"));
         assertTrue(presenter.contains("channelNameSummary(row)"));
         assertTrue(systems.contains("radioSystemsDirectory.load(apiPage"));
@@ -915,6 +914,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(networkSite.contains("scannerHex(call?.system_id, 3)"));
         assertTrue(networkSite.contains("scannerHex(call?.rfss_id, 2)"));
         assertTrue(networkSite.contains("scannerHex(call?.site_id, 2)"));
+        assertTrue(networkSite.contains("family.includes('DMR')"));
+        assertTrue(networkSite.contains("`Network ${network}`"));
+        assertTrue(networkSite.contains("`Site ${site}`"));
         assertTrue(scannerCall.contains("engineer.append(scannerCallQuality(call))"));
         for(String field: List.of("Decoded", "Repeated", "Concealed", "Missing", "FEC Errors", "FEC Protected"))
         {

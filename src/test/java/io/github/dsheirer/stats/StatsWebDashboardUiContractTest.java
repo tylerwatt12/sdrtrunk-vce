@@ -170,6 +170,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
         assertTrue(context.contains("`RAN ${identifierNumber(row.ran)}`"));
         assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
+        assertTrue(context.contains("values.push(radioSystemLabel(row))"));
+        assertTrue(context.contains("protocolFamily(row) === 'NXDN' && row.ran != null"));
 
         assertTrue(calls.contains("label: 'Conventional Channel'"));
         assertTrue(calls.contains("label: 'Mode'"));
@@ -283,8 +285,10 @@ class StatsWebDashboardUiContractTest
         String context = function(source, "function dashboardChannelContext(row)");
         assertTrue(context.contains("dashboardChannelKind(row)"));
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
-        assertTrue(context.contains("protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id"));
-        assertTrue(context.contains("`Site ${isP25(row) ? hex(site, 2) : identifierNumber(site)}`"));
+        assertTrue(context.contains("row.site_id"));
+        assertTrue(context.contains("`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`"));
+        assertFalse(context.contains("row.site_system_id"));
+        assertTrue(context.contains("values.push(radioSystemLabel(row))"));
         assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
     }
 
