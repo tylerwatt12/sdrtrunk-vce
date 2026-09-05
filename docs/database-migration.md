@@ -55,8 +55,9 @@ exact deployed sample and an explicit adjacent step.
 
 Each new database stores one authoritative, monotonically increasing integer `database_format_version` in the existing
 `database_metadata` table. That value describes the complete persisted SQLite contract, including schema semantics
-that an exact DDL fingerprint alone cannot identify. Existing subsystem-version rows may remain useful for validation,
-but they do not choose a migration route. Do not add another version or migration-history table.
+that an exact DDL fingerprint alone cannot identify. Historical formats retain their subsystem-version rows as part
+of their frozen signatures. Format 15 removes those redundant rows from the current database; only the global format
+version chooses or validates the current contract. Do not add another version or migration-history table.
 
 Marker-bearing formats resolve by global version first and then validate that version's exact fingerprint, metadata,
 and invariants. This permits a semantic-only format bump to share its predecessor's DDL fingerprint. Markerless legacy
@@ -73,7 +74,7 @@ derived state or refuse ambiguous critical configuration instead of guessing whi
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -156,6 +157,10 @@ browser preference, account, credential, role, receiver setting, and channel ass
 preference revision is incremented; malformed, incomplete, already-newer, and revision-exhausted documents are
 refused. This is a semantic-only version change with unchanged DDL and no new runtime migration path.
 
+The format 12-to-13 step adds the one bounded `setup_wizard` progress record described below. It preserves every
+existing setting and marks an upgraded profile as previously configured while still requiring runtime readiness
+checks for settings such as JMBE and the administrator account.
+
 ## Replacement Boundary
 
 This is one replacement, not a second migrator layered beside the existing one. Replace the Alpha-specific source
@@ -194,6 +199,34 @@ code-owned rather than copied into mutable database rows, so adding or correctin
 create append-only storage or require pruning. The website reads the selected catalog once when opening the tuner
 spectrum or its administration form; both queries are primary-key lookups through `application_settings`. Missing,
 malformed, or unsupported country selections in format 14 are validation errors and are never repaired at startup.
+
+The format 14-to-15 step makes saved channel UUIDs, radio-system keys, Alias List IDs, and broadcast-provider UUIDs
+the durable internal identities. It preserves administrator-owned channels, Alias Lists, stream providers, routes,
+accounts, credentials, settings, icons, and decoder-specific channel maps stored with saved channels. Channel rows
+replace the duplicated Alias List name with a foreign key and rename the RadioResolve upload-correlation field so it
+is no longer mistaken for channel or system identity. Broadcast providers receive a canonical stable UUID; an
+existing canonical unique UUID is preserved and a missing one is generated deterministically. Alias streaming routes
+are converted from provider names to provider UUIDs, so a later provider rename cannot break routing. Unresolved or
+ambiguous names, mismatched scalar and JSON state, and malformed or duplicate identities are refused rather than
+guessed.
+
+The same step removes the unused legacy named Channel Maps table and reports how many of those retired rows were
+dropped. These are not the decoder channel maps stored inside saved DMR or NXDN channel configuration, which remain
+intact.
+
+Accounts and password verifiers are preserved exactly while the stricter current tables are rebuilt. Exact version-5
+browser preferences are upgraded to version 6 by renaming conversation grouping to target grouping and incrementing
+each preference revision. The old Systems and Conventional web access choices become one Radio choice using the more
+restrictive saved level. Whole-site access is renamed to Web access, and the shared site-settings revision is renamed
+to receiver-settings revision without changing its value. Default public access remains implicit instead of adding
+redundant policy rows.
+
+The old receiver context, site GUID, and trunked identity scope did not have one safe meaning across conventional,
+P25, DMR, and NXDN operation. The migration therefore counts and separately reports resets of receiver activity and
+call history, learned site observations, signal-quality observations, and radio-system/channel identity cache rows.
+Live decoder observations rebuild them under the clean model. No administrator configuration is inferred from those
+derived rows. New collection boundaries are recorded, the old trunked-identity boundary is replaced by the
+radio-system boundary, and redundant subsystem schema-version metadata is removed.
 
 ## Schema-Change Rule
 

@@ -20,6 +20,8 @@ import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.auth.WebPasswordVerifier;
+import io.github.dsheirer.web.settings.WebUserPreferences;
+import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -28,7 +30,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -44,16 +48,20 @@ public final class Format5WebStateValidator
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
     private static final String LEGACY_NOW_PLAYING_NODE = "user/io/github/dsheirer/preference/nowplaying";
     private static final String SITE_SETTINGS_REVISION_KEY = "site.settings.revision";
+    private static final String RECEIVER_SETTINGS_REVISION_KEY = "receiver.settings.revision";
     private static final String RETAIN_IDLE_CALL_DETAILS_KEY = "retain.idle.call.details";
     private static final String CLEAR_VOICE_QUALITY_KEY = "clear.voice.decode.quality.on.call.end";
     private static final String TRAFFIC_GRANT_AGE_OUT_KEY = "traffic.grant.age.out.milliseconds";
     private static final int MINIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     private static final int MAXIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15_000;
     private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
+    private static final int LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION = 5;
     private static final ObjectMapper STRICT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT);
+    /** Frozen format-5-through-14 registry. Current capability names must not change historical admission. */
+    private static final Map<String,PolicyDefinition> LEGACY_POLICY_REGISTRY = legacyPolicyRegistry();
 
     private Format5WebStateValidator()
     {
@@ -61,21 +69,35 @@ public final class Format5WebStateValidator
 
     public static void validate(Connection connection) throws SQLException
     {
-        validate(connection, 5);
+        validate(connection, WebUserPreferences.CURRENT_VERSION, currentPolicyRegistry(),
+            RECEIVER_SETTINGS_REVISION_KEY);
     }
 
     /** Validates one exact persisted preference-document generation for its owning database format. */
     public static void validate(Connection connection, int preferenceDocumentVersion) throws SQLException
     {
+        if(preferenceDocumentVersion < 1 ||
+            preferenceDocumentVersion > LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION)
+        {
+            throw invalid("unsupported historical preference-document version " + preferenceDocumentVersion);
+        }
+        validate(connection, preferenceDocumentVersion, LEGACY_POLICY_REGISTRY, SITE_SETTINGS_REVISION_KEY);
+    }
+
+    private static void validate(Connection connection, int preferenceDocumentVersion,
+                                 Map<String,PolicyDefinition> policyRegistry, String settingsRevisionKey)
+        throws SQLException
+    {
         Objects.requireNonNull(connection, "Database connection cannot be null");
-        if(preferenceDocumentVersion < 1 || preferenceDocumentVersion > 5)
+        if(preferenceDocumentVersion < 1 || preferenceDocumentVersion > WebUserPreferences.CURRENT_VERSION)
         {
             throw invalid("unsupported preference-document version " + preferenceDocumentVersion);
         }
 
         UserCounts userCounts = validateUsers(connection, preferenceDocumentVersion);
-        long policyCount = validatePolicies(connection);
-        validateSiteSettings(connection, preferenceDocumentVersion == 1, preferenceDocumentVersion < 4);
+        long policyCount = validatePolicies(connection, policyRegistry);
+        validateReceiverSettings(connection, preferenceDocumentVersion == 1, preferenceDocumentVersion < 4,
+            settingsRevisionKey);
 
         if(userCounts.primary() > 1)
         {
@@ -249,6 +271,10 @@ public final class Format5WebStateValidator
             {
                 Format12WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
             }
+            else if(preferenceDocumentVersion == WebUserPreferences.CURRENT_VERSION)
+            {
+                WebUserPreferencesCodec.decode(resultSet.getString("preferences_json"));
+            }
             else
             {
                 throw new IOException("Unsupported web preference document version " +
@@ -263,11 +289,12 @@ public final class Format5WebStateValidator
         return primaryValue == 1;
     }
 
-    private static long validatePolicies(Connection connection) throws SQLException
+    private static long validatePolicies(Connection connection, Map<String,PolicyDefinition> policyRegistry)
+        throws SQLException
     {
-        long configurableCapabilities = Arrays.stream(WebCapability.values()).filter(WebCapability::configurable)
+        long configurableCapabilities = policyRegistry.values().stream().filter(PolicyDefinition::configurable)
             .count();
-        Set<WebCapability> visited = EnumSet.noneOf(WebCapability.class);
+        Set<String> visited = new HashSet<>();
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT capability_id, required_tier, updated_at_ms,
                    typeof(capability_id) AS capability_id_type,
@@ -292,7 +319,7 @@ public final class Format5WebStateValidator
                     requireStorage(resultSet, "updated_at_type", "integer", "access-policy update time");
                     requirePositive(resultSet, "updated_at_ms", "access-policy update time");
                     String id = resultSet.getString("capability_id");
-                    WebCapability capability = WebCapability.fromId(id)
+                    PolicyDefinition capability = java.util.Optional.ofNullable(policyRegistry.get(id))
                         .orElseThrow(() -> invalid("unknown access-policy capability: " + id));
                     AccessTier tier;
                     try
@@ -312,7 +339,7 @@ public final class Format5WebStateValidator
                     {
                         throw invalid("default access-policy capability is redundantly persisted: " + id);
                     }
-                    if(!visited.add(capability))
+                    if(!visited.add(id))
                     {
                         throw invalid("duplicate access-policy capability is persisted: " + id);
                     }
@@ -322,12 +349,50 @@ public final class Format5WebStateValidator
         return visited.size();
     }
 
+    private static Map<String,PolicyDefinition> currentPolicyRegistry()
+    {
+        Map<String,PolicyDefinition> registry = new LinkedHashMap<>();
+        for(WebCapability capability: WebCapability.values())
+        {
+            registry.put(capability.id(), new PolicyDefinition(capability.configurable(), capability.defaultTier()));
+        }
+        return Map.copyOf(registry);
+    }
+
+    private static Map<String,PolicyDefinition> legacyPolicyRegistry()
+    {
+        Map<String,PolicyDefinition> registry = new LinkedHashMap<>();
+        legacy(registry, "site-access", true, AccessTier.PUBLIC);
+        legacy(registry, "dashboard", true, AccessTier.PUBLIC);
+        legacy(registry, "live", true, AccessTier.PUBLIC);
+        legacy(registry, "tuner-spectrum", false, AccessTier.ADMIN);
+        legacy(registry, "systems", true, AccessTier.PUBLIC);
+        legacy(registry, "conventional", true, AccessTier.PUBLIC);
+        legacy(registry, "credits", true, AccessTier.PUBLIC);
+        legacy(registry, "csv-export", true, AccessTier.PUBLIC);
+        legacy(registry, "call-audio", true, AccessTier.PUBLIC);
+        legacy(registry, "user-settings", false, AccessTier.USER);
+        legacy(registry, "admin-users", false, AccessTier.ADMIN);
+        legacy(registry, "admin-access", false, AccessTier.ADMIN);
+        legacy(registry, "admin-aliases", false, AccessTier.ADMIN);
+        legacy(registry, "admin-settings", false, AccessTier.ADMIN);
+        legacy(registry, "receiver-health", false, AccessTier.ADMIN);
+        return Map.copyOf(registry);
+    }
+
+    private static void legacy(Map<String,PolicyDefinition> registry, String id, boolean configurable,
+                               AccessTier defaultTier)
+    {
+        registry.put(id, new PolicyDefinition(configurable, defaultTier));
+    }
+
     /**
-     * Validates the bounded portable-preferences document and the receiver-wide site settings stored inside it.
+     * Validates the bounded portable-preferences document and the receiver-wide settings stored inside it.
      * Other Java preference nodes and keys remain application-owned and are accepted as opaque string values.
      */
-    private static void validateSiteSettings(Connection connection, boolean allowRetiredWebAudioSettings,
-                                             boolean allowMovedPresentationSettings)
+    private static void validateReceiverSettings(Connection connection, boolean allowRetiredWebAudioSettings,
+                                                 boolean allowMovedPresentationSettings,
+                                                 String settingsRevisionKey)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -350,13 +415,14 @@ public final class Format5WebStateValidator
                 requireStorage(resultSet, "updated_at_type", "integer", "portable preference update time");
                 requirePositive(resultSet, "updated_at_ms", "portable preference update time");
                 validatePortablePreferences(resultSet.getString("settings_json"), allowRetiredWebAudioSettings,
-                    allowMovedPresentationSettings);
+                    allowMovedPresentationSettings, settingsRevisionKey);
             }
         }
     }
 
     private static void validatePortablePreferences(String json, boolean allowRetiredWebAudioSettings,
-                                                    boolean allowMovedPresentationSettings)
+                                                    boolean allowMovedPresentationSettings,
+                                                    String settingsRevisionKey)
         throws SQLException
     {
         if(json == null || json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_PORTABLE_PREFERENCES_BYTES)
@@ -404,7 +470,7 @@ public final class Format5WebStateValidator
             JsonNode nowPlaying = root.get(LEGACY_NOW_PLAYING_NODE);
             if(nowPlaying != null)
             {
-                validateNowPlayingSiteSettings(nowPlaying, allowMovedPresentationSettings);
+                validateNowPlayingReceiverSettings(nowPlaying, allowMovedPresentationSettings, settingsRevisionKey);
             }
         }
         catch(IOException exception)
@@ -413,10 +479,17 @@ public final class Format5WebStateValidator
         }
     }
 
-    private static void validateNowPlayingSiteSettings(JsonNode nowPlaying, boolean allowMovedPresentationSettings)
+    private static void validateNowPlayingReceiverSettings(JsonNode nowPlaying,
+                                                           boolean allowMovedPresentationSettings,
+                                                           String revisionKey)
         throws SQLException
     {
-        String revisionKey = SITE_SETTINGS_REVISION_KEY;
+        String forbiddenRevisionKey = SITE_SETTINGS_REVISION_KEY.equals(revisionKey) ?
+            RECEIVER_SETTINGS_REVISION_KEY : SITE_SETTINGS_REVISION_KEY;
+        if(nowPlaying.has(forbiddenRevisionKey))
+        {
+            throw invalid("unexpected settings revision key for this database format: " + forbiddenRevisionKey);
+        }
         String retainKey = RETAIN_IDLE_CALL_DETAILS_KEY;
         String clearKey = CLEAR_VOICE_QUALITY_KEY;
         String ageOutKey = TRAFFIC_GRANT_AGE_OUT_KEY;
@@ -433,13 +506,13 @@ public final class Format5WebStateValidator
         }
         if(!nowPlaying.has(revisionKey))
         {
-            throw invalid("site settings exist without their revision");
+            throw invalid("receiver settings exist without their revision");
         }
 
         long revision = parseCanonicalLong(nowPlaying.get(revisionKey).textValue(), revisionKey);
         if(revision < 1 || revision == Long.MAX_VALUE)
         {
-            throw invalid("site-settings revision must be positive and incrementable");
+            throw invalid("receiver-settings revision must be positive and incrementable");
         }
         requireBoolean(nowPlaying, retainKey);
         requireBoolean(nowPlaying, clearKey);
@@ -450,7 +523,7 @@ public final class Format5WebStateValidator
             if(ageOut < MINIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS ||
                 ageOut > MAXIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)
             {
-                throw invalid("site setting is outside its supported range: " + ageOutKey);
+                throw invalid("receiver setting is outside its supported range: " + ageOutKey);
             }
         }
     }
@@ -462,7 +535,7 @@ public final class Format5WebStateValidator
             String value = object.get(key).textValue();
             if(!"true".equals(value) && !"false".equals(value))
             {
-                throw invalid("site setting must be true or false: " + key);
+                throw invalid("receiver setting must be true or false: " + key);
             }
         }
     }
@@ -474,13 +547,13 @@ public final class Format5WebStateValidator
             long parsed = Long.parseLong(value);
             if(!Long.toString(parsed).equals(value))
             {
-                throw invalid("site setting must be a canonical integer: " + key);
+                throw invalid("receiver setting must be a canonical integer: " + key);
             }
             return parsed;
         }
         catch(NumberFormatException exception)
         {
-            throw invalid("site setting must be a canonical integer: " + key, exception);
+            throw invalid("receiver setting must be a canonical integer: " + key, exception);
         }
     }
 
@@ -523,6 +596,10 @@ public final class Format5WebStateValidator
     }
 
     private record UserCounts(long total, long primary, long ordinary)
+    {
+    }
+
+    private record PolicyDefinition(boolean configurable, AccessTier defaultTier)
     {
     }
 }

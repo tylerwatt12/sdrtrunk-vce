@@ -60,6 +60,11 @@ class DatabaseFormatCatalogTest
 
         assertEquals(DatabaseFormatCatalog.requireVersion(DatabaseFormatCatalog.CURRENT_VERSION),
             DatabaseFormatCatalog.current());
+        assertTrue(DatabaseFormatCatalog.current().subsystemMetadata().isEmpty());
+        assertFalse(DatabaseFormatCatalog.requireVersion(13).subsystemMetadata().isEmpty(),
+            "The exact historical format-13 signature must retain its subsystem metadata");
+        assertFalse(DatabaseFormatCatalog.requireVersion(14).subsystemMetadata().isEmpty(),
+            "The exact historical format-14 signature must retain its subsystem metadata");
         assertTrue(DatabaseFormatCatalog.requireVersion(7).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("limit of 16 scan lists")));
         assertTrue(DatabaseFormatCatalog.requireVersion(9).migrationPolicy().stream()
@@ -148,7 +153,8 @@ class DatabaseFormatCatalogTest
     @Test
     void freshDatabaseHasExactCurrentFingerprintAndMarker() throws Exception
     {
-        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = mTemporaryFolder.resolve("current.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = open(database))
         {
@@ -159,6 +165,17 @@ class DatabaseFormatCatalogTest
             assertFalse(detected.requiresMigration());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM database_metadata WHERE key IN (
+                    'alias_schema_version',
+                    'configuration_schema_version',
+                    'settings_schema_version',
+                    'icon_schema_version',
+                    'p25_activity_schema_version',
+                    'trunked_site_schema_version',
+                    'dmr_activity_schema_version'
+                )
+                """));
         }
     }
 
@@ -306,7 +323,34 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void unmarkedEmptyCurrentLayoutIsRefusedBecauseFormatsSixThroughTwelveAreSemanticallyAmbiguous() throws Exception
+    void unmarkedHistoricalSharedLayoutIsRefusedWhenItsSemanticFormatIsAmbiguous() throws Exception
+    {
+        Path database = Format13TestDatabase.create(mTemporaryFolder.resolve("unmarked-historical.sqlite"));
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement();
+            var deleteMarker = connection.prepareStatement("DELETE FROM database_metadata WHERE key=?"))
+        {
+            //An empty user table removes the preference-revision clue and recreates the genuinely ambiguous
+            //format-6-through-13 layout that shipped under several semantic format markers.
+            statement.executeUpdate("DELETE FROM web_access_policy");
+            statement.executeUpdate("DELETE FROM web_user");
+            deleteMarker.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            assertEquals(1, deleteMarker.executeUpdate());
+        }
+
+        try(Connection connection = open(database))
+        {
+            SQLException exception = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspect(connection));
+            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13]"),
+                exception::getMessage);
+            assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
+                exception::getMessage);
+        }
+    }
+
+    @Test
+    void exactUnmarkedCurrentLayoutRequiresOnlyGlobalMarkerAdoption() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -316,16 +360,14 @@ class DatabaseFormatCatalogTest
         {
             statement.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
             assertEquals(1, statement.executeUpdate());
-        }
 
-        try(Connection connection = open(database))
-        {
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
+            assertFalse(detected.markerPresent());
+            assertTrue(detected.requiresMigration());
             SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseFormatCatalog.inspect(connection));
-            assertTrue(exception.getMessage().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13, 14]"),
-                exception::getMessage);
-            assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
-                exception::getMessage);
+                () -> DatabaseFormatCatalog.requireCurrent(connection));
+            assertTrue(exception.getMessage().contains("missing authoritative metadata"), exception::getMessage);
         }
     }
 

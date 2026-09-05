@@ -3,7 +3,6 @@ package io.github.dsheirer.database.upgrade;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.web.settings.SpectrumSnapSettings;
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -26,19 +25,20 @@ class Format13To14DatabaseMigrationTest
             assertEquals(1, step.validateSource(connection).getFirst().affectedRows());
 
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 14);
             connection.rollback();
             assertEquals(13, DatabaseFormatCatalog.inspect(connection).version());
             assertThrows(SQLException.class, () -> SpectrumSnapSettings.read(connection));
 
-            DatabaseMigrationChain.migrate(connection);
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 14);
             connection.commit();
-            assertEquals(14, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(14, DatabaseFormatCatalog.inspect(connection).version());
             SpectrumSnapSettings selected = SpectrumSnapSettings.read(connection);
             assertEquals(1, selected.revision());
             assertEquals("US", selected.countryCode());
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(path);
     }
 
     @Test

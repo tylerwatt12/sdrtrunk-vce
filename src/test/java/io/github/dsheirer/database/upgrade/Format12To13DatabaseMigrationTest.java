@@ -23,18 +23,19 @@ class Format12To13DatabaseMigrationTest
             assertEquals(1,step.validateSource(connection).getFirst().affectedRows());
             assertEquals(before,settings(connection));
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 13);
             connection.rollback();
             assertEquals(12,DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before,settings(connection));
             assertThrows(SQLException.class,()->SetupProgress.read(connection));
-            DatabaseMigrationChain.migrate(connection);
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 13);
             connection.commit();
-            assertEquals(14,DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(13, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before,settings(connection));
             assertTrue(SetupProgress.read(connection).isComplete());
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(path);
     }
 
     @Test void freshProfileIsIncompleteAndMissingRecordIsNotSilentlyRepaired() throws Exception

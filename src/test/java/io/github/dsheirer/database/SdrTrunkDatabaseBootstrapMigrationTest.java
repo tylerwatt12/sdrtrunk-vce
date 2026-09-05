@@ -96,15 +96,9 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals("{\"preserved\":true}", scalar(database, """
             SELECT settings_json FROM application_settings WHERE key='format-3-preserve-sentinel'
             """));
-        assertEquals("5:2:3:1", scalar(database, """
-            SELECT call_count || ':' || encrypted_count || ':' || recorded_count || ':' || streamed_count
-            FROM conventional_call_identity_bucket WHERE context_id=701 AND identity_id=4101
-            """));
-        assertEquals("3:2", scalar(database, """
-            SELECT grant_count || ':' || page_count
-            FROM trunked_signaling_activity_bucket WHERE context_id=700
-            """));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM conventional_call_identity_bucket"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_signaling_activity_bucket"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM radio_system"));
         List<Path> backups = regularFiles(database.getParent().resolve("backups"));
         assertEquals(1, backups.size());
         assertFormat(backups.getFirst(), 3, "p25-site-projection-v27", true);

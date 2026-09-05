@@ -58,9 +58,8 @@ class Format4To5DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(4, report.source().version());
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
+                new Format4To5DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 5);
                 connection.commit();
             }
             catch(Exception exception)
@@ -73,7 +72,7 @@ class Format4To5DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(5, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("3", metadata(connection, "configuration_schema_version"));
             assertEquals("3", metadata(connection, "settings_schema_version"));
             assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM web_user"));
@@ -101,23 +100,11 @@ class Format4To5DatabaseMigrationTest
                        json_extract(preferences_json, '$.presentation.live_detail_row_limit')
                 FROM web_user WHERE username='listener'
                 """));
-            assertEquals("5:light:normal:0:1:4:0", scalar(connection, """
+            assertEquals("1:light:normal:0", scalar(connection, """
                 SELECT json_extract(preferences_json, '$.version') || ':' ||
                        json_extract(preferences_json, '$.appearance.theme') || ':' ||
                        json_extract(preferences_json, '$.scanner.detail_mode') || ':' ||
-                       json_array_length(json_extract(preferences_json, '$.playback.selected_scan_list_ids')) || ':' ||
-                       json_extract(preferences_json, '$.playback.conversation_grouping') || ':' ||
-                       json_extract(preferences_json, '$.playback.conversation_burst_limit') || ':' ||
-                       json_array_length(json_extract(preferences_json, '$.health_alerts.disabled_codes'))
-                FROM web_user WHERE username='admin'
-                """));
-            assertEquals("0:1:0", scalar(connection, """
-                SELECT json_extract(preferences_json,
-                           '$.presentation.show_only_active_trunked_channels') || ':' ||
-                       json_extract(preferences_json,
-                           '$.presentation.retain_last_call_on_idle_rows') || ':' ||
-                       json_extract(preferences_json,
-                           '$.presentation.clear_voice_quality_when_idle')
+                       json_array_length(json_extract(preferences_json, '$.playback.selected_scan_list_ids'))
                 FROM web_user WHERE username='admin'
                 """));
             assertEquals("1750:1:preserve-me", scalar(connection, """
@@ -128,7 +115,7 @@ class Format4To5DatabaseMigrationTest
                        json_extract(settings_json, '$."user/example".sentinel')
                 FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
-            assertEquals("0", scalar(connection, """
+            assertEquals("1", scalar(connection, """
                 SELECT COUNT(*) FROM application_settings
                 WHERE key='portable_java_preferences_v1' AND (
                     json_type(settings_json,
@@ -182,9 +169,9 @@ class Format4To5DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport rolledBack = DatabaseMigrationChain.migrate(connection);
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, rolledBack.target().version());
-                assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                new Format4To5DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 5);
+                assertEquals("5", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
                 assertTrue(tableExists(connection, "web_user"));
                 connection.rollback();
             }
@@ -201,24 +188,9 @@ class Format4To5DatabaseMigrationTest
             assertFalse(tableExists(connection, "web_user"));
             assertEquals(4, DatabaseFormatCatalog.inspect(connection).version());
 
-            connection.setAutoCommit(false);
-            try
-            {
-                DatabaseMigrationChain.MigrationReport retried = DatabaseMigrationChain.migrate(connection);
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, retried.target().version());
-                connection.commit();
-            }
-            catch(Exception exception)
-            {
-                connection.rollback();
-                throw exception;
-            }
-            finally
-            {
-                connection.setAutoCommit(true);
-            }
+            migrateToFormat5(connection);
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(5, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM web_user"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM configuration_channel
@@ -297,16 +269,33 @@ class Format4To5DatabaseMigrationTest
                 WHERE id=(SELECT min(id) FROM configuration_channel)
                 """);
             DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
-            connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
-            connection.commit();
-            connection.setAutoCommit(true);
+            migrateToFormat5(connection);
 
             assertEquals("P25_PHASE1", scalar(connection,
                 "SELECT decoder_type FROM configuration_channel WHERE id=(SELECT min(id) " +
                     "FROM configuration_channel)"));
-            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("5", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertTrue(tableExists(connection, "web_user"));
+        }
+    }
+
+    private static void migrateToFormat5(Connection connection) throws Exception
+    {
+        connection.setAutoCommit(false);
+        try
+        {
+            new Format4To5DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 5);
+            connection.commit();
+        }
+        catch(Exception exception)
+        {
+            connection.rollback();
+            throw exception;
+        }
+        finally
+        {
+            connection.setAutoCommit(true);
         }
     }
 

@@ -17,6 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
+import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -26,8 +29,6 @@ import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.source.config.SourceConfigTuner;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.ByteArrayOutputStream;
@@ -77,7 +78,33 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void refusesMarkerlessCurrentLayoutWhenItsSemanticFormatIsAmbiguous() throws Exception
+    void refusesMarkerlessHistoricalLayoutWhenItsSemanticFormatIsAmbiguous() throws Exception
+    {
+        Path database = newStagedDatabase();
+        Format13TestDatabase.create(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement();
+            var deleteMarker = connection.prepareStatement("DELETE FROM database_metadata WHERE key=?"))
+        {
+            //Without a persisted preference document, the shared historical DDL has no safe semantic-version clue.
+            statement.executeUpdate("DELETE FROM web_access_policy");
+            statement.executeUpdate("DELETE FROM web_user");
+            deleteMarker.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            assertEquals(1, deleteMarker.executeUpdate());
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode(), result.error());
+        assertTrue(result.error().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13]"), result.error());
+        assertFalse(result.output().contains("adopt-global-format-marker"));
+        assertFalse(result.output().contains("format-1-to-2"));
+        assertFalse(result.output().contains("format-2-to-3"));
+        assertNull(metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+    }
+
+    @Test
+    void adoptsMarkerForExactMarkerlessCurrentLayout() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -91,13 +118,13 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode(), result.error());
-        assertTrue(result.error().contains("ambiguous across formats [6, 7, 8, 9, 10, 11, 12, 13, 14]"),
-            result.error());
-        assertFalse(result.output().contains("adopt-global-format-marker"));
-        assertFalse(result.output().contains("format-1-to-2"));
-        assertFalse(result.output().contains("format-2-to-3"));
-        assertNull(metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("PLAN STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+            DatabaseFormatCatalog.CURRENT_VERSION + " [adopt-global-format-marker]"), result.output());
+        assertTrue(result.output().contains("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+            DatabaseFormatCatalog.CURRENT_VERSION + " [adopt-global-format-marker]"), result.output());
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
     }
 
     @Test
@@ -198,15 +225,16 @@ class ApplicationDatabaseMigratorTest
             statement.executeUpdate("UPDATE alias_list SET name='default p25' WHERE name='Default P25'");
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    id, sort_order, name, radres_guid, decoder_type, source_type, frequency_count, config_json
+                    id, sort_order, name, radres_guid, decoder_type, source_type, primary_frequency_hz,
+                    frequency_count, config_json
                 ) VALUES (
                     1, 1, 'Blank P25', '00000000-0000-4000-8000-000000000001',
-                    'P25_PHASE1', 'TUNER', 0, ?
+                    'P25_PHASE1', 'TUNER', 851012500, 1, ?
                 )
                 """))
             {
                 insert.setString(1, channelJson("Blank P25", null, null, null,
-                    DecoderType.P25_PHASE1, 0));
+                    DecoderType.P25_PHASE1, 851012500));
                 insert.executeUpdate();
             }
         }
@@ -216,12 +244,17 @@ class ApplicationDatabaseMigratorTest
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertEquals("default p25", scalar(database,
             "SELECT name FROM alias_list WHERE name='Default P25' COLLATE NOCASE"));
-        assertEquals("default p25:default p25", scalar(database, """
-            SELECT alias_list_name || ':' || json_extract(config_json, '$.aliasListName')
-            FROM configuration_channel WHERE id=1
+        assertEquals("default p25", scalar(database, """
+            SELECT list.name
+            FROM configuration_channel channel
+            JOIN alias_list list ON list.id=channel.alias_list_id
+            WHERE channel.id=1
             """));
-        assertEquals("30",
-            metadata(database, "p25_activity_schema_version"));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM configuration_channel
+            WHERE id=1 AND json_type(config_json, '$.aliasListName') IS NOT NULL
+            """));
+        assertNull(metadata(database, "p25_activity_schema_version"));
     }
 
     @Test
@@ -245,8 +278,7 @@ class ApplicationDatabaseMigratorTest
             FROM alias_list_unmatched_talkgroup_scan_list_membership
             WHERE alias_list_id=(SELECT id FROM alias_list WHERE name='Default P25')
             """));
-        assertEquals("30",
-            metadata(database, "p25_activity_schema_version"));
+        assertNull(metadata(database, "p25_activity_schema_version"));
     }
 
     @Test
@@ -350,15 +382,22 @@ class ApplicationDatabaseMigratorTest
                 )
                 """));
             assertEquals("Safe Stream", scalar(connection, """
-                SELECT channel_name FROM alias_list_unmatched_talkgroup_stream WHERE alias_list_id=1
+                SELECT json_extract(provider.config_json, '$.name')
+                FROM alias_list_unmatched_talkgroup_stream route
+                JOIN configuration_broadcast_stream provider
+                  ON provider.configuration_id=route.broadcast_configuration_id
+                WHERE route.alias_list_id=1
                 """));
             assertEquals("5:Phase 2 Stream|6:DMR Stream|7:NXDN Stream", scalar(connection, """
                 SELECT group_concat(route, '|')
                 FROM (
-                    SELECT alias_list_id || ':' || channel_name AS route
-                    FROM alias_list_unmatched_talkgroup_stream
-                    WHERE alias_list_id IN (5, 6, 7)
-                    ORDER BY alias_list_id
+                    SELECT unmatched.alias_list_id || ':' ||
+                           json_extract(provider.config_json, '$.name') AS route
+                    FROM alias_list_unmatched_talkgroup_stream unmatched
+                    JOIN configuration_broadcast_stream provider
+                      ON provider.configuration_id=unmatched.broadcast_configuration_id
+                    WHERE unmatched.alias_list_id IN (5, 6, 7)
+                    ORDER BY unmatched.alias_list_id
                 )
                 """));
             assertEquals("9", scalar(connection, "SELECT COUNT(*) FROM alias"));
@@ -379,88 +418,62 @@ class ApplicationDatabaseMigratorTest
                 SELECT COUNT(*) FROM alias WHERE id IN (105, 106, 107)
                 """));
             assertEquals("1", scalar(connection, """
-                SELECT COUNT(*) FROM alias_broadcast_channel
-                WHERE id=203 AND alias_id=103 AND channel_name='Retained Stream'
+                SELECT COUNT(*) FROM alias_broadcast_channel route
+                JOIN configuration_broadcast_stream provider
+                  ON provider.configuration_id=route.broadcast_configuration_id
+                WHERE route.id=203 AND route.alias_id=103
+                  AND json_extract(provider.config_json, '$.name')='Retained Stream'
                 """));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM alias_broadcast_channel
                 WHERE id IN (201, 202)
                 """));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_scope_context"));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_identity_summary"));
             assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM trunked_identity_scope WHERE protocol_code IN (3, 4)
+                SELECT COUNT(*) FROM sqlite_schema WHERE name IN (
+                    'trunked_identity_scope', 'trunked_identity_scope_context',
+                    'trunked_identity_summary', 'trunked_radio_talkgroup_summary',
+                    'trunked_radio_presence_lifecycle',
+                    'p25_zero_local_fq_talkgroup_summary',
+                    'receiver_context', 'p25_control_channel_quality'
+                )
                 """));
             assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM trunked_identity_summary WHERE identity_id=999
+                SELECT
+                    (SELECT COUNT(*) FROM radio_system) +
+                    (SELECT COUNT(*) FROM receiver_channel) +
+                    (SELECT COUNT(*) FROM radio_system_identity_summary) +
+                    (SELECT COUNT(*) FROM trunked_radio_group_summary) +
+                    (SELECT COUNT(*) FROM trunked_radio_affiliation) +
+                    (SELECT COUNT(*) FROM trunked_radio_channel_presence) +
+                    (SELECT COUNT(*) FROM trunked_radio_channel_presence_clear) +
+                    (SELECT COUNT(*) FROM p25_site_snapshot) +
+                    (SELECT COUNT(*) FROM trunked_control_channel_quality)
                 """));
-            assertEquals("2", scalar(connection, """
-                SELECT COUNT(*) FROM receiver_context WHERE protocol_code IN (3, 4)
-                """));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM trunked_radio_talkgroup_summary"));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM trunked_radio_presence_lifecycle"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM sqlite_schema
                 WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
                 """));
-            assertFalse("1234".equals(metadata(connection,
-                ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY)));
+            assertNull(metadata(connection, "trunked_identity_metrics_started_at_ms"));
+            assertTrue(Long.parseLong(metadata(connection, "radio_system_metrics_started_at_ms")) > 0);
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
             assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
                 "82:Default NXDN|83:Default Analog|84:Default Analog", scalar(connection, """
                 SELECT group_concat(value, '|')
                 FROM (
-                    SELECT id || ':' || COALESCE(alias_list_name, 'NULL') AS value
-                    FROM configuration_channel
-                    WHERE id BETWEEN 78 AND 85
-                    ORDER BY id
+                    SELECT channel.id || ':' || COALESCE(list.name, 'NULL') AS value
+                    FROM configuration_channel channel
+                    LEFT JOIN alias_list list ON list.id=channel.alias_list_id
+                    WHERE channel.id BETWEEN 78 AND 85
+                    ORDER BY channel.id
                 )
                 """));
-            assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
-                "82:Default NXDN|83:Default Analog|84:Default Analog", scalar(connection, """
-                SELECT group_concat(value, '|')
-                FROM (
-                    SELECT id || ':' || COALESCE(json_extract(config_json, '$.aliasListName'), 'NULL') AS value
-                    FROM configuration_channel
-                    WHERE id BETWEEN 78 AND 85
-                    ORDER BY id
-                )
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE json_type(config_json, '$.aliasListName') IS NOT NULL
                 """));
             assertEquals("0", scalar(connection,
                 "SELECT COUNT(*) FROM configuration_channel WHERE id=85"));
-            assertEquals("preserved-context", scalar(connection,
-                "SELECT context_key FROM receiver_context WHERE id=50"));
-            assertEquals("92.5", scalar(connection, """
-                SELECT decode_health_pct FROM p25_control_channel_quality WHERE guid='preserved-quality'
-                """));
-            assertEquals("PRESERVED", scalar(connection, """
-                SELECT callsign
-                FROM p25_site_channel_summary
-                WHERE guid='preserved-site' AND channel_key='12-345'
-                """));
-            assertEquals("1:1:1", scalar(connection, """
-                SELECT
-                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_snapshot')
-                     WHERE name='active_rfss_network_connection') || ':' ||
-                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_snapshot')
-                     WHERE name='system_id') || ':' ||
-                    (SELECT COUNT(*) FROM pragma_table_info('p25_site_channel_summary')
-                     WHERE name='callsign')
-                """));
-            assertEquals("NULL:NULL", scalar(connection, """
-                SELECT COALESCE(CAST(active_rfss_network_connection AS TEXT), 'NULL') || ':' ||
-                       COALESCE(CAST(system_id AS TEXT), 'NULL')
-                FROM p25_site_snapshot
-                WHERE guid='preserved-site'
-                """));
             assertEquals("{\"preserved\":true}", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='migration-sentinel'
                 """));
@@ -484,19 +497,19 @@ class ApplicationDatabaseMigratorTest
             }
             assertTrue(insertedId > 900, "Retired high-water alias IDs must not be reused");
 
-            long insertedScopeId;
+            long insertedSystemId;
             try(ResultSet resultSet = statement.executeQuery("""
-                INSERT INTO trunked_identity_scope(
-                    scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                INSERT INTO radio_system(
+                    system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
                     first_seen_ms, last_seen_ms
-                ) VALUES ('post-migration:dmr', 3, 2, 0, 10000, 10000)
-                RETURNING scope_id
+                ) VALUES ('p25:bee00:348', 1, 0, 781824, 840, 10000, 10000)
+                RETURNING id
                 """))
             {
                 assertTrue(resultSet.next());
-                insertedScopeId = resultSet.getLong(1);
+                insertedSystemId = resultSet.getLong(1);
             }
-            assertTrue(insertedScopeId > 0, "A new identity scope must be writable after the reset");
+            assertTrue(insertedSystemId > 0, "A new radio system must be writable after the reset");
         }
 
         Path exactCurrent = mTemporaryFolder.resolve("exact-current.sqlite");
@@ -603,15 +616,19 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertEquals("78:Default P25:Default P25|81:Default DMR:Default DMR", scalar(database, """
+        assertEquals("78:Default P25|81:Default DMR", scalar(database, """
             SELECT group_concat(value, '|')
             FROM (
-                SELECT id || ':' || alias_list_name || ':' ||
-                    json_extract(config_json, '$.aliasListName') AS value
-                FROM configuration_channel
-                WHERE id IN (78, 81)
-                ORDER BY id
+                SELECT channel.id || ':' || list.name AS value
+                FROM configuration_channel channel
+                JOIN alias_list list ON list.id=channel.alias_list_id
+                WHERE channel.id IN (78, 81)
+                ORDER BY channel.id
             )
+            """));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM configuration_channel
+            WHERE id IN (78, 81) AND json_type(config_json, '$.aliasListName') IS NOT NULL
             """));
     }
 
@@ -637,13 +654,14 @@ class ApplicationDatabaseMigratorTest
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains("RESET P25 affiliation history: 1 row(s)"));
         assertTrue(result.error().isEmpty());
-        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM p25_system WHERE system_key=70"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM radio_system"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_scope"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_identity_summary"));
         assertEquals("0", scalar(database, """
             SELECT COUNT(*) FROM sqlite_schema
-            WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
+            WHERE name IN (
+                'p25_system', 'p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup',
+                'trunked_identity_scope', 'trunked_identity_summary'
+            )
             """));
         assertEquals("ok", scalar(database, "PRAGMA quick_check"));
     }
@@ -702,73 +720,32 @@ class ApplicationDatabaseMigratorTest
                 settings.path("directories").path("directory.streaming").asText());
             assertEquals(source.resolve("private/leave-alone.txt").toString(),
                 settings.path("directories").path("unrecognized.absolute.path").asText());
-            assertEquals("1", metadata(connection, "dmr_activity_schema_version"));
+            assertNull(metadata(connection, "dmr_activity_schema_version"));
         }
     }
 
     @Test
-    void refusesUnreleasedPredecessorSchemaWithoutRepairingIt() throws Exception
-    {
-        Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        removeDmrActivityVersion(database);
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("mixed or partially migrated"));
-
-        try(Connection connection = open(database))
-        {
-            assertEquals(null, metadata(connection, "dmr_activity_schema_version"));
-        }
-    }
-
-    @Test
-    void refusesExactAlpha7VersionTupleWithoutChangingIt() throws Exception
+    void refusesIncompleteCurrentSchemaWithoutRepairingIt() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("UPDATE database_metadata SET value='3' WHERE key='alias_schema_version'");
-            statement.executeUpdate("UPDATE database_metadata SET value='21' WHERE key='p25_activity_schema_version'");
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                "dmr_activity_schema_version'");
+            statement.executeUpdate("DROP INDEX idx_trunked_radio_group_reverse");
         }
 
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("mixed or partially migrated"));
-        try(Connection connection = open(database))
-        {
-            assertEquals("3", metadata(connection, "alias_schema_version"));
-            assertEquals("21", metadata(connection, "p25_activity_schema_version"));
-            assertEquals(null, metadata(connection, "dmr_activity_schema_version"));
-        }
-    }
-
-    @Test
-    void refusesOlderPublishedSchemaOutsideReleasePreparation() throws Exception
-    {
-        Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        assertTrue(result.error().contains("Unrecognized SQLite database schema fingerprint"), result::error);
 
         try(Connection connection = open(database))
         {
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "20");
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("mixed or partially migrated"));
-
-        try(Connection connection = open(database))
-        {
-            assertEquals("20", metadata(connection, "p25_activity_schema_version"));
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM sqlite_schema
+                WHERE type='index' AND name='idx_trunked_radio_group_reverse'
+                """));
         }
     }
 
@@ -794,7 +771,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void malformedCurrentSiteSettingsAreRefusedBeforeRelocationWithoutSchemaChanges() throws Exception
+    void malformedCurrentReceiverSettingsAreRefusedBeforeRelocationWithoutSchemaChanges() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -803,10 +780,12 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)
                 VALUES ('portable_java_preferences_v1', '{invalid', 1)
                 """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
         }
 
         CommandResult result = run(database, source, target);
@@ -819,7 +798,7 @@ class ApplicationDatabaseMigratorTest
             assertEquals("{invalid", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
-            assertEquals("1", metadata(connection, "dmr_activity_schema_version"));
+            assertNull(metadata(connection, "dmr_activity_schema_version"));
         }
     }
 
@@ -1017,15 +996,6 @@ class ApplicationDatabaseMigratorTest
             error.toString(StandardCharsets.UTF_8));
     }
 
-    private static void removeDmrActivityVersion(Path database) throws Exception
-    {
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                "dmr_activity_schema_version'");
-        }
-    }
-
     private static void insertAlpha9MigrationCases(Path database) throws Exception
     {
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -1093,6 +1063,11 @@ class ApplicationDatabaseMigratorTest
                     (205, 109, 'DMR Stream'),
                     (206, 110, 'NXDN Stream')
                 """);
+            insertBroadcastProvider(connection, 0, "Safe Stream", 7200);
+            insertBroadcastProvider(connection, 1, "Retained Stream", 7201);
+            insertBroadcastProvider(connection, 2, "Phase 2 Stream", 7202);
+            insertBroadcastProvider(connection, 3, "DMR Stream", 7203);
+            insertBroadcastProvider(connection, 4, "NXDN Stream", 7204);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     id, sort_order, system_name, site_name, name, alias_list_name,
@@ -1280,6 +1255,39 @@ class ApplicationDatabaseMigratorTest
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);
         return OBJECT_MAPPER.writeValueAsString(channel);
+    }
+
+    private static void insertBroadcastProvider(Connection connection, int sortOrder, String name, int systemId)
+        throws Exception
+    {
+        BroadcastConfiguration configuration = new RdioScannerConfiguration();
+        configuration.setName(name);
+        configuration.setHost("http://127.0.0.1");
+        configuration.setPort(3200 + sortOrder);
+        configuration.setEnabled(true);
+        ((RdioScannerConfiguration)configuration).setApiKey("format-chain-fixture-" + sortOrder);
+        ((RdioScannerConfiguration)configuration).setSystemID(systemId);
+        ObjectNode payload = OBJECT_MAPPER.valueToTree(configuration);
+        payload.remove("configurationId");
+
+        try(var insert = connection.prepareStatement("""
+            INSERT INTO configuration_broadcast_stream (
+                sort_order, name, server_type, enabled, host, port, delay_ms,
+                maximum_recording_age_ms, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """))
+        {
+            insert.setInt(1, sortOrder);
+            insert.setString(2, name);
+            insert.setString(3, configuration.getBroadcastServerType().name());
+            insert.setInt(4, 1);
+            insert.setString(5, configuration.getHost());
+            insert.setInt(6, configuration.getPort());
+            insert.setLong(7, configuration.getDelay());
+            insert.setLong(8, configuration.getMaximumRecordingAge());
+            insert.setString(9, OBJECT_MAPPER.writeValueAsString(payload));
+            insert.executeUpdate();
+        }
     }
 
     private static Connection open(Path database) throws Exception

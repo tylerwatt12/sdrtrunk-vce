@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -322,17 +323,8 @@ class ApplicationMigrationServiceTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
         DatabaseMigrationChain.PreflightReport approved =
             ApplicationMigrationService.readMigrationPlan(sourceDatabase);
-        try(Connection connection = open(sourceDatabase); var statement = connection.prepareStatement(
-            "UPDATE database_metadata SET value=? WHERE key=?"))
-        {
-            statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
-            statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-            assertEquals(1, statement.executeUpdate());
-            try(var remove = connection.createStatement())
-            {
-                remove.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
-            }
-        }
+        Files.delete(sourceDatabase);
+        Format14TestDatabase.create(sourceDatabase);
 
         IOException exception = assertThrows(IOException.class,
             () -> new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, approved,
@@ -491,18 +483,13 @@ class ApplicationMigrationServiceTest
             (source, destination) ->
             {
                 Files.createDirectories(destination.getParent());
-                Files.copy(source, destination);
-                try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + destination);
-                    var statement = connection.prepareStatement(
-                        "UPDATE database_metadata SET value=? WHERE key=?"))
+                try
                 {
-                    statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
-                    statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-                    assertEquals(1, statement.executeUpdate());
-                    try(var remove = connection.createStatement())
-                    {
-                        remove.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
-                    }
+                    Format14TestDatabase.create(destination);
+                }
+                catch(Exception e)
+                {
+                    throw new IOException("Could not create the staged format-14 fixture", e);
                 }
             },
             (staged, source, target) ->
@@ -529,17 +516,8 @@ class ApplicationMigrationServiceTest
         DatabaseMigrationChain.PreflightReport approvedPlan =
             ApplicationMigrationService.readMigrationPlan(sourceDatabase);
 
-        try(Connection connection = open(sourceDatabase); var statement = connection.prepareStatement(
-            "UPDATE database_metadata SET value=? WHERE key=?"))
-        {
-            statement.setString(1, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION - 1));
-            statement.setString(2, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-            assertEquals(1, statement.executeUpdate());
-            try(var remove = connection.createStatement())
-            {
-                remove.executeUpdate("DELETE FROM application_settings WHERE key='spectrum_snap_country'");
-            }
-        }
+        Files.delete(sourceDatabase);
+        Format14TestDatabase.create(sourceDatabase);
 
         Path targetRoot = mTemporaryFolder.resolve("approved-plan-target");
         PreviousBuildLocator.Selection selection = new PreviousBuildLocator.Selection(sourceRoot,
@@ -870,7 +848,8 @@ class ApplicationMigrationServiceTest
         IOException exception = assertThrows(IOException.class,
             () -> service.importPrevious(sourceRoot, targetRoot, null));
 
-        assertTrue(exception.getMessage().contains("canonical lowercase UUID"));
+        assertTrue(exception.getMessage().contains("Channel kind scalar does not match config_json"),
+            exception::getMessage);
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertFalse(Files.exists(targetRoot));
     }
@@ -1028,19 +1007,24 @@ class ApplicationMigrationServiceTest
         {
             String configJson = channelJson("Preserved Channel", "Preserved System", "Preserved Site", "Test",
                 DecoderType.P25_PHASE1, 451000000);
-            String configurationId = OBJECT_MAPPER.readTree(configJson).path("configurationId").asText();
+            ObjectNode currentChannel = (ObjectNode)OBJECT_MAPPER.readTree(configJson);
+            String configurationId = currentChannel.path("configurationId").asText();
+            currentChannel.remove(List.of("configurationId", "system", "site", "name", "aliasListId",
+                "aliasListName", "radioResolveId", "radresGuid", "radres_guid", "autoStart", "enabled",
+                "autoStartOrder", "order", "channelType"));
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                    radres_guid, decoder_type, source_type, primary_frequency_hz, frequency_count, config_json
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    radioresolve_id, auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
                 ) VALUES (
-                    ?, 'TRUNKED', 1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Test',
-                    '00000000-0000-4000-8000-000000007001', 'P25_PHASE1', 'TUNER', 451000000, 1, ?
+                    ?, 'TRUNKED', 1, 'Preserved System', 'Preserved Site', 'Preserved Channel',
+                    (SELECT id FROM alias_list WHERE name='Test' COLLATE NOCASE),
+                    '00000000-0000-4000-8000-000000007001', 0, 'P25_PHASE1', 0, 451000000, ?
                 )
                 """))
             {
                 insert.setString(1, configurationId);
-                insert.setString(2, configJson);
+                insert.setString(2, OBJECT_MAPPER.writeValueAsString(currentChannel));
                 insert.executeUpdate();
             }
             statement.executeUpdate("""
@@ -1048,38 +1032,25 @@ class ApplicationMigrationServiceTest
                 VALUES ('current_profile_sentinel', '{"value":"preserved"}', 1000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_control_channel_quality(
-                    guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs,
+                INSERT INTO radio_system(
+                    id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (7000, 'p25:bee00:123', 1, 0, 781824, 291, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(
+                    id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                    radio_system_assigned_at_ms
+                ) VALUES (7001, '%s', 1000, 2000, 7000, 1000)
+                """.formatted(configurationId));
+            statement.executeUpdate("""
+                INSERT INTO trunked_control_channel_quality(
+                    channel_id, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs,
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits,
                     sync_loss_bits, dropped_bits, last_valid_decode_ms
                 ) VALUES (
-                    'preserved-quality', 851012500, 1000, 2000, -72.5,
+                    7001, 851012500, 1000, 2000, -72.5,
                     92.5, 100, 3, 4, 5, 6, 1900
-                )
-                """);
-            statement.executeUpdate("""
-                INSERT INTO receiver_context(
-                    id, context_key, guid, kind_code, protocol_code, channel_name,
-                    alias_list_name, decoder, first_seen_ms, last_seen_ms, primary_frequency_hz
-                ) VALUES (
-                    7001, 'preserved-dmr-context', 'preserved-dmr-guid', 2, 3, 'Preserved DMR',
-                    'Test', 'DMR', 1000, 2000, 451000000
-                )
-                """);
-            statement.executeUpdate("""
-                INSERT INTO dmr_conventional_talkgroup_summary(
-                    context_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms,
-                    last_seen_ms, call_count, encrypted_count, last_source_radio_id
-                ) VALUES (7001, 451000000, 1, 321, 1000, 2000, 7, 2, 654)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_site_snapshot(
-                    guid, snapshot_hash, protocol_code, variant_code, identity_domain_code,
-                    configured_system, channel_name, decoder, first_seen_ms, last_seen_ms,
-                    observation_count
-                ) VALUES (
-                    'preserved-site-guid', 'preserved-site-hash', 3, 1, 1,
-                    'Preserved System', 'Preserved Site', 'DMR', 1000, 2000, 9
                 )
                 """);
         }
@@ -1108,14 +1079,7 @@ class ApplicationMigrationServiceTest
             SELECT settings_json FROM application_settings WHERE key='current_profile_sentinel'
             """));
         assertEquals("92.5", scalar(database, """
-            SELECT decode_health_pct FROM p25_control_channel_quality WHERE guid='preserved-quality'
-            """));
-        assertEquals("7", scalar(database, """
-            SELECT call_count FROM dmr_conventional_talkgroup_summary
-            WHERE context_id=7001 AND talkgroup_id=321
-            """));
-        assertEquals("9", scalar(database, """
-            SELECT observation_count FROM trunked_site_snapshot WHERE guid='preserved-site-guid'
+            SELECT decode_health_pct FROM trunked_control_channel_quality WHERE channel_id=7001
             """));
     }
 

@@ -102,29 +102,35 @@ class Format5WebStateValidatorTest
     void rejectsRuntimeInvalidUsernameAndNonpositiveIdentifier() throws Exception
     {
         Path username = fresh(mTemporaryFolder.resolve("invalid-username.sqlite"));
-        try(Connection connection = open(username))
+        try(Connection connection = open(username); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
             insertUser(connection, 2, "bad user", "USER", false);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
         }
         assertRejectedByBothPaths(username, "invalid username or tier");
 
         Path identifier = fresh(mTemporaryFolder.resolve("invalid-id.sqlite"));
-        try(Connection connection = open(identifier))
+        try(Connection connection = open(identifier); Statement statement = connection.createStatement())
         {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
             insertUser(connection, -1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
         }
         assertRejectedByBothPaths(identifier, "account identifier must be positive");
     }
 
     @Test
-    void rejectsCredentialStorageThatSQLiteColumnChecksAdmit() throws Exception
+    void rejectsCredentialStorageWhenSQLiteChecksWereBypassed() throws Exception
     {
         Path textSalt = fresh(mTemporaryFolder.resolve("text-salt.sqlite"));
         try(Connection connection = open(textSalt); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
             statement.executeUpdate("UPDATE web_user SET password_salt='0123456789abcdef' WHERE id=1");
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
         }
         assertRejectedByBothPaths(textSalt, "password salt must use SQLite blob storage");
 
@@ -132,7 +138,9 @@ class Format5WebStateValidatorTest
         try(Connection connection = open(fractionalIterations); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
             statement.executeUpdate("UPDATE web_user SET password_iterations=600000.5 WHERE id=1");
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
         }
         assertRejectedByBothPaths(fractionalIterations, "password work factor must use SQLite integer storage");
     }
@@ -185,6 +193,7 @@ class Format5WebStateValidatorTest
                 assertDoesNotThrow(() -> Format5WebStateValidator.validate(connection, 1));
                 assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 2));
                 assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 3));
+                assertThrows(SQLException.class, () -> Format5WebStateValidator.validate(connection, 6));
             }
         }
 
@@ -219,35 +228,38 @@ class Format5WebStateValidatorTest
     }
 
     @Test
-    void validatesStrictPortableSiteSettingsThroughStartupAndCatalogPaths() throws Exception
+    void validatesStrictPortableReceiverSettingsThroughStartupAndCatalogPaths() throws Exception
     {
-        Path valid = fresh(mTemporaryFolder.resolve("valid-site-settings.sqlite"));
+        Path valid = fresh(mTemporaryFolder.resolve("valid-receiver-settings.sqlite"));
         putPortablePreferences(valid, """
             {"user/io/github/dsheirer/preference/nowplaying":{
-                "site.settings.revision":"1",
+                "receiver.settings.revision":"1",
                 "traffic.grant.age.out.milliseconds":"15000",
                 "unrelated.setting":"preserved"
             },"user/example":{"sentinel":"preserved"}}
             """);
         assertAcceptedByBothPaths(valid);
 
-        assertPortablePreferencesRejected("site-setting-without-revision.sqlite", """
+        assertPortablePreferencesRejected("receiver-setting-without-revision.sqlite", """
             {"user/io/github/dsheirer/preference/nowplaying":{"traffic.grant.age.out.milliseconds":"1000"}}
             """, "without their revision");
-        assertPortablePreferencesRejected("invalid-site-revision.sqlite", """
-            {"user/io/github/dsheirer/preference/nowplaying":{"site.settings.revision":"0"}}
+        assertPortablePreferencesRejected("invalid-receiver-revision.sqlite", """
+            {"user/io/github/dsheirer/preference/nowplaying":{"receiver.settings.revision":"0"}}
             """, "revision must be positive and incrementable");
         assertPortablePreferencesRejected("obsolete-shared-live-setting.sqlite", """
             {"user/io/github/dsheirer/preference/nowplaying":{
-                "site.settings.revision":"1","retain.idle.call.details":"true"}}
+                "receiver.settings.revision":"1","retain.idle.call.details":"true"}}
             """, "obsolete shared Live presentation setting");
-        assertPortablePreferencesRejected("invalid-site-age-out.sqlite", """
+        assertPortablePreferencesRejected("invalid-receiver-age-out.sqlite", """
             {"user/io/github/dsheirer/preference/nowplaying":{
-                "site.settings.revision":"1","traffic.grant.age.out.milliseconds":"15001"}}
+                "receiver.settings.revision":"1","traffic.grant.age.out.milliseconds":"15001"}}
             """, "outside its supported range");
         assertPortablePreferencesRejected("nontext-portable-preference.sqlite", """
-            {"user/io/github/dsheirer/preference/nowplaying":{"site.settings.revision":1}}
+            {"user/io/github/dsheirer/preference/nowplaying":{"receiver.settings.revision":1}}
             """, "portable preference value must be text");
+        assertPortablePreferencesRejected("legacy-site-revision.sqlite", """
+            {"user/io/github/dsheirer/preference/nowplaying":{"site.settings.revision":"1"}}
+            """, "unexpected settings revision key");
         assertPortablePreferencesRejected("duplicate-portable-preference.sqlite", """
             {"user/io/github/dsheirer/preference/nowplaying":{},
              "user/io/github/dsheirer/preference/nowplaying":{}}
@@ -261,7 +273,9 @@ class Format5WebStateValidatorTest
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
             statement.executeUpdate("UPDATE web_user SET preferences_revision=9223372036854775807 WHERE id=1");
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
         }
         assertRejectedByBothPaths(database, "preference revision must be positive and incrementable");
     }
