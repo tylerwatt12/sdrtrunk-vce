@@ -71,5 +71,5 @@ SEARCH p25_foreign_system_band_summary USING INDEX idx_p25_foreign_system_band_s
   (last_seen_ms<?)
 ```
 
-Representative-volume query-plan tests cover both website reads and both retention paths. Website responses remain
-independently limited, so a large retained set cannot produce an unbounded response.
+Representative-volume query-plan tests cover the detailed frequency-band read and both retention paths. Both website
+responses remain independently limited, so a large retained set cannot produce an unbounded response.
