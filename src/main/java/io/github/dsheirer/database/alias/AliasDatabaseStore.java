@@ -44,8 +44,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -276,6 +278,7 @@ public class AliasDatabaseStore
     {
         Set<Long> definitionIds = new HashSet<>();
         Set<String> definitionNames = new HashSet<>();
+        Set<AliasListDefinition> definitionInstances = Collections.newSetFromMap(new IdentityHashMap<>());
 
         for(AliasListDefinition definition: definitions)
         {
@@ -283,6 +286,7 @@ public class AliasDatabaseStore
             {
                 throw new SQLException("Alias-list definitions must have a name");
             }
+            definitionInstances.add(definition);
             if(definition.getId() != AliasListDefinition.UNASSIGNED_ID && !definitionIds.add(definition.getId()))
             {
                 throw new SQLException("Duplicate alias-list id [" + definition.getId() + "]");
@@ -316,14 +320,12 @@ public class AliasDatabaseStore
 
         Set<Long> aliasIds = new HashSet<>();
         Map<Long,AliasListDefinition> definitionsById = new HashMap<>();
-        Map<String,AliasListDefinition> definitionsByName = new HashMap<>();
         for(AliasListDefinition definition: definitions)
         {
             if(definition.getId() != AliasListDefinition.UNASSIGNED_ID)
             {
                 definitionsById.put(definition.getId(), definition);
             }
-            definitionsByName.put(normalize(definition.getName()), definition);
         }
 
         for(Alias alias: aliases)
@@ -340,13 +342,10 @@ public class AliasDatabaseStore
             AliasListDefinition definition = definitionsById.get(alias.getAliasListId());
             if(definition == null && alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID)
             {
-                AliasListDefinition namedDefinition =
-                    definitionsByName.get(normalize(alias.getAliasListName()));
-                if(alias.getId() == Alias.UNASSIGNED_ID ||
-                    namedDefinition != null &&
-                        namedDefinition.getId() == AliasListDefinition.UNASSIGNED_ID)
+                AliasListDefinition attachedDefinition = alias.getAliasListDefinition();
+                if(definitionInstances.contains(attachedDefinition))
                 {
-                    definition = namedDefinition;
+                    definition = attachedDefinition;
                 }
             }
             if(definition == null)
@@ -483,22 +482,24 @@ public class AliasDatabaseStore
     private void attachDefinitions(List<Alias> aliases, List<AliasListDefinition> definitions) throws SQLException
     {
         Map<Long,AliasListDefinition> byId = new HashMap<>();
-        Map<String,AliasListDefinition> byName = new HashMap<>();
+        Set<AliasListDefinition> definitionInstances = Collections.newSetFromMap(new IdentityHashMap<>());
         for(AliasListDefinition definition: definitions)
         {
             byId.put(definition.getId(), definition);
-            byName.put(normalize(definition.getName()), definition);
+            definitionInstances.add(definition);
         }
 
         for(Alias alias: aliases)
         {
             AliasListDefinition definition = byId.get(alias.getAliasListId());
             if(definition == null &&
-                alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID &&
-                alias.getAliasListName() != null)
+                alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID)
             {
-                //validateSnapshot already limited persisted aliases in this state to a newly-created definition.
-                definition = byName.get(normalize(alias.getAliasListName()));
+                AliasListDefinition attachedDefinition = alias.getAliasListDefinition();
+                if(definitionInstances.contains(attachedDefinition))
+                {
+                    definition = attachedDefinition;
+                }
             }
             if(definition != null)
             {

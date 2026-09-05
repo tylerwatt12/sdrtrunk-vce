@@ -134,6 +134,35 @@ class AliasAdministrationServiceTest
     }
 
     @Test
+    void aliasListDisplayNameDoesNotEstablishAServiceRelationship() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("name-only-alias-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            service.createAliasList("County P25", AliasListFamily.P25);
+            Alias nameOnly = new Alias("Dispatch");
+            nameOnly.setAliasListName("County P25");
+            nameOnly.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
+
+            assertThrows(AliasAdministrationService.NotFoundException.class,
+                () -> service.createAlias(nameOnly));
+            assertTrue(manager.getAliasModel().getAliases().isEmpty());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
     void maximumBulkEditUsesOneCommit() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("large-bulk-data");

@@ -42,9 +42,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Alias Model contains all aliases and is responsible for creation and management of alias lists.  Alias lists are a
- * set of aliases that all share a common alias list name and can be attached to a decoding channel for aliasing
- * identifiers produced by channel decoder(s).
+ * Alias Model contains all aliases and is responsible for creation and management of durable Alias Lists that can be
+ * attached to a decoding channel for aliasing identifiers produced by channel decoder(s).
  */
 public class AliasModel
 {
@@ -57,7 +56,7 @@ public class AliasModel
     private final ObservableList<AliasListDefinition> mAliasListDefinitions = FXCollections.observableArrayList();
     private final ObservableList<AliasListDefinition> mReadOnlyAliasListDefinitions =
         FXCollections.unmodifiableObservableList(mAliasListDefinitions);
-    private final Map<String,AliasList> mAliasListMap = new HashMap<>();
+    private final Map<Long,AliasList> mAliasListMap = new HashMap<>();
     private boolean mReconcilingAliasLists;
 
     public AliasModel()
@@ -161,10 +160,9 @@ public class AliasModel
 
         if(definitionsChanged)
         {
-            for(Map.Entry<String,AliasList> entry: List.copyOf(mAliasListMap.entrySet()))
+            for(Map.Entry<Long,AliasList> entry: List.copyOf(mAliasListMap.entrySet()))
             {
-                AliasListDefinition replacement = committedDefinitions.stream()
-                    .filter(definition -> definition.getName().equals(entry.getKey())).findFirst().orElse(null);
+                AliasListDefinition replacement = publishedDefinitionsById.get(entry.getKey());
                 if(replacement != null)
                 {
                     entry.getValue().replaceDefinition(replacement);
@@ -199,7 +197,7 @@ public class AliasModel
             reconcileCachedAliasLists();
         }
 
-        mAliasListMap.keySet().removeIf(name -> getAliasListDefinition(name) == null);
+        mAliasListMap.keySet().removeIf(id -> getAliasListDefinition(id) == null);
     }
 
     private void reconcilePublishedAliases(List<Alias> desired)
@@ -304,14 +302,14 @@ public class AliasModel
             throw new IllegalArgumentException("Active alias-list definitions require a durable ID");
         }
 
-        AliasListDefinition existing = definition.getId() > AliasListDefinition.UNASSIGNED_ID ?
-            getAliasListDefinition(definition.getId()) : getAliasListDefinition(definition.getName());
+        AliasListDefinition existing = getAliasListDefinition(definition.getId());
+        AliasListDefinition sameName = getAliasListDefinition(definition.getName());
 
-        if(existing == null)
+        if(existing == null && sameName == null)
         {
             mAliasListDefinitions.add(definition);
         }
-        else if(existing != definition)
+        else if(existing != definition || sameName != definition)
         {
             throw new IllegalArgumentException("Alias list [" + definition.getName() + "] already exists");
         }
@@ -395,9 +393,14 @@ public class AliasModel
             return null;
         }
 
-        return alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
-            getAliasListDefinition(alias.getAliasListId()) :
-            getAliasListDefinition(alias.getAliasListName());
+        if(alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID)
+        {
+            return getAliasListDefinition(alias.getAliasListId());
+        }
+
+        AliasListDefinition attached = alias.getAliasListDefinition();
+        return attached != null && mAliasListDefinitions.stream().anyMatch(definition -> definition == attached) ?
+            attached : null;
     }
 
     /**
@@ -485,9 +488,7 @@ public class AliasModel
     }
 
     /**
-     * Creates a new alias list containing all aliases that match the alias name, or returns a previously created and
-     * cached alias list.  Returned alias list is automatically registered as a listener to this model so that any
-     * updates to the list by the user will automatically be reflected in constructed alias lists.
+     * Resolves a display name to its durable definition, then returns that definition's runtime lookup list.
      */
     public AliasList getAliasList(String name)
     {
@@ -502,32 +503,42 @@ public class AliasModel
             return AliasList.empty(name);
         }
 
-        AliasList mapValue = mAliasListMap.get(definition.getName());
-        if (mapValue != null)
+        return getAliasList(definition);
+    }
+
+    public AliasList getAliasList(AliasListDefinition definition)
+    {
+        if(definition == null)
         {
-            return mapValue;
+            return null;
         }
 
-        AliasList aliasList = new AliasList(definition);
+        AliasListDefinition current = getAliasListDefinition(definition.getId());
+        if(current == null)
+        {
+            return AliasList.empty(definition.getName());
+        }
+
+        AliasList cached = mAliasListMap.get(current.getId());
+        if(cached != null)
+        {
+            return cached;
+        }
+
+        AliasList aliasList = new AliasList(current);
         List<Alias> matchingAliases = new ArrayList<>();
 
         for(Alias alias: mAliases)
         {
-            if(alias.belongsTo(definition))
+            if(alias.belongsTo(current))
             {
                 matchingAliases.add(alias);
             }
         }
 
         aliasList.addAliases(matchingAliases);
-        mAliasListMap.put(definition.getName(), aliasList);
-
+        mAliasListMap.put(current.getId(), aliasList);
         return aliasList;
-    }
-
-    public AliasList getAliasList(AliasListDefinition definition)
-    {
-        return definition != null ? getAliasList(definition.getName()) : null;
     }
 
     /**

@@ -118,7 +118,14 @@ public final class AliasFactory
     private static Alias shallowCopyOf(Alias original)
     {
         Alias copy = new Alias(original.getName());
-        copy.setAliasListId(original.getAliasListId());
+        if(original.getAliasListDefinition() != null)
+        {
+            copy.setAliasListDefinition(original.getAliasListDefinition());
+        }
+        else
+        {
+            copy.setAliasListId(original.getAliasListId());
+        }
         copy.setAliasListName(original.getAliasListName());
         copy.setDescription(original.getDescription());
         copy.setGroup(original.getGroup());

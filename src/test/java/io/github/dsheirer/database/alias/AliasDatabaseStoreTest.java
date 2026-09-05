@@ -232,7 +232,7 @@ class AliasDatabaseStoreTest
         Alias nameOnly = new Alias("Name Only");
         nameOnly.setAliasListName("County P25");
         nameOnly.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
-        assertThrows(SQLException.class, () -> replace(store, List.of(nameOnly), List.of()));
+        assertThrows(SQLException.class, () -> replace(store, List.of(nameOnly), List.of(definition)));
     }
 
     @Test

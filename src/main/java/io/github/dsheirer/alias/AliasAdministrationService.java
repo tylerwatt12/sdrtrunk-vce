@@ -1066,9 +1066,7 @@ public final class AliasAdministrationService
 
     private AliasListDefinition resolveAliasList(Alias alias)
     {
-        AliasListDefinition definition = alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
-            aliasModel().getAliasListDefinition(alias.getAliasListId()) :
-            aliasModel().getAliasListDefinition(alias.getAliasListName());
+        AliasListDefinition definition = aliasModel().getAliasListDefinition(alias);
 
         if(definition == null)
         {

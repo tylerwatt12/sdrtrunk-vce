@@ -188,7 +188,14 @@ class AliasOneToOneTest
         Alias imported = new Alias("Imported");
         imported.setAliasListName("County");
         AliasListDefinition importedDefinition = new AliasListDefinition("county", AliasListFamily.P25);
+        assertFalse(imported.belongsTo(importedDefinition));
+
+        imported.setAliasListDefinition(importedDefinition);
         assertTrue(imported.belongsTo(importedDefinition));
+
+        AliasListDefinition separateDraftWithSameName =
+            new AliasListDefinition("County", AliasListFamily.P25);
+        assertFalse(imported.belongsTo(separateDraftWithSameName));
     }
 
     @Test
@@ -206,6 +213,32 @@ class AliasOneToOneTest
 
         alias.setAliasListName("Stale Display Name");
         assertSame(alias, model.getAliases("Current Name", alias.getMatchIdentifier().getType()).getFirst());
+
+        AliasListDefinition sameNameWrongId = new AliasListDefinition("Current Name", AliasListFamily.P25);
+        sameNameWrongId.setId(13);
+        assertTrue(model.getAliasList(sameNameWrongId).aliases().isEmpty());
+    }
+
+    @Test
+    void cachedRuntimeListFollowsItsDurableIdentityAcrossRename()
+    {
+        AliasListDefinition originalDefinition = new AliasListDefinition("Old Name", AliasListFamily.P25);
+        originalDefinition.setId(12);
+        Alias originalAlias = alias(41, originalDefinition, "Dispatch", 100);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(originalDefinition));
+        model.addAlias(originalAlias);
+        AliasList cached = model.getAliasList(originalDefinition);
+
+        AliasListDefinition renamedDefinition = new AliasListDefinition("New Name", AliasListFamily.P25);
+        renamedDefinition.setId(12);
+        Alias databaseCopy = alias(41, renamedDefinition, "Dispatch", 100);
+        model.publishCommittedConfiguration(List.of(renamedDefinition), List.of(databaseCopy), Set.of(), true);
+
+        assertSame(cached, model.getAliasList(renamedDefinition));
+        assertSame(cached, model.getAliasList("New Name"));
+        assertEquals("New Name", cached.getName());
+        assertTrue(model.getAliasList("Old Name").aliases().isEmpty());
     }
 
     @Test
