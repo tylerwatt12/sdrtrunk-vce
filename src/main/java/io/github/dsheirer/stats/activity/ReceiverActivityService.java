@@ -34,6 +34,7 @@ import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -411,8 +412,21 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             snapshot.active() && snapshot.configurationId() != null && !snapshot.configurationId().isBlank() &&
                 snapshot.frequencyHz() > 0)
         {
+            DecoderType decoderType = decoderType(snapshot.channel());
+            TrunkedIdentityDomain identityDomain =
+                TrunkedIdentityDomain.STANDARD;
+
+            if(snapshot.channel().getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn)
+            {
+                identityDomain = nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
+                    TrunkedIdentityDomain.NXDN_TYPE_D :
+                    TrunkedIdentityDomain.NXDN_TYPE_C;
+            }
+
             enqueueObservation(writer, new ReceiverActivityRecords.ControlChannelQuality(snapshot.observedAtMs(),
-                snapshot.configurationId(), snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
+                snapshot.configurationId(), decoderType != null && decoderType.getProtocol() != null ?
+                    decoderType.getProtocol().name() : "UNKNOWN", identityDomain, snapshot.frequencyHz(),
+                snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
                 snapshot.minimumSignalDbfs(), snapshot.maximumSignalDbfs(), snapshot.decodeHealthPercent(),
                 snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
                 snapshot.droppedBits(), snapshot.lastValidDecodeMs()));

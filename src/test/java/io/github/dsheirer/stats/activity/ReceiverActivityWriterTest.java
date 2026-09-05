@@ -6,6 +6,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -134,7 +136,7 @@ class ReceiverActivityWriterTest
     }
 
     @Test
-    void aBadRecordRollsBackTheWholeBatch() throws Exception
+    void aStaleMissingConfigurationRecordIsDroppedWithoutPoisoningTheBatch() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("rollback.sqlite"));
         insertConfiguredChannel(database);
@@ -145,14 +147,15 @@ class ReceiverActivityWriterTest
         writer.enqueue(activity("99999999-9999-4999-8999-999999999999",
             ReceiverActivityRecords.Action.GRANT, 1_700_000_002_001L));
 
-        awaitState(writer, ReceiverActivityStatus.State.FAILED);
+        awaitWritten(writer, 2);
         writer.close();
-        assertEquals(0, writer.getWrittenRecords());
+        assertEquals(2, writer.getWrittenRecords());
+        assertEquals(ReceiverActivityStatus.State.STOPPED, writer.getStatus().state());
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_channel"));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_signaling_activity_bucket"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_channel"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_signaling_activity_bucket"));
         }
     }
 
@@ -331,8 +334,8 @@ class ReceiverActivityWriterTest
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", action, "CALL_GROUP", "1811524",
             "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1, false, null, null,
             0xBEE00, 0x3A9, 0x293, 2, 1, null, action == ReceiverActivityRecords.Action.CALL, null, null,
-            ReceiverActivityRecords.IdentityDomain.STANDARD, ReceiverActivityRecords.P25TargetIdentity.ORDINARY,
-            List.of());
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of());
     }
 
     private static void awaitWritten(ReceiverActivityWriter writer, long count) throws Exception

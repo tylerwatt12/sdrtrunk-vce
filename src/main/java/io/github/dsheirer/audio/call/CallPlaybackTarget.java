@@ -23,9 +23,11 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -83,8 +85,23 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
 
         ChannelConfigurationPolicy.ChannelKind channelKind = source != null ? source.channelKind() : null;
         DecoderType decoderType = source != null ? source.decoderType() : null;
-        Protocol protocol = canonicalProtocol(target != null ? target.getProtocol() :
-            decoderType != null ? decoderType.getProtocol() : Protocol.UNKNOWN);
+        Protocol configuredProtocol = canonicalProtocol(decoderType != null ? decoderType.getProtocol() :
+            Protocol.UNKNOWN);
+        Protocol targetProtocol = canonicalProtocol(target != null ? target.getProtocol() : Protocol.UNKNOWN);
+        if(configuredProtocol != Protocol.UNKNOWN && targetProtocol != Protocol.UNKNOWN &&
+            configuredProtocol != targetProtocol)
+        {
+            return null;
+        }
+        Protocol protocol = configuredProtocol != Protocol.UNKNOWN ? configuredProtocol : targetProtocol;
+        TrunkedIdentityDomain identityDomain = source != null ? source.identityDomain() :
+            TrunkedIdentityDomain.STANDARD;
+        if(protocol == Protocol.NXDN &&
+            (!TrunkedIdentityEligibility.nxdnIdentifierMatchesDomain(target, identityDomain) ||
+                !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers, identityDomain)))
+        {
+            return null;
+        }
 
         if(channelKind == null)
         {
@@ -114,7 +131,8 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
             return null;
         }
 
-        String radioSystemKey = radioSystemKey(source, identifiers, protocol, configurationId);
+        P25Home servingP25Home = protocol == Protocol.APCO25 ? servingP25Home(source, identifiers) : null;
+        String radioSystemKey = radioSystemKey(protocol, identityDomain, configurationId, servingP25Home);
 
         if(radioSystemKey == null)
         {
@@ -125,14 +143,9 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
 
         if(target instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
         {
-            return new CallPlaybackTarget(prefix + "talkgroup:home:" + fullyQualified.getWacn() + ':' +
-                fullyQualified.getSystem() + ':' + fullyQualified.getTalkgroup(), Kind.TALKGROUP, radioSystemKey,
-                null);
-        }
-        else if(target instanceof NXDNFullyQualifiedTalkgroupIdentifier fullyQualified)
-        {
-            return new CallPlaybackTarget(prefix + "talkgroup:home:" + fullyQualified.getSystem() + ':' +
-                fullyQualified.getValue(), Kind.TALKGROUP, radioSystemKey, null);
+            return identityTarget(prefix, radioSystemKey, protocol, identityDomain, Kind.TALKGROUP,
+                RadioSystemIdentityKey.KIND_TALKGROUP, fullyQualified.getWacn(), fullyQualified.getSystem(),
+                fullyQualified.getTalkgroup());
         }
         else if(target instanceof PatchGroupIdentifier patchIdentifier)
         {
@@ -140,14 +153,27 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
 
             if(patch != null && patch.getPatchGroup() != null)
             {
-                return new CallPlaybackTarget(prefix + "patch-group:" + patch.getPatchGroup().getValue(),
-                    Kind.PATCH_GROUP, radioSystemKey, null);
+                if(protocol == Protocol.APCO25 &&
+                    patch.getPatchGroup() instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+                {
+                    return identityTarget(prefix, radioSystemKey, protocol, identityDomain, Kind.PATCH_GROUP,
+                        RadioSystemIdentityKey.KIND_PATCH_GROUP, fullyQualified.getWacn(),
+                        fullyQualified.getSystem(), fullyQualified.getTalkgroup());
+                }
+
+                if(protocol == Protocol.APCO25 && servingP25Home != null)
+                {
+                    return identityTarget(prefix, radioSystemKey, protocol, identityDomain, Kind.PATCH_GROUP,
+                        RadioSystemIdentityKey.KIND_PATCH_GROUP, servingP25Home.wacn(),
+                        servingP25Home.system(), patch.getPatchGroup().getValue());
+                }
             }
         }
         else if(target instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
-            return new CallPlaybackTarget(prefix + "radio:home:" + fullyQualified.getWacn() + ':' +
-                fullyQualified.getSystem() + ':' + fullyQualified.getRadio(), Kind.RADIO, radioSystemKey, null);
+            return identityTarget(prefix, radioSystemKey, protocol, identityDomain, Kind.RADIO,
+                RadioSystemIdentityKey.KIND_RADIO,
+                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getRadio());
         }
         else if(target != null && target.getValue() instanceof Number number)
         {
@@ -160,12 +186,19 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
 
             if(kind != null)
             {
-                return new CallPlaybackTarget(prefix + kind.keyPart() + ':' + number.intValue(), kind,
-                    radioSystemKey, null);
+                if(protocol == Protocol.APCO25 && servingP25Home != null)
+                {
+                    return identityTarget(prefix, radioSystemKey, protocol, identityDomain, kind,
+                        identityKind(kind),
+                        servingP25Home.wacn(), servingP25Home.system(), number.intValue());
+                }
+
+                return identityTarget(prefix, radioSystemKey, protocol, identityDomain, kind, identityKind(kind),
+                    RadioSystemIdentityKey.NO_HOME, RadioSystemIdentityKey.NO_HOME, number.intValue());
             }
         }
 
-        return new CallPlaybackTarget(prefix + "channel:" + configurationId, Kind.CHANNEL, radioSystemKey, null);
+        return null;
     }
 
     public Map<String,Object> toMap(String label)
@@ -190,24 +223,65 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
         return Map.copyOf(value);
     }
 
-    private static String radioSystemKey(CallLegSource source, IdentifierCollection identifiers, Protocol protocol,
-                                         String configurationId)
+    private static String radioSystemKey(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                         String configurationId, P25Home servingP25Home)
     {
-        if(protocol == Protocol.APCO25)
+        if(protocol == Protocol.APCO25 && servingP25Home != null)
         {
-            P25SiteIdentity learned = source != null ? source.p25SiteIdentity() : null;
-            Integer wacn = learned != null ? learned.wacn() :
-                integerIdentifier(identifiers, Form.WACN);
-            Integer system = learned != null ? learned.system() :
-                integerIdentifier(identifiers, Form.SYSTEM);
-
-            if(wacn != null && system != null)
-            {
-                return RadioSystemKey.p25(wacn, system);
-            }
+            return RadioSystemKey.p25(servingP25Home.wacn(), servingP25Home.system());
         }
 
-        return RadioSystemKey.configured(protocol, configurationId);
+        return protocol == Protocol.APCO25 ? null :
+            RadioSystemKey.channelScoped(protocol, identityDomain, configurationId);
+    }
+
+    private static P25Home servingP25Home(CallLegSource source, IdentifierCollection identifiers)
+    {
+        P25SiteIdentity learned = source != null ? source.p25SiteIdentity() : null;
+        Integer wacn = learned != null ? learned.wacn() : integerIdentifier(identifiers, Form.WACN);
+        Integer system = learned != null ? learned.system() : integerIdentifier(identifiers, Form.SYSTEM);
+        return wacn != null && system != null ? new P25Home(wacn, system) : null;
+    }
+
+    private static CallPlaybackTarget identityTarget(String prefix, String radioSystemKey, Protocol protocol,
+                                                     TrunkedIdentityDomain identityDomain, Kind kind,
+                                                     int identityKind, int homeWacn, int homeSystemId,
+                                                     int identityId)
+    {
+        Form form = switch(kind)
+        {
+            case TALKGROUP -> Form.TALKGROUP;
+            case PATCH_GROUP -> Form.PATCH_GROUP;
+            case RADIO -> Form.RADIO;
+            default -> null;
+        };
+
+        if(form == null || !TrunkedIdentityEligibility.isEligible(protocol, identityDomain,
+            form, identityId))
+        {
+            return null;
+        }
+
+        try
+        {
+            return new CallPlaybackTarget(prefix + RadioSystemIdentityKey.format(identityKind, homeWacn,
+                homeSystemId, identityId), kind, radioSystemKey, null);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
+    }
+
+    private static int identityKind(Kind kind)
+    {
+        return switch(kind)
+        {
+            case TALKGROUP -> RadioSystemIdentityKey.KIND_TALKGROUP;
+            case RADIO -> RadioSystemIdentityKey.KIND_RADIO;
+            case PATCH_GROUP -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+            default -> throw new IllegalArgumentException("Not a radio-system identity target");
+        };
     }
 
     private static Integer integerIdentifier(IdentifierCollection identifiers, Form form)
@@ -244,21 +318,23 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
         return value != null && !value.isBlank() ? value.strip() : null;
     }
 
+    private record P25Home(int wacn, int system)
+    {
+    }
+
     public enum Kind
     {
-        CHANNEL("channel", "channel"),
-        CHANNEL_TIMESLOT("channel_timeslot", "channel-timeslot"),
-        TALKGROUP("talkgroup", "talkgroup"),
-        PATCH_GROUP("patch_group", "patch-group"),
-        RADIO("radio", "radio");
+        CHANNEL("channel"),
+        CHANNEL_TIMESLOT("channel_timeslot"),
+        TALKGROUP("talkgroup"),
+        PATCH_GROUP("patch_group"),
+        RADIO("radio");
 
         private final String mWireName;
-        private final String mKeyPart;
 
-        Kind(String wireName, String keyPart)
+        Kind(String wireName)
         {
             mWireName = wireName;
-            mKeyPart = keyPart;
         }
 
         String wireName()
@@ -266,9 +342,5 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
             return mWireName;
         }
 
-        String keyPart()
-        {
-            return mKeyPart;
-        }
     }
 }

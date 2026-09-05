@@ -155,7 +155,9 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     {
     }
 
-    public record PatchGroup(Integer patchGroup, Integer version, List<Integer> talkgroups, List<Integer> radios)
+    /** Site-local patch telemetry. These numbers are observations, not canonical cross-system identities. */
+    public record PatchGroup(Integer localPatchGroupId, Integer version, List<Integer> localTalkgroupIds,
+                             List<Integer> localRadioIds)
     {
     }
 

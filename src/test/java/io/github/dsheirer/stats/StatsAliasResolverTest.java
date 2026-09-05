@@ -585,8 +585,10 @@ class StatsAliasResolverTest
             ) VALUES (77, '%s', 1, 0, 0xBEE00, 0x348, 1, 2)
             """.formatted(P25_SYSTEM_KEY));
         statement.executeUpdate("""
-            INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-            VALUES (%d, '%s', 1, 2, 77)
+            INSERT INTO receiver_channel(
+                id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                radio_system_assigned_at_ms
+            ) VALUES (%d, '%s', 1, 2, 77, 1)
             """.formatted(receiverChannelId, configurationId));
     }
 }

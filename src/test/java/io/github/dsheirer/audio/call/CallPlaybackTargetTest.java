@@ -7,17 +7,21 @@ package io.github.dsheirer.audio.call;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.am.AMTalkgroup;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
 import java.util.Set;
@@ -79,7 +83,7 @@ class CallPlaybackTargetTest
             talkgroup, 0);
 
         assertEquals(firstSite.key(), secondSite.key());
-        assertEquals("system:p25:bee00:348:talkgroup:101", firstSite.key());
+        assertEquals("system:p25:bee00:348:v1-g-bee00-348-101", firstSite.key());
         assertNotEquals(firstSite.key(), otherSystem.key());
     }
 
@@ -104,9 +108,26 @@ class CallPlaybackTargetTest
         CallPlaybackTarget first = target(source, APCO25Talkgroup.create(101), 0);
         CallPlaybackTarget second = target(source, APCO25Talkgroup.create(202), 0);
 
-        assertEquals("system:p25:bee00:348:talkgroup:101", first.key());
-        assertEquals("system:p25:bee00:348:talkgroup:202", second.key());
+        assertEquals("system:p25:bee00:348:v1-g-bee00-348-101", first.key());
+        assertEquals("system:p25:bee00:348:v1-g-bee00-348-202", second.key());
         assertNotEquals(first, second);
+    }
+
+    @Test
+    void p25PrivateRadioUsesTheCanonicalHomeIdentityWithoutLosingServingSystemScope()
+    {
+        CallLegSource source = source(DecoderType.P25_PHASE1, CHANNEL_A,
+            new P25SiteIdentity(0xBEE00, 0x348, 1, 1), ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+        CallPlaybackTarget ordinary = target(source, APCO25RadioIdentifier.createTo(123), 0);
+        CallPlaybackTarget equivalentHome = target(source,
+            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xBEE00, 0x348, 123), 0);
+        CallPlaybackTarget roaming = target(source,
+            APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 9_001), 0);
+
+        assertEquals("system:p25:bee00:348:v1-r-bee00-348-123", ordinary.key());
+        assertEquals(ordinary, equivalentHome);
+        assertEquals("system:p25:bee00:348:v1-r-abcde-321-9001", roaming.key());
+        assertNotEquals(ordinary, roaming);
     }
 
     @Test
@@ -149,8 +170,8 @@ class CallPlaybackTargetTest
         CallPlaybackTarget second = target(source(DecoderType.DMR, CHANNEL_B, null,
             ChannelConfigurationPolicy.ChannelKind.TRUNKED), talkgroup, 1);
 
-        assertEquals("system:dmr:channel:" + CHANNEL_A + ":talkgroup:9001", first.key());
-        assertEquals("system:dmr:channel:" + CHANNEL_B + ":talkgroup:9001", second.key());
+        assertEquals("system:dmr:channel:" + CHANNEL_A + ":v1-g-x-x-9001", first.key());
+        assertEquals("system:dmr:channel:" + CHANNEL_B + ":v1-g-x-x-9001", second.key());
         assertNotEquals(first, second);
     }
 
@@ -163,15 +184,42 @@ class CallPlaybackTargetTest
         CallPlaybackTarget second = target(source(DecoderType.NXDN, CHANNEL_B, null,
             ChannelConfigurationPolicy.ChannelKind.TRUNKED), talkgroup, 0);
 
-        assertEquals("system:nxdn:channel:" + CHANNEL_A + ":talkgroup:9001", first.key());
-        assertEquals("system:nxdn:channel:" + CHANNEL_B + ":talkgroup:9001", second.key());
+        assertEquals("system:nxdn-c:channel:" + CHANNEL_A + ":v1-g-x-x-9001", first.key());
+        assertEquals("system:nxdn-c:channel:" + CHANNEL_B + ":v1-g-x-x-9001", second.key());
         assertNotEquals(first, second);
+    }
+
+    @Test
+    void nxdnPlaybackUsesTheSavedAddressDomainAndRejectsContradictoryIdentifiers()
+    {
+        Identifier<?> typeCReserved = NXDNTalkgroupIdentifier.createTo(0xFFF0);
+        Identifier<?> typeD = NXDNTalkgroupIdentifier.createTypeDTo(0xFFF0);
+        CallLegSource typeCSource = source(DecoderType.NXDN, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.NXDN_TYPE_C);
+        CallLegSource typeDSource = source(DecoderType.NXDN, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.NXDN_TYPE_D);
+
+        assertNull(target(typeCSource, typeCReserved, 0), "Type-C reserves 0xFFF0");
+        assertNull(target(typeCSource, typeD, 0), "Decoded Type-D evidence cannot override saved Type-C");
+        assertNull(target(typeDSource, typeCReserved, 0), "Decoded Type-C evidence cannot override saved Type-D");
+        assertEquals("system:nxdn-d:channel:" + CHANNEL_A + ":v1-g-x-x-65520",
+            target(typeDSource, typeD, 0).key());
     }
 
     private static CallLegSource source(DecoderType decoderType, String configurationId, P25SiteIdentity p25,
                                         ChannelConfigurationPolicy.ChannelKind channelKind)
     {
-        return new CallLegSource(decoderType, configurationId, "Display name", null, 1, p25, channelKind,
+        return source(decoderType, configurationId, p25, channelKind,
+            decoderType == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C :
+                TrunkedIdentityDomain.STANDARD);
+    }
+
+    private static CallLegSource source(DecoderType decoderType, String configurationId, P25SiteIdentity p25,
+                                        ChannelConfigurationPolicy.ChannelKind channelKind,
+                                        TrunkedIdentityDomain identityDomain)
+    {
+        return new CallLegSource(decoderType, configurationId, "Display name", null, 1, p25,
+            identityDomain, channelKind,
             channelKind == ChannelConfigurationPolicy.ChannelKind.TRUNKED);
     }
 

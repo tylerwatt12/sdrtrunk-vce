@@ -364,6 +364,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                 WEST_CHANNEL_ID.equals(channelConfigurationId) ? 2 : (int)(producerId % 200L) + 1;
             CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, channelConfigurationId,
                 "Site " + site, radioResolveId, ALIAS_LIST_ID, new P25SiteIdentity(0xBEE00, 0x348, 1, site),
+                io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
                 io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
             return new AudioCallSnapshot(callId, null, mAliasList, new IdentifierCollection(identifiers),
                 broadcastChannels, now, end, 1, 1, now, end, false, false, CallEncryptionState.CLEAR,

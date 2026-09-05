@@ -6,6 +6,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -65,26 +67,23 @@ class RadioSystemSchemaTest
                 """.formatted(radioSystemId)));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO radio_system_identity_summary(
-                    radio_system_id, identity_kind_code, identity_id, p25_identity_state_code,
-                    first_seen_ms, last_seen_ms)
-                VALUES (%d, 1, 91, 2, 1000, 1000)
+                    radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, first_seen_ms, last_seen_ms)
+                VALUES (%d, 1, 0xABCDE, -1, 91, 1000, 1000)
                 """.formatted(radioSystemId)));
+            long talkgroupIdentityId = seedIdentity(connection, radioSystemId, 1, 91);
+            long radioIdentityId = seedIdentity(connection, radioSystemId, 2, 101);
             assertThrows(SQLException.class, () -> execute(connection, """
-                INSERT INTO radio_system_identity_summary(
-                    radio_system_id, identity_kind_code, identity_id, p25_identity_state_code,
-                    p25_home_wacn, p25_home_system_id, p25_home_talkgroup_id,
-                    first_seen_ms, last_seen_ms)
-                VALUES (%d, 1, 91, 2, 1048576, 937, 91, 1000, 1000)
-                """.formatted(radioSystemId)));
-            assertThrows(SQLException.class, () -> execute(connection, """
-                INSERT INTO trunked_radio_affiliation(radio_system_id, radio_id, talkgroup_id, confirmed_at_ms)
-                VALUES (%d, 101, 91, 0)
-                """.formatted(radioSystemId)));
+                INSERT INTO trunked_radio_affiliation(
+                    radio_system_id, radio_identity_id, talkgroup_identity_id, channel_id, confirmed_at_ms)
+                SELECT %d, %d, %d, id, 0 FROM receiver_channel
+                """.formatted(radioSystemId, radioIdentityId, talkgroupIdentityId)));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_radio_group_summary(
-                    radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms)
-                VALUES (%d, 101, 91, 2, 1000, 1000)
-                """.formatted(radioSystemId)));
+                    radio_system_id, radio_identity_id, group_identity_id, group_kind_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES (%d, %d, %d, 2, 1000, 1000)
+                """.formatted(radioSystemId, radioIdentityId, talkgroupIdentityId)));
         }
     }
 
@@ -95,10 +94,10 @@ class RadioSystemSchemaTest
         {
             long radioSystemId = seedSystem(connection);
             execute(connection, """
-                INSERT INTO p25_zero_local_fq_talkgroup_summary(
-                    radio_system_id, home_wacn, home_system_id, home_talkgroup_id,
-                    first_seen_ms, last_seen_ms)
-                VALUES (%d, 0xABCDE, 0x321, 1200, 1000, 1000)
+                INSERT INTO radio_system_identity_summary(
+                    radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, first_seen_ms, last_seen_ms)
+                VALUES (%d, 1, 0xABCDE, 0x321, 1200, 1000, 1000)
                 """.formatted(radioSystemId));
 
             assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
@@ -113,8 +112,9 @@ class RadioSystemSchemaTest
             seedSystem(connection);
             String overlong = "X".repeat(RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS + 40);
             assertTrue(RadioSystemSchema.updateTalkerAlias(connection,
-                (int)scalar(connection, "SELECT id FROM receiver_channel"), 101, "  " + overlong + "  ", 1_100,
-                ReceiverActivityRecords.IdentityDomain.STANDARD));
+                (int)scalar(connection, "SELECT id FROM receiver_channel"), 101,
+                ReceiverActivityRecords.P25Identity.ORDINARY, "  " + overlong + "  ", 1_100,
+                TrunkedIdentityDomain.STANDARD, null, null));
             assertEquals(RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS, scalar(connection,
                 "SELECT length(last_talker_alias) FROM radio_system_identity_summary WHERE identity_id=101"));
             assertThrows(SQLException.class, () -> execute(connection, """
@@ -132,16 +132,15 @@ class RadioSystemSchemaTest
         try(Connection connection = open())
         {
             long radioSystemId = seedSystem(connection);
-            execute(connection, """
-                INSERT INTO radio_system_identity_summary(
-                    radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms)
-                VALUES (%d, 1, 91, 1000, 1000)
-                """.formatted(radioSystemId));
+            long talkgroupIdentityId = seedIdentity(connection, radioSystemId, 1, 91);
+            long radioIdentityId = seedIdentity(connection, radioSystemId, 2, 101);
+            long clearedRadioIdentityId = seedIdentity(connection, radioSystemId, 2, 102);
             execute(connection, """
                 INSERT INTO trunked_radio_group_summary(
-                    radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms)
-                VALUES (%d, 101, 91, 3, 1000, 1000)
-                """.formatted(radioSystemId));
+                    radio_system_id, radio_identity_id, group_identity_id, group_kind_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES (%d, %d, %d, 1, 1000, 1000)
+                """.formatted(radioSystemId, radioIdentityId, talkgroupIdentityId));
             execute(connection, """
                 INSERT INTO radio_system(
                     system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
@@ -151,25 +150,29 @@ class RadioSystemSchemaTest
             long p25RadioSystemId = scalar(connection,
                 "SELECT id FROM radio_system WHERE system_key='p25:bee00:3a9'");
             execute(connection, """
-                INSERT INTO p25_zero_local_fq_talkgroup_summary(
-                    radio_system_id, home_wacn, home_system_id, home_talkgroup_id,
-                    first_seen_ms, last_seen_ms)
-                VALUES (%d, 0xABCDE, 0x321, 1200, 1000, 1000)
+                INSERT INTO radio_system_identity_summary(
+                    radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, first_seen_ms, last_seen_ms)
+                VALUES (%d, 1, 0xABCDE, 0x321, 1200, 1000, 1000)
                 """.formatted(p25RadioSystemId));
-            execute(connection, """
-                INSERT INTO trunked_radio_affiliation(radio_system_id, radio_id, talkgroup_id, confirmed_at_ms)
-                VALUES (%d, 101, 91, 1000)
-                """.formatted(radioSystemId));
             long channelId = scalar(connection, "SELECT id FROM receiver_channel");
             execute(connection, """
-                INSERT INTO trunked_radio_channel_presence(
-                    radio_system_id, radio_id, channel_id, evidence_code, confirmed_at_ms)
-                VALUES (%d, 101, %d, 1, 1000)
-                """.formatted(radioSystemId, channelId));
+                INSERT INTO trunked_radio_affiliation(
+                    radio_system_id, radio_identity_id, talkgroup_identity_id, channel_id,
+                    radio_observed_local_id, talkgroup_observed_local_id, confirmed_at_ms)
+                VALUES (%d, %d, %d, %d, 101, 91, 1000)
+                """.formatted(radioSystemId, radioIdentityId, talkgroupIdentityId, channelId));
             execute(connection, """
-                INSERT INTO trunked_radio_presence_lifecycle(radio_system_id, radio_id, cleared_at_ms)
-                VALUES (%d, 102, 1000)
-                """.formatted(radioSystemId));
+                INSERT INTO trunked_radio_channel_presence(
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id,
+                    evidence_code, confirmed_at_ms)
+                VALUES (%d, %d, %d, 101, 1, 1000)
+                """.formatted(radioSystemId, radioIdentityId, channelId));
+            execute(connection, """
+                INSERT INTO trunked_radio_channel_presence_clear(
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id, cleared_at_ms)
+                VALUES (%d, %d, %d, 102, 1000)
+                """.formatted(radioSystemId, clearedRadioIdentityId, channelId));
 
             assertTrue(ReceiverActivitySchema.deleteOlderThan(connection, 2_000) >= 6);
             assertEquals(0, scalar(connection,
@@ -177,14 +180,14 @@ class RadioSystemSchemaTest
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_radio_group_summary WHERE radio_system_id=" + radioSystemId));
             assertEquals(0, scalar(connection,
-                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+                "SELECT COUNT(*) FROM radio_system_identity_summary WHERE radio_system_id=" + p25RadioSystemId));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_radio_affiliation WHERE radio_system_id=" + radioSystemId));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_radio_channel_presence WHERE radio_system_id=" + radioSystemId));
             assertEquals(0, scalar(connection,
-                "SELECT COUNT(*) FROM trunked_radio_presence_lifecycle WHERE radio_system_id=" + radioSystemId));
-            //The configured channel still owns this provisional DMR system, so cleanup keeps exactly one owner row.
+                "SELECT COUNT(*) FROM trunked_radio_channel_presence_clear WHERE radio_system_id=" + radioSystemId));
+            //The configured channel still owns this channel-scoped DMR system.
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + radioSystemId));
         }
     }
@@ -217,7 +220,6 @@ class RadioSystemSchemaTest
     void configuredSummaryCapsRemainFinite()
     {
         assertTrue(RadioSystemSchema.MAX_IDENTITIES_PER_SYSTEM > 0);
-        assertTrue(RadioSystemSchema.MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SYSTEM > 0);
         assertTrue(RadioSystemSchema.MAX_RELATIONSHIPS_PER_SYSTEM > 0);
     }
 
@@ -245,15 +247,31 @@ class RadioSystemSchemaTest
     private static long seedSystem(Connection connection) throws Exception
     {
         execute(connection, """
-            INSERT INTO radio_system(system_key, protocol_code, address_domain_code, first_seen_ms, last_seen_ms)
-            VALUES ('dmr:channel:%s', 3, 0, 1000, 1000)
-            """.formatted(CONFIGURATION_ID));
+            INSERT INTO radio_system(
+                system_key, configuration_id, protocol_code, address_domain_code, first_seen_ms, last_seen_ms)
+            VALUES ('dmr:channel:%s', '%s', 3, 0, 1000, 1000)
+            """.formatted(CONFIGURATION_ID, CONFIGURATION_ID));
         long systemId = scalar(connection, "SELECT id FROM radio_system");
         execute(connection, """
-            INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-            VALUES ('%s', 1000, 1000, %d)
+            INSERT INTO receiver_channel(
+                configuration_id, first_seen_ms, last_seen_ms, radio_system_id, radio_system_assigned_at_ms)
+            VALUES ('%s', 1000, 1000, %d, 1000)
             """.formatted(CONFIGURATION_ID, systemId));
         return systemId;
+    }
+
+    private static long seedIdentity(Connection connection, long radioSystemId, int kind, int identity)
+        throws Exception
+    {
+        execute(connection, """
+            INSERT INTO radio_system_identity_summary(
+                radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms)
+            VALUES (%d, %d, %d, 1000, 1000)
+            """.formatted(radioSystemId, kind, identity));
+        return scalar(connection, """
+            SELECT id FROM radio_system_identity_summary
+            WHERE radio_system_id=%d AND identity_kind_code=%d AND identity_id=%d
+            """.formatted(radioSystemId, kind, identity));
     }
 
     private static void execute(Connection connection, String sql) throws SQLException

@@ -13,6 +13,7 @@ package io.github.dsheirer.database.configuration;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.source.config.SourceConfigRecording;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
@@ -25,26 +26,37 @@ import java.sql.Types;
 import java.util.Objects;
 
 /**
- * The two JSON-authoritative channel projections that serve indexed production queries. Decoder and source subtype
- * details remain authoritative in {@code config_json}, and these two scalars must exactly match that document.
+ * The JSON-authoritative channel projections that serve indexed production queries. Decoder, NXDN address-domain,
+ * and source subtype details remain authoritative in {@code config_json}, and these scalars must exactly match that
+ * document.
  * {@code configuration_channel.channel_kind} is different: it is the row-owned topology classification, derived by
  * the shared channel policy when saving and checked against the decoded configuration when loading.
  */
-public record ConfigurationChannelProjection(String decoderType, Long primaryFrequencyHz)
+public record ConfigurationChannelProjection(String decoderType, int addressDomainCode, Long primaryFrequencyHz)
 {
+    public static final int ADDRESS_DOMAIN_STANDARD = 0;
+    public static final int ADDRESS_DOMAIN_NXDN_TYPE_C = 1;
+    public static final int ADDRESS_DOMAIN_NXDN_TYPE_D = 2;
+
     public static ConfigurationChannelProjection from(Channel channel)
     {
         Objects.requireNonNull(channel, "Channel cannot be null");
         DecodeConfiguration decodeConfiguration = channel.getDecodeConfiguration();
         String decoderType = decodeConfiguration != null && decodeConfiguration.getDecoderType() != null ?
             decodeConfiguration.getDecoderType().name() : null;
-        return new ConfigurationChannelProjection(decoderType, primaryFrequency(channel.getSourceConfiguration()));
+        int addressDomainCode = decodeConfiguration instanceof DecodeConfigNXDN nxdn &&
+            nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
+            ADDRESS_DOMAIN_NXDN_TYPE_D : decodeConfiguration instanceof DecodeConfigNXDN ?
+                ADDRESS_DOMAIN_NXDN_TYPE_C : ADDRESS_DOMAIN_STANDARD;
+        return new ConfigurationChannelProjection(decoderType, addressDomainCode,
+            primaryFrequency(channel.getSourceConfiguration()));
     }
 
     public static ConfigurationChannelProjection read(ResultSet resultSet) throws SQLException, IOException
     {
         Objects.requireNonNull(resultSet, "Result set cannot be null");
         return new ConfigurationChannelProjection(nullableText(resultSet, "decoder_type"),
+            Math.toIntExact(requiredInteger(resultSet, "address_domain_code")),
             nullableInteger(resultSet, "primary_frequency_hz"));
     }
 
@@ -80,13 +92,14 @@ public record ConfigurationChannelProjection(String decoderType, Long primaryFre
     {
         Objects.requireNonNull(statement, "Statement cannot be null");
         statement.setString(firstParameter, decoderType);
+        statement.setInt(firstParameter + 1, addressDomainCode);
         if(primaryFrequencyHz != null)
         {
-            statement.setLong(firstParameter + 1, primaryFrequencyHz);
+            statement.setLong(firstParameter + 2, primaryFrequencyHz);
         }
         else
         {
-            statement.setNull(firstParameter + 1, Types.INTEGER);
+            statement.setNull(firstParameter + 2, Types.INTEGER);
         }
     }
 

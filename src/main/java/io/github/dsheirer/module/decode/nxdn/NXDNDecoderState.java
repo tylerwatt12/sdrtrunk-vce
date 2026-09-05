@@ -82,6 +82,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationRespons
 import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationResponseTypeD;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasComplete;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
 import java.util.List;
@@ -97,6 +98,7 @@ public class NXDNDecoderState extends DecoderState
     private final ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private final NXDNTrafficChannelManager mTrafficChannelManager;
     private final boolean mTrunkingEnabled;
+    private final TrunkedIdentityDomain mIdentityDomain;
     private DecodeEvent mCurrentConventionalCallEvent;
     private boolean mEncryptedCallStateDetermined = false;
     private boolean mEncryptedCall = false;
@@ -121,6 +123,9 @@ public class NXDNDecoderState extends DecoderState
         mTrafficChannelManager = trafficChannelManager;
         DecodeConfigNXDN config = channel != null &&
             channel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN ? configNXDN : null;
+        mIdentityDomain = config != null && config.getTransmissionMode() != null &&
+            config.getTransmissionMode().isTypeD() ? TrunkedIdentityDomain.NXDN_TYPE_D :
+            TrunkedIdentityDomain.NXDN_TYPE_C;
         mTrunkingEnabled = config == null || config.isTrunked();
         mSiteMetadataPublisher = mTrunkingEnabled ? new ProtocolSiteMetadataPublisher(mChannel,
             mNetworkConfigurationMonitor::getSnapshot, this::hasInterModuleEventBus,
@@ -1071,7 +1076,8 @@ public class NXDNDecoderState extends DecoderState
         long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
         boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new NXDNConventionalCallEvent(startTimestamp, endTimestamp,
-            mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
+            mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted,
+            mIdentityDomain));
     }
 
     private static DecodeEventType callEventType(CallType callType, EncryptionKeyIdentifier encryption)

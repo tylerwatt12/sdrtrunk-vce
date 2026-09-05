@@ -149,7 +149,7 @@ public class ConfigurationDatabaseStore
             SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
                    channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radioresolve_id,
                    channel.auto_start, channel.auto_start_order, channel.decoder_type,
-                   channel.primary_frequency_hz, channel.config_json
+                   channel.address_domain_code, channel.primary_frequency_hz, channel.config_json
             FROM configuration_channel channel
             LEFT JOIN alias_list list ON list.id = channel.alias_list_id
             ORDER BY channel.sort_order, channel.id
@@ -244,8 +244,10 @@ public class ConfigurationDatabaseStore
                 StoredChannelClassification previous = stored.get(configurationId);
                 String channelKind = ChannelConfigurationPolicy.requireChannelKind(channel).name();
                 String decoderType = ConfigurationChannelProjection.from(channel).decoderType();
+                int addressDomainCode = ConfigurationChannelProjection.from(channel).addressDomainCode();
                 if(previous != null && (!previous.channelKind().equals(channelKind) ||
-                    !Objects.equals(previous.decoderType(), decoderType)))
+                    !Objects.equals(previous.decoderType(), decoderType) ||
+                    previous.addressDomainCode() != addressDomainCode))
                 {
                     delete.setString(1, configurationId);
                     delete.addBatch();
@@ -277,8 +279,9 @@ public class ConfigurationDatabaseStore
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO configuration_channel (
                 configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
-                radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                radioresolve_id, auto_start, auto_start_order, decoder_type, address_domain_code,
+                primary_frequency_hz, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(configuration_id) DO UPDATE SET
                 channel_kind=excluded.channel_kind,
                 sort_order=excluded.sort_order,
@@ -290,6 +293,7 @@ public class ConfigurationDatabaseStore
                 auto_start=excluded.auto_start,
                 auto_start_order=excluded.auto_start_order,
                 decoder_type=excluded.decoder_type,
+                address_domain_code=excluded.address_domain_code,
                 primary_frequency_hz=excluded.primary_frequency_hz,
                 config_json=excluded.config_json
             """))
@@ -319,7 +323,7 @@ public class ConfigurationDatabaseStore
                 statement.setInt(9, channel.getAutoStart() ? 1 : 0);
                 setInteger(statement, 10, channel.getAutoStartOrder());
                 projection.bind(statement, 11);
-                statement.setString(13, channelPayload(channel));
+                statement.setString(14, channelPayload(channel));
                 statement.addBatch();
             }
             statement.executeBatch();
@@ -367,13 +371,14 @@ public class ConfigurationDatabaseStore
     {
         Map<String,StoredChannelClassification> stored = new HashMap<>();
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT configuration_id, channel_kind, decoder_type FROM configuration_channel");
+            "SELECT configuration_id, channel_kind, decoder_type, address_domain_code FROM configuration_channel");
             ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
                 stored.put(rows.getString("configuration_id"), new StoredChannelClassification(
-                    rows.getString("channel_kind"), rows.getString("decoder_type")));
+                    rows.getString("channel_kind"), rows.getString("decoder_type"),
+                    rows.getInt("address_domain_code")));
             }
         }
         return Map.copyOf(stored);
@@ -496,7 +501,7 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private record StoredChannelClassification(String channelKind, String decoderType)
+    private record StoredChannelClassification(String channelKind, String decoderType, int addressDomainCode)
     {
     }
 

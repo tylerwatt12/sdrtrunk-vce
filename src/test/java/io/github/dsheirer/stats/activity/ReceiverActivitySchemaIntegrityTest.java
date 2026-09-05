@@ -6,6 +6,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -83,7 +85,8 @@ class ReceiverActivitySchemaIntegrityTest
         {
             insertConfiguredChannel(connection);
             ReceiverActivitySchema.insertControlChannelQuality(connection,
-                new ReceiverActivityRecords.ControlChannelQuality(1_500, CONFIGURATION_ID, 851_012_500,
+                new ReceiverActivityRecords.ControlChannelQuality(1_500, CONFIGURATION_ID, "APCO25",
+                    TrunkedIdentityDomain.STANDARD, 851_012_500,
                     -70.0, -71.0, -75.0, -68.0, 95.0, 100, 2, 3, 4, 5, 1_400));
             long channelId = scalar(connection,
                 "SELECT id FROM receiver_channel WHERE configuration_id='" + CONFIGURATION_ID + "'");
@@ -230,7 +233,8 @@ class ReceiverActivitySchemaIntegrityTest
                 INSERT INTO statistics_status(key, value, updated_at_ms) VALUES ('bad-value', x'31', 1000)
                 """));
             assertThrows(IllegalArgumentException.class, () -> new ReceiverActivityRecords.ControlChannelQuality(
-                1000, CONFIGURATION_ID, 851000000, null, null, null, null, 101.0,
+                1000, CONFIGURATION_ID, "APCO25", TrunkedIdentityDomain.STANDARD, 851000000,
+                null, null, null, null, 101.0,
                 0, 0, 0, 0, 0, 0));
         }
     }

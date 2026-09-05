@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -12,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
@@ -33,6 +36,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -101,7 +105,7 @@ class TrunkedCallActivityMapperTest
         assertEquals(Integer.toString(0x2223), record.targetId());
         assertEquals(3, record.encryptionAlgorithmId());
         assertEquals(7, record.encryptionKeyId());
-        assertEquals(ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D, record.identityDomain());
+        assertEquals(TrunkedIdentityDomain.NXDN_TYPE_D, record.identityDomain());
     }
 
     @Test
@@ -133,10 +137,38 @@ class TrunkedCallActivityMapperTest
                 "SELECT SUM(logical_call_count) FROM radio_system_identity_summary"));
             assertEquals(0, scalar(connection,
                 "SELECT SUM(encrypted_logical_call_count) FROM radio_system_identity_summary"));
+            assertEquals(0, scalar(connection,
+                "SELECT SUM(source_logical_call_count) FROM radio_system_identity_summary"));
+            assertEquals(0, scalar(connection,
+                "SELECT SUM(target_logical_call_count) FROM radio_system_identity_summary"));
             assertEquals(0x84, scalar(connection,
                 "SELECT last_encryption_algorithm_id FROM radio_system_identity_summary WHERE identity_id=91"));
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
+
+            ReceiverActivityRecords.ResolvedLogicalCall completed =
+                new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(9, 1), 3_599_000L,
+                    parent.getConfigurationId().toString(), Protocol.DMR.name(), TrunkedIdentityDomain.STANDARD,
+                    null, null, 91, Form.TALKGROUP.name(), java.util.List.of(), 101, true, 0x84, 101,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN,
+                    java.util.List.of(), java.util.List.of());
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, completed));
+            assertEquals(1, scalar(connection, """
+                SELECT logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=91
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT target_logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=91
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=101
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT source_logical_call_count FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=101
+                """));
         }
     }
 

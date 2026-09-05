@@ -247,7 +247,8 @@ public class P25NetworkConfigurationStabilizerTest
         observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40003), 11_000L);
         observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40002), 21_000L);
 
-        assertEquals(List.of(40002, 40003), stabilizer.getSnapshot().patchGroups().getFirst().talkgroups());
+        assertEquals(List.of(40002, 40003),
+            stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
     }
 
     @Test
@@ -263,7 +264,7 @@ public class P25NetworkConfigurationStabilizerTest
         assertFalse(manager.addPatchGroup(repeated, 11_000L));
         stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(repeated, 11_000L), 11_000L);
 
-        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().talkgroups());
+        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
     }
 
     private static void observeAccumulatedPatchGroup(PatchGroupManager manager,

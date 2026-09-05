@@ -125,7 +125,7 @@ class UnmatchedTalkgroupPolicyTest
             AudioCallRecordingMetadata metadata = builder.getRecordingMetadata();
             assertNull(metadata.destinationAlias());
             assertEquals(metadata.destinationIdentity(), metadata.destinationMatcherIdentity());
-            assertTrue(metadata.destinationTalkgroupRecordEnabled());
+            assertTrue(metadata.destinationRecordEnabled());
         }
     }
 
@@ -178,7 +178,7 @@ class UnmatchedTalkgroupPolicyTest
         assertFalse(unmatched.isRecordAudio());
         assertEquals(Set.of("Member", "Console"), destinations(unmatched));
         assertEquals("Member", unmatched.getRecordingMetadata().destinationAlias());
-        assertFalse(unmatched.getRecordingMetadata().destinationTalkgroupRecordEnabled());
+        assertFalse(unmatched.getRecordingMetadata().destinationRecordEnabled());
     }
 
     @Test

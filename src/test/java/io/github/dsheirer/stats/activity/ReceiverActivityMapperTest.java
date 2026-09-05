@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import org.junit.jupiter.api.Test;
 
 /** Focused mapper coverage for the immutable conventional producer records. */
@@ -39,7 +40,8 @@ class ReceiverActivityMapperTest
     void mapsNxdnCompletionUsingOnlyTheSavedConfigurationId()
     {
         NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000, 2_000, CONFIGURATION_ID,
-            461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, true);
+            461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, true,
+            TrunkedIdentityDomain.NXDN_TYPE_C);
         ReceiverActivityRecords.NxdnConventionalCall record = new ReceiverActivityMapper().map(event);
 
         assertEquals(CONFIGURATION_ID, record.configurationId());
@@ -57,6 +59,7 @@ class ReceiverActivityMapperTest
         assertNull(mapper.map(new DMRConventionalCallEvent(1_000, 2_000, null, 461_125_000, 1,
             DMRConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false)));
         assertNull(mapper.map(new NXDNConventionalCallEvent(1_000, 2_000, "display-name", 461_125_000,
-            NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false)));
+            NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false,
+            TrunkedIdentityDomain.NXDN_TYPE_C)));
     }
 }

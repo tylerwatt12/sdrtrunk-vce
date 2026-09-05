@@ -251,6 +251,9 @@ public final class SdrTrunkDatabaseSchema
                 (typeof(decoder_type) = 'text' AND decoder_type IN (
                     'AM', 'DMR', 'NBFM', 'NXDN', 'P25_CONVENTIONAL', 'P25_PHASE1', 'P25_PHASE2'
                 ))),
+            address_domain_code INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(address_domain_code) = 'integer' AND address_domain_code IN (0, 1, 2)
+            ),
             primary_frequency_hz INTEGER CHECK(primary_frequency_hz IS NULL OR
                 (typeof(primary_frequency_hz) = 'integer' AND primary_frequency_hz > 0)),
             config_json TEXT NOT NULL CHECK(
@@ -271,6 +274,10 @@ public final class SdrTrunkDatabaseSchema
                     AND json_type(config_json, '$.order') IS NULL
                     AND json_type(config_json, '$.channelType') IS NULL
                 ELSE 0 END
+            ),
+            CHECK(
+                (decoder_type = 'NXDN' AND address_domain_code IN (1, 2))
+                OR ((decoder_type IS NULL OR decoder_type <> 'NXDN') AND address_domain_code = 0)
             )
         )
         """;
@@ -529,7 +536,7 @@ public final class SdrTrunkDatabaseSchema
             new SqliteSchemaValidator.Table("configuration_channel", "id", "configuration_id", "channel_kind",
                 "sort_order", "system_name", "site_name",
                 "name", "alias_list_id", "radioresolve_id", "auto_start", "auto_start_order", "decoder_type",
-                "primary_frequency_hz", "config_json"),
+                "address_domain_code", "primary_frequency_hz", "config_json"),
             new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "configuration_id",
                 "sort_order", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),

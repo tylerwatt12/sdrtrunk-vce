@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -947,6 +949,7 @@ class ReceiverActivityServiceLifecycleTest
         IdentifierCollection identifiers = new IdentifierCollection();
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "uncertain-config",
             "Uncertain Site", "uncertain-guid", 0, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
             timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
@@ -965,6 +968,7 @@ class ReceiverActivityServiceLifecycleTest
         P25SiteIdentity learnedSite = new P25SiteIdentity(0xBEE00, 0x348, 2, 1);
         CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "learned-config",
             "Learned Site", "learned-guid", 77L, learnedSite,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
             timestamp + 100L, 1, 1, timestamp, timestamp + 100L, false, true,
@@ -1561,8 +1565,8 @@ class ReceiverActivityServiceLifecycleTest
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
             false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
-            ReceiverActivityRecords.IdentityDomain.STANDARD, ReceiverActivityRecords.P25TargetIdentity.ORDINARY,
-            List.of());
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of());
     }
 
     private static class TestUserPreferences extends UserPreferences

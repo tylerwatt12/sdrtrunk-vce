@@ -11,7 +11,11 @@
 package io.github.dsheirer.module.decode.traffic;
 
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.dmr.message.type.Tier3Gateway;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 
 /**
@@ -20,7 +24,6 @@ import io.github.dsheirer.protocol.Protocol;
 public final class TrunkedIdentityEligibility
 {
     private static final int P25_EVERYONE_TALKGROUP = 0xFFFF;
-    private static final int P25_FIRST_SPECIAL_RADIO = 0xFFFFFC;
     private static final int DMR_MAX_ID = 0xFFFFFF;
     private static final int NXDN_MAX_ID = 0xFFFF;
     private static final int NXDN_TYPE_C_RESERVED_GROUP = 0xFFF0;
@@ -76,7 +79,7 @@ public final class TrunkedIdentityEligibility
 
         return switch(protocol)
         {
-            case APCO25, APCO25_PHASE2 -> radio < P25_FIRST_SPECIAL_RADIO;
+            case APCO25, APCO25_PHASE2 -> radio <= RadioSystemIdentityKey.MAX_P25_RADIO_ID;
             case DMR -> radio <= DMR_MAX_ID && !Tier3Gateway.isGateway(radio);
             case NXDN -> radio <= NXDN_MAX_ID &&
                 (identityDomain == TrunkedIdentityDomain.NXDN_TYPE_D ||
@@ -84,5 +87,55 @@ public final class TrunkedIdentityEligibility
                         radio != NXDN_MAX_ID);
             default -> false;
         };
+    }
+
+    /**
+     * Verifies that decoded NXDN identifiers use the saved channel's address domain.  The saved decoder mode is the
+     * authority; decoded identifiers are evidence inside that mode and can never reclassify the channel.
+     */
+    public static boolean nxdnIdentifiersMatchDomain(IdentifierCollection identifiers,
+                                                      TrunkedIdentityDomain identityDomain)
+    {
+        if(identityDomain != TrunkedIdentityDomain.NXDN_TYPE_C &&
+            identityDomain != TrunkedIdentityDomain.NXDN_TYPE_D)
+        {
+            return false;
+        }
+
+        boolean typeD = identityDomain == TrunkedIdentityDomain.NXDN_TYPE_D;
+        if(identifiers != null)
+        {
+            for(Identifier<?> identifier: identifiers.getIdentifiers())
+            {
+                if(!nxdnIdentifierMatchesDomain(identifier, identityDomain))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /** Checks one decoded NXDN identity against the saved channel's authoritative address domain. */
+    public static boolean nxdnIdentifierMatchesDomain(Identifier<?> identifier,
+                                                       TrunkedIdentityDomain identityDomain)
+    {
+        if(identityDomain != TrunkedIdentityDomain.NXDN_TYPE_C &&
+            identityDomain != TrunkedIdentityDomain.NXDN_TYPE_D)
+        {
+            return false;
+        }
+
+        boolean typeD = identityDomain == TrunkedIdentityDomain.NXDN_TYPE_D;
+        if(identifier instanceof NXDNTalkgroupIdentifier talkgroup)
+        {
+            return talkgroup.isTypeD() == typeD;
+        }
+        if(identifier instanceof NXDNRadioIdentifier radio)
+        {
+            return radio.isTypeD() == typeD;
+        }
+        return true;
     }
 }

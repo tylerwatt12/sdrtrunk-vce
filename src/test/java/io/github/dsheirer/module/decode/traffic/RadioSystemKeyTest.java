@@ -33,11 +33,16 @@ class RadioSystemKeyTest
     @Test
     void unprovenDmrAndNxdnGroupingStaysOnTheConfiguredChannel()
     {
-        assertEquals("dmr:channel:" + CHANNEL_ID, RadioSystemKey.configured(Protocol.DMR, CHANNEL_ID));
-        assertEquals("nxdn:channel:" + CHANNEL_ID, RadioSystemKey.configured(Protocol.NXDN, CHANNEL_ID));
-        assertEquals("p25:channel:" + CHANNEL_ID, RadioSystemKey.configured(Protocol.APCO25, CHANNEL_ID));
-        assertNull(RadioSystemKey.configured(Protocol.NBFM, CHANNEL_ID));
-        assertNull(RadioSystemKey.configured(Protocol.DMR, "not-a-uuid"));
+        assertEquals("dmr:channel:" + CHANNEL_ID,
+            RadioSystemKey.channelScoped(Protocol.DMR, TrunkedIdentityDomain.STANDARD, CHANNEL_ID));
+        assertEquals("nxdn-c:channel:" + CHANNEL_ID,
+            RadioSystemKey.channelScoped(Protocol.NXDN, TrunkedIdentityDomain.NXDN_TYPE_C, CHANNEL_ID));
+        assertEquals("nxdn-d:channel:" + CHANNEL_ID,
+            RadioSystemKey.channelScoped(Protocol.NXDN, TrunkedIdentityDomain.NXDN_TYPE_D, CHANNEL_ID));
+        assertNull(RadioSystemKey.channelScoped(Protocol.NXDN, TrunkedIdentityDomain.STANDARD, CHANNEL_ID));
+        assertNull(RadioSystemKey.channelScoped(Protocol.APCO25, TrunkedIdentityDomain.STANDARD, CHANNEL_ID));
+        assertNull(RadioSystemKey.channelScoped(Protocol.NBFM, TrunkedIdentityDomain.STANDARD, CHANNEL_ID));
+        assertNull(RadioSystemKey.channelScoped(Protocol.DMR, TrunkedIdentityDomain.STANDARD, "not-a-uuid"));
     }
 
     @Test

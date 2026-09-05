@@ -14,8 +14,11 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -24,9 +27,10 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,13 +43,13 @@ import java.util.List;
  * aliases while a call is active or queued for disk. The RadioResolve identifier remains nullable and is never
  * replaced with a display-name-derived fallback.</p>
  */
-public record AudioCallRecordingMetadata(String systemName, String systemIdentity, String siteName,
+public record AudioCallRecordingMetadata(String systemName, String siteName,
                                          String radioResolveId, String channelName, String channelIdentity,
                                          String aliasListName, String destinationProtocol, String destinationValue,
                                          String destinationIdentity, String destinationAlias,
                                          String destinationDescription, String destinationGroup,
                                          String destinationMatcherIdentity,
-                                         boolean destinationTalkgroupRecordEnabled, String sourceProtocol,
+                                         boolean destinationRecordEnabled, String sourceProtocol,
                                          String sourceValue, String sourceAlias, String sourceDescription,
                                          String sourceGroup)
 {
@@ -70,11 +74,10 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         String channelIdentity =
             identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY);
         String aliasList = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY);
-        String stableChannelIdentity = hasText(channelIdentity) ? channelIdentity :
-            nullSafe(system) + ':' + nullSafe(site) + ':' + nullSafe(channel);
+        String stableChannelIdentity = ChannelConfigurationKey.canonical(channelIdentity);
         DestinationDecision safeDestination = destination != null ? destination : DestinationDecision.empty();
         SourceDecision safeSource = source != null ? source : SourceDecision.empty();
-        return new AudioCallRecordingMetadata(label(system), nullSafe(system), label(site), radioResolveId,
+        return new AudioCallRecordingMetadata(label(system), label(site), radioResolveId,
             label(channel), stableChannelIdentity, label(aliasList), safeDestination.protocol(),
             safeDestination.value(), safeDestination.receivedIdentity(), safeDestination.aliasName(),
             safeDestination.aliasDescription(), safeDestination.aliasGroup(), safeDestination.matcherIdentity(),
@@ -89,16 +92,20 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
      */
     AudioCallRecordingMetadata withResolvedUserIdentifiers(Identifier<?> destination, Identifier<?> source)
     {
-        String resolvedDestinationProtocol = destination != null ? protocol(destination) : destinationProtocol;
-        String resolvedDestinationValue = destination != null ? destinationValue(destination) : destinationValue;
+        String resolvedDestinationProtocol = !hasText(destinationProtocol) && destination != null ?
+            protocol(destination) : destinationProtocol;
+        String resolvedDestinationValue = !hasText(destinationValue) && destination != null ?
+            destinationValue(destination) : destinationValue;
         String resolvedDestinationIdentity = destination != null ?
             receivedDestinationIdentity(destination) : destinationIdentity;
-        String resolvedSourceProtocol = source != null ? protocol(source) : sourceProtocol;
-        String resolvedSourceValue = source != null ? receivedSourceIdentity(source) : sourceValue;
-        return new AudioCallRecordingMetadata(systemName, systemIdentity, siteName, radioResolveId, channelName,
+        String resolvedSourceProtocol = !hasText(sourceProtocol) && source != null ?
+            protocol(source) : sourceProtocol;
+        String resolvedSourceValue = !hasText(sourceValue) && source != null ?
+            receivedSourceIdentity(source) : sourceValue;
+        return new AudioCallRecordingMetadata(systemName, siteName, radioResolveId, channelName,
             channelIdentity, aliasListName, resolvedDestinationProtocol, resolvedDestinationValue,
             resolvedDestinationIdentity, destinationAlias, destinationDescription, destinationGroup,
-            destinationMatcherIdentity, destinationTalkgroupRecordEnabled, resolvedSourceProtocol,
+            destinationMatcherIdentity, destinationRecordEnabled, resolvedSourceProtocol,
             resolvedSourceValue, sourceAlias, sourceDescription, sourceGroup);
     }
 
@@ -106,7 +113,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
     {
         return identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER &&
             identifier.getRole() == Role.TO &&
-            (identifier.getForm() == Form.TALKGROUP || identifier.getForm() == Form.PATCH_GROUP);
+            (identifier.getForm() == Form.TALKGROUP || identifier.getForm() == Form.PATCH_GROUP ||
+                identifier.getForm() == Form.RADIO);
     }
 
     public static boolean isSource(Identifier<?> identifier)
@@ -137,6 +145,28 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         else if(destination instanceof TalkgroupIdentifier talkgroupIdentifier)
         {
             candidates.add(talkgroupIdentifier);
+        }
+        else if(destination instanceof RadioIdentifier)
+        {
+            DestinationDecision firstMatch = null;
+            for(Alias alias: aliasList.getAliases(destination))
+            {
+                AliasID matcher = matchingRadioAliasId(alias, (RadioIdentifier)destination);
+                String matcherIdentity = matcher != null ? matcherIdentity(matcher) : fallbackIdentity;
+                DestinationDecision match = new DestinationDecision(protocol(destination), value, fallbackIdentity,
+                    label(alias.getName()), label(alias.getDescription()), label(alias.getGroup()), matcherIdentity,
+                    alias.isRecordable());
+                if(match.recordEnabled())
+                {
+                    return match;
+                }
+                if(firstMatch == null)
+                {
+                    firstMatch = match;
+                }
+            }
+            return firstMatch != null ? firstMatch : new DestinationDecision(protocol(destination), value,
+                fallbackIdentity, null, null, null, fallbackIdentity, false);
         }
         else
         {
@@ -233,6 +263,24 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         return null;
     }
 
+    private static AliasID matchingRadioAliasId(Alias alias, RadioIdentifier destination)
+    {
+        AliasID aliasID = alias != null ? alias.getMatchIdentifier() : null;
+        if(aliasID instanceof Radio matcher &&
+            protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
+            matcher.getValue() == destination.getValue())
+        {
+            return matcher;
+        }
+        if(aliasID instanceof RadioRange matcher &&
+            protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
+            matcher.contains(destination.getValue()))
+        {
+            return matcher;
+        }
+        return null;
+    }
+
     private static boolean protocolsMatch(Protocol first, Protocol second)
     {
         return first != null && second != null && canonicalProtocol(first) == canonicalProtocol(second);
@@ -253,6 +301,14 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         {
             return "exact:" + talkgroup.getProtocol() + ':' + talkgroup.getValue();
         }
+        else if(matcher instanceof RadioRange range)
+        {
+            return "range:" + range.getProtocol() + ':' + range.getMinRadio() + ':' + range.getMaxRadio();
+        }
+        else if(matcher instanceof Radio radio)
+        {
+            return "exact:" + radio.getProtocol() + ':' + radio.getValue();
+        }
 
         return matcher.getType() + ":" + matcher;
     }
@@ -266,8 +322,12 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
         Identifier<?> destination =
             identifiers.getIdentifier(IdentifierClass.USER, Form.PATCH_GROUP, Role.TO);
+        if(destination == null)
+        {
+            destination = identifiers.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
+        }
         return destination != null ? destination :
-            identifiers.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
+            identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.TO);
     }
 
     private static Identifier<?> sourceIdentifier(IdentifierCollection identifiers)
@@ -290,13 +350,13 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
     {
         if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
         {
-            return protocol(destination) + ":fq:" + fullyQualified.getWacn() + ':' +
-                fullyQualified.getSystem() + ':' + fullyQualified.getTalkgroup();
+            return canonicalIdentityOrNull(RadioSystemIdentityKey.KIND_TALKGROUP,
+                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getTalkgroup());
         }
-        else if(destination instanceof NXDNFullyQualifiedTalkgroupIdentifier fullyQualified)
+        else if(destination instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
-            return protocol(destination) + ":fq:" + fullyQualified.getSystem() + ':' +
-                fullyQualified.getValue();
+            return canonicalIdentityOrNull(RadioSystemIdentityKey.KIND_RADIO,
+                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getRadio());
         }
         else if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
         {
@@ -311,10 +371,27 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
     {
         if(source instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
-            return fullyQualified.getFullyQualifiedRadioAddress();
+            return canonicalIdentityOrNull(RadioSystemIdentityKey.KIND_RADIO,
+                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getRadio());
         }
 
         return source != null && source.getValue() != null ? source.getValue().toString() : null;
+    }
+
+    /**
+     * Decoder identifiers can legitimately describe P25 broadcast, everyone and infrastructure addresses that are
+     * not subscriber-directory identities. Metadata capture must remain non-throwing for those observations.
+     */
+    private static String canonicalIdentityOrNull(int kind, int homeWacn, int homeSystemId, int identityId)
+    {
+        try
+        {
+            return RadioSystemIdentityKey.format(kind, homeWacn, homeSystemId, identityId);
+        }
+        catch(IllegalArgumentException ignored)
+        {
+            return null;
+        }
     }
 
     private static String identifierText(IdentifierCollection identifiers, IdentifierClass identifierClass,
@@ -329,11 +406,6 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         return identifier != null && identifier.getProtocol() != null ? identifier.getProtocol().name() : null;
     }
 
-    private static boolean hasText(String value)
-    {
-        return value != null && !value.isBlank();
-    }
-
     private static String label(String value)
     {
         if(value == null)
@@ -345,9 +417,9 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         return stripped.length() <= MAXIMUM_LABEL_LENGTH ? stripped : stripped.substring(0, MAXIMUM_LABEL_LENGTH);
     }
 
-    private static String nullSafe(String value)
+    private static boolean hasText(String value)
     {
-        return value != null ? value : "";
+        return value != null && !value.isBlank();
     }
 
     public record DestinationDecision(String protocol, String value, String receivedIdentity, String aliasName,

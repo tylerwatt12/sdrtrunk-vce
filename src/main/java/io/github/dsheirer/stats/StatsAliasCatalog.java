@@ -1256,9 +1256,10 @@ final class StatsAliasCatalog
         List<Object> parameters = new ArrayList<>();
         targets.appendCte(sql, parameters, true);
         sql.append("""
-            SELECT summary.radio_system_id, summary.identity_kind_code, summary.identity_id,
-                summary.p25_identity_state_code, summary.p25_home_wacn,
-                summary.p25_home_system_id, summary.p25_home_talkgroup_id,
+            SELECT summary.radio_system_id, summary.identity_kind_code,
+                summary.identity_id AS identity_id,
+                summary.identity_id AS canonical_identity_id,
+                summary.home_wacn, summary.home_system_id,
                 summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
                 summary.recorded_output_count AS recorded_logical_call_count,
                 summary.streamed_output_count AS stream_submitted_logical_call_count,
@@ -1280,39 +1281,10 @@ final class StatsAliasCatalog
               AND
             """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
-        targets.appendPredicate(sql, "summary.radio_system_id", "summary.identity_kind_code", "summary.identity_id");
+        targets.appendPredicate(sql, "summary.radio_system_id", "summary.identity_kind_code",
+            "summary.identity_id");
         sql.append("""
-
-            UNION ALL
-
-            SELECT summary.radio_system_id, 1 AS identity_kind_code, 0 AS identity_id,
-                2 AS p25_identity_state_code, summary.home_wacn AS p25_home_wacn,
-                summary.home_system_id AS p25_home_system_id,
-                summary.home_talkgroup_id AS p25_home_talkgroup_id,
-                summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
-                summary.recorded_output_count AS recorded_logical_call_count,
-                summary.streamed_output_count AS stream_submitted_logical_call_count,
-                summary.encrypted_logical_call_count,
-                summary.grant_count AS grant_observation_count,
-                summary.join_count AS join_observation_count,
-                summary.emergency_count AS emergency_observation_count,
-                summary.register_count AS register_observation_count,
-                summary.logout_count AS logout_observation_count,
-                summary.denial_count AS denial_observation_count,
-                summary.data_count AS data_observation_count,
-                %s AS other_signaling_observation_count,
-                %s AS signaling_observation_count,
-                source.protocol_code, source.system_key AS radio_system_key,
-                source.p25_wacn AS wacn, source.p25_system_id AS system_id
-            FROM p25_zero_local_fq_talkgroup_summary summary
-            JOIN radio_system source ON source.id = summary.radio_system_id
-            WHERE summary.radio_system_id IN (%s)
-              AND
-            """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(radioSystemIds.size())));
-        parameters.addAll(radioSystemIds);
-        targets.appendPredicate(sql, "summary.radio_system_id", "1", "0");
-        sql.append("""
-            ORDER BY 1, 2, 3, 5, 6, 7
+            ORDER BY 1, 2, 3, 5, 6
             LIMIT ?
             """);
         parameters.add(budget.queryLimit());
@@ -1485,55 +1457,57 @@ final class StatsAliasCatalog
         StringBuilder sql = new StringBuilder();
         targets.appendCte(sql, parameters, true);
         sql.append("""
-            SELECT relationship.radio_system_id, 2 AS identity_kind_code, relationship.radio_id AS identity_id,
+            SELECT relationship.radio_system_id, 2 AS identity_kind_code,
+                identity.identity_id AS identity_id,
                 min(relationship.first_seen_ms) AS first_seen_ms,
                 max(relationship.last_seen_ms) AS last_seen_ms,
                 count(*) AS relationship_count,
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
                 source.protocol_code, source.system_key AS radio_system_key,
                 source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                NULL AS p25_identity_state_code, NULL AS p25_home_wacn,
-                NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
+                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id
             FROM trunked_radio_group_summary relationship
             JOIN radio_system source ON source.id = relationship.radio_system_id
+            JOIN radio_system_identity_summary identity
+              ON identity.radio_system_id = relationship.radio_system_id
+             AND identity.id = relationship.radio_identity_id
             WHERE relationship.radio_system_id IN (%s)
               AND
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
-        targets.appendPredicate(sql, "relationship.radio_system_id", "2", "relationship.radio_id");
+        targets.appendPredicate(sql, "relationship.radio_system_id", "2",
+            "identity.identity_id");
         sql.append("""
-            GROUP BY relationship.radio_system_id, relationship.radio_id, source.protocol_code,
-                source.system_key, source.p25_wacn, source.p25_system_id
+            GROUP BY relationship.radio_system_id, identity.id, identity.identity_id,
+                identity.home_wacn, identity.home_system_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
 
             UNION ALL
 
             SELECT relationship.radio_system_id, relationship.group_kind_code AS identity_kind_code,
-                relationship.group_id AS identity_id,
+                target.identity_id AS identity_id,
                 min(relationship.first_seen_ms) AS first_seen_ms,
                 max(relationship.last_seen_ms) AS last_seen_ms,
                 count(*) AS relationship_count,
                 sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
                 source.protocol_code, source.system_key AS radio_system_key,
                 source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                target.p25_identity_state_code, target.p25_home_wacn,
-                target.p25_home_system_id, target.p25_home_talkgroup_id
+                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id
             FROM trunked_radio_group_summary relationship
             JOIN radio_system source ON source.id = relationship.radio_system_id
-            LEFT JOIN radio_system_identity_summary target
-              ON target.radio_system_id = relationship.radio_system_id
-             AND target.identity_kind_code = relationship.group_kind_code
-             AND target.identity_id = relationship.group_id
+            JOIN radio_system_identity_summary target
+             ON target.radio_system_id = relationship.radio_system_id
+             AND target.id = relationship.group_identity_id
             WHERE relationship.radio_system_id IN (%s)
               AND
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
         targets.appendPredicate(sql, "relationship.radio_system_id", "relationship.group_kind_code",
-            "relationship.group_id");
+            "target.identity_id");
         sql.append("""
-            GROUP BY relationship.radio_system_id, relationship.group_kind_code, relationship.group_id,
-                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id,
-                target.p25_identity_state_code, target.p25_home_wacn,
-                target.p25_home_system_id, target.p25_home_talkgroup_id
+            GROUP BY relationship.radio_system_id, relationship.group_kind_code, target.id, target.identity_id,
+                target.home_wacn, target.home_system_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
             ORDER BY 1, 2, 3
             LIMIT ?
             """);
@@ -1583,47 +1557,53 @@ final class StatsAliasCatalog
         StringBuilder sql = new StringBuilder();
         targets.appendCte(sql, parameters, true);
         sql.append("""
-            SELECT source.id AS radio_system_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
+            SELECT source.id AS radio_system_id, 2 AS identity_kind_code,
+                coalesce(affiliation.radio_observed_local_id, identity.identity_id) AS identity_id,
                 max(affiliation.confirmed_at_ms) AS updated_at_ms,
                 count(*) AS current_affiliation_count, source.protocol_code,
                 source.system_key AS radio_system_key,
-                source.p25_wacn AS wacn, source.p25_system_id AS system_id, NULL AS p25_identity_state_code,
-                NULL AS p25_home_wacn, NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
+                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id
             FROM radio_system source
             JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
+            JOIN radio_system_identity_summary identity
+              ON identity.radio_system_id = affiliation.radio_system_id
+             AND identity.id = affiliation.radio_identity_id
             WHERE source.id IN (%s)
               AND
             """.formatted(placeholders(p25Systems.size())));
         parameters.addAll(p25Systems);
-        targets.appendPredicate(sql, "source.id", "2", "affiliation.radio_id");
+        targets.appendPredicate(sql, "source.id", "2",
+            "coalesce(affiliation.radio_observed_local_id, identity.identity_id)");
         sql.append("""
-            GROUP BY source.id, affiliation.radio_id, source.protocol_code,
-                source.system_key, source.p25_wacn, source.p25_system_id
+            GROUP BY source.id, identity.id, identity.identity_id,
+                identity.home_wacn, identity.home_system_id, affiliation.radio_observed_local_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
 
             UNION ALL
 
-            SELECT source.id AS radio_system_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
+            SELECT source.id AS radio_system_id, 1 AS identity_kind_code,
+                coalesce(affiliation.talkgroup_observed_local_id, target.identity_id) AS identity_id,
                 max(affiliation.confirmed_at_ms) AS updated_at_ms,
                 count(*) AS current_affiliation_count, source.protocol_code,
                 source.system_key AS radio_system_key,
-                source.p25_wacn AS wacn, source.p25_system_id AS system_id, target.p25_identity_state_code,
-                target.p25_home_wacn, target.p25_home_system_id, target.p25_home_talkgroup_id
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
+                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id
             FROM radio_system source
             JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
             LEFT JOIN radio_system_identity_summary target
-              ON target.radio_system_id = source.id
-             AND target.identity_kind_code = 1
-             AND target.identity_id = affiliation.talkgroup_id
+             ON target.radio_system_id = source.id
+             AND target.id = affiliation.talkgroup_identity_id
             WHERE source.id IN (%s)
               AND
             """.formatted(placeholders(p25Systems.size())));
         parameters.addAll(p25Systems);
-        targets.appendPredicate(sql, "source.id", "1", "affiliation.talkgroup_id");
+        targets.appendPredicate(sql, "source.id", "1",
+            "coalesce(affiliation.talkgroup_observed_local_id, target.identity_id)");
         sql.append("""
-            GROUP BY source.id, affiliation.talkgroup_id, source.protocol_code,
-                source.system_key, source.p25_wacn, source.p25_system_id,
-                target.p25_identity_state_code, target.p25_home_wacn,
-                target.p25_home_system_id, target.p25_home_talkgroup_id
+            GROUP BY source.id, target.id, target.identity_id,
+                target.home_wacn, target.home_system_id, affiliation.talkgroup_observed_local_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
             ORDER BY 1, 2, 3
             LIMIT ?
             """);

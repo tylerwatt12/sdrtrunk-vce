@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import org.junit.jupiter.api.Test;
@@ -43,7 +45,7 @@ class P25GrantFactConfirmationTrackerTest
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", java.util.List.of(), 854_187_500L, "0-509", 0,
             false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, null, false, null, null,
-            ReceiverActivityRecords.IdentityDomain.STANDARD, ReceiverActivityRecords.P25TargetIdentity.UNKNOWN,
-            java.util.List.of());
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
+            ReceiverActivityRecords.P25Identity.ORDINARY, java.util.List.of());
     }
 }

@@ -286,10 +286,7 @@ public final class TrunkedSiteSchema
             return false;
         }
 
-        boolean classificationChanged = previous != null &&
-            (previous.protocolCode() != snapshot.protocolCode() ||
-                previous.variantCode() != snapshot.variantCode() ||
-                previous.locationCategoryCode() != snapshot.locationCategoryCode());
+        boolean classificationChanged = generationChanged(previous, snapshot);
         upsertSite(connection, receiverChannelId, snapshot);
 
         if(classificationChanged)
@@ -792,7 +789,8 @@ public final class TrunkedSiteSchema
     {
         try(PreparedStatement statement = connection.prepareStatement(
             """
-            SELECT snapshot_hash, last_seen_ms, protocol_code, variant_code, location_category_code
+            SELECT snapshot_hash, last_seen_ms, protocol_code, variant_code, location_category_code,
+                network_id, system_id, site_id, ran
             FROM trunked_site_snapshot
             WHERE channel_id = ?
             """))
@@ -803,9 +801,35 @@ public final class TrunkedSiteSchema
             {
                 return resultSet.next() ?
                     new SiteState(resultSet.getString(1), resultSet.getLong(2), resultSet.getInt(3),
-                        resultSet.getInt(4), resultSet.getInt(5)) : null;
+                        resultSet.getInt(4), resultSet.getInt(5), nullableInteger(resultSet, 6),
+                        nullableInteger(resultSet, 7), nullableInteger(resultSet, 8),
+                        nullableInteger(resultSet, 9)) : null;
             }
         }
+    }
+
+    /** True when a newer snapshot would replace the saved channel's decoded site/location generation. */
+    public static boolean isGenerationChange(Connection connection, Snapshot snapshot) throws SQLException
+    {
+        if(snapshot == null || snapshot.configurationId() == null || snapshot.configurationId().isBlank())
+        {
+            return false;
+        }
+
+        int channelId = receiverChannelId(connection, snapshot.configurationId());
+        return generationChanged(siteState(connection, channelId), snapshot);
+    }
+
+    private static boolean generationChanged(SiteState previous, Snapshot snapshot)
+    {
+        return previous != null && snapshot != null &&
+            (previous.protocolCode() != snapshot.protocolCode() ||
+                previous.variantCode() != snapshot.variantCode() ||
+                previous.locationCategoryCode() != snapshot.locationCategoryCode() ||
+                locationChanged(previous.networkId(), snapshot.networkId()) ||
+                locationChanged(previous.systemId(), snapshot.systemId()) ||
+                locationChanged(previous.siteId(), snapshot.siteId()) ||
+                locationChanged(previous.ran(), snapshot.ran()));
     }
 
     private static void upsertSite(Connection connection, int channelId, Snapshot snapshot) throws SQLException
@@ -842,6 +866,14 @@ public final class TrunkedSiteSchema
                     WHEN trunked_site_snapshot.protocol_code != excluded.protocol_code
                       OR trunked_site_snapshot.variant_code != excluded.variant_code
                       OR trunked_site_snapshot.location_category_code != excluded.location_category_code
+                      OR (trunked_site_snapshot.network_id IS NOT NULL AND excluded.network_id IS NOT NULL
+                          AND trunked_site_snapshot.network_id != excluded.network_id)
+                      OR (trunked_site_snapshot.system_id IS NOT NULL AND excluded.system_id IS NOT NULL
+                          AND trunked_site_snapshot.system_id != excluded.system_id)
+                      OR (trunked_site_snapshot.site_id IS NOT NULL AND excluded.site_id IS NOT NULL
+                          AND trunked_site_snapshot.site_id != excluded.site_id)
+                      OR (trunked_site_snapshot.ran IS NOT NULL AND excluded.ran IS NOT NULL
+                          AND trunked_site_snapshot.ran != excluded.ran)
                     THEN excluded.first_seen_ms
                     ELSE min(trunked_site_snapshot.first_seen_ms, excluded.first_seen_ms)
                 END,
@@ -850,6 +882,14 @@ public final class TrunkedSiteSchema
                     WHEN trunked_site_snapshot.protocol_code != excluded.protocol_code
                       OR trunked_site_snapshot.variant_code != excluded.variant_code
                       OR trunked_site_snapshot.location_category_code != excluded.location_category_code
+                      OR (trunked_site_snapshot.network_id IS NOT NULL AND excluded.network_id IS NOT NULL
+                          AND trunked_site_snapshot.network_id != excluded.network_id)
+                      OR (trunked_site_snapshot.system_id IS NOT NULL AND excluded.system_id IS NOT NULL
+                          AND trunked_site_snapshot.system_id != excluded.system_id)
+                      OR (trunked_site_snapshot.site_id IS NOT NULL AND excluded.site_id IS NOT NULL
+                          AND trunked_site_snapshot.site_id != excluded.site_id)
+                      OR (trunked_site_snapshot.ran IS NOT NULL AND excluded.ran IS NOT NULL
+                          AND trunked_site_snapshot.ran != excluded.ran)
                     THEN 1
                     ELSE trunked_site_snapshot.observation_count + 1
                 END
@@ -1035,6 +1075,12 @@ public final class TrunkedSiteSchema
         return value != null ? value : UNKNOWN;
     }
 
+    private static Integer nullableInteger(ResultSet resultSet, int column) throws SQLException
+    {
+        int value = resultSet.getInt(column);
+        return resultSet.wasNull() ? null : value;
+    }
+
     private static void setInteger(PreparedStatement statement, int parameter, Integer value) throws SQLException
     {
         if(value != null)
@@ -1128,8 +1174,14 @@ public final class TrunkedSiteSchema
         }
     }
 
+    private static boolean locationChanged(Integer previous, Integer current)
+    {
+        return previous != null && current != null && !previous.equals(current);
+    }
+
     private record SiteState(String snapshotHash, long lastSeenEpochMilliseconds, int protocolCode,
-                             int variantCode, int locationCategoryCode)
+                             int variantCode, int locationCategoryCode, Integer networkId, Integer systemId,
+                             Integer siteId, Integer ran)
     {
     }
 

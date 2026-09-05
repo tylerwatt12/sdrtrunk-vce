@@ -34,16 +34,17 @@ public final class RadioSystemKey
     }
 
     /**
-     * Isolates a system to one saved channel when a complete, proven over-the-air system identity is unavailable.
-     * This is currently the deliberate rule for every DMR and NXDN trunking variant.
+     * Isolates a DMR or NXDN system to one saved channel until capture-backed native grouping rules are available.
+     * P25 requires its native WACN and System ID and is never represented by a synthetic channel-scoped system.
      */
-    public static String configured(Protocol protocol, String configurationId)
+    public static String channelScoped(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                       String configurationId)
     {
         String family = switch(protocol != null ? protocol : Protocol.UNKNOWN)
         {
-            case APCO25, APCO25_PHASE2 -> "p25";
             case DMR -> "dmr";
-            case NXDN -> "nxdn";
+            case NXDN -> identityDomain == TrunkedIdentityDomain.NXDN_TYPE_C ? "nxdn-c" :
+                identityDomain == TrunkedIdentityDomain.NXDN_TYPE_D ? "nxdn-d" : null;
             default -> null;
         };
         String canonicalId = canonicalUuid(configurationId);

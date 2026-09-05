@@ -28,7 +28,8 @@ system/site labels, decoder choices, and RadioResolve identifiers do not partici
 For trunked systems:
 
 - complete P25 WACN/System identity can be shared by several receiver channels;
-- provisional P25, DMR, and NXDN systems remain saved-channel-specific; and
+- incomplete P25 observations create no radio-system identity, while DMR and NXDN systems remain saved-channel-specific;
+  and
 - each channel keeps its exact Alias List assignment even when several channels share one P25 radio system.
 
 A system-level alias is returned only when every applicable assigned list that resolves the identity produces the
@@ -80,14 +81,13 @@ ORDER BY summary.last_seen_ms DESC, summary.identity_id
 LIMIT ?;
 ```
 
-Positive local P25 talkgroups may carry complete home WACN/System/talkgroup evidence in the ordinary identity summary.
-A valid fully-qualified P25 talkgroup with local ID zero instead uses
-`p25_zero_local_fq_talkgroup_summary`, keyed by
-`(radio_system_id, home_wacn, home_system_id, home_talkgroup_id)`. This keeps different home tuples separate. Zero-local
-rows are diagnostic and review-only because they cannot create a usable talkgroup-zero Alias.
-
-New ordinary identities and zero-local tuples are each capped at 100,000 rows per radio system. Existing rows continue
-updating after the cap. Rows contain first/last times and fixed counters, not immutable events or JSON.
+P25 identities use one canonical summary keyed by kind, home WACN/System, and native identity. Ordinary identities use
+the serving WACN/System; fully-qualified identities use the decoded home tuple. A local ID, including zero for valid
+fully-qualified evidence, remains observation/display data and does not collapse distinct home identities. Zero is
+not offered as a usable Alias matcher. The system summary stores no cross-channel "last local ID"; Alias resolution
+uses exact channel-local evidence when available and withholds ambiguous roaming aggregates. New canonical identities
+are capped at 100,000 rows per radio system. Existing rows continue updating after the cap. Rows contain first/last
+times and fixed counters, not immutable events or JSON.
 
 ### Conventional channels
 
@@ -134,8 +134,9 @@ summary key whenever possible. Normal steady-state row creation approaches zero 
 
 Observed summaries use the configured Statistics retention period of 1 through 365 days. Time-first indexes select at
 most 1,000 expired rows per cleanup statement. Deleting a saved channel cascades its channel-owned conventional facts.
-Deleting an unshared provisional DMR, NXDN, or P25 system cascades its system summaries. A native P25 system remains
-while another receiver channel or retained system fact uses it, then bounded orphan cleanup removes it.
+Deleting a DMR or NXDN saved channel cascades its explicitly owned channel-scoped radio system and summaries. A native
+P25 system remains while another receiver channel or retained system fact uses it, then bounded orphan cleanup removes
+it. Incomplete P25 observations never create a provisional system.
 
 Alias policies, routes, and scan-list memberships are configuration and remain until an administrator changes or
 deletes them. Statistics clear never deletes those configuration rows.
@@ -150,7 +151,7 @@ Representative-volume tests require indexed searches for:
 
 - selected Alias List to configured receiver channels by `alias_list_id`;
 - receiver channels to radio systems by numeric IDs;
-- recent system identities and zero-local P25 tuples by `radio_system_id`;
+- recent canonical system identities by `radio_system_id`;
 - conventional identities by `channel_id`; and
 - exact and covering-range Alias matches by the existing matcher indexes.
 

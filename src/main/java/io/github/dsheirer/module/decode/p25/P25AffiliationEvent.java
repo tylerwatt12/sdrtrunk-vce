@@ -47,6 +47,8 @@ public class P25AffiliationEvent extends P25DecodeEvent
     }
 
     private final Outcome mOutcome;
+    private final Identifier<?> mRadio;
+    private final Identifier<?> mTalkgroup;
     private final Integer mRadioId;
     private final Integer mTalkgroupId;
 
@@ -55,6 +57,8 @@ public class P25AffiliationEvent extends P25DecodeEvent
     {
         super(eventType, timestamp);
         mOutcome = outcome;
+        mRadio = radio;
+        mTalkgroup = talkgroup;
         mRadioId = integerValue(radio);
         mTalkgroupId = integerValue(talkgroup);
     }
@@ -69,9 +73,21 @@ public class P25AffiliationEvent extends P25DecodeEvent
         return mRadioId;
     }
 
+    /** Original over-the-air radio identity, including a fully-qualified home tuple when supplied. */
+    public Identifier<?> getRadioIdentifier()
+    {
+        return mRadio;
+    }
+
     public Integer getTalkgroupId()
     {
         return mTalkgroupId;
+    }
+
+    /** Original over-the-air group identity, including a fully-qualified home tuple when supplied. */
+    public Identifier<?> getTalkgroupIdentifier()
+    {
+        return mTalkgroup;
     }
 
     private static Integer integerValue(Identifier<?> identifier)

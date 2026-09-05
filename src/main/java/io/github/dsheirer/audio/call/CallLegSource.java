@@ -13,6 +13,7 @@ package io.github.dsheirer.audio.call;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 /**
  * Immutable configured and learned source identity captured when a decoder call leg is created.
@@ -25,15 +26,20 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
  */
 public record CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
                             String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                            TrunkedIdentityDomain identityDomain,
                             ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
 {
-    public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null, null, false);
+    public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null,
+        TrunkedIdentityDomain.STANDARD, null, false);
 
     public CallLegSource
     {
         channelConfigurationId = normalize(channelConfigurationId);
         channelName = normalize(channelName);
         radioResolveId = normalize(radioResolveId);
+        identityDomain = identityDomain != null ? identityDomain :
+            decoderType == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C :
+                TrunkedIdentityDomain.STANDARD;
     }
 
     public boolean hasDurableAliasListId()
@@ -64,7 +70,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     public CallLegSource asTrafficChannel()
     {
         return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
-            radioResolveId, aliasListId, p25SiteIdentity, channelKind, true);
+            radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true);
     }
 
     private static String normalize(String value)

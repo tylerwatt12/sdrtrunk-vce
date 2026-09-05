@@ -13,7 +13,8 @@ The activity database supports a small set of bounded website and runtime querie
 The current model has two plain ownership levels. A `receiver_channel` is one saved channel configuration. A
 `radio_system` is a trunked system identity. Every site, quality, conventional, and detailed-activity row belongs to a
 receiver channel through its numeric `channel_id`. System-wide trunked summaries belong to a radio system through
-`radio_system_id`.
+`radio_system_id`. Retained detailed events store their observed radio-system and canonical identity references when
+known; they do not borrow a channel's later system assignment.
 
 Names, Alias List assignments, decoder choices, the configured primary frequency, and RadioResolve identifiers stay
 in the configuration tables. Activity tables do not copy them. Readers join `configuration_channel` when they need
@@ -26,8 +27,9 @@ decoder/source document exactly. The row-owned `channel_kind` is derived through
 save and checked against that same decoded document on load.
 
 No table described here stores raw decoder messages, a complete JSON object, or an unbounded immutable call log.
-Optional detailed Activity is retention-bound. Normal statistics use mutable summaries and hourly or 10-second
-buckets.
+Optional detailed Activity is retention-bound. Its P25 source/target references preserve canonical roaming identity,
+while observed-local and event-time NAC/RFSS/Site columns preserve only facts seen with that event. Normal statistics
+use mutable summaries and hourly or 10-second buckets.
 
 ## Saved channels and radio systems
 
@@ -35,7 +37,8 @@ buckets.
 
 One row is created when activity is first accepted for a saved channel. `configuration_id` is the canonical saved
 channel UUID and has a cascading foreign key to `configuration_channel(configuration_id)`. The row contains only its
-numeric ID, first and last observation times, and an optional `radio_system_id`.
+numeric ID, first and last observation times, an optional `radio_system_id`, and a monotonic assignment-generation
+watermark used to reject stale current-state evidence.
 
 Changing a channel name, system/site label, Alias List, or RadioResolve identifier does not change activity identity.
 Deleting the saved channel cascades all channel-owned site, quality, conventional, and detailed activity. Expected
@@ -46,26 +49,27 @@ cardinality is one row per observed saved channel: normally tens, and at most th
 One row owns protocol-neutral trunked identity summaries. Its stable `system_key` is:
 
 - `p25:<five-digit WACN hex>:<three-digit system hex>` after a complete P25 WACN and System ID are known;
-- `p25:channel:<configuration UUID>` while P25 identity is incomplete;
 - `dmr:channel:<configuration UUID>` for DMR; or
-- `nxdn:channel:<configuration UUID>` for NXDN.
+- `nxdn-c:channel:<configuration UUID>` or `nxdn-d:channel:<configuration UUID>` for the saved NXDN address domain.
 
 Two P25 receiver channels that learn the same complete WACN/System pair share one radio system. DMR and NXDN remain
-saved-channel-specific until validated protocol rules can prove a better native identity. Alias Lists never
-participate in system identity.
+saved-channel-specific until validated protocol rules can prove a better native identity; their system row has an
+explicit cascading configuration owner. Alias Lists never participate in system identity.
 
 `protocol_code` uses `1=P25`, `3=DMR`, and `4=NXDN`. `address_domain_code` describes how subscriber and talkgroup
 addresses are interpreted (`standard`, NXDN Type-C, or NXDN Type-D). P25 WACN and System ID are stored only on the
 native P25 system row; they are not repeated on `receiver_channel`.
 
-When provisional P25 identity becomes complete, the channel moves to the native row. Channel-owned facts collected
-under the provisional identity are cleared so they cannot be displayed under the new system. The detached
-provisional row is deleted immediately and its system-owned derived rows cascade. Deleting a DMR, NXDN, or
-provisional-P25 channel does the same. A shared native P25 row remains while another channel or retained system fact
-uses it, then bounded maintenance removes it after its final owner and retained facts are gone.
+Incomplete P25 observations do not create a provisional radio system. Optional detailed activity remains
+channel-owned with a null system reference until complete native identity is observed; system summaries are skipped.
+A newer contradictory partial site generation detaches the channel and advances its watermark, so delayed old
+current-state evidence cannot reattach it. Complete delayed calls may still update their correctly identified
+historical system without moving the channel.
 
-Expected cardinality is one row per established P25 system plus one per configured DMR, NXDN, or provisional P25
-channel. It does not grow with calls.
+Deleting a DMR or NXDN configuration cascades its channel-scoped system and derived rows coherently. A shared native
+P25 row remains while another channel or retained system fact uses it, then bounded maintenance removes it after its
+final owner and retained facts are gone. Expected cardinality is one row per established P25 system plus one per
+observed configured DMR or NXDN channel. It does not grow with calls.
 
 The directory and site-list access paths use these bounded query shapes:
 
@@ -91,9 +95,13 @@ One mutable row represents a talkgroup, radio, or P25 patch group on one radio s
 fixed action counters, logical-call and completed-output counters, optional latest counterpart/encryption data, and a
 latest over-the-air talker alias. Administrator aliases remain in the Alias tables and are resolved at read time.
 
-P25 fully-qualified identity state and its home WACN/System/talkgroup tuple are stored only when the tuple is complete
-and valid. A fully-qualified talkgroup whose local ID is zero uses `p25_zero_local_fq_talkgroup_summary` so unrelated
-home tuples cannot collapse into one row.
+The authoritative natural identity is `(radio_system_id, identity_kind_code, home_wacn, home_system_id,
+identity_id)`. P25 ordinary identities use the serving WACN/System as their home tuple; valid fully-qualified identities
+use their decoded home tuple. DMR and NXDN leave the home tuple null. A surrogate row ID gives relationships and events
+one compact foreign key. P25 local alias zero remains observation/display evidence and never replaces the positive
+canonical home identity, so unrelated roaming identities cannot collapse.
+The canonical summary deliberately stores no system-wide "last local ID"; local aliases are authoritative only in
+the channel-scoped event, site bucket, presence, and affiliation rows that observed them.
 
 The recent-identity and retention indexes begin with `radio_system_id` or `last_seen_ms` for the two concrete access
 paths. New identities are capped at 100,000 rows per system; existing rows continue updating at the cap. Retention
@@ -109,23 +117,25 @@ LIMIT ?;
 ### `trunked_radio_group_summary`
 
 One mutable row stores an observed radio-to-group relationship. `group_kind_code` distinguishes an ordinary talkgroup
-from a patch group, and `group_id` stores that group's local address. The row means the pair was observed; it does not
-claim that the radio is currently affiliated. Exact radio and group directions are index-backed. Admission is capped
-at 500,000 rows per system, existing rows continue updating, and retention removes expired rows.
+from a patch group. `radio_identity_id` and `group_identity_id` reference the two canonical summary rows; observed
+local addresses remain presentation evidence elsewhere. The row means the pair was observed; it does not claim that
+the radio is currently affiliated. Exact radio and group directions are index-backed. Admission is capped at 500,000
+rows per system, existing rows continue updating, and retention removes expired rows.
 
 ### `trunked_radio_affiliation`, `trunked_radio_channel_presence`, and
-`trunked_radio_presence_lifecycle`
+`trunked_radio_channel_presence_clear`
 
 These tables hold compact current state, not event history:
 
 - affiliation is the latest explicitly accepted or confirmed talkgroup for a radio;
 - channel presence is the receiver channel that decoded the latest authoritative registration or affiliation; and
-- lifecycle is the latest authoritative clear time, which prevents a delayed observation from recreating cleared
-  state.
+- channel-presence clear is a bounded per-channel canonical/local-alias watermark that prevents a delayed observation
+  from recreating cleared state without suppressing the same local number on another receiver channel.
 
-Channel presence has a composite foreign key that requires its `channel_id` to belong to the same `radio_system_id`.
-Calls, generic observations, and talker aliases do not invent current affiliation or channel presence. At most one
-row of each kind exists per radio and system. Time-first indexes support 1,000-row retention batches.
+Affiliation, channel presence, and clear watermarks have composite foreign keys requiring their `channel_id` to belong
+to the same `radio_system_id`. Calls, generic observations, and talker aliases do not invent current affiliation or
+channel presence. Current presence and affiliation have at most one row per canonical radio and system; clear rows
+are keyed by radio, system, and observing channel. Time-first indexes support 1,000-row retention batches.
 
 ### Logical-call and P25 learned-site buckets
 
@@ -236,9 +246,9 @@ and coalesces noisy updates. A stale site snapshot is rejected before it can cha
 moves or enriches already-counted summaries rather than counting another physical call. Recorded and streamed output
 updates output counters without inventing another call.
 
-The Statistics retention setting is 1 through 365 days. Time-based tables use ordered indexes and delete at most
-1,000 rows per statement. Maintenance repeats bounded batches until current. SQLite may reuse freed pages immediately;
-file compaction remains a separate maintenance action.
+The Statistics retention setting is 1 through 365 days. Time-based tables use ordered indexes and each maintenance
+pass deletes at most 1,000 rows per table. Later passes continue draining expired data. SQLite may reuse freed pages
+immediately; file compaction remains a separate maintenance action.
 
 Clearing one saved channel deletes that channel's learned site, quality, conventional, and optional detailed facts.
 Deleting a saved channel does the same through its foreign key. System-wide P25 history remains when another channel

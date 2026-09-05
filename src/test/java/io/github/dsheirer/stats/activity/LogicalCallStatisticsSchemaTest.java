@@ -6,6 +6,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -54,8 +56,13 @@ class LogicalCallStatisticsSchemaTest
             assertEquals(2, scalar(connection,
                 "SELECT SUM(observed_call_count) FROM p25_site_call_bucket"));
             assertEquals(1, scalar(connection, """
-                SELECT logical_call_count FROM trunked_logical_call_identity_bucket
-                WHERE identity_role_code=1 AND identity_kind_code=1 AND identity_id=1201
+                SELECT bucket.logical_call_count
+                FROM trunked_logical_call_identity_bucket bucket
+                JOIN radio_system_identity_summary identity
+                  ON identity.id=bucket.identity_summary_id
+                 AND identity.radio_system_id=bucket.radio_system_id
+                WHERE bucket.identity_role_code=1 AND identity.identity_kind_code=1
+                  AND identity.identity_id=1201
                 """));
 
             assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
@@ -75,7 +82,7 @@ class LogicalCallStatisticsSchemaTest
     }
 
     @Test
-    void nativeP25CallsShareASystemWhileUnresolvedCallsStayChannelScoped() throws Exception
+    void nativeP25CallsShareASystemWhileUnresolvedCallsCreateNoSyntheticSystem() throws Exception
     {
         try(Connection connection = open("identity.sqlite"))
         {
@@ -88,18 +95,14 @@ class LogicalCallStatisticsSchemaTest
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system"));
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_channel"));
 
-            //Remove the shared derived rows so each channel can be characterized independently as provisional.
+            //Remove the shared derived rows, then prove incomplete P25 identity creates no fake radio system.
             execute(connection, "DELETE FROM receiver_channel");
             execute(connection, "DELETE FROM radio_system");
-            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+            assertFalse(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 call(CHANNEL_A, 3, null, null, List.of())));
-            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+            assertFalse(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 call(CHANNEL_B, 4, null, null, List.of())));
-            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM radio_system"));
-            assertEquals("p25:channel:" + CHANNEL_A + "|p25:channel:" + CHANNEL_B,
-                text(connection, """
-                    SELECT group_concat(system_key, '|') FROM (SELECT system_key FROM radio_system ORDER BY system_key)
-                    """));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
         }
     }
@@ -190,9 +193,13 @@ class LogicalCallStatisticsSchemaTest
     {
         return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(9, sequence),
             CALL_START + sequence, configurationId, Protocol.APCO25.name(),
-            ReceiverActivityRecords.IdentityDomain.STANDARD, wacn, systemId, 1201, Form.TALKGROUP.name(),
-            List.of(), 700001, true, 0x84, 1, ReceiverActivityRecords.P25TargetIdentity.ORDINARY,
-            List.of(), sites);
+            TrunkedIdentityDomain.STANDARD, wacn, systemId, 1201, Form.TALKGROUP.name(),
+            List.of(), 700001, true, 0x84, 1, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), sites.stream()
+                .map(site -> new ReceiverActivityRecords.P25SiteCallObservation(configurationId, site,
+                    700001, 1201, Form.TALKGROUP.name(), ReceiverActivityRecords.P25Identity.ORDINARY,
+                    ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), List.of()))
+                .toList());
     }
 
     private static P25SiteIdentity site(int rfss, int site)

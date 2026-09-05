@@ -19,22 +19,21 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Maps protocol-neutral trunked call-start notifications into the existing compact activity projection.
+ * Maps DMR and NXDN call-start notifications into the compact activity projection.  P25 call identity is owned by
+ * the P25 grant/activity path and deliberately does not flow through this tracker mapper.
  */
 class TrunkedCallActivityMapper
 {
@@ -66,6 +65,12 @@ class TrunkedCallActivityMapper
         }
 
         IdentifierCollection identifiers = event.getIdentifierCollection();
+        TrunkedIdentityDomain identityDomain = identityDomain(channel);
+        if(protocol == Protocol.NXDN && !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers,
+            identityDomain))
+        {
+            return null;
+        }
         Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
         IChannelDescriptor descriptor = event.getChannelDescriptor();
@@ -87,14 +92,16 @@ class TrunkedCallActivityMapper
         String targetKind = target != null && target.getForm() != null ? target.getForm().name() : null;
 
         return new ReceiverActivityRecords.ActivityEvent(event.getTimeStart(), configurationId,
-            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, protocol.name(), ReceiverActivityRecords.Action.CALL,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, configuredProtocolName(channel, protocol),
+            ReceiverActivityRecords.Action.CALL,
             eventType.name(), sourceId, targetId, targetKind, List.of(), frequency,
             descriptor != null ? descriptor.toString() : null, timeslot, encrypted,
             encrypted && encryptionKey != null ? encryptionKey.getAlgorithm() : null,
             encrypted && encryptionKey != null ? encryptionKey.getKey() : null,
             null, intValue(identifiers, Form.SYSTEM), null, null, intValue(identifiers, Form.SITE),
             value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
-            identityDomain(channel, identifiers), ReceiverActivityRecords.P25TargetIdentity.UNKNOWN, List.of());
+            identityDomain, ReceiverActivityRecords.P25Identity.UNKNOWN,
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of());
     }
 
     ReceiverActivityRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
@@ -115,12 +122,17 @@ class TrunkedCallActivityMapper
         }
 
         IdentifierCollection identifiers = attribution.identifiers();
+        TrunkedIdentityDomain identityDomain = identityDomain(channel);
+        if(protocol == Protocol.NXDN && !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers,
+            identityDomain))
+        {
+            return null;
+        }
         Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
         Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Integer destinationId = identityId(target);
         String destinationKind = target != null && target.getForm() != null ? target.getForm().name() : null;
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
-        ReceiverActivityRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
         String configurationId = ChannelConfigurationKey.configured(channel);
         IChannelDescriptor descriptor = attribution.channelDescriptor();
         Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
@@ -133,20 +145,19 @@ class TrunkedCallActivityMapper
 
         if(!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
             !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
-            attribution.encryptionKeyId() == null && !targetIdentity.isStableFullyQualified())
+            attribution.encryptionKeyId() == null)
         {
             return null;
         }
 
         return new ReceiverActivityRecords.TrunkedCallAttribution(
-            attribution.callStartEpochMilliseconds(), configurationId,
+            attribution.callStartEpochMilliseconds(), configurationId, configuredProtocolName(channel, protocol),
             frequency, attribution.timeslot(),
             destinationId != null ? destinationId : 0, destinationKind, patchMemberTalkgroups(target),
             sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
             attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
-            identityDomain(channel, identifiers), targetIdentity,
-            p25PatchMemberIdentities(target, protocol));
+            identityDomain);
     }
 
     private static Integer identityId(Identifier identifier)
@@ -154,7 +165,8 @@ class TrunkedCallActivityMapper
         if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
             patch.getValue().getPatchGroup() != null)
         {
-            int value = patch.getValue().getPatchGroup().getValue();
+            Identifier primary = patch.getValue().getPatchGroup();
+            int value = primary.getValue() instanceof Number number ? number.intValue() : -1;
             return value > 0 ? value : null;
         }
 
@@ -177,59 +189,6 @@ class TrunkedCallActivityMapper
             .distinct()
             .sorted()
             .toList();
-    }
-
-    private static ReceiverActivityRecords.P25TargetIdentity p25TargetIdentity(Identifier identifier,
-                                                                              Protocol protocol)
-    {
-        if(protocol != Protocol.APCO25)
-        {
-            return ReceiverActivityRecords.P25TargetIdentity.UNKNOWN;
-        }
-
-        Identifier primary = identifier;
-
-        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
-        {
-            primary = patch.getValue().getPatchGroup();
-        }
-
-        if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
-        {
-            return ReceiverActivityRecords.P25TargetIdentity.fullyQualified(fullyQualified.getWacn(),
-                fullyQualified.getSystem(), fullyQualified.getTalkgroup());
-        }
-
-        return primary instanceof TalkgroupIdentifier ? ReceiverActivityRecords.P25TargetIdentity.ORDINARY :
-            ReceiverActivityRecords.P25TargetIdentity.UNKNOWN;
-    }
-
-    private static List<ReceiverActivityRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(
-        Identifier identifier, Protocol protocol)
-    {
-        if(protocol != Protocol.APCO25 || !(identifier instanceof PatchGroupIdentifier patch) ||
-            patch.getValue() == null)
-        {
-            return List.of();
-        }
-
-        List<ReceiverActivityRecords.P25PatchMemberIdentity> identities = new ArrayList<>();
-        for(TalkgroupIdentifier member: patch.getValue().getPatchedTalkgroupIdentifiers())
-        {
-            if(member == null || member.getValue() == null || member.getValue() <= 0 ||
-                member.getProtocol() != Protocol.APCO25)
-            {
-                continue;
-            }
-
-            ReceiverActivityRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(member, protocol);
-            if(targetIdentity.state() != ReceiverActivityRecords.P25IdentityState.UNKNOWN)
-            {
-                identities.add(new ReceiverActivityRecords.P25PatchMemberIdentity(member.getValue(), targetIdentity));
-            }
-        }
-
-        return List.copyOf(identities);
     }
 
     private static EncryptionKeyIdentifier encryptionIdentifier(IdentifierCollection identifiers)
@@ -265,40 +224,25 @@ class TrunkedCallActivityMapper
         }
     }
 
-    private static ReceiverActivityRecords.IdentityDomain identityDomain(Channel channel,
-                                                                       IdentifierCollection identifiers)
+    private static TrunkedIdentityDomain identityDomain(Channel channel)
     {
         if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
         {
-            if(config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD())
-            {
-                return ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D;
-            }
-
-            return hasTypeDIdentifier(identifiers) ? ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D :
-                ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C;
+            return config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD() ?
+                TrunkedIdentityDomain.NXDN_TYPE_D :
+                TrunkedIdentityDomain.NXDN_TYPE_C;
         }
 
-        return ReceiverActivityRecords.IdentityDomain.STANDARD;
+        return TrunkedIdentityDomain.STANDARD;
     }
 
-    private static boolean hasTypeDIdentifier(IdentifierCollection identifiers)
+    private static String configuredProtocolName(Channel channel, Protocol fallback)
     {
-        if(identifiers == null)
-        {
-            return false;
-        }
-
-        for(Identifier identifier: identifiers.getIdentifiers())
-        {
-            if(identifier instanceof NXDNTalkgroupIdentifier talkgroup && talkgroup.isTypeD() ||
-                identifier instanceof NXDNRadioIdentifier radio && radio.isTypeD())
-            {
-                return true;
-            }
-        }
-
-        return false;
+        DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
+        return decoderType == DecoderType.DMR ? Protocol.DMR.name() :
+            decoderType == DecoderType.NXDN ? Protocol.NXDN.name() :
+            fallback != null ? fallback.name() : Protocol.UNKNOWN.name();
     }
 
     private static Identifier first(IdentifierCollection identifiers, Form form)
@@ -317,11 +261,6 @@ class TrunkedCallActivityMapper
         return identifier != null && identifier.getValue() != null ? identifier.getValue().toString() : null;
     }
 
-    private static String blankToNull(String value)
-    {
-        return value != null && !value.isBlank() ? value : null;
-    }
-
     private record DecodeTypeMatch(DecoderType decoderType, Protocol protocol)
     {
         private static DecodeTypeMatch from(Channel channel, Protocol protocol)
@@ -333,9 +272,7 @@ class TrunkedCallActivityMapper
         private boolean matches()
         {
             return protocol == Protocol.DMR && decoderType == DecoderType.DMR ||
-                protocol == Protocol.NXDN && decoderType == DecoderType.NXDN ||
-                protocol == Protocol.APCO25 &&
-                    (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
+                protocol == Protocol.NXDN && decoderType == DecoderType.NXDN;
         }
     }
 }

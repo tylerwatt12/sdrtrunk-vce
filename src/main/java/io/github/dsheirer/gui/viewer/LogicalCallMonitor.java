@@ -1480,13 +1480,11 @@ public class LogicalCallMonitor extends BorderPane
             case NON_P25_RESOLUTION_NOT_APPLICABLE -> "Duplicate matching does not apply to this decoder";
             case MISSING_CALL_SOURCE -> "Call source was unavailable";
             case MISSING_DECODER_TYPE -> "Decoder identity was unavailable";
-            case MISSING_DURABLE_ALIAS_LIST_ID -> "Alias-list identity was unavailable";
-            case MISSING_LEARNED_SITE_IDENTITY -> "Learned site identity was unavailable";
+            case MISSING_RADIO_SYSTEM_IDENTITY -> "Radio-system identity was unavailable";
             case MISSING_DESTINATION_IDENTITY -> "Talkgroup identity was unavailable";
             case MISSING_ENCRYPTION_STATE -> "Encryption state wasn't confirmed";
             case INVALID_CALL_TIMING -> "Call timing was invalid";
             case COHORT_CAPACITY -> "Too many possible copies were already waiting";
-            case ALIAS_LIST_MISMATCH -> "Different alias lists";
             case WACN_MISMATCH -> "Different WACNs";
             case SYSTEM_ID_MISMATCH -> "Different systems";
             case DESTINATION_MISMATCH -> "Different talkgroups";
