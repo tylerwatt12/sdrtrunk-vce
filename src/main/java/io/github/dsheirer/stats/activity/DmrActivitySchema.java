@@ -31,7 +31,6 @@ import java.util.TreeMap;
  */
 public final class DmrActivitySchema
 {
-    public static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
     public static final int MAXIMUM_TALKGROUPS_PER_CHANNEL = 4_096;
     public static final int MAXIMUM_RADIOS_PER_CHANNEL = 32_768;
     public static final int MAXIMUM_DMR_ID = 0xFFFFFF;
@@ -293,32 +292,6 @@ public final class DmrActivitySchema
         }
     }
 
-    public static CleanupResult deleteOlderThan(Connection connection, long cutoffEpochMilliseconds)
-        throws SQLException
-    {
-        int talkgroups = deleteAllBatches(connection, """
-            DELETE FROM dmr_conventional_talkgroup_summary
-            WHERE (channel_id, frequency_hz, timeslot, talkgroup_id) IN (
-                SELECT channel_id, frequency_hz, timeslot, talkgroup_id
-                FROM dmr_conventional_talkgroup_summary INDEXED BY idx_dmr_conventional_talkgroup_last_seen
-                WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, channel_id, frequency_hz, timeslot, talkgroup_id
-                LIMIT ?
-            )
-            """, cutoffEpochMilliseconds);
-        int radios = deleteAllBatches(connection, """
-            DELETE FROM dmr_conventional_radio_summary
-            WHERE (channel_id, frequency_hz, timeslot, radio_id) IN (
-                SELECT channel_id, frequency_hz, timeslot, radio_id
-                FROM dmr_conventional_radio_summary INDEXED BY idx_dmr_conventional_radio_last_seen
-                WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, channel_id, frequency_hz, timeslot, radio_id
-                LIMIT ?
-            )
-            """, cutoffEpochMilliseconds);
-        return new CleanupResult(talkgroups, radios);
-    }
-
     public static int resetStats(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -513,28 +486,6 @@ public final class DmrActivitySchema
         {
             throw new SQLException("Invalid conventional DMR receiver channel");
         }
-    }
-
-    private static int deleteAllBatches(Connection connection, String sql, long cutoffEpochMilliseconds)
-        throws SQLException
-    {
-        int total = 0;
-
-        try(PreparedStatement statement = connection.prepareStatement(sql))
-        {
-            int deleted;
-
-            do
-            {
-                statement.setLong(1, cutoffEpochMilliseconds);
-                statement.setInt(2, RETENTION_DELETE_BATCH_SIZE);
-                deleted = statement.executeUpdate();
-                total = Math.addExact(total, deleted);
-            }
-            while(deleted > 0);
-        }
-
-        return total;
     }
 
     private static void validateTableDefinition(Connection connection, String table,
@@ -759,14 +710,6 @@ public final class DmrActivitySchema
         else
         {
             statement.setNull(index, java.sql.Types.INTEGER);
-        }
-    }
-
-    public record CleanupResult(int talkgroups, int radios)
-    {
-        public int total()
-        {
-            return Math.addExact(talkgroups, radios);
         }
     }
 

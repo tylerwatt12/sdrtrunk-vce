@@ -171,9 +171,7 @@ class DmrActivitySchemaTest
             record(connection, groupCall(1_000, 2_000, "old", 461_125_000L, 1, 91, 101, false));
             record(connection, groupCall(9_000, 10_000, "keep", 462_125_000L, 2, 92, 102, false));
 
-            DmrActivitySchema.CleanupResult cleanup = DmrActivitySchema.deleteOlderThan(connection, 5_000);
-            assertEquals(1, cleanup.talkgroups());
-            assertEquals(1, cleanup.radios());
+            assertEquals(2, ReceiverActivitySchema.runRetentionPass(connection, 5_000));
             assertEquals(2, DmrActivitySchema.clearChannelStats(connection, configurationId("keep")));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
 

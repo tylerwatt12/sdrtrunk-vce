@@ -44,7 +44,6 @@ final class RadioSystemSchema
     private static final int IDENTITY_DOMAIN_STANDARD = 0;
     private static final int IDENTITY_DOMAIN_NXDN_TYPE_C = 1;
     private static final int IDENTITY_DOMAIN_NXDN_TYPE_D = 2;
-    private static final int DELETE_BATCH_SIZE = 1_000;
     static final int MAX_IDENTITIES_PER_SYSTEM = 100_000;
     static final int MAX_RELATIONSHIPS_PER_SYSTEM = 500_000;
     static final int MAX_TALKER_ALIAS_CHARACTERS = 160;
@@ -1463,66 +1462,6 @@ final class RadioSystemSchema
         }
     }
 
-    static int deleteOlderThan(Connection connection, long cutoff) throws SQLException
-    {
-        int deleted = 0;
-        deleted += deleteIdentityBatches(connection, "trunked_radio_affiliation", cutoff);
-        deleted += deleteIdentityBatches(connection, "trunked_radio_channel_presence", cutoff);
-        deleted += deleteIdentityBatches(connection, "trunked_radio_channel_presence_clear", cutoff);
-        deleted += deleteIdentityBatches(connection, "trunked_radio_group_summary", cutoff);
-        deleted += deleteIdentityBatches(connection, "radio_system_identity_summary", cutoff);
-        return deleted;
-    }
-
-    /** Removes at most one bounded batch of systems after their channels and retained facts are gone. */
-    static int pruneUnusedRadioSystems(Connection connection) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            DELETE FROM radio_system
-            WHERE id IN (
-                SELECT system.id
-                FROM radio_system system
-                WHERE NOT EXISTS (SELECT 1 FROM receiver_channel WHERE radio_system_id = system.id)
-                  AND NOT EXISTS (
-                              SELECT 1 FROM radio_system_identity_summary WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_radio_group_summary WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_radio_affiliation WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_radio_channel_presence WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_radio_channel_presence_clear WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_logical_call_bucket WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_logical_call_identity_bucket WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM receiver_activity_event WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM trunked_signaling_activity_bucket WHERE radio_system_id = system.id
-                          )
-                          AND NOT EXISTS (
-                              SELECT 1 FROM p25_learned_site WHERE radio_system_id = system.id
-                          )
-                ORDER BY system.id
-                LIMIT ?
-            )
-            """))
-        {
-            statement.setInt(1, DELETE_BATCH_SIZE);
-            return statement.executeUpdate();
-        }
-    }
-
     static int reset(Connection connection) throws SQLException
     {
         int deleted = 0;
@@ -2075,106 +2014,6 @@ final class RadioSystemSchema
         }
 
         return index;
-    }
-
-    private static int deleteIdentityBatches(Connection connection, String table, long cutoff) throws SQLException
-    {
-        String sql;
-
-        if("radio_system_identity_summary".equals(table))
-        {
-            sql = """
-                DELETE FROM radio_system_identity_summary
-                WHERE id IN (
-                    SELECT identity.id
-                    FROM radio_system_identity_summary identity INDEXED BY idx_radio_system_identity_retention
-                    WHERE identity.last_seen_ms < ?
-                      AND NOT EXISTS (SELECT 1 FROM trunked_radio_group_summary child
-                          WHERE child.radio_identity_id=identity.id OR child.group_identity_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM trunked_radio_affiliation child
-                          WHERE child.radio_identity_id=identity.id OR child.talkgroup_identity_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM trunked_radio_channel_presence child
-                          WHERE child.radio_identity_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM trunked_radio_channel_presence_clear child
-                          WHERE child.radio_identity_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM trunked_logical_call_identity_bucket child
-                          WHERE child.identity_summary_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM p25_site_call_identity_bucket child
-                          WHERE child.identity_summary_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM receiver_activity_event child
-                          WHERE child.source_identity_summary_id=identity.id
-                             OR child.target_identity_summary_id=identity.id)
-                      AND NOT EXISTS (SELECT 1 FROM activity_event_identity_member child
-                          WHERE child.identity_summary_id=identity.id)
-                    ORDER BY identity.last_seen_ms, identity.radio_system_id, identity.identity_kind_code,
-                        identity.home_wacn, identity.home_system_id, identity.identity_id
-                    LIMIT %d
-                )
-                """.formatted(DELETE_BATCH_SIZE);
-        }
-        else if("trunked_radio_group_summary".equals(table))
-        {
-            sql = """
-                DELETE FROM trunked_radio_group_summary
-                WHERE (radio_system_id, radio_identity_id, group_identity_id) IN (
-                    SELECT radio_system_id, radio_identity_id, group_identity_id
-                    FROM trunked_radio_group_summary INDEXED BY idx_trunked_radio_group_retention
-                    WHERE last_seen_ms < ?
-                    ORDER BY last_seen_ms, radio_system_id, radio_identity_id, group_identity_id
-                    LIMIT %d
-                )
-                """.formatted(DELETE_BATCH_SIZE);
-        }
-        else if("trunked_radio_affiliation".equals(table))
-        {
-            sql = """
-                DELETE FROM trunked_radio_affiliation
-                WHERE (radio_system_id, radio_identity_id) IN (
-                    SELECT radio_system_id, radio_identity_id
-                    FROM trunked_radio_affiliation INDEXED BY idx_trunked_radio_affiliation_retention
-                    WHERE confirmed_at_ms < ?
-                    ORDER BY confirmed_at_ms, radio_system_id, radio_identity_id
-                    LIMIT %d
-                )
-                """.formatted(DELETE_BATCH_SIZE);
-        }
-        else if("trunked_radio_channel_presence".equals(table))
-        {
-            sql = """
-                DELETE FROM trunked_radio_channel_presence
-                WHERE (radio_system_id, radio_identity_id) IN (
-                    SELECT radio_system_id, radio_identity_id
-                    FROM trunked_radio_channel_presence INDEXED BY idx_trunked_radio_channel_presence_retention
-                    WHERE confirmed_at_ms < ?
-                    ORDER BY confirmed_at_ms, radio_system_id, radio_identity_id
-                    LIMIT %d
-                )
-                """.formatted(DELETE_BATCH_SIZE);
-        }
-        else if("trunked_radio_channel_presence_clear".equals(table))
-        {
-            sql = """
-                DELETE FROM trunked_radio_channel_presence_clear
-                WHERE (radio_system_id, radio_identity_id, channel_id) IN (
-                    SELECT radio_system_id, radio_identity_id, channel_id
-                    FROM trunked_radio_channel_presence_clear
-                        INDEXED BY idx_trunked_radio_channel_presence_clear_retention
-                    WHERE cleared_at_ms < ?
-                    ORDER BY cleared_at_ms, radio_system_id, radio_identity_id, channel_id
-                    LIMIT %d
-                )
-                """.formatted(DELETE_BATCH_SIZE);
-        }
-        else
-        {
-            throw new IllegalArgumentException("Unsupported trunked identity retention table: " + table);
-        }
-
-        try(PreparedStatement statement = connection.prepareStatement(sql))
-        {
-            statement.setLong(1, cutoff);
-            return statement.executeUpdate();
-        }
     }
 
     private static void validateRadioSystemKeys(Connection connection) throws SQLException

@@ -105,7 +105,7 @@ the channel-scoped event, site bucket, presence, and affiliation rows that obser
 
 The recent-identity and retention indexes begin with `radio_system_id` or `last_seen_ms` for the two concrete access
 paths. New identities are capped at 100,000 rows per system; existing rows continue updating at the cap. Retention
-removes expired rows in batches of at most 1,000.
+uses the shared bounded maintenance pass described below.
 
 ```sql
 SELECT ... FROM radio_system_identity_summary
@@ -135,7 +135,7 @@ These tables hold compact current state, not event history:
 Affiliation, channel presence, and clear watermarks have composite foreign keys requiring their `channel_id` to belong
 to the same `radio_system_id`. Calls, generic observations, and talker aliases do not invent current affiliation or
 channel presence. Current presence and affiliation have at most one row per canonical radio and system; clear rows
-are keyed by radio, system, and observing channel. Time-first indexes support 1,000-row retention batches.
+are keyed by radio, system, and observing channel. Time-first indexes support bounded retention batches.
 
 ### Logical-call and P25 learned-site buckets
 
@@ -185,7 +185,7 @@ Repeated cumulative snapshots do not refresh an old child unless that child is o
 
 Admission is capped at 1,024 channel facts and 256 neighbor facts per receiver channel. At an unusually large 100-site
 installation, the defensive maximum is therefore 102,400 channel rows and 25,600 neighbor rows. Old rows are removed
-in batches of at most 1,000.
+through the shared bounded pass.
 
 ```sql
 SELECT ... FROM trunked_site_channel_summary
@@ -229,7 +229,7 @@ LIMIT ?;
 8,640/day, 259,200 at the default 30-day retention, or 3,153,600 at the maximum 365-day retention.
 
 The channel-and-time index serves a site's latest and chart queries. The time-first covering index lets maintenance
-select at most 1,000 expired keys without scanning the table. Samples travel through the bounded statistics queue and
+select a bounded set of expired keys without scanning the table. Samples travel through the bounded statistics queue and
 single database writer; decoder and tuner threads never wait for SQLite.
 
 ```sql
@@ -246,8 +246,17 @@ and coalesces noisy updates. A stale site snapshot is rejected before it can cha
 moves or enriches already-counted summaries rather than counting another physical call. Recorded and streamed output
 updates output counters without inventing another call.
 
-The Statistics retention setting is 1 through 365 days. Time-based tables use ordered indexes and each maintenance
-pass deletes at most 1,000 rows per table. Later passes continue draining expired data. SQLite may reuse freed pages
+The Statistics retention setting is 1 through 365 days. Time-based tables use ordered indexes. One routine
+maintenance pass deletes at most 1,000 rows in total across the entire activity database, with at most 256 direct
+deletes from any one task. A cursor in the bounded status store rotates the first task, so a large table cannot starve
+later tables. Startup runs exactly one pass. If expired data remains, the writer schedules more passes at short safe
+boundaries after live observation batches, while giving an empty receiver queue the earliest opportunity. A busy
+receiver therefore keeps accepting and committing observations while cleanup converges instead of draining the whole
+backlog before startup or in one hourly pause.
+
+Routine parent deletes require every retained child to be gone first. The 1,000-row pass cap is therefore also the
+total deleted-row cap: foreign-key cascades add no hidden child-row deletes. Explicit channel clear and full reset are
+operator actions and intentionally remain complete rather than using the routine cap. SQLite may reuse freed pages
 immediately; file compaction remains a separate maintenance action.
 
 Clearing one saved channel deletes that channel's learned site, quality, conventional, and optional detailed facts.

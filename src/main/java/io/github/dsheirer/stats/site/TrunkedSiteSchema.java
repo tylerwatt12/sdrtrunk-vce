@@ -36,7 +36,6 @@ public final class TrunkedSiteSchema
     public static final int PROTOCOL_NXDN = 4;
     public static final int MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT = 1_024;
     public static final int MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT = 256;
-    public static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
     public static final int UNKNOWN = -1;
     public static final int CHANNEL_ROLE_CURRENT_CONTROL = 1;
     public static final int CHANNEL_ROLE_ALTERNATE_CONTROL = 1 << 1;
@@ -509,52 +508,6 @@ public final class TrunkedSiteSchema
         }
     }
 
-    /**
-     * Deletes expired learned facts in bounded, time-indexed batches. Child rows are removed independently before
-     * expired site parents, so an active site cannot keep an obsolete channel or neighbor alive indefinitely.
-     *
-     * <p>The caller owns the transaction and must use a connection with foreign keys enabled so deleting an expired
-     * site also removes any remaining descendants.</p>
-     */
-    public static CleanupResult deleteOlderThan(Connection connection, long cutoffEpochMilliseconds)
-        throws SQLException
-    {
-        int channels = deleteAllBatches(connection, """
-            DELETE FROM trunked_site_channel_summary
-            WHERE (channel_id, channel_number, inbound_channel_number, timeslot, frequency_hz) IN (
-                SELECT channel_id, channel_number, inbound_channel_number, timeslot, frequency_hz
-                FROM trunked_site_channel_summary INDEXED BY idx_trunked_site_channel_last_seen
-                WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, channel_id, channel_number, inbound_channel_number, timeslot, frequency_hz
-                LIMIT ?
-            )
-            """, cutoffEpochMilliseconds);
-        int neighbors = deleteAllBatches(connection, """
-            DELETE FROM trunked_site_neighbor_summary
-            WHERE (channel_id, variant_code, location_category_code, network_id, system_id, site_id,
-                   channel_number, frequency_hz) IN (
-                SELECT channel_id, variant_code, location_category_code, network_id, system_id, site_id,
-                       channel_number, frequency_hz
-                FROM trunked_site_neighbor_summary INDEXED BY idx_trunked_site_neighbor_last_seen
-                WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, channel_id, variant_code, location_category_code, network_id, system_id, site_id,
-                         channel_number, frequency_hz
-                LIMIT ?
-            )
-            """, cutoffEpochMilliseconds);
-        int sites = deleteAllBatches(connection, """
-            DELETE FROM trunked_site_snapshot
-            WHERE channel_id IN (
-                SELECT channel_id
-                FROM trunked_site_snapshot INDEXED BY idx_trunked_site_snapshot_last_seen
-                WHERE last_seen_ms < ?
-                ORDER BY last_seen_ms, channel_id
-                LIMIT ?
-            )
-            """, cutoffEpochMilliseconds);
-        return new CleanupResult(channels, neighbors, sites);
-    }
-
     private static void validatePrimaryKey(Connection connection, String table, List<String> expected)
         throws SQLException
     {
@@ -598,28 +551,6 @@ public final class TrunkedSiteSchema
         {
             throw new SQLException("SQLite schema has incorrect columns for index [" + index + "]: " + actual);
         }
-    }
-
-    private static int deleteAllBatches(Connection connection, String sql, long cutoffEpochMilliseconds)
-        throws SQLException
-    {
-        int total = 0;
-
-        try(PreparedStatement statement = connection.prepareStatement(sql))
-        {
-            int deleted;
-
-            do
-            {
-                statement.setLong(1, cutoffEpochMilliseconds);
-                statement.setInt(2, RETENTION_DELETE_BATCH_SIZE);
-                deleted = statement.executeUpdate();
-                total = Math.addExact(total, deleted);
-            }
-            while(deleted > 0);
-        }
-
-        return total;
     }
 
     private static long observationTime(long childObservationTime, long snapshotObservationTime)
@@ -1154,14 +1085,6 @@ public final class TrunkedSiteSchema
         {
             this(variantCode, locationCategoryCode, networkId, systemId, siteId, channelNumber, frequencyHertz,
                 statusFlags, 0);
-        }
-    }
-
-    public record CleanupResult(int channelsDeleted, int neighborsDeleted, int sitesDeleted)
-    {
-        public int total()
-        {
-            return Math.addExact(Math.addExact(channelsDeleted, neighborsDeleted), sitesDeleted);
         }
     }
 

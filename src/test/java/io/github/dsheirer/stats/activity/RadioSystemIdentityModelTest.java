@@ -647,7 +647,7 @@ class RadioSystemIdentityModelTest
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
             execute(connection, "DELETE FROM radio_system_identity_summary WHERE radio_system_id=" + system);
             execute(connection, "DELETE FROM trunked_radio_group_summary WHERE radio_system_id=" + system);
-            assertEquals(1, ReceiverActivitySchema.pruneUnusedRadioSystems(connection));
+            assertEquals(1, ReceiverActivitySchema.runRetentionPass(connection, 0));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
         }
     }

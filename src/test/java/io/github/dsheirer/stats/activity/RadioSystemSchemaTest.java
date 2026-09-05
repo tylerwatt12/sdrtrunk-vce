@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -174,7 +175,7 @@ class RadioSystemSchemaTest
                 VALUES (%d, %d, %d, 102, 1000)
                 """.formatted(radioSystemId, clearedRadioIdentityId, channelId));
 
-            assertTrue(ReceiverActivitySchema.deleteOlderThan(connection, 2_000) >= 6);
+            assertTrue(ReceiverActivitySchema.runRetentionPass(connection, 2_000) >= 6);
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM radio_system_identity_summary WHERE radio_system_id=" + radioSystemId));
             assertEquals(0, scalar(connection,
@@ -232,6 +233,8 @@ class RadioSystemSchemaTest
         }
         SdrTrunkDatabaseSchema.create(connection);
         ReceiverActivitySchema.create(connection);
+        DmrActivitySchema.create(connection);
+        TrunkedSiteSchema.create(connection);
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,

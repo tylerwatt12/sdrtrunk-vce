@@ -129,7 +129,7 @@ class LogicalCallStatisticsSchemaTest
                 """, CALL_START - 1, CALL_START + 3_600_000L)
                 .contains("idx_p25_site_call_bucket_time"));
 
-            assertTrue(ReceiverActivitySchema.deleteOlderThan(connection, CALL_START + 3_600_001L) > 0);
+            assertTrue(ReceiverActivitySchema.runRetentionPass(connection, CALL_START + 3_600_001L) > 0);
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_learned_site"));

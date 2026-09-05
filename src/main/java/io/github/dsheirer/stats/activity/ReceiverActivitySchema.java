@@ -56,7 +56,6 @@ public class ReceiverActivitySchema
     public static final int IDENTITY_KIND_PATCH_GROUP = 3;
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
-    static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
     private static final int NULL_TIMESLOT = -1;
 
     private static final int RECEIVER_TRUNKED_SITE = 1;
@@ -247,6 +246,31 @@ public class ReceiverActivitySchema
         validateIndexColumns(connection, "idx_p25_site_call_identity_retention",
             List.of("bucket_start_ms", "radio_system_id", "learned_site_id", "channel_id",
                 "identity_role_code", "identity_summary_id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_retention",
+            List.of("observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_radio_system",
+            List.of("radio_system_id", "id"));
+        validateIndexColumns(connection, "idx_trunked_signaling_activity_system",
+            List.of("radio_system_id", "channel_id", "bucket_start_ms"));
+        validateIndexColumns(connection, "idx_p25_site_snapshot_retention", List.of("last_seen_ms", "channel_id"));
+        validateIndexColumns(connection, "idx_p25_learned_site_retention",
+            List.of("last_seen_ms", "radio_system_id", "learned_site_id"));
+        for(String index: List.of("idx_p25_site_channel_retention", "idx_p25_site_channel_tag_retention",
+            "idx_p25_site_frequency_band_retention", "idx_p25_foreign_system_band_retention",
+            "idx_p25_site_neighbor_retention", "idx_p25_site_patch_group_retention",
+            "idx_p25_site_patch_group_talkgroup_retention", "idx_p25_site_patch_group_radio_retention"))
+        {
+            validateIndexColumns(connection, index, List.of("confirmed_at_ms"));
+        }
+        for(String index: List.of("idx_p25_site_channel_summary_retention",
+            "idx_p25_site_channel_tag_summary_retention", "idx_p25_site_frequency_band_summary_retention",
+            "idx_p25_foreign_system_band_summary_retention", "idx_p25_site_neighbor_summary_retention",
+            "idx_p25_site_patch_group_summary_retention",
+            "idx_p25_site_patch_group_talkgroup_summary_retention",
+            "idx_p25_site_patch_group_radio_summary_retention"))
+        {
+            validateIndexColumns(connection, index, List.of("last_seen_ms"));
+        }
     }
 
     static Long recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
@@ -1400,69 +1424,10 @@ public class ReceiverActivitySchema
         return selectReceiverChannelId(connection, quality.configurationId());
     }
 
-    static int deleteOlderThan(Connection connection, long cutoffEpochMilliseconds) throws SQLException
+    /** Runs one globally bounded retention pass across every activity subsystem. */
+    public static int runRetentionPass(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
-        int deleted = 0;
-        //Hourly rows can contain observations on both sides of an arbitrary retention instant. Preserve that
-        //overlapping hour and delete only buckets that end at or before the cutoff.
-        long hourlyBucketCutoff = bucketStart(cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "receiver_activity_event", "observed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "trunked_logical_call_identity_bucket", "bucket_start_ms",
-            hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "trunked_logical_call_bucket", "bucket_start_ms",
-            hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "p25_site_call_identity_bucket", "bucket_start_ms",
-            hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "p25_site_call_bucket", "bucket_start_ms", hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "trunked_signaling_activity_bucket", "bucket_start_ms",
-            hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "conventional_call_identity_bucket", "bucket_start_ms",
-            hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "conventional_activity_bucket", "bucket_start_ms", hourlyBucketCutoff);
-        deleted += deleteByTime(connection, "p25_site_channel", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_channel_tag", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_frequency_band", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_foreign_system_band", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_neighbor", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_patch_group_talkgroup", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_patch_group_radio", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_patch_group", "confirmed_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_channel_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_channel_tag_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_frequency_band_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_foreign_system_band_summary", "last_seen_ms",
-            cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_neighbor_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_patch_group_talkgroup_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_patch_group_radio_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_patch_group_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_snapshot", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteExpiredControlChannelQuality(connection, cutoffEpochMilliseconds);
-        deleted += RadioSystemSchema.deleteOlderThan(connection, cutoffEpochMilliseconds);
-        try(PreparedStatement statement = connection.prepareStatement("""
-            DELETE FROM p25_learned_site
-            WHERE last_seen_ms < ?
-              AND NOT EXISTS (
-                  SELECT 1 FROM p25_site_call_bucket fact
-                  WHERE fact.learned_site_id = p25_learned_site.learned_site_id
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM p25_site_call_identity_bucket fact
-                  WHERE fact.learned_site_id = p25_learned_site.learned_site_id
-              )
-            """))
-        {
-            statement.setLong(1, cutoffEpochMilliseconds);
-            deleted += statement.executeUpdate();
-        }
-        deleted += RadioSystemSchema.pruneUnusedRadioSystems(connection);
-        return deleted;
-    }
-
-    /** Receiver-channel rows are owned by configuration_channel and are removed by its cascading foreign key. */
-    static int pruneUnusedRadioSystems(Connection connection) throws SQLException
-    {
-        return RadioSystemSchema.pruneUnusedRadioSystems(connection);
+        return ReceiverActivityRetention.runPass(connection, cutoffEpochMilliseconds).deletedRows();
     }
 
     static int resetStats(Connection connection) throws SQLException
@@ -1732,7 +1697,7 @@ public class ReceiverActivitySchema
      * top-source queries, grouped by protocol and trunked/conventional topology. A physical call is represented only
      * by counter increments: one destination (or channel fallback), an optional source, and additional destination
      * rows for patch members. Row growth is one upserted row per distinct channel/hour/identity combination rather
-     * than one row per call, and {@link #deleteOlderThan(Connection, long)} applies the configured activity
+     * than one row per call, and {@link #runRetentionPass(Connection, long)} applies the configured activity
      * retention. Existing site and conventional hourly buckets cannot serve this query because they contain physical
      * totals but no protocol-neutral source identity, destination kind, or patch-member dimensions.
      */
@@ -2195,6 +2160,8 @@ public class ReceiverActivitySchema
     private static void createIndexesAndViews(Statement statement) throws SQLException
     {
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_channel_radio_system ON receiver_channel(radio_system_id, id)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_retention ON receiver_activity_event(observed_at_ms, id)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_radio_system ON receiver_activity_event(radio_system_id, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_time ON receiver_activity_event(channel_id, observed_at_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_target_time ON receiver_activity_event(target_identity_summary_id, observed_at_ms) WHERE target_identity_summary_id IS NOT NULL");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_time ON receiver_activity_event(source_identity_summary_id, observed_at_ms) WHERE source_identity_summary_id IS NOT NULL");
@@ -2205,6 +2172,7 @@ public class ReceiverActivitySchema
             ON activity_event_identity_member(identity_summary_id, event_id)
             """);
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_signaling_activity_time ON trunked_signaling_activity_bucket(bucket_start_ms, radio_system_id, channel_id)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_signaling_activity_system ON trunked_signaling_activity_bucket(radio_system_id, channel_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_logical_call_bucket_time ON trunked_logical_call_bucket(bucket_start_ms, radio_system_id)");
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_logical_identity_dashboard_time
@@ -2236,6 +2204,24 @@ public class ReceiverActivitySchema
             )
             """);
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_snapshot_identity ON p25_site_snapshot(rfss, site, channel_id)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_snapshot_retention ON p25_site_snapshot(last_seen_ms, channel_id)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_learned_site_retention ON p25_learned_site(last_seen_ms, radio_system_id, learned_site_id)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_retention ON p25_site_channel(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_summary_retention ON p25_site_channel_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_tag_retention ON p25_site_channel_tag(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_tag_summary_retention ON p25_site_channel_tag_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_frequency_band_retention ON p25_site_frequency_band(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_frequency_band_summary_retention ON p25_site_frequency_band_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_foreign_system_band_retention ON p25_foreign_system_band(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_foreign_system_band_summary_retention ON p25_foreign_system_band_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_retention ON p25_site_neighbor(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_summary_retention ON p25_site_neighbor_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_group_retention ON p25_site_patch_group(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_group_summary_retention ON p25_site_patch_group_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_group_talkgroup_retention ON p25_site_patch_group_talkgroup(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_group_talkgroup_summary_retention ON p25_site_patch_group_talkgroup_summary(last_seen_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_group_radio_retention ON p25_site_patch_group_radio(confirmed_at_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_group_radio_summary_retention ON p25_site_patch_group_radio_summary(last_seen_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_frequency ON p25_site_channel(channel_id, downlink_hz)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_tag_summary_channel_tag ON p25_site_channel_tag_summary(channel_id, tag, last_seen_ms DESC)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_channel_site ON p25_site_neighbor(channel_id, system_id, rfss, site)");
@@ -2324,6 +2310,8 @@ public class ReceiverActivitySchema
     ).stream(), RadioSystemSchema.tables().stream()).toList();
     private static final List<String> INDEXES = java.util.stream.Stream.concat(List.of(
         "idx_receiver_channel_radio_system",
+        "idx_receiver_activity_event_retention",
+        "idx_receiver_activity_event_radio_system",
         "idx_receiver_activity_event_channel_time",
         "idx_receiver_activity_event_target_time",
         "idx_receiver_activity_event_source_time",
@@ -2331,6 +2319,7 @@ public class ReceiverActivitySchema
         "idx_receiver_activity_event_encryption",
         "idx_activity_event_member_identity_event",
         "idx_trunked_signaling_activity_time",
+        "idx_trunked_signaling_activity_system",
         "idx_trunked_logical_call_bucket_time",
         "idx_trunked_logical_identity_dashboard_time",
         "idx_p25_site_call_bucket_time",
@@ -2340,6 +2329,24 @@ public class ReceiverActivitySchema
         "idx_conventional_bucket_dashboard_time",
         "idx_conventional_call_identity_dashboard_time",
         "idx_p25_site_snapshot_identity",
+        "idx_p25_site_snapshot_retention",
+        "idx_p25_learned_site_retention",
+        "idx_p25_site_channel_retention",
+        "idx_p25_site_channel_summary_retention",
+        "idx_p25_site_channel_tag_retention",
+        "idx_p25_site_channel_tag_summary_retention",
+        "idx_p25_site_frequency_band_retention",
+        "idx_p25_site_frequency_band_summary_retention",
+        "idx_p25_foreign_system_band_retention",
+        "idx_p25_foreign_system_band_summary_retention",
+        "idx_p25_site_neighbor_retention",
+        "idx_p25_site_neighbor_summary_retention",
+        "idx_p25_site_patch_group_retention",
+        "idx_p25_site_patch_group_summary_retention",
+        "idx_p25_site_patch_group_talkgroup_retention",
+        "idx_p25_site_patch_group_talkgroup_summary_retention",
+        "idx_p25_site_patch_group_radio_retention",
+        "idx_p25_site_patch_group_radio_summary_retention",
         "idx_p25_site_channel_frequency",
         "idx_p25_site_channel_tag_summary_channel_tag",
         "idx_p25_site_neighbor_channel_site",
@@ -3726,17 +3733,6 @@ public class ReceiverActivitySchema
             activity.observedAtEpochMilliseconds() >= channel.radioSystemAssignedAtEpochMilliseconds();
     }
 
-    private static int deleteByTime(Connection connection, String table, String column, long cutoffEpochMilliseconds)
-        throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM " + table + " WHERE " + column + " < ?"))
-        {
-            statement.setLong(1, cutoffEpochMilliseconds);
-            return statement.executeUpdate();
-        }
-    }
-
     private static ForeignKeyDefinition foreignKey(String table, List<String> columns, String parentTable,
                                                     List<String> parentColumns, String onDelete)
     {
@@ -3892,42 +3888,6 @@ public class ReceiverActivitySchema
             return new ObservedForeignKey(mParentTable, mOnDelete, List.copyOf(mColumns),
                 List.copyOf(mParentColumns));
         }
-    }
-
-    /**
-     * Drains expired shared control-channel quality buckets in bounded, retention-indexed batches. The ordered
-     * covering-index selection prevents a full table scan and the composite primary-key lookup keeps each delete
-     * batch deterministic for the WITHOUT ROWID table.
-     */
-    private static int deleteExpiredControlChannelQuality(Connection connection, long cutoffEpochMilliseconds)
-        throws SQLException
-    {
-        int total = 0;
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            DELETE FROM trunked_control_channel_quality
-            WHERE (channel_id, frequency_hz, bucket_start_ms) IN (
-                SELECT channel_id, frequency_hz, bucket_start_ms
-                FROM trunked_control_channel_quality INDEXED BY idx_trunked_control_quality_retention
-                WHERE observed_at_ms < ?
-                ORDER BY observed_at_ms, channel_id, frequency_hz, bucket_start_ms
-                LIMIT ?
-            )
-            """))
-        {
-            int deleted;
-
-            do
-            {
-                statement.setLong(1, cutoffEpochMilliseconds);
-                statement.setInt(2, RETENTION_DELETE_BATCH_SIZE);
-                deleted = statement.executeUpdate();
-                total = Math.addExact(total, deleted);
-            }
-            while(deleted > 0);
-        }
-
-        return total;
     }
 
     private static int deleteAll(Connection connection, String table) throws SQLException

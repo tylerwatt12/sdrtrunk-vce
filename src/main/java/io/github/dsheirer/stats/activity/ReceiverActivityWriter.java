@@ -54,6 +54,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private static final long GRACEFUL_DRAIN_MILLISECONDS = 5000;
     private static final long FORCED_SHUTDOWN_WAIT_MILLISECONDS = 1000;
     private static final long RETENTION_CLEANUP_INTERVAL_MILLISECONDS = TimeUnit.HOURS.toMillis(1);
+    private static final long RETENTION_BACKLOG_RETRY_MILLISECONDS = TimeUnit.SECONDS.toMillis(5);
     private static final long MAINTENANCE_INTERVAL_MILLISECONDS = TimeUnit.DAYS.toMillis(1);
     private static final long RESOLVED_CALL_RETENTION_MILLISECONDS = TimeUnit.HOURS.toMillis(24);
     private static final int MAXIMUM_RESOLVED_CALLS = 65_536;
@@ -376,11 +377,6 @@ class ReceiverActivityWriter implements AutoCloseable
 
                     while(batch.size() < mBatchSize)
                     {
-                        if(mRetentionCleanupRequested.get())
-                        {
-                            break;
-                        }
-
                         command = mMaintenanceQueue.peek();
                         queuedHead = mQueue.peek();
 
@@ -494,15 +490,21 @@ class ReceiverActivityWriter implements AutoCloseable
 
     private void runScheduledMaintenance(Connection connection) throws SQLException, InterruptedException
     {
-        if(mRetentionCleanupRequested.getAndSet(false) ||
-            System.currentTimeMillis() - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS)
-        {
-            cleanupRetentionWithRetry(connection);
-        }
+        long now = System.currentTimeMillis();
+        boolean scheduled = now - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS;
+        boolean backlogDue = mRetentionCleanupRequested.get() &&
+            (mQueue.isEmpty() || now - mLastRetentionCleanup >= RETENTION_BACKLOG_RETRY_MILLISECONDS);
+        boolean maintenanceDue = now - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS;
 
-        if(System.currentTimeMillis() - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS)
+        if(maintenanceDue)
         {
+            mRetentionCleanupRequested.getAndSet(false);
             runMaintenanceWithRetry(connection);
+        }
+        else if(scheduled || backlogDue)
+        {
+            mRetentionCleanupRequested.getAndSet(false);
+            cleanupRetentionWithRetry(connection);
         }
     }
 
@@ -634,7 +636,11 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             try
             {
-                cleanupRetention(connection);
+                ReceiverActivityMaintenance.RetentionResult result = cleanupRetention(connection);
+                if(result.moreWorkLikely())
+                {
+                    mRetentionCleanupRequested.set(true);
+                }
                 return;
             }
             catch(SQLException e)
@@ -673,7 +679,12 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             try
             {
-                ReceiverActivityMaintenance.runLightMaintenance(connection, mRetentionDays);
+                ReceiverActivityMaintenance.RetentionResult result =
+                    ReceiverActivityMaintenance.runLightMaintenancePass(connection, mRetentionDays);
+                if(result.moreWorkLikely())
+                {
+                    mRetentionCleanupRequested.set(true);
+                }
                 mLastRetentionCleanup = System.currentTimeMillis();
                 mLastMaintenance = System.currentTimeMillis();
                 return;
@@ -896,10 +907,12 @@ class ReceiverActivityWriter implements AutoCloseable
         }
     }
 
-    private void cleanupRetention(Connection connection) throws SQLException
+    private ReceiverActivityMaintenance.RetentionResult cleanupRetention(Connection connection) throws SQLException
     {
-        ReceiverActivityMaintenance.cleanupRetention(connection, mRetentionDays);
+        ReceiverActivityMaintenance.RetentionResult result =
+            ReceiverActivityMaintenance.cleanupRetentionPass(connection, mRetentionDays);
         mLastRetentionCleanup = System.currentTimeMillis();
+        return result;
     }
 
     private static boolean isDatabaseBusy(SQLException exception)

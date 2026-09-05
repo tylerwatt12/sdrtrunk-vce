@@ -180,6 +180,47 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void startupBacklogUsesOnePassAndLiveObservationsAreWrittenBeforeItDrains() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("startup-retention.sqlite"));
+        insertConfiguredChannel(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
+                VALUES (1, '%s', 1, 1)
+                """.formatted(CONFIGURATION_ID));
+            statement.executeUpdate("""
+                WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value + 1 FROM n WHERE value < 5000)
+                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
+                SELECT 1, value, 4 FROM n
+                """);
+        }
+
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 200, 100, 0);
+        writer.start();
+        long now = System.currentTimeMillis();
+        for(int index = 0; index < 100; index++)
+        {
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, now + index));
+        }
+
+        awaitWritten(writer, 100);
+        assertEquals(100, writer.getWrittenRecords());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertTrue(scalar(connection,
+                "SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms < 10000") > 0,
+                "startup must not drain a large expired backlog before serving the live queue");
+        }
+    }
+
+    @Test
     void clearChannelIsOrderedBetweenEarlierAndLaterObservations() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("clear-order.sqlite"));

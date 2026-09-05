@@ -172,27 +172,35 @@ public final class ReceiverActivityMaintenance
 
     static int runLightMaintenance(Connection connection, int retentionDays) throws SQLException
     {
-        int deleted = cleanupRetention(connection, retentionDays);
+        return runLightMaintenancePass(connection, retentionDays).deletedRows();
+    }
+
+    static RetentionResult runLightMaintenancePass(Connection connection, int retentionDays) throws SQLException
+    {
+        RetentionResult retention = cleanupRetentionPass(connection, retentionDays);
+        int deleted = retention.deletedRows();
         checkpoint(connection);
         optimize(connection);
         updateStatus(connection, "last_maintenance_ms");
         ReceiverActivitySchema.updateStatus(connection, "last_maintenance_deleted_rows", Integer.toString(deleted));
-        return deleted;
+        return retention;
     }
 
-    static int cleanupRetention(Connection connection, int retentionDays) throws SQLException
+    static RetentionResult cleanupRetentionPass(Connection connection, int retentionDays) throws SQLException
     {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
-        int deleted = ReceiverActivitySchema.deleteOlderThan(connection, cutoff) +
-            TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total() +
-            DmrActivitySchema.deleteOlderThan(connection, cutoff).total();
-        deleted += ReceiverActivitySchema.pruneUnusedRadioSystems(connection);
+        ReceiverActivityRetention.Pass pass = ReceiverActivityRetention.runPass(connection, cutoff);
+        int deleted = pass.deletedRows();
 
         ReceiverActivitySchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
         ReceiverActivitySchema.updateStatus(connection, "last_retention_cleanup_ms",
             Long.toString(System.currentTimeMillis()));
         ReceiverActivitySchema.updateStatus(connection, "last_retention_deleted_rows", Integer.toString(deleted));
-        return deleted;
+        return new RetentionResult(deleted, pass.moreWorkLikely());
+    }
+
+    record RetentionResult(int deletedRows, boolean moreWorkLikely)
+    {
     }
 
     private static int resetStats(Connection connection) throws SQLException

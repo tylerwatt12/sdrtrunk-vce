@@ -189,10 +189,7 @@ class TrunkedSiteSchemaTest
                 List.of(new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, null, 1, 10_000)),
                 List.of(new TrunkedSiteSchema.Neighbor(2, 4, 1, 303, 2, 122, 156_000_000L, 1, 10_000))));
 
-            TrunkedSiteSchema.CleanupResult cleanup = TrunkedSiteSchema.deleteOlderThan(connection, 5_000);
-            assertEquals(1, cleanup.channelsDeleted());
-            assertEquals(1, cleanup.neighborsDeleted());
-            assertEquals(1, cleanup.sitesDeleted());
+            assertEquals(3, ReceiverActivitySchema.runRetentionPass(connection, 5_000));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
 
             assertEquals(1, TrunkedSiteSchema.clearChannelStats(connection, NXDN_CHANNEL));
