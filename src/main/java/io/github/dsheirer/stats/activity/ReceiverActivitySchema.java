@@ -122,8 +122,9 @@ public class ReceiverActivitySchema
             statement.executeUpdate(receiverChannelSql());
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS receiver_activity_event (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
+                    channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                        CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                     observed_at_ms INTEGER NOT NULL
                         CHECK(typeof(observed_at_ms) = 'integer' AND observed_at_ms > 0),
                     action_code INTEGER NOT NULL
@@ -163,8 +164,8 @@ public class ReceiverActivitySchema
             createControlChannelQualityTable(statement);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS statistics_status (
-                    key TEXT PRIMARY KEY CHECK(length(trim(key)) > 0),
-                    value TEXT,
+                    key TEXT PRIMARY KEY CHECK(typeof(key) = 'text' AND length(trim(key)) > 0),
+                    value TEXT CHECK(value IS NULL OR typeof(value) = 'text'),
                     updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
                 )
                 """);
@@ -284,11 +285,13 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS receiver_channel (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT
+                    CHECK(typeof(id) = 'integer' AND id > 0),
                 configuration_id TEXT NOT NULL UNIQUE
                     REFERENCES configuration_channel(configuration_id) ON DELETE CASCADE
                     CHECK(
-                        length(configuration_id) = 36 AND configuration_id = lower(configuration_id)
+                        typeof(configuration_id) = 'text'
+                        AND length(configuration_id) = 36 AND configuration_id = lower(configuration_id)
                         AND substr(configuration_id, 9, 1) = '-'
                         AND substr(configuration_id, 14, 1) = '-'
                         AND substr(configuration_id, 19, 1) = '-'
@@ -299,7 +302,8 @@ public class ReceiverActivitySchema
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 radio_system_id INTEGER REFERENCES radio_system(id) ON DELETE SET NULL
-                    CHECK(radio_system_id IS NULL OR typeof(radio_system_id) = 'integer'),
+                    CHECK(radio_system_id IS NULL OR
+                        (typeof(radio_system_id) = 'integer' AND radio_system_id > 0)),
                 UNIQUE(id, radio_system_id)
             )
             """;
@@ -1291,7 +1295,8 @@ public class ReceiverActivitySchema
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_learned_site (
                 learned_site_id INTEGER PRIMARY KEY CHECK(typeof(learned_site_id) = 'integer' AND learned_site_id > 0),
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 rfss INTEGER NOT NULL CHECK(typeof(rfss) = 'integer' AND rfss BETWEEN 0 AND 255),
                 site INTEGER NOT NULL CHECK(typeof(site) = 'integer' AND site BETWEEN 0 AND 255),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
@@ -1306,7 +1311,8 @@ public class ReceiverActivitySchema
         statement.executeUpdate(createP25SiteCallIdentityBucketSql());
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS trunked_signaling_activity_bucket (
-                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 %s,
                 PRIMARY KEY(channel_id, bucket_start_ms)
@@ -1318,7 +1324,8 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_logical_call_bucket (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 logical_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(logical_call_count) = 'integer' AND logical_call_count >= 0),
                 encrypted_logical_call_count INTEGER NOT NULL DEFAULT 0
@@ -1334,7 +1341,8 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_logical_call_identity_bucket (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 identity_role_code INTEGER NOT NULL CHECK(typeof(identity_role_code) = 'integer' AND identity_role_code IN (1, 2)),
                 identity_kind_code INTEGER NOT NULL CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (0, 1, 2, 3)),
@@ -1363,8 +1371,10 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS p25_site_call_bucket (
-                radio_system_id INTEGER NOT NULL,
-                learned_site_id INTEGER NOT NULL,
+                radio_system_id INTEGER NOT NULL
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
+                learned_site_id INTEGER NOT NULL
+                    CHECK(typeof(learned_site_id) = 'integer' AND learned_site_id > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(observed_call_count) = 'integer' AND observed_call_count >= 0),
                 encrypted_observed_call_count INTEGER NOT NULL DEFAULT 0
@@ -1380,8 +1390,10 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS p25_site_call_identity_bucket (
-                radio_system_id INTEGER NOT NULL,
-                learned_site_id INTEGER NOT NULL,
+                radio_system_id INTEGER NOT NULL
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
+                learned_site_id INTEGER NOT NULL
+                    CHECK(typeof(learned_site_id) = 'integer' AND learned_site_id > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 identity_role_code INTEGER NOT NULL CHECK(typeof(identity_role_code) = 'integer' AND identity_role_code IN (1, 2)),
                 identity_kind_code INTEGER NOT NULL CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (0, 1, 2, 3)),
@@ -1411,7 +1423,8 @@ public class ReceiverActivitySchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS conventional_activity_summary (
-                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz > 0),
                 timeslot INTEGER NOT NULL DEFAULT -1
                     CHECK(typeof(timeslot) = 'integer' AND timeslot IN (-1, 1, 2)),
@@ -1428,7 +1441,8 @@ public class ReceiverActivitySchema
             """.formatted(ACTION_COUNT_DEFINITIONS, EVENT_TYPE_CODES));
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS conventional_activity_bucket (
-                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz >= 0),
                 timeslot INTEGER NOT NULL DEFAULT -1
                     CHECK(typeof(timeslot) = 'integer' AND timeslot IN (-1, 1, 2)),
@@ -1465,7 +1479,8 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS activity_event_talkgroup_member (
-                event_id INTEGER NOT NULL REFERENCES receiver_activity_event(id) ON DELETE CASCADE,
+                event_id INTEGER NOT NULL REFERENCES receiver_activity_event(id) ON DELETE CASCADE
+                    CHECK(typeof(event_id) = 'integer' AND event_id > 0),
                 talkgroup_id INTEGER NOT NULL CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id > 0),
                 PRIMARY KEY(event_id, talkgroup_id)
             ) WITHOUT ROWID
@@ -1476,7 +1491,8 @@ public class ReceiverActivitySchema
     {
         return """
             CREATE TABLE IF NOT EXISTS conventional_call_identity_bucket (
-                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 identity_role_code INTEGER NOT NULL CHECK(typeof(identity_role_code) = 'integer' AND identity_role_code IN (1, 2)),
                 identity_kind_code INTEGER NOT NULL CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (0, 1, 2, 3)),
@@ -1504,9 +1520,11 @@ public class ReceiverActivitySchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_snapshot (
-                channel_id INTEGER PRIMARY KEY REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER PRIMARY KEY REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 snapshot_hash TEXT CHECK(snapshot_hash IS NULL OR (
-                    length(snapshot_hash) = 64 AND snapshot_hash = lower(snapshot_hash)
+                    typeof(snapshot_hash) = 'text'
+                    AND length(snapshot_hash) = 64 AND snapshot_hash = lower(snapshot_hash)
                     AND snapshot_hash NOT GLOB '*[^0-9a-f]*'
                 )),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
@@ -1554,9 +1572,10 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel (
-                channel_id INTEGER NOT NULL,
-                channel_key TEXT NOT NULL CHECK(length(trim(channel_key)) > 0),
-                descriptor TEXT,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                channel_key TEXT NOT NULL CHECK(
+                    typeof(channel_key) = 'text' AND length(trim(channel_key)) > 0),
+                descriptor TEXT CHECK(descriptor IS NULL OR typeof(descriptor) = 'text'),
                 downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
                     (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
                 uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
@@ -1565,7 +1584,7 @@ public class ReceiverActivitySchema
                     (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
                 timeslots INTEGER CHECK(timeslots IS NULL OR
                     (typeof(timeslots) = 'integer' AND timeslots IN (1, 2, 4))),
-                callsign TEXT,
+                callsign TEXT CHECK(callsign IS NULL OR typeof(callsign) = 'text'),
                 confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, channel_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
@@ -1573,9 +1592,10 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel_summary (
-                channel_id INTEGER NOT NULL,
-                channel_key TEXT NOT NULL CHECK(length(trim(channel_key)) > 0),
-                descriptor TEXT,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                channel_key TEXT NOT NULL CHECK(
+                    typeof(channel_key) = 'text' AND length(trim(channel_key)) > 0),
+                descriptor TEXT CHECK(descriptor IS NULL OR typeof(descriptor) = 'text'),
                 downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
                     (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
                 uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
@@ -1587,16 +1607,17 @@ public class ReceiverActivitySchema
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
-                callsign TEXT,
+                callsign TEXT CHECK(callsign IS NULL OR typeof(callsign) = 'text'),
                 PRIMARY KEY(channel_id, channel_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel_tag (
-                channel_id INTEGER NOT NULL,
-                channel_key TEXT NOT NULL,
-                tag TEXT NOT NULL CHECK(length(trim(tag)) > 0),
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                channel_key TEXT NOT NULL CHECK(
+                    typeof(channel_key) = 'text' AND length(trim(channel_key)) > 0),
+                tag TEXT NOT NULL CHECK(typeof(tag) = 'text' AND length(trim(tag)) > 0),
                 confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, channel_key, tag),
                 FOREIGN KEY(channel_id, channel_key) REFERENCES p25_site_channel(channel_id, channel_key) ON DELETE CASCADE
@@ -1604,9 +1625,10 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_channel_tag_summary (
-                channel_id INTEGER NOT NULL,
-                channel_key TEXT NOT NULL,
-                tag TEXT NOT NULL CHECK(length(trim(tag)) > 0),
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                channel_key TEXT NOT NULL CHECK(
+                    typeof(channel_key) = 'text' AND length(trim(channel_key)) > 0),
+                tag TEXT NOT NULL CHECK(typeof(tag) = 'text' AND length(trim(tag)) > 0),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
@@ -1617,7 +1639,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_band (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
                 tdma INTEGER CHECK(tdma IS NULL OR
                     (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
@@ -1638,7 +1660,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_band_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
                 tdma INTEGER CHECK(tdma IS NULL OR
                     (typeof(tdma) = 'integer' AND tdma IN (0, 1))),
@@ -1662,8 +1684,9 @@ public class ReceiverActivitySchema
         createForeignSystemBandTables(statement);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_neighbor (
-                channel_id INTEGER NOT NULL,
-                neighbor_key TEXT NOT NULL CHECK(length(trim(neighbor_key)) > 0),
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                neighbor_key TEXT NOT NULL CHECK(
+                    typeof(neighbor_key) = 'text' AND length(trim(neighbor_key)) > 0),
                 system_id INTEGER CHECK(system_id IS NULL OR
                     (typeof(system_id) = 'integer' AND system_id BETWEEN 0 AND 4095)),
                 rfss INTEGER CHECK(rfss IS NULL OR
@@ -1672,12 +1695,13 @@ public class ReceiverActivitySchema
                     (typeof(site) = 'integer' AND site BETWEEN 0 AND 255)),
                 lra INTEGER CHECK(lra IS NULL OR
                     (typeof(lra) = 'integer' AND lra BETWEEN 0 AND 255)),
-                channel_descriptor TEXT,
+                channel_descriptor TEXT CHECK(
+                    channel_descriptor IS NULL OR typeof(channel_descriptor) = 'text'),
                 downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
                     (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
                 uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
                     (typeof(uplink_hz) = 'integer' AND uplink_hz > 0)),
-                status TEXT,
+                status TEXT CHECK(status IS NULL OR typeof(status) = 'text'),
                 confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, neighbor_key),
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
@@ -1685,8 +1709,9 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_neighbor_summary (
-                channel_id INTEGER NOT NULL,
-                neighbor_key TEXT NOT NULL CHECK(length(trim(neighbor_key)) > 0),
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                neighbor_key TEXT NOT NULL CHECK(
+                    typeof(neighbor_key) = 'text' AND length(trim(neighbor_key)) > 0),
                 system_id INTEGER CHECK(system_id IS NULL OR
                     (typeof(system_id) = 'integer' AND system_id BETWEEN 0 AND 4095)),
                 rfss INTEGER CHECK(rfss IS NULL OR
@@ -1695,12 +1720,13 @@ public class ReceiverActivitySchema
                     (typeof(site) = 'integer' AND site BETWEEN 0 AND 255)),
                 lra INTEGER CHECK(lra IS NULL OR
                     (typeof(lra) = 'integer' AND lra BETWEEN 0 AND 255)),
-                channel_descriptor TEXT,
+                channel_descriptor TEXT CHECK(
+                    channel_descriptor IS NULL OR typeof(channel_descriptor) = 'text'),
                 downlink_hz INTEGER CHECK(downlink_hz IS NULL OR
                     (typeof(downlink_hz) = 'integer' AND downlink_hz > 0)),
                 uplink_hz INTEGER CHECK(uplink_hz IS NULL OR
                     (typeof(uplink_hz) = 'integer' AND uplink_hz > 0)),
-                status TEXT,
+                status TEXT CHECK(status IS NULL OR typeof(status) = 'text'),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
@@ -1710,7 +1736,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 patch_group INTEGER NOT NULL
                     CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
                 version INTEGER CHECK(version IS NULL OR
@@ -1722,7 +1748,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 patch_group INTEGER NOT NULL
                     CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
                 version INTEGER CHECK(version IS NULL OR
@@ -1736,7 +1762,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 patch_group INTEGER NOT NULL
                     CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
                 talkgroup_id INTEGER NOT NULL
@@ -1749,7 +1775,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 patch_group INTEGER NOT NULL
                     CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
                 talkgroup_id INTEGER NOT NULL
@@ -1764,7 +1790,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_radio (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 patch_group INTEGER NOT NULL
                     CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
                 radio_id INTEGER NOT NULL
@@ -1777,7 +1803,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_radio_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 patch_group INTEGER NOT NULL
                     CHECK(typeof(patch_group) = 'integer' AND patch_group BETWEEN 1 AND 65534),
                 radio_id INTEGER NOT NULL
@@ -1796,7 +1822,8 @@ public class ReceiverActivitySchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS trunked_control_channel_quality (
-                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz > 0),
                 bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
                 observed_at_ms INTEGER NOT NULL CHECK(
@@ -1834,7 +1861,7 @@ public class ReceiverActivitySchema
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 foreign_wacn INTEGER NOT NULL CHECK(typeof(foreign_wacn) = 'integer' AND foreign_wacn BETWEEN 0 AND 1048575),
                 foreign_system_id INTEGER NOT NULL CHECK(typeof(foreign_system_id) = 'integer' AND foreign_system_id BETWEEN 0 AND 4095),
                 band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),
@@ -1853,7 +1880,7 @@ public class ReceiverActivitySchema
             """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 foreign_wacn INTEGER NOT NULL CHECK(typeof(foreign_wacn) = 'integer' AND foreign_wacn BETWEEN 0 AND 1048575),
                 foreign_system_id INTEGER NOT NULL CHECK(typeof(foreign_system_id) = 'integer' AND foreign_system_id BETWEEN 0 AND 4095),
                 band INTEGER NOT NULL CHECK(typeof(band) = 'integer' AND band BETWEEN 0 AND 15),

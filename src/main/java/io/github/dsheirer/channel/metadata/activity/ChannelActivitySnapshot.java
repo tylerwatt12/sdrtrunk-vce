@@ -42,13 +42,31 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     public static ChannelActivitySnapshot from(ChannelActivityTableState table)
     {
         Channel owner = table != null ? table.getOwnerChannel() : null;
-        String tableId = owner != null ? "channel-" + owner.getChannelID() : "conventional";
+        String tableId = tableId(owner);
         List<Row> rows = table != null ? table.getRows().stream().map(row -> Row.from(row, owner)).toList() : List.of();
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
             owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
-            owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
+            owner != null ? owner.getName() : "Conventional", persistedConfigurationId(owner),
             table != null && table.isControlActive(), table != null && table.isChannelRunning(),
             table != null ? table.getIdentifiers() : List.of(), rows);
+    }
+
+    /** Stable browser-table identity for a saved channel; conventional rows share one aggregate table. */
+    static String tableId(Channel owner)
+    {
+        if(owner == null)
+        {
+            return "conventional";
+        }
+
+        String configurationId = persistedConfigurationId(owner);
+        return configurationId != null ? "channel:" + configurationId :
+            "transient-channel:" + owner.getChannelID();
+    }
+
+    private static String persistedConfigurationId(Channel channel)
+    {
+        return channel != null ? ChannelConfigurationKey.canonical(channel.getPersistedConfigurationId()) : null;
     }
 
     /**
@@ -79,7 +97,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         private static Row from(ChannelActivityRow row, Channel owner)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
-            String configurationId = row.getChannel() != null ? row.getChannel().getConfigurationId() : null;
+            String configurationId = persistedConfigurationId(row.getChannel());
             Channel channel = owner != null ? owner : row.getChannel();
             ChannelActivityDecodeQuality quality = row.getDecodeQuality();
             return new Row(row.getKey(), channelName, configurationId, row.getState().name(),
@@ -97,7 +115,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 aliasDescriptions(row.getSourceAliases()), value(row.getTalkerAlias()), row.getSourceAliasDisplay(),
                 value(row.getTarget()), form(row.getTarget()), aliases(row.getTargetAliases()),
                 aliasDescriptions(row.getTargetAliases()),
-                row.getDecoder(), row.getEncryptionDetails(), new Navigation(ChannelConfigurationKey.configured(channel),
+                row.getDecoder(), row.getEncryptionDetails(), new Navigation(persistedConfigurationId(channel),
+                channel != null && channel.getAliasListId() > 0 ? channel.getAliasListId() : null,
                 channel != null ? channel.getAliasListName() : null, protocol(row.getSource(), row.getTarget()),
                 aliasReferences(row.getSourceAliases()), matcher(row.getSource()),
                 aliasReferences(row.getTargetAliases()), matcher(row.getTarget())), row.getRole().name());
@@ -206,7 +225,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     }
 
     /** Browser navigation metadata detached from mutable receiver and Alias objects. */
-    public record Navigation(String channelConfigurationId, String aliasListName, String protocol,
+    public record Navigation(String channelConfigurationId, Long aliasListId, String aliasListName, String protocol,
                              List<AliasReference> sourceAliases, MatcherReference sourceMatcher,
                              List<AliasReference> targetAliases, MatcherReference targetMatcher)
     {

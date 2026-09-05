@@ -102,6 +102,137 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
+    void nxdnAddressDomainChangeDropsOnlyIdentityDependentLogicalCallFacts() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
+            record(connection, trunked(NXDN_A, "NXDN", null, null, 91, 1_000,
+                ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_C));
+            long radioSystemId = radioSystemId(connection, NXDN_A);
+            long channelId = channelId(connection, NXDN_A);
+            execute(connection, """
+                INSERT INTO trunked_site_snapshot(
+                    channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (%d, '%s', 4, 1, 0, 1000, 1000)
+                """.formatted(channelId, "a".repeat(64)));
+            execute(connection, """
+                INSERT INTO trunked_logical_call_bucket(
+                    radio_system_id, bucket_start_ms, logical_call_count
+                ) VALUES (%d, 0, 1)
+                """.formatted(radioSystemId));
+            execute(connection, """
+                INSERT INTO trunked_logical_call_identity_bucket(
+                    radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_id, logical_call_count
+                ) VALUES (%d, 0, 1, 1, 91, 1)
+                """.formatted(radioSystemId));
+
+            record(connection, trunked(NXDN_A, "NXDN", null, null, 92, 2_000,
+                ReceiverActivityRecords.IdentityDomain.NXDN_TYPE_D));
+
+            assertEquals(2, scalar(connection,
+                "SELECT address_domain_code FROM radio_system WHERE id=" + radioSystemId));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM trunked_logical_call_identity_bucket
+                WHERE radio_system_id=%d
+                """.formatted(radioSystemId)));
+            assertEquals(0, scalar(connection,
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(1, scalar(connection, """
+                SELECT logical_call_count FROM trunked_logical_call_bucket
+                WHERE radio_system_id=%d AND bucket_start_ms=0
+                """.formatted(radioSystemId)));
+        }
+    }
+
+    @Test
+    void p25FullyQualifiedAndPatchMemberIdentitiesKeepTheirNativeMeaning() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivityRecords.P25TargetIdentity zeroLocal =
+                ReceiverActivityRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
+            record(connection, p25Activity(P25_A, 1_000, "0", "TALKGROUP", List.of(), zeroLocal,
+                List.of(), null));
+            record(connection, p25Activity(P25_A, 2_000, "500", "PATCH_GROUP", List.of(501, 502),
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(
+                    new ReceiverActivityRecords.P25PatchMemberIdentity(501,
+                        ReceiverActivityRecords.P25TargetIdentity.ORDINARY),
+                    new ReceiverActivityRecords.P25PatchMemberIdentity(502,
+                        ReceiverActivityRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x322, 1_202))),
+                null));
+
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=0
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=501 AND p25_identity_state_code=1
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=502 AND p25_identity_state_code=2
+                  AND p25_home_wacn=0xABCDE AND p25_home_system_id=0x322
+                  AND p25_home_talkgroup_id=1202
+                """));
+        }
+    }
+
+    @Test
+    void authoritativeRadioPresenceUsesTimestampEvidenceAndClearWatermarks() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, p25Activity(P25_A, 1_000, "91", "TALKGROUP", List.of(),
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
+                ReceiverActivityRecords.RadioPresenceUpdate.confirmed(1_001, 91,
+                    ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION)));
+            record(connection, p25Activity(P25_A, 900, "92", "TALKGROUP", List.of(),
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
+                ReceiverActivityRecords.RadioPresenceUpdate.confirmed(1_001, 92,
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION)));
+
+            assertEquals(91, scalar(connection, "SELECT talkgroup_id FROM trunked_radio_affiliation"));
+            assertEquals(1_000, scalar(connection,
+                "SELECT confirmed_at_ms FROM trunked_radio_channel_presence"));
+
+            record(connection, p25Activity(P25_A, 1_100, "91", "TALKGROUP", List.of(),
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
+                ReceiverActivityRecords.RadioPresenceUpdate.cleared(1_001)));
+            record(connection, p25Activity(P25_A, 1_100, "92", "TALKGROUP", List.of(),
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
+                ReceiverActivityRecords.RadioPresenceUpdate.confirmed(1_001, 92,
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION)));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+
+            record(connection, p25Activity(P25_A, 1_200, "93", "TALKGROUP", List.of(),
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of(),
+                ReceiverActivityRecords.RadioPresenceUpdate.confirmed(1_001, 93,
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION)));
+            record(connection, new ReceiverActivityRecords.ActivityEvent(1_300, P25_A,
+                ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
+                ReceiverActivityRecords.Action.CALL, "CALL_GROUP", "1002", "93", "TALKGROUP", List.of(),
+                851_012_500L, "0-1", 1, false, null, null, 0xBEE00, 0x3A9, null, null, null, null,
+                false, null, null, ReceiverActivityRecords.IdentityDomain.STANDARD,
+                ReceiverActivityRecords.P25TargetIdentity.ORDINARY, List.of()));
+
+            assertEquals(93, scalar(connection, "SELECT talkgroup_id FROM trunked_radio_affiliation"));
+            assertEquals(1_200, scalar(connection,
+                "SELECT confirmed_at_ms FROM trunked_radio_channel_presence"));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM trunked_radio_channel_presence WHERE radio_id=1002
+                """));
+        }
+    }
+
+    @Test
     void conventionalActivityUsesOnlyTheSavedConfigurationIdentity() throws Exception
     {
         try(Connection connection = open())
@@ -181,7 +312,7 @@ class RadioSystemIdentityModelTest
             long systemB = radioSystemId(connection, P25_B);
             long channelB = channelId(connection, P25_B);
             assertThrows(SQLException.class, () -> execute(connection, """
-                INSERT INTO trunked_radio_site_presence(
+                INSERT INTO trunked_radio_channel_presence(
                     radio_system_id, radio_id, channel_id, evidence_code, confirmed_at_ms
                 ) VALUES (%d, 1001, %d, 1, 4000)
                 """.formatted(systemA, channelB)));
@@ -243,7 +374,7 @@ class RadioSystemIdentityModelTest
                 SELECT COUNT(*) FROM sqlite_master
                 WHERE name IN ('receiver_context', 'trunked_identity_scope', 'trunked_identity_scope_context',
                     'radio_system_context', 'p25_system', 'trunked_identity_summary',
-                    'trunked_radio_talkgroup_summary')
+                    'trunked_radio_talkgroup_summary', 'trunked_radio_site_presence')
                 """));
             assertEquals(0, scalar(connection, """
                 SELECT COUNT(*) FROM database_metadata
@@ -257,6 +388,27 @@ class RadioSystemIdentityModelTest
                 ) VALUES ('p25:bee00:124', 1, 0, 0xBEE00, 0x123, 1000, 1000)
                 """));
             ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void validationRejectsAConventionalChannelAttachedToATrunkedRadioSystem() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, CONVENTIONAL, "CONVENTIONAL", "DMR", 1, "DMR Conventional", null);
+            execute(connection, """
+                INSERT INTO radio_system(
+                    system_key, protocol_code, address_domain_code, first_seen_ms, last_seen_ms
+                ) VALUES ('dmr:channel:%s', 3, 0, 1000, 1000)
+                """.formatted(CONVENTIONAL));
+            execute(connection, """
+                INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
+                SELECT '%s', 1000, 1000, id FROM radio_system
+                WHERE system_key='dmr:channel:%s'
+                """.formatted(CONVENTIONAL, CONVENTIONAL));
+
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
         }
     }
 
@@ -300,12 +452,36 @@ class RadioSystemIdentityModelTest
                                                                   Integer wacn, Integer systemId, int talkgroup,
                                                                   long timestamp)
     {
+        return trunked(configurationId, protocol, wacn, systemId, talkgroup, timestamp,
+            ReceiverActivityRecords.IdentityDomain.STANDARD);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent trunked(String configurationId, String protocol,
+                                                                  Integer wacn, Integer systemId, int talkgroup,
+                                                                  long timestamp,
+                                                                  ReceiverActivityRecords.IdentityDomain domain)
+    {
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, protocol, ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1001", Integer.toString(talkgroup), "TALKGROUP", List.of(), 851_012_500L,
             "0-1", 1, false, null, null, wacn, systemId, null, null, null, null, false, null, null,
-            ReceiverActivityRecords.IdentityDomain.STANDARD, ReceiverActivityRecords.P25TargetIdentity.ORDINARY,
+            domain, ReceiverActivityRecords.P25TargetIdentity.ORDINARY,
             List.of());
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent p25Activity(String configurationId, long timestamp,
+                                                                      String targetId, String targetKind,
+                                                                      List<Integer> patchMembers,
+                                                                      ReceiverActivityRecords.P25TargetIdentity target,
+                                                                      List<ReceiverActivityRecords.P25PatchMemberIdentity>
+                                                                          memberIdentities,
+                                                                      ReceiverActivityRecords.RadioPresenceUpdate presence)
+    {
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.CALL,
+            "CALL_GROUP", presence != null ? Integer.toString(presence.radioId()) : "1001", targetId, targetKind,
+            patchMembers, 851_012_500L, "0-1", 1, false, null, null, 0xBEE00, 0x3A9, null, null, null, null,
+            false, null, presence, ReceiverActivityRecords.IdentityDomain.STANDARD, target, memberIdentities);
     }
 
     private static ReceiverActivityRecords.ActivityEvent conventional(String configurationId, long frequency,

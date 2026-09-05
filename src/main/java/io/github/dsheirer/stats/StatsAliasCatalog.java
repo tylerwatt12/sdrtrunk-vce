@@ -2315,14 +2315,19 @@ final class StatsAliasCatalog
 
         private void addAliasList(long aliasListId, String aliasList)
         {
-            if(aliasListId > 0)
+            if(aliasListId > 0 && aliasListIds.add(aliasListId))
             {
-                aliasListIds.add(aliasListId);
-
-                if(canonicalAliasListId == null)
+                if(aliasListIds.size() == 1)
                 {
                     canonicalAliasListId = aliasListId;
                     canonicalAliasList = aliasList;
+                }
+                else
+                {
+                    //A shared P25 system owns no Alias List. Preserve every applicable list for matching, but do not
+                    //present whichever channel happened to be read first as the system's canonical list.
+                    canonicalAliasListId = null;
+                    canonicalAliasList = null;
                 }
             }
         }

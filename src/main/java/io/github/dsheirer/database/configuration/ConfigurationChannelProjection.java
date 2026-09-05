@@ -25,8 +25,10 @@ import java.sql.Types;
 import java.util.Objects;
 
 /**
- * The two channel projections that serve indexed production queries. Subtype details remain authoritative in the
- * JSON configuration; projections with no query consumer are deliberately not persisted.
+ * The two JSON-authoritative channel projections that serve indexed production queries. Decoder and source subtype
+ * details remain authoritative in {@code config_json}, and these two scalars must exactly match that document.
+ * {@code configuration_channel.channel_kind} is different: it is the row-owned topology classification, derived by
+ * the shared channel policy when saving and checked against the decoded configuration when loading.
  */
 public record ConfigurationChannelProjection(String decoderType, Long primaryFrequencyHz)
 {

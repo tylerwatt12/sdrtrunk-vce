@@ -161,6 +161,10 @@ class ReceiverActivitySchemaIntegrityTest
                 VALUES (1, 'not-a-canonical-sha256', 1000, 1000)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_snapshot(channel_id, snapshot_hash, first_seen_ms, last_seen_ms)
+                VALUES (1, x'%s', 1000, 1000)
+                """.formatted("aa".repeat(64))));
+            assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO p25_site_snapshot(
                     channel_id, snapshot_hash, first_seen_ms, last_seen_ms, protocol, nac)
                 VALUES (1, '%s', 1000, 1000, 'APCO25', 1.5)
@@ -191,6 +195,10 @@ class ReceiverActivitySchemaIntegrityTest
                 VALUES (1, '0-1', 3, 1000)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_channel(channel_id, channel_key, confirmed_at_ms)
+                VALUES (1, x'3031', 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO p25_site_frequency_band(
                     channel_id, band, tdma, base_hz, spacing_hz, timeslots, confirmed_at_ms)
                 VALUES (1, 0, 1, 851000000, 12500, 3, 1000)
@@ -217,6 +225,9 @@ class ReceiverActivitySchemaIntegrityTest
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO statistics_status(key, value, updated_at_ms) VALUES ('bad-time', '1', 0)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO statistics_status(key, value, updated_at_ms) VALUES ('bad-value', x'31', 1000)
                 """));
             assertThrows(IllegalArgumentException.class, () -> new ReceiverActivityRecords.ControlChannelQuality(
                 1000, CONFIGURATION_ID, 851000000, null, null, null, null, 101.0,

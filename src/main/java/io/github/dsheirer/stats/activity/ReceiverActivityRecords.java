@@ -411,12 +411,12 @@ final class ReceiverActivityRecords
     /**
      * One successful completed-call output. This protocol-neutral ephemeral writer message is aggregated directly
      * into compact summaries and time buckets; it is never stored as an individual database row. The call-start
-     * timestamp keeps tracked, recorded, and streamed series aligned to the same call hour. The legacy
-     * {@code talkgroupId} component carries the numeric destination for radio/private calls too; targetKind controls
-     * how that value is interpreted and keeps talkgroup-specific projections gated.
+     * timestamp keeps tracked, recorded, and streamed series aligned to the same call hour. The destination kind
+     * controls whether the numeric destination is a talkgroup, patch group, radio, or configured conventional
+     * routing value; that value never owns the channel or radio-system identity.
      */
     record ConventionalCallOutput(long callStartEpochMilliseconds, String configurationId,
-                               Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
+                               Long frequencyHertz, Integer timeslot, int destinationId, String targetKind,
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
                                IdentityDomain identityDomain, P25TargetIdentity p25TargetIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities)
@@ -428,16 +428,11 @@ final class ReceiverActivityRecords
             {
                 throw new IllegalArgumentException("Call output requires a saved channel configuration ID");
             }
-            patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, talkgroupId);
+            patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
             identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
             p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity : P25TargetIdentity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
-        }
-
-        int destinationId()
-        {
-            return talkgroupId;
         }
 
         @Override

@@ -19,7 +19,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.module.decode.DecoderFactory;
@@ -65,12 +64,13 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database))
         {
-            assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
-                metadata(connection, "alias_schema_version"));
-            assertEquals("30",
-                metadata(connection, "p25_activity_schema_version"));
-            assertEquals("2", metadata(connection, "trunked_site_schema_version"));
-            assertEquals("1", metadata(connection, "dmr_activity_schema_version"));
+            assertNull(metadata(connection, "alias_schema_version"));
+            assertNull(metadata(connection, "configuration_schema_version"));
+            assertNull(metadata(connection, "settings_schema_version"));
+            assertNull(metadata(connection, "icon_schema_version"));
+            assertNull(metadata(connection, "p25_activity_schema_version"));
+            assertNull(metadata(connection, "trunked_site_schema_version"));
+            assertNull(metadata(connection, "dmr_activity_schema_version"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
         }
     }
@@ -242,10 +242,8 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
-                metadata(connection, "alias_schema_version"));
-            assertEquals("30",
-                metadata(connection, "p25_activity_schema_version"));
+            assertNull(metadata(connection, "alias_schema_version"));
+            assertNull(metadata(connection, "p25_activity_schema_version"));
             assertEquals("Default:1:1", scalar(connection, """
                 SELECT name || ':' || published || ':' || is_default
                 FROM scan_list

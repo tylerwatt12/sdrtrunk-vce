@@ -79,6 +79,7 @@ public final class DmrActivitySchema
         column("last_talkgroup_id", "INTEGER", false, null, 0),
         column("last_peer_radio_id", "INTEGER", false, null, 0));
     private static final List<String> TALKGROUP_CHECKS = List.of(
+        "check(typeof(channel_id)='integer'andchannel_id>0)",
         "check(typeof(frequency_hz)='integer'andfrequency_hz>0)",
         "check(typeof(timeslot)='integer'andtimeslotin(1,2))",
         "check(typeof(talkgroup_id)='integer'andtalkgroup_idbetween1and16777215)",
@@ -86,8 +87,10 @@ public final class DmrActivitySchema
         "check(typeof(first_seen_ms)='integer'andfirst_seen_ms>0)",
         "check(typeof(last_seen_ms)='integer'andlast_seen_ms>=first_seen_ms)",
         "check(typeof(call_count)='integer'andcall_count>0)",
-        "check(typeof(encrypted_count)='integer'andencrypted_count>=0)");
+        "check(typeof(encrypted_count)='integer'andencrypted_count>=0)",
+        "check(encrypted_count<=call_count)");
     private static final List<String> RADIO_CHECKS = List.of(
+        "check(typeof(channel_id)='integer'andchannel_id>0)",
         "check(typeof(frequency_hz)='integer'andfrequency_hz>0)",
         "check(typeof(timeslot)='integer'andtimeslotin(1,2))",
         "check(typeof(radio_id)='integer'andradio_idbetween1and16777215)",
@@ -100,7 +103,11 @@ public final class DmrActivitySchema
         "check(typeof(target_call_count)='integer'andtarget_call_count>=0)",
         "check(typeof(group_call_count)='integer'andgroup_call_count>=0)",
         "check(typeof(private_call_count)='integer'andprivate_call_count>=0)",
-        "check(typeof(encrypted_count)='integer'andencrypted_count>=0)");
+        "check(typeof(encrypted_count)='integer'andencrypted_count>=0)",
+        "check(source_call_count<=call_count)",
+        "check(target_call_count<=call_count)",
+        "check(group_call_count+private_call_count<=call_count)",
+        "check(encrypted_count<=call_count)");
 
     private DmrActivitySchema()
     {
@@ -115,7 +122,7 @@ public final class DmrActivitySchema
         {
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS dmr_conventional_talkgroup_summary (
-                    channel_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                     frequency_hz INTEGER NOT NULL,
                     timeslot INTEGER NOT NULL,
                     talkgroup_id INTEGER NOT NULL,
@@ -135,12 +142,13 @@ public final class DmrActivitySchema
                     CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                     CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                     CHECK(typeof(call_count) = 'integer' AND call_count > 0),
-                    CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0)
+                    CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
+                    CHECK(encrypted_count <= call_count)
                 ) WITHOUT ROWID
                 """);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS dmr_conventional_radio_summary (
-                    channel_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                     frequency_hz INTEGER NOT NULL,
                     timeslot INTEGER NOT NULL,
                     radio_id INTEGER NOT NULL,
@@ -170,7 +178,11 @@ public final class DmrActivitySchema
                     CHECK(typeof(target_call_count) = 'integer' AND target_call_count >= 0),
                     CHECK(typeof(group_call_count) = 'integer' AND group_call_count >= 0),
                     CHECK(typeof(private_call_count) = 'integer' AND private_call_count >= 0),
-                    CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0)
+                    CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
+                    CHECK(source_call_count <= call_count),
+                    CHECK(target_call_count <= call_count),
+                    CHECK(group_call_count + private_call_count <= call_count),
+                    CHECK(encrypted_count <= call_count)
                 ) WITHOUT ROWID
                 """);
             statement.executeUpdate("""

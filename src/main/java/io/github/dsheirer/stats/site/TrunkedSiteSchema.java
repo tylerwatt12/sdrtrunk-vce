@@ -117,9 +117,11 @@ public final class TrunkedSiteSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_site_snapshot (
-                channel_id INTEGER PRIMARY KEY REFERENCES receiver_channel(id) ON DELETE CASCADE,
+                channel_id INTEGER PRIMARY KEY REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 snapshot_hash TEXT NOT NULL CHECK(
-                    length(snapshot_hash) = 64 AND snapshot_hash = lower(snapshot_hash)
+                    typeof(snapshot_hash) = 'text'
+                    AND length(snapshot_hash) = 64 AND snapshot_hash = lower(snapshot_hash)
                     AND snapshot_hash NOT GLOB '*[^0-9a-f]*'
                 ),
                 protocol_code INTEGER NOT NULL CHECK(typeof(protocol_code) = 'integer' AND protocol_code IN (3, 4)),
@@ -181,7 +183,7 @@ public final class TrunkedSiteSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_site_channel_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 channel_number INTEGER NOT NULL CHECK(typeof(channel_number) = 'integer' AND channel_number >= -1),
                 inbound_channel_number INTEGER NOT NULL
                     CHECK(typeof(inbound_channel_number) = 'integer' AND inbound_channel_number >= -1),
@@ -206,7 +208,7 @@ public final class TrunkedSiteSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_site_neighbor_summary (
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 variant_code INTEGER NOT NULL
                     CHECK(typeof(variant_code) = 'integer' AND variant_code BETWEEN 0 AND 5),
                 location_category_code INTEGER NOT NULL
@@ -354,7 +356,7 @@ public final class TrunkedSiteSchema
     }
 
     /**
-     * Channel and neighbor identities are meaningful only within their protocol variant and identity domain. A
+     * Channel and neighbor identities are meaningful only within their protocol variant and location category. A
      * saved channel can be reconfigured, so retained facts from an incompatible classification must not be merged
      * into the new evidence.
      */

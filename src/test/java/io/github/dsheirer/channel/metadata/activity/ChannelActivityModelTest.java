@@ -90,6 +90,7 @@ class ChannelActivityModelTest
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
             155_730_000L);
         channel.setAliasListName(definition.getName());
+        channel.setAliasListId(definition.getId());
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         metadata.receive(new IdentifierUpdateNotification(AliasListConfigurationIdentifier.create(definition.getName()),
             Operation.ADD, 1));
@@ -144,6 +145,7 @@ class ChannelActivityModelTest
         Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
             155_730_000L);
         channel.setAliasListName(definition.getName());
+        channel.setAliasListId(definition.getId());
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         metadata.receive(new IdentifierUpdateNotification(AliasListConfigurationIdentifier.create(definition.getName()),
             Operation.ADD, 1));
@@ -207,6 +209,7 @@ class ChannelActivityModelTest
         Channel parent = trunkedChannel("Primary", "County", "North", new DecodeConfigP25Phase1(),
             851_012_500L);
         parent.setAliasListName(definition.getName());
+        parent.setAliasListId(definition.getId());
         APCO25Channel traffic = APCO25Channel.create(0, 459);
         traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
         IdentifierCollection identifiers = new IdentifierCollection(List.of(source, target, talker));

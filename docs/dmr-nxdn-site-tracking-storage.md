@@ -5,7 +5,7 @@
 The activity database supports a small set of bounded website and runtime queries:
 
 1. list saved receiver channels and the radio systems they have observed;
-2. show talkgroups, radios, affiliations, site presence, and call/output totals for one radio system;
+2. show talkgroups, radios, affiliations, last-confirmed channel presence, and call/output totals for one radio system;
 3. show the latest P25, DMR, or NXDN site facts, learned channels, neighbors, and control-channel quality;
 4. show carrier- and timeslot-specific activity for conventional channels; and
 5. remove old activity without deleting administrator-owned channel or Alias configuration.
@@ -18,6 +18,12 @@ receiver channel through its numeric `channel_id`. System-wide trunked summaries
 Names, Alias List assignments, decoder choices, the configured primary frequency, and RadioResolve identifiers stay
 in the configuration tables. Activity tables do not copy them. Readers join `configuration_channel` when they need
 current display or configuration data.
+
+Within `configuration_channel`, the row owns the channel UUID, trunked/conventional classification, display fields,
+Alias List ID, optional RadioResolve ID, and auto-start settings; those fields are forbidden in `config_json`.
+`decoder_type` and `primary_frequency_hz` are the only JSON-authoritative indexed projections and must match the
+decoder/source document exactly. The row-owned `channel_kind` is derived through the shared classification policy on
+save and checked against that same decoded document on load.
 
 No table described here stores raw decoder messages, a complete JSON object, or an unbounded immutable call log.
 Optional detailed Activity is retention-bound. Normal statistics use mutable summaries and hourly or 10-second
@@ -107,19 +113,19 @@ from a patch group, and `group_id` stores that group's local address. The row me
 claim that the radio is currently affiliated. Exact radio and group directions are index-backed. Admission is capped
 at 500,000 rows per system, existing rows continue updating, and retention removes expired rows.
 
-### `trunked_radio_affiliation`, `trunked_radio_site_presence`, and
+### `trunked_radio_affiliation`, `trunked_radio_channel_presence`, and
 `trunked_radio_presence_lifecycle`
 
 These tables hold compact current state, not event history:
 
 - affiliation is the latest explicitly accepted or confirmed talkgroup for a radio;
-- site presence is the receiver channel that decoded the latest authoritative registration or affiliation; and
+- channel presence is the receiver channel that decoded the latest authoritative registration or affiliation; and
 - lifecycle is the latest authoritative clear time, which prevents a delayed observation from recreating cleared
   state.
 
-Site presence has a composite foreign key that requires its `channel_id` to belong to the same `radio_system_id`.
-Calls, generic observations, and talker aliases do not invent current affiliation or site presence. At most one row of
-each kind exists per radio and system. Time-first indexes support 1,000-row retention batches.
+Channel presence has a composite foreign key that requires its `channel_id` to belong to the same `radio_system_id`.
+Calls, generic observations, and talker aliases do not invent current affiliation or channel presence. At most one
+row of each kind exists per radio and system. Time-first indexes support 1,000-row retention batches.
 
 ### Logical-call and P25 learned-site buckets
 

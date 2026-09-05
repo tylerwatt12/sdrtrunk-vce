@@ -84,6 +84,32 @@ class CallPlaybackTargetTest
     }
 
     @Test
+    void conventionalP25TalkgroupsShareTheSavedChannelTarget()
+    {
+        CallLegSource source = source(DecoderType.P25_CONVENTIONAL, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL);
+        CallPlaybackTarget first = target(source, APCO25Talkgroup.create(101), 0);
+        CallPlaybackTarget second = target(source, APCO25Talkgroup.create(202), 0);
+
+        assertEquals(CallPlaybackTarget.Kind.CHANNEL, first.kind());
+        assertEquals("channel:" + CHANNEL_A, first.key());
+        assertEquals(first, second);
+    }
+
+    @Test
+    void trunkedP25TalkgroupsRemainSeparateInsideOneNativeSystem()
+    {
+        CallLegSource source = source(DecoderType.P25_PHASE1, CHANNEL_A,
+            new P25SiteIdentity(0xBEE00, 0x348, 1, 1), ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+        CallPlaybackTarget first = target(source, APCO25Talkgroup.create(101), 0);
+        CallPlaybackTarget second = target(source, APCO25Talkgroup.create(202), 0);
+
+        assertEquals("system:p25:bee00:348:talkgroup:101", first.key());
+        assertEquals("system:p25:bee00:348:talkgroup:202", second.key());
+        assertNotEquals(first, second);
+    }
+
+    @Test
     void conventionalDmrTimeslotsRemainIndependent()
     {
         CallLegSource source = source(DecoderType.DMR, CHANNEL_A, null,
@@ -98,6 +124,20 @@ class CallPlaybackTargetTest
         assertEquals(1, first.toMap("DMR").get("timeslot"));
         assertEquals(2, second.toMap("DMR").get("timeslot"));
         assertNotEquals(first, second);
+    }
+
+    @Test
+    void conventionalDmrTalkgroupsShareTheSavedChannelAndTimeslotTarget()
+    {
+        CallLegSource source = source(DecoderType.DMR, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL);
+        CallPlaybackTarget first = target(source, new DMRTalkgroup(101), DMRMessage.TIMESLOT_1);
+        CallPlaybackTarget second = target(source, new DMRTalkgroup(202), DMRMessage.TIMESLOT_1);
+        CallPlaybackTarget otherSlot = target(source, new DMRTalkgroup(202), DMRMessage.TIMESLOT_2);
+
+        assertEquals("channel:" + CHANNEL_A + ":timeslot:1", first.key());
+        assertEquals(first, second);
+        assertNotEquals(first, otherSlot);
     }
 
     @Test

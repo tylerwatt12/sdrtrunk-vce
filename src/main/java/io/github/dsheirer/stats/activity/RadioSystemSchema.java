@@ -48,6 +48,7 @@ final class RadioSystemSchema
     static final int MAX_IDENTITIES_PER_SYSTEM = 100_000;
     static final int MAX_ZERO_LOCAL_FQ_TALKGROUPS_PER_SYSTEM = 100_000;
     static final int MAX_RELATIONSHIPS_PER_SYSTEM = 500_000;
+    static final int MAX_TALKER_ALIAS_CHARACTERS = 160;
 
     private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes().stream()
         .filter(action -> action != ReceiverActivityRecords.Action.CALL)
@@ -116,12 +117,12 @@ final class RadioSystemSchema
             ON trunked_radio_affiliation(confirmed_at_ms, radio_system_id, radio_id)
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_radio_site_presence_channel
-            ON trunked_radio_site_presence(channel_id, confirmed_at_ms DESC, radio_system_id, radio_id)
+            CREATE INDEX IF NOT EXISTS idx_trunked_radio_channel_presence_channel
+            ON trunked_radio_channel_presence(channel_id, confirmed_at_ms DESC, radio_system_id, radio_id)
             """);
         statement.executeUpdate("""
-            CREATE INDEX IF NOT EXISTS idx_trunked_radio_site_presence_retention
-            ON trunked_radio_site_presence(confirmed_at_ms, radio_system_id, radio_id)
+            CREATE INDEX IF NOT EXISTS idx_trunked_radio_channel_presence_retention
+            ON trunked_radio_channel_presence(confirmed_at_ms, radio_system_id, radio_id)
             """);
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_trunked_radio_presence_lifecycle_retention
@@ -139,7 +140,8 @@ final class RadioSystemSchema
             new SqliteSchemaValidator.Definition("table", "trunked_radio_group_summary",
                 radioGroupSummarySql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_affiliation", radioAffiliationSql()),
-            new SqliteSchemaValidator.Definition("table", "trunked_radio_site_presence", radioSitePresenceSql()),
+            new SqliteSchemaValidator.Definition("table", "trunked_radio_channel_presence",
+                radioChannelPresenceSql()),
             new SqliteSchemaValidator.Definition("table", "trunked_radio_presence_lifecycle",
                 radioPresenceLifecycleSql()),
             new SqliteSchemaValidator.Definition("trigger", "prune_provisional_radio_system_after_channel_delete",
@@ -153,8 +155,10 @@ final class RadioSystemSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS radio_system (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                system_key TEXT NOT NULL UNIQUE CHECK(length(trim(system_key)) > 0),
+                id INTEGER PRIMARY KEY AUTOINCREMENT
+                    CHECK(typeof(id) = 'integer' AND id > 0),
+                system_key TEXT NOT NULL UNIQUE
+                    CHECK(typeof(system_key) = 'text' AND length(trim(system_key)) > 0),
                 protocol_code INTEGER NOT NULL
                     CHECK(typeof(protocol_code) = 'integer' AND protocol_code IN (1, 3, 4)),
                 address_domain_code INTEGER NOT NULL DEFAULT 0
@@ -215,7 +219,8 @@ final class RadioSystemSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS radio_system_identity_summary (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 identity_kind_code INTEGER NOT NULL
                     CHECK(typeof(identity_kind_code) = 'integer' AND identity_kind_code IN (1, 2, 3)),
                 identity_id INTEGER NOT NULL CHECK(typeof(identity_id) = 'integer' AND identity_id > 0),
@@ -251,7 +256,9 @@ final class RadioSystemSchema
                     (typeof(last_encryption_algorithm_id) = 'integer' AND last_encryption_algorithm_id >= 0)),
                 last_encryption_key_id INTEGER CHECK(last_encryption_key_id IS NULL OR
                     (typeof(last_encryption_key_id) = 'integer' AND last_encryption_key_id >= 0)),
-                last_talker_alias TEXT,
+                last_talker_alias TEXT CHECK(last_talker_alias IS NULL OR
+                    (typeof(last_talker_alias) = 'text'
+                        AND length(trim(last_talker_alias)) BETWEEN 1 AND %d)),
                 last_talker_alias_seen_ms INTEGER CHECK(last_talker_alias_seen_ms IS NULL OR
                     (typeof(last_talker_alias_seen_ms) = 'integer' AND last_talker_alias_seen_ms > 0)),
                 PRIMARY KEY(radio_system_id, identity_kind_code, identity_id),
@@ -278,7 +285,7 @@ final class RadioSystemSchema
                         AND p25_home_talkgroup_id IS NULL)
                 )
             ) WITHOUT ROWID
-            """.formatted(ACTION_COUNT_DEFINITIONS);
+            """.formatted(ACTION_COUNT_DEFINITIONS, MAX_TALKER_ALIAS_CHARACTERS);
     }
 
     /**
@@ -290,7 +297,8 @@ final class RadioSystemSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS p25_zero_local_fq_talkgroup_summary (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 home_wacn INTEGER NOT NULL
                     CHECK(typeof(home_wacn) = 'integer' AND home_wacn BETWEEN 0 AND 1048575),
                 home_system_id INTEGER NOT NULL
@@ -318,7 +326,8 @@ final class RadioSystemSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_group_summary (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
                 group_id INTEGER NOT NULL CHECK(typeof(group_id) = 'integer' AND group_id > 0),
                 group_kind_code INTEGER NOT NULL
@@ -348,7 +357,8 @@ final class RadioSystemSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_affiliation (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
                 talkgroup_id INTEGER NOT NULL CHECK(typeof(talkgroup_id) = 'integer' AND talkgroup_id > 0),
                 confirmed_at_ms INTEGER NOT NULL
@@ -358,13 +368,14 @@ final class RadioSystemSchema
             """;
     }
 
-    private static String radioSitePresenceSql()
+    private static String radioChannelPresenceSql()
     {
         return """
-            CREATE TABLE IF NOT EXISTS trunked_radio_site_presence (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+            CREATE TABLE IF NOT EXISTS trunked_radio_channel_presence (
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
-                channel_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 evidence_code INTEGER NOT NULL
                     CHECK(typeof(evidence_code) = 'integer' AND evidence_code IN (1, 2)),
                 confirmed_at_ms INTEGER NOT NULL
@@ -380,7 +391,8 @@ final class RadioSystemSchema
     {
         return """
             CREATE TABLE IF NOT EXISTS trunked_radio_presence_lifecycle (
-                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE,
+                radio_system_id INTEGER NOT NULL REFERENCES radio_system(id) ON DELETE CASCADE
+                    CHECK(typeof(radio_system_id) = 'integer' AND radio_system_id > 0),
                 radio_id INTEGER NOT NULL CHECK(typeof(radio_id) = 'integer' AND radio_id > 0),
                 cleared_at_ms INTEGER NOT NULL CHECK(typeof(cleared_at_ms) = 'integer' AND cleared_at_ms > 0),
                 PRIMARY KEY(radio_system_id, radio_id)
@@ -464,7 +476,8 @@ final class RadioSystemSchema
             new SqliteSchemaValidator.Table("trunked_radio_group_summary", relationshipColumns),
             new SqliteSchemaValidator.Table("trunked_radio_affiliation", "radio_system_id", "radio_id", "talkgroup_id",
                 "confirmed_at_ms"),
-            new SqliteSchemaValidator.Table("trunked_radio_site_presence", "radio_system_id", "radio_id", "channel_id",
+            new SqliteSchemaValidator.Table("trunked_radio_channel_presence", "radio_system_id", "radio_id",
+                "channel_id",
                 "evidence_code", "confirmed_at_ms"),
             new SqliteSchemaValidator.Table("trunked_radio_presence_lifecycle", "radio_system_id", "radio_id",
                 "cleared_at_ms")
@@ -477,7 +490,7 @@ final class RadioSystemSchema
             "idx_p25_zero_local_fq_system_last_seen", "idx_p25_zero_local_fq_retention",
             "idx_trunked_radio_group_reverse", "idx_trunked_radio_group_retention",
             "idx_trunked_radio_affiliation_talkgroup", "idx_trunked_radio_affiliation_retention",
-            "idx_trunked_radio_site_presence_channel", "idx_trunked_radio_site_presence_retention",
+            "idx_trunked_radio_channel_presence_channel", "idx_trunked_radio_channel_presence_retention",
             "idx_trunked_radio_presence_lifecycle_retention");
     }
 
@@ -491,7 +504,7 @@ final class RadioSystemSchema
         validatePrimaryKey(connection, "trunked_radio_group_summary",
             List.of("radio_system_id", "radio_id", "group_id", "group_kind_code"));
         validatePrimaryKey(connection, "trunked_radio_affiliation", List.of("radio_system_id", "radio_id"));
-        validatePrimaryKey(connection, "trunked_radio_site_presence", List.of("radio_system_id", "radio_id"));
+        validatePrimaryKey(connection, "trunked_radio_channel_presence", List.of("radio_system_id", "radio_id"));
         validatePrimaryKey(connection, "trunked_radio_presence_lifecycle", List.of("radio_system_id", "radio_id"));
 
         validateForeignKeys(connection, "radio_system", Set.of());
@@ -503,7 +516,7 @@ final class RadioSystemSchema
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
         validateForeignKeys(connection, "trunked_radio_affiliation", Set.of(
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE")));
-        validateForeignKeys(connection, "trunked_radio_site_presence", Set.of(
+        validateForeignKeys(connection, "trunked_radio_channel_presence", Set.of(
             new ForeignKey("radio_system_id", "radio_system", "id", "CASCADE"),
             new ForeignKey("channel_id", "receiver_channel", "id", "CASCADE"),
             new ForeignKey("radio_system_id", "receiver_channel", "radio_system_id", "CASCADE")));
@@ -553,12 +566,12 @@ final class RadioSystemSchema
             new IndexColumn(0, "confirmed_at_ms", false),
             new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false)));
-        validateIndex(connection, "idx_trunked_radio_site_presence_channel", List.of(
+        validateIndex(connection, "idx_trunked_radio_channel_presence_channel", List.of(
             new IndexColumn(0, "channel_id", false),
             new IndexColumn(1, "confirmed_at_ms", true),
             new IndexColumn(2, "radio_system_id", false),
             new IndexColumn(3, "radio_id", false)));
-        validateIndex(connection, "idx_trunked_radio_site_presence_retention", List.of(
+        validateIndex(connection, "idx_trunked_radio_channel_presence_retention", List.of(
             new IndexColumn(0, "confirmed_at_ms", false),
             new IndexColumn(1, "radio_system_id", false),
             new IndexColumn(2, "radio_id", false)));
@@ -677,7 +690,7 @@ final class RadioSystemSchema
                 statement.executeUpdate();
             }
 
-            for(String table: List.of("trunked_radio_affiliation", "trunked_radio_site_presence"))
+            for(String table: List.of("trunked_radio_affiliation", "trunked_radio_channel_presence"))
             {
                 try(PreparedStatement statement = connection.prepareStatement(
                     "DELETE FROM " + table +
@@ -700,18 +713,18 @@ final class RadioSystemSchema
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO trunked_radio_site_presence (
+            INSERT INTO trunked_radio_channel_presence (
                 radio_system_id, radio_id, channel_id, evidence_code, confirmed_at_ms
             ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(radio_system_id, radio_id) DO UPDATE SET
                 channel_id = excluded.channel_id,
                 evidence_code = excluded.evidence_code,
                 confirmed_at_ms = excluded.confirmed_at_ms
-            WHERE excluded.confirmed_at_ms > trunked_radio_site_presence.confirmed_at_ms
-               OR (excluded.confirmed_at_ms = trunked_radio_site_presence.confirmed_at_ms
-                   AND (excluded.evidence_code > trunked_radio_site_presence.evidence_code
-                       OR (excluded.evidence_code = trunked_radio_site_presence.evidence_code
-                           AND excluded.channel_id < trunked_radio_site_presence.channel_id)))
+            WHERE excluded.confirmed_at_ms > trunked_radio_channel_presence.confirmed_at_ms
+               OR (excluded.confirmed_at_ms = trunked_radio_channel_presence.confirmed_at_ms
+                   AND (excluded.evidence_code > trunked_radio_channel_presence.evidence_code
+                       OR (excluded.evidence_code = trunked_radio_channel_presence.evidence_code
+                           AND excluded.channel_id < trunked_radio_channel_presence.channel_id)))
             """))
         {
             statement.setInt(1, radioSystem.radioSystemId());
@@ -1080,7 +1093,7 @@ final class RadioSystemSchema
     }
 
     /**
-     * Resolves the identity radioSystem for one writer record. Only primary activity/site observations may reclassify the
+     * Resolves the radio system for one writer record. Only primary activity/site observations may reclassify the
      * NXDN address domain. Completion, attribution and alias messages are delayed enrichments of an already accepted
      * observation and must never change the current generation themselves.
      */
@@ -1334,8 +1347,8 @@ final class RadioSystemSchema
      */
     private static void clearNxdnIdentityDomainState(Connection connection, int radioSystemId) throws SQLException
     {
-        for(String table: List.of("trunked_radio_affiliation", "trunked_radio_site_presence",
-            "trunked_radio_presence_lifecycle"))
+        for(String table: List.of("trunked_radio_affiliation", "trunked_radio_channel_presence",
+            "trunked_radio_presence_lifecycle", "trunked_logical_call_identity_bucket"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "DELETE FROM " + table + " WHERE radio_system_id = ?"))
@@ -1388,14 +1401,15 @@ final class RadioSystemSchema
     }
 
     /**
-     * Clears receiver-owned projections before moving a channel to a different identity radioSystem. These rows join
-     * through the channel's current radioSystem/protocol, so retaining them would relabel old calls as belonging to the new
-     * system or protocol.
+     * Clears receiver-owned projections before moving a channel to a different radio system. These rows join
+     * through the channel's current radio system and protocol, so retaining them would relabel old calls as belonging
+     * to the new system or protocol.
      */
     private static void clearReceiverChannelIdentityState(Connection connection, int channelId) throws SQLException
     {
-        for(String table: List.of("p25_site_snapshot", "trunked_control_channel_quality",
-            "trunked_radio_site_presence", "trunked_signaling_activity_bucket", "receiver_activity_event"))
+        for(String table: List.of("p25_site_snapshot", "trunked_site_snapshot",
+            "trunked_control_channel_quality", "trunked_radio_channel_presence",
+            "trunked_signaling_activity_bucket", "receiver_activity_event"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "DELETE FROM " + table + " WHERE channel_id = ?"))
@@ -1406,7 +1420,7 @@ final class RadioSystemSchema
         }
     }
 
-    /** Clears receiver-owned identity evidence and its radioSystem mapping when a newer site generation is known but its
+    /** Clears receiver-owned identity evidence and its radio-system mapping when a newer site generation is known but its
      * complete normalized system key is not yet available. */
     static void clearReceiverChannelGeneration(Connection connection, int channelId) throws SQLException
     {
@@ -1418,7 +1432,7 @@ final class RadioSystemSchema
     {
         int deleted = 0;
         deleted += deleteIdentityBatches(connection, "trunked_radio_affiliation", cutoff);
-        deleted += deleteIdentityBatches(connection, "trunked_radio_site_presence", cutoff);
+        deleted += deleteIdentityBatches(connection, "trunked_radio_channel_presence", cutoff);
         deleted += deleteIdentityBatches(connection, "trunked_radio_presence_lifecycle", cutoff);
         deleted += deleteIdentityBatches(connection, "trunked_radio_group_summary", cutoff);
         deleted += deleteIdentityBatches(connection, "p25_zero_local_fq_talkgroup_summary", cutoff);
@@ -1451,7 +1465,7 @@ final class RadioSystemSchema
                               SELECT 1 FROM trunked_radio_affiliation WHERE radio_system_id = system.id
                           )
                           AND NOT EXISTS (
-                              SELECT 1 FROM trunked_radio_site_presence WHERE radio_system_id = system.id
+                              SELECT 1 FROM trunked_radio_channel_presence WHERE radio_system_id = system.id
                           )
                           AND NOT EXISTS (
                               SELECT 1 FROM trunked_radio_presence_lifecycle WHERE radio_system_id = system.id
@@ -1481,7 +1495,7 @@ final class RadioSystemSchema
     {
         int deleted = 0;
         deleted += deleteAll(connection, "trunked_radio_affiliation");
-        deleted += deleteAll(connection, "trunked_radio_site_presence");
+        deleted += deleteAll(connection, "trunked_radio_channel_presence");
         deleted += deleteAll(connection, "trunked_radio_presence_lifecycle");
         deleted += deleteAll(connection, "trunked_radio_group_summary");
         deleted += deleteAll(connection, "p25_zero_local_fq_talkgroup_summary");
@@ -1791,8 +1805,9 @@ final class RadioSystemSchema
             setInteger(statement, index++, counterpart != null ? counterpart.id() : null);
             setInteger(statement, index++, encryptionAlgorithm);
             setInteger(statement, index++, encryptionKey);
-            statement.setString(index++, normalizedAlias(talkerAlias));
-            setLong(statement, index, normalizedAlias(talkerAlias) != null ? talkerAliasSeen : null);
+            String normalizedTalkerAlias = normalizedAlias(talkerAlias);
+            statement.setString(index++, normalizedTalkerAlias);
+            setLong(statement, index, normalizedTalkerAlias != null ? talkerAliasSeen : null);
             statement.executeUpdate();
         }
 
@@ -2153,13 +2168,13 @@ final class RadioSystemSchema
                 )
                 """.formatted(DELETE_BATCH_SIZE);
         }
-        else if("trunked_radio_site_presence".equals(table))
+        else if("trunked_radio_channel_presence".equals(table))
         {
             sql = """
-                DELETE FROM trunked_radio_site_presence
+                DELETE FROM trunked_radio_channel_presence
                 WHERE (radio_system_id, radio_id) IN (
                     SELECT radio_system_id, radio_id
-                    FROM trunked_radio_site_presence INDEXED BY idx_trunked_radio_site_presence_retention
+                    FROM trunked_radio_channel_presence INDEXED BY idx_trunked_radio_channel_presence_retention
                     WHERE confirmed_at_ms < ?
                     ORDER BY confirmed_at_ms, radio_system_id, radio_id
                     LIMIT %d
@@ -2243,7 +2258,7 @@ final class RadioSystemSchema
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT channel.id, channel.configuration_id, system.system_key, system.protocol_code,
-                    configured.decoder_type
+                    configured.channel_kind, configured.decoder_type
                 FROM receiver_channel channel
                 JOIN radio_system system ON system.id = channel.radio_system_id
                 JOIN configuration_channel configured
@@ -2261,13 +2276,40 @@ final class RadioSystemSchema
                 boolean nativeP25 = RadioSystemKey.isP25Native(key);
                 String configuredKey = RadioSystemKey.configured(protocol(systemProtocol), configurationId);
 
-                if(configuredProtocol != systemProtocol ||
+                if(!"TRUNKED".equals(resultSet.getString("channel_kind")) ||
+                    configuredProtocol != systemProtocol ||
                     (!nativeP25 && !key.equals(configuredKey)) ||
                     (nativeP25 && systemProtocol != TrunkedIdentityPolicy.PROTOCOL_P25))
                 {
                     throw new SQLException("Receiver channel [" + resultSet.getInt("id") +
                         "] is attached to an incompatible radio system");
                 }
+            }
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT issue FROM (
+                    SELECT 'P25 identity state on a non-P25 radio system' AS issue
+                    FROM radio_system_identity_summary summary
+                    JOIN radio_system system ON system.id=summary.radio_system_id
+                    WHERE system.protocol_code<>1 AND summary.p25_identity_state_code<>0
+                    UNION ALL
+                    SELECT 'fully qualified P25 identity on a non-P25 radio system'
+                    FROM p25_zero_local_fq_talkgroup_summary summary
+                    JOIN radio_system system ON system.id=summary.radio_system_id
+                    WHERE system.protocol_code<>1
+                    UNION ALL
+                    SELECT 'learned P25 site on a non-P25 radio system'
+                    FROM p25_learned_site site
+                    JOIN radio_system system ON system.id=site.radio_system_id
+                    WHERE system.protocol_code<>1
+                ) LIMIT 1
+                """))
+        {
+            if(resultSet.next())
+            {
+                throw new SQLException(resultSet.getString("issue"));
             }
         }
     }
@@ -2411,7 +2453,20 @@ final class RadioSystemSchema
 
     private static String normalizedAlias(String alias)
     {
-        return alias != null && !alias.isBlank() ? alias.strip() : null;
+        if(alias == null || alias.isBlank())
+        {
+            return null;
+        }
+
+        String normalized = alias.strip();
+        int codePointCount = normalized.codePointCount(0, normalized.length());
+        if(codePointCount <= MAX_TALKER_ALIAS_CHARACTERS)
+        {
+            return normalized;
+        }
+
+        int end = normalized.offsetByCodePoints(0, MAX_TALKER_ALIAS_CHARACTERS);
+        return normalized.substring(0, end);
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException

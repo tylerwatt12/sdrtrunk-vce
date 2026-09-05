@@ -473,6 +473,17 @@ public class Channel extends Configuration
     }
 
     /**
+     * Returns the configuration identifier only after it has been loaded from or accepted by persistent storage.
+     * Unlike {@link #getConfigurationId()}, this observer-safe accessor never treats a transient channel's generated
+     * candidate as durable identity.
+     */
+    @JsonIgnore
+    public String getPersistedConfigurationId()
+    {
+        return mConfigurationIdPersistenceRequired ? null : mConfigurationId;
+    }
+
+    /**
      * Restores the stable internal channel configuration identifier.  Missing or malformed legacy values are replaced
      * with a valid identifier so they cannot leak into call routing.
      */

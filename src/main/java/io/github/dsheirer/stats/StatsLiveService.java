@@ -526,6 +526,7 @@ final class StatsLiveService implements AutoCloseable
         if(navigation != null)
         {
             putText(row, "configuration_id", navigation.channelConfigurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
+            put(row, "alias_list_id", navigation.aliasListId());
             putText(row, "alias_list_name", navigation.aliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "protocol", navigation.protocol(), MAXIMUM_LIVE_TEXT_LENGTH);
             row.put("source_aliases", navigation.sourceAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)

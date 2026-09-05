@@ -39,7 +39,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * SQLite persistence for active channel and stream configuration. The legacy channel-map table remains untouched.
+ * SQLite persistence for active channel and stream configuration.
  */
 public class ConfigurationDatabaseStore
 {

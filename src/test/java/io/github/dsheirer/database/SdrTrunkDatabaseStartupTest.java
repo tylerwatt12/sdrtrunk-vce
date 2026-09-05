@@ -44,6 +44,7 @@ class SdrTrunkDatabaseStartupTest
             Statement statement = connection.createStatement())
         {
             SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.validate(connection);
             assertEquals("0", scalar(statement, """
                 SELECT COUNT(*) FROM sqlite_master
                 WHERE name IN ('configuration_channel_map', 'idx_configuration_channel_map_sort')
@@ -67,6 +68,106 @@ class SdrTrunkDatabaseStartupTest
                 )
                 WHERE name = 'alias_list_name'
                 """));
+            assertEquals("0", scalar(statement, """
+                SELECT COUNT(*) FROM database_metadata
+                WHERE key IN ('alias_schema_version', 'configuration_schema_version',
+                    'settings_schema_version', 'icon_schema_version')
+                """));
+        }
+    }
+
+    @Test
+    void currentAdministrativeSchemaRejectsAmbiguousScalarAndPayloadRepresentations() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("strict-current-schema.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            SdrTrunkDatabaseSchema.create(connection);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'Dispatch', 'P25')");
+
+            for(String sql: List.of(
+                "INSERT INTO database_metadata(key,value,updated_at_ms) VALUES ('', '1', 1)",
+                "INSERT INTO database_metadata(key,value,updated_at_ms) VALUES ('bad-time', '1', 0)",
+                "INSERT INTO database_metadata(key,value,updated_at_ms) VALUES ('bad-value', x'01', 1)",
+                "INSERT INTO application_settings(key,settings_json,updated_at_ms) VALUES ('bad-json', '{', 1)",
+                "INSERT INTO application_settings(key,settings_json,updated_at_ms) VALUES ('bad-time', '{}', 0)",
+                "INSERT INTO application_icons(key,icons_json,updated_at_ms) VALUES ('icons', '[]', 1)",
+                "INSERT INTO alias_list(id,name,family) VALUES (-1,'Bad ID','P25')",
+                "INSERT INTO alias_list(name,family) VALUES ('','P25')",
+                "INSERT INTO alias_list(name,family) VALUES ('This Alias List Name Is Too Long','P25')",
+                "INSERT INTO alias_list(name,family,unmatched_talkgroup_record_enabled) VALUES ('Bad flag','P25',0.5)",
+                "INSERT INTO scan_list(sort_order,name,published,is_default) VALUES (0.5,'Bad order',1,0)",
+                "INSERT INTO scan_list(sort_order,name,published,is_default) VALUES (1,'Bad flag',0.5,0)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,value) " +
+                    "VALUES (1,'Bad color',0.5,0,'TALKGROUP','APCO25',91)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,value) " +
+                    "VALUES (1,'Bad record',0,2,'TALKGROUP','APCO25',91)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,value) " +
+                    "VALUES (1,'',0,0,'TALKGROUP','APCO25',91)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,value) " +
+                    "VALUES (1,'Bad protocol',0,0,'TALKGROUP','UNKNOWN',91)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,value) " +
+                    "VALUES (1,'Bad identifier',0,0,'TALKGROUP','APCO25',-1)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,numeric_value) " +
+                    "VALUES (1,'Bad status',0,0,'STATUS',256)",
+                "INSERT INTO alias(alias_list_id,name,color,stream_as_talkgroup,record_enabled," +
+                    "matcher_type,protocol,value) VALUES (1,'Bad stream',0,0,0,'TALKGROUP','APCO25',91)",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,value,text_value) " +
+                    "VALUES (1,'Mixed payload',0,0,'TALKGROUP','APCO25',91,'unused')",
+                "INSERT INTO alias(alias_list_id,name,color,record_enabled,matcher_type,protocol,min_value,max_value) " +
+                    "VALUES (1,'Empty range',0,0,'TALKGROUP_RANGE','APCO25',91,91)",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',-1,'{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0.5,'{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'  ','{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'MPT1327','{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,primary_frequency_hz," +
+                    "config_json) VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,0,'{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,primary_frequency_hz," +
+                    "config_json) VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,121.5,'{}')",
+                "INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,config_json) " +
+                    "VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'[]')",
+                "INSERT INTO configuration_broadcast_stream(configuration_id,sort_order,config_json) " +
+                    "VALUES ('22222222-2222-4222-8222-222222222222',0.5,'{}')",
+                "INSERT INTO configuration_broadcast_stream(configuration_id,sort_order,config_json) " +
+                    "VALUES ('22222222-2222-4222-8222-222222222222',0,'[]')",
+                "INSERT INTO web_user(username,tier,primary_admin,credential_version,password_algorithm," +
+                    "password_iterations,password_derived_key_bits,password_salt,password_hash," +
+                    "password_changed_at_ms,auth_revision,preferences_json,preferences_revision," +
+                    "created_at_ms,updated_at_ms) VALUES ('operator','USER',0.5,1," +
+                    "'PBKDF2WithHmacSHA256',600000,256,zeroblob(16),zeroblob(32),1,1,'{}',1,1,1)",
+                "INSERT INTO web_user(username,tier,primary_admin,credential_version,password_algorithm," +
+                    "password_iterations,password_derived_key_bits,password_salt,password_hash," +
+                    "password_changed_at_ms,auth_revision,preferences_json,preferences_revision," +
+                    "created_at_ms,updated_at_ms) VALUES ('operator','USER',0,1," +
+                    "'PBKDF2WithHmacSHA256',600000,256,zeroblob(16),zeroblob(32),1,1,'[]',1,1,1)",
+                "INSERT INTO web_user(username,tier,primary_admin,credential_version,password_algorithm," +
+                    "password_iterations,password_derived_key_bits,password_salt,password_hash," +
+                    "password_changed_at_ms,auth_revision,preferences_json,preferences_revision," +
+                    "created_at_ms,updated_at_ms) VALUES ('bad user','USER',0,1," +
+                    "'PBKDF2WithHmacSHA256',600000,256,zeroblob(16),zeroblob(32),1,1,'{}',1,1,1)",
+                "INSERT INTO web_access_policy(capability_id,required_tier,updated_at_ms) " +
+                    "VALUES ('receiver-control','ADMIN',0.5)"))
+            {
+                assertThrows(java.sql.SQLException.class, () -> statement.executeUpdate(sql), sql);
+            }
+
+            statement.executeUpdate("""
+                INSERT INTO alias(alias_list_id,name,color,stream_as_talkgroup,record_enabled,
+                    matcher_type,protocol,min_value,max_value)
+                VALUES (1,'Valid range',-1,91,1,'TALKGROUP_RANGE','APCO25',1,65535)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,
+                    primary_frequency_hz,config_json)
+                VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'AM',121900000,'{}')
+                """);
         }
     }
 

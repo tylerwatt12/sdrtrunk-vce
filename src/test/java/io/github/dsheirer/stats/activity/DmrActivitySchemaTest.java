@@ -144,6 +144,18 @@ class DmrActivitySchemaTest
                     channel_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms, call_count)
                 VALUES (%d, 461125000, 1, 101, 0, 1000, 1)
                 """.formatted(channel)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO dmr_conventional_talkgroup_summary(
+                    channel_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms, last_seen_ms,
+                    call_count, encrypted_count)
+                VALUES (%d, 461125000, 1, 91, 1000, 1000, 1, 2)
+                """.formatted(channel)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO dmr_conventional_radio_summary(
+                    channel_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms,
+                    call_count, source_call_count, group_call_count, private_call_count)
+                VALUES (%d, 461125000, 1, 101, 1000, 1000, 1, 2, 1, 1)
+                """.formatted(channel)));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
         }
     }

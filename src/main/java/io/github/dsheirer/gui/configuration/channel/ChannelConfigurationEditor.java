@@ -931,8 +931,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
 
     private void updateClearChannelStatisticsButtonState()
     {
-        boolean supported = getDecoderType() == DecoderType.P25_PHASE1 || getDecoderType() == DecoderType.P25_PHASE2 ||
-            getDecoderType() == DecoderType.DMR || getDecoderType() == DecoderType.NXDN;
+        boolean supported = DecoderType.PRIMARY_DECODERS.contains(getDecoderType());
         Channel channel = getItem();
         String configurationId = ChannelConfigurationKey.configured(channel);
         getClearChannelStatisticsButton().setVisible(supported);

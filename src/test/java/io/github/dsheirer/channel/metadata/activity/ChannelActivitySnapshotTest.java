@@ -43,21 +43,28 @@ class ChannelActivitySnapshotTest
 
         assertEquals("", snapshot.title());
         assertEquals("", snapshot.channelName());
+        assertEquals("transient-channel:" + owner.getChannelID(), table.getTableId());
+        assertEquals("transient-channel:" + owner.getChannelID(), snapshot.tableId());
+        assertEquals("", snapshot.configurationId());
     }
 
     @Test
     void carriesConfiguredSystemSiteAndChannelContext()
     {
+        String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
         Channel owner = new Channel();
+        owner.setConfigurationId(configurationId);
         owner.setSystem("County System");
         owner.setSite("Downtown Simulcast");
         owner.setName("Primary Control");
-        ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(
-            new ChannelActivityTableState("Decoded title", owner, null));
+        ChannelActivityTableState table = new ChannelActivityTableState("Decoded title", owner, null);
+        ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(table);
 
         assertEquals("County System", snapshot.systemName());
         assertEquals("Downtown Simulcast", snapshot.siteName());
         assertEquals("Primary Control", snapshot.channelName());
+        assertEquals("channel:" + configurationId, table.getTableId());
+        assertEquals("channel:" + configurationId, snapshot.tableId());
     }
 
     @Test
@@ -68,6 +75,7 @@ class ChannelActivitySnapshotTest
         channel.setConfigurationId(configurationId);
         channel.setRadioResolveId("86a927a5-fc21-4ee3-8bb3-6e8b943cc68f");
         channel.setAliasListName("County Sheriff");
+        channel.setAliasListId(41L);
         Alias radio = new Alias("Car 12");
         radio.setId(301L);
         radio.setAliasListId(41L);
@@ -87,6 +95,7 @@ class ChannelActivitySnapshotTest
         ChannelActivitySnapshot.Navigation navigation = snapshotRow.navigation();
         assertEquals("CONVENTIONAL", snapshotRow.role());
         assertEquals(configurationId, navigation.channelConfigurationId());
+        assertEquals(41L, navigation.aliasListId());
         assertEquals("County Sheriff", navigation.aliasListName());
         assertEquals("p25", navigation.protocol());
         assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12"),
