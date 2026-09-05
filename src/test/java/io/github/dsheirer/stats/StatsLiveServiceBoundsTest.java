@@ -95,6 +95,7 @@ class StatsLiveServiceBoundsTest
             assertEquals(true, table.get("channel_running"));
             assertEquals("728d2d66-de4e-476b-a696-919f32dd4d12", projected.get("configuration_id"));
             assertEquals(41L, projected.get("alias_list_id"));
+            assertFalse(projected.containsKey("context_key"));
             assertEquals("County", projected.get("alias_list_name"));
             assertEquals("p25", projected.get("protocol"));
             List<Map<String,Object>> sourceAliases =
@@ -126,7 +127,7 @@ class StatsLiveServiceBoundsTest
                 source.publish(activity(tableId, List.of(activityRow("row-" + index))));
             }
 
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 source.publish(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
                     List.of(activityRow("omitted"))));
@@ -198,11 +199,10 @@ class StatsLiveServiceBoundsTest
     void projectsOnlyCatalogOwnedCanonicalNavigation()
     {
         String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
-        String guid = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
             WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
-                configurationId, guid, WebEntityRef.site(guid),
-                WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))), 60_000L);
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0))), 60_000L);
         catalog.refreshNow();
         TestChannelActivitySource source = new TestChannelActivitySource();
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
@@ -219,11 +219,11 @@ class StatsLiveServiceBoundsTest
             source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
             Map<String,Object> table = tables(service).getFirst();
             Map<String,Object> projected = rows(table).getFirst();
-            assertEquals(Map.of("kind", "site", "key", guid), table.get("entity_ref"));
-            assertEquals(Map.of("kind", "site", "key", guid), projected.get("entity_ref"));
-            assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:49F:alias-list:1", "id", 1201),
+            assertEquals(Map.of("kind", "channel", "key", configurationId), table.get("entity_ref"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId), projected.get("entity_ref"));
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f", "id", 1201),
                 projected.get("source_entity_ref"));
-            assertEquals(Map.of("kind", "talkgroup", "scope", "p25:BEE00:49F:alias-list:1", "id", 4400),
+            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:49f", "id", 4400),
                 projected.get("target_entity_ref"));
         }
         finally
@@ -236,7 +236,6 @@ class StatsLiveServiceBoundsTest
     void rebuiltCatalogInvalidatesTheEncodedLiveSnapshot() throws Exception
     {
         String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
-        String guid = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
         AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded =
             new AtomicReference<>(WebEntityNavigationCatalog.Snapshot.empty());
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
@@ -255,11 +254,11 @@ class StatsLiveServiceBoundsTest
             assertFalse(new String(withoutNavigation, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
 
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
-                    configurationId, guid, WebEntityRef.site(guid),
-                    WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0))));
+                    configurationId, WebEntityRef.channel(configurationId),
+                    WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0))));
                 catalog.refreshNow();
 
                 boolean resynchronized = false;
@@ -325,7 +324,7 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("blocked", "Live", "System", "Site",
                     "Control", null, true, true, List.of(),

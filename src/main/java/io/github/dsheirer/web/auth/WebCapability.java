@@ -22,12 +22,11 @@ import java.util.regex.Pattern;
  */
 public enum WebCapability
 {
-    SITE_ACCESS("site-access", "Entire website", AccessTier.PUBLIC),
+    WEB_ACCESS("web-access", "Entire web interface", AccessTier.PUBLIC),
     DASHBOARD_VIEW("dashboard", "Dashboard", AccessTier.PUBLIC),
     LIVE_VIEW("live", "Live", AccessTier.PUBLIC),
     TUNER_SPECTRUM_VIEW("tuner-spectrum", "Tuner Spectrum", AccessTier.ADMIN, false),
-    SYSTEMS_VIEW("systems", "Systems & Sites", AccessTier.PUBLIC),
-    CONVENTIONAL_VIEW("conventional", "Conventional", AccessTier.PUBLIC),
+    RADIO_VIEW("radio", "Radio systems and channels", AccessTier.PUBLIC),
     CREDITS_VIEW("credits", "Credits", AccessTier.PUBLIC),
     CSV_EXPORT("csv-export", "CSV export", AccessTier.PUBLIC),
     WEB_AUDIO_LISTEN("call-audio", "Scanner and call audio", AccessTier.PUBLIC),

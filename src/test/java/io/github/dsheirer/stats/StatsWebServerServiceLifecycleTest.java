@@ -370,7 +370,7 @@ class StatsWebServerServiceLifecycleTest
         assertTrue(found, "Alias-list catalog did not contain ID [" + aliasListId + "]: " + catalog.body());
 
         HttpResponse<String> observed = client.send(HttpRequest.newBuilder(origin.resolve(
-                "/api/v1/alias-lists/" + aliasListId + "/observed-talkgroups"))
+                "/api/v1/alias-lists/" + aliasListId + "/observed-group-identities"))
             .timeout(Duration.ofSeconds(10))
             .header("Cookie", cookie)
             .GET()

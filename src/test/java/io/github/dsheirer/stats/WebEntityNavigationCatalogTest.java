@@ -29,7 +29,6 @@ import org.junit.jupiter.api.Test;
 class WebEntityNavigationCatalogTest
 {
     private static final String CONFIGURATION_ID = "728d2d66-de4e-476b-a696-919f32dd4d12";
-    private static final String SITE_ID = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
 
     @Test
     void retainsTheLastCompleteGenerationWhenARefreshFails()
@@ -95,8 +94,8 @@ class WebEntityNavigationCatalogTest
             catalog.stop();
             release.countDown();
             assertTrue(completed.await(1, TimeUnit.SECONDS));
-            assertEquals(p25Snapshot().channel(CONFIGURATION_ID, null).entityRef(),
-                catalog.snapshot().channel(CONFIGURATION_ID, null).entityRef());
+            assertEquals(p25Snapshot().channel(CONFIGURATION_ID).entityRef(),
+                catalog.snapshot().channel(CONFIGURATION_ID).entityRef());
             assertEquals(1, catalog.successfulRefreshes(),
                 "a refresh completing after stop must not publish a new generation");
         }
@@ -120,13 +119,13 @@ class WebEntityNavigationCatalogTest
     }
 
     @Test
-    void resolvesOnlyProtocolValidIdentitiesUnderAnExactLearnedScope()
+    void resolvesOnlyProtocolValidIdentitiesUnderAnExactLearnedRadioSystem()
     {
-        WebEntityNavigationCatalog.Channel channel = p25Snapshot().channel(CONFIGURATION_ID, null);
-        assertEquals(Map.of("kind", "radio", "scope", "p25:BEE00:49F:alias-list:1", "id", 1201),
+        WebEntityNavigationCatalog.Channel channel = p25Snapshot().channel(CONFIGURATION_ID);
+        assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f", "id", 1201),
             channel.identity(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201))
                 .toMap());
-        assertEquals(Map.of("kind", "patch_group", "scope", "p25:BEE00:49F:alias-list:1", "id", 4400),
+        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f", "id", 4400),
             channel.identity(new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", "phase_1", 4400))
                 .toMap());
         assertNull(channel.identity(
@@ -138,32 +137,28 @@ class WebEntityNavigationCatalogTest
     @Test
     void refusesDuplicateCanonicalChannelIdentities()
     {
-        WebEntityNavigationCatalog.Channel channel = p25Snapshot().channel(CONFIGURATION_ID, null);
+        WebEntityNavigationCatalog.Channel channel = p25Snapshot().channel(CONFIGURATION_ID);
         assertThrows(IllegalArgumentException.class,
             () -> WebEntityNavigationCatalog.Snapshot.of(List.of(channel, channel)));
     }
 
     @Test
-    void neverUsesConventionalCorrelationMetadataOrFallbackIdentityForNavigation()
+    void navigationUsesOnlyTheSavedChannelConfigurationId()
     {
         String conventionalId = "828d2d66-de4e-476b-a696-919f32dd4d12";
-        String correlationGuid = "a1b2c3d4-e5f6-4789-8abc-def012345678";
         WebEntityNavigationCatalog.Channel conventional = new WebEntityNavigationCatalog.Channel(
-            conventionalId, correlationGuid, WebEntityRef.conventional(conventionalId), null, 3, 0);
+            conventionalId, WebEntityRef.channel(conventionalId), null, 3, 0);
         WebEntityNavigationCatalog.Snapshot snapshot = WebEntityNavigationCatalog.Snapshot.of(
-            List.of(p25Snapshot().channel(CONFIGURATION_ID, null), conventional));
+            List.of(p25Snapshot().channel(CONFIGURATION_ID), conventional));
 
-        assertSame(conventional, snapshot.channel(conventionalId, null));
-        assertNull(snapshot.channel(null, correlationGuid),
-            "conventional radres_guid is upload correlation metadata, not a site identity");
-        assertNull(snapshot.channel("00000000-0000-0000-0000-000000000999", SITE_ID),
-            "a supplied but unresolved configuration identity must not fall back to GUID");
+        assertSame(conventional, snapshot.channel(conventionalId));
+        assertNull(snapshot.channel("00000000-0000-0000-0000-000000000999"));
     }
 
     private static WebEntityNavigationCatalog.Snapshot p25Snapshot()
     {
         return WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
-            CONFIGURATION_ID, SITE_ID, WebEntityRef.site(SITE_ID),
-            WebEntityRef.system("p25:BEE00:49F:alias-list:1"), 1, 0)));
+            CONFIGURATION_ID, WebEntityRef.channel(CONFIGURATION_ID),
+            WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0)));
     }
 }

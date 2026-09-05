@@ -309,12 +309,12 @@ public final class WebSessionHttpController
     }
 
     /** Fixed desktop handoff path for creating one site-scoped P25 bandplan override. */
-    public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity, String radioResolveId)
+    public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity, String configurationId)
     {
         Objects.requireNonNull(identity, "P25 site identity cannot be null");
         return DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + String.format(Locale.ROOT, "/%05X/%03X/%02X/%02X/%s",
             identity.wacn(), identity.system(), identity.rfss(), identity.site(),
-            requireCanonicalRadioResolveId(radioResolveId));
+            requireCanonicalConfigurationId(configurationId));
     }
 
     private static String desktopHandoffRedirectLocation(String rawPath)
@@ -344,10 +344,10 @@ public final class WebSessionHttpController
                 P25SiteIdentity identity = new P25SiteIdentity(Integer.parseInt(segments[0], 16),
                     Integer.parseInt(segments[1], 16), Integer.parseInt(segments[2], 16),
                     Integer.parseInt(segments[3], 16));
-                String radioResolveId = requireCanonicalRadioResolveId(segments[4]);
+                String configurationId = requireCanonicalConfigurationId(segments[4]);
                 return String.format(Locale.ROOT,
-                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&guid=%s",
-                    identity.wacn(), identity.system(), identity.rfss(), identity.site(), radioResolveId);
+                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
+                    identity.wacn(), identity.system(), identity.rfss(), identity.site(), configurationId);
             }
             catch(IllegalArgumentException exception)
             {
@@ -405,13 +405,13 @@ public final class WebSessionHttpController
         return true;
     }
 
-    private static String requireCanonicalRadioResolveId(String radioResolveId)
+    private static String requireCanonicalConfigurationId(String configurationId)
     {
         try
         {
-            String canonical = UUID.fromString(radioResolveId).toString();
+            String canonical = UUID.fromString(configurationId).toString();
 
-            if(canonical.equals(radioResolveId))
+            if(canonical.equals(configurationId))
             {
                 return canonical;
             }
@@ -421,7 +421,7 @@ public final class WebSessionHttpController
             //Report one stable validation error below.
         }
 
-        throw new IllegalArgumentException("RadioResolve ID must be a canonical lowercase UUID");
+        throw new IllegalArgumentException("Channel configuration ID must be a canonical lowercase UUID");
     }
 
     private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,

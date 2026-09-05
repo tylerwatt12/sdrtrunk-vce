@@ -12,7 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
-import io.github.dsheirer.web.settings.WebSiteSettingsService;
+import io.github.dsheirer.web.settings.WebReceiverSettingsService;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -23,7 +23,7 @@ import java.time.Duration;
 import java.util.prefs.BackingStoreException;
 import org.junit.jupiter.api.Test;
 
-class WebSiteSettingsHttpControllerTest
+class WebReceiverSettingsHttpControllerTest
 {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -31,10 +31,10 @@ class WebSiteSettingsHttpControllerTest
     void readsAndAtomicallyUpdatesOnlySharedReceiverTiming() throws Exception
     {
         TestNowPlayingPreference nowPlaying = new TestNowPlayingPreference();
-        WebSiteSettingsService service = new WebSiteSettingsService(nowPlaying);
-        WebSiteSettingsHttpController controller = new WebSiteSettingsHttpController(service);
+        WebReceiverSettingsService service = new WebReceiverSettingsService(nowPlaying);
+        WebReceiverSettingsHttpController controller = new WebReceiverSettingsHttpController(service);
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
-        server.createContext(WebSiteSettingsHttpController.PATH, controller::handle);
+        server.createContext(WebReceiverSettingsHttpController.PATH, controller::handle);
         server.start();
 
         try
@@ -94,7 +94,7 @@ class WebSiteSettingsHttpControllerTest
             assertEquals(400, send(client, request(origin)
                 .method("GET", HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
             assertEquals(400, send(client, HttpRequest.newBuilder(
-                origin.resolve(WebSiteSettingsHttpController.PATH + "?extra=1"))
+                origin.resolve(WebReceiverSettingsHttpController.PATH + "?extra=1"))
                 .timeout(Duration.ofSeconds(5)).GET()).statusCode());
 
             nowPlaying.mFailNextSave = true;
@@ -118,7 +118,7 @@ class WebSiteSettingsHttpControllerTest
 
     private static HttpRequest.Builder request(URI origin)
     {
-        return HttpRequest.newBuilder(origin.resolve(WebSiteSettingsHttpController.PATH))
+        return HttpRequest.newBuilder(origin.resolve(WebReceiverSettingsHttpController.PATH))
             .timeout(Duration.ofSeconds(10));
     }
 
@@ -135,8 +135,8 @@ class WebSiteSettingsHttpControllerTest
 
     private static final class TestNowPlayingPreference extends NowPlayingPreference
     {
-        private SiteSettingsSnapshot mSnapshot = new SiteSettingsSnapshot(1,
-            new SiteSettings(DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS));
+        private ReceiverSettingsSnapshot mSnapshot = new ReceiverSettingsSnapshot(1,
+            new ReceiverSettings(DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS));
         private int mSaveCount;
         private boolean mFailNextSave;
 
@@ -146,27 +146,27 @@ class WebSiteSettingsHttpControllerTest
         }
 
         @Override
-        public SiteSettingsSnapshot getSiteSettingsSnapshot()
+        public ReceiverSettingsSnapshot getReceiverSettingsSnapshot()
         {
             return mSnapshot;
         }
 
         @Override
-        public synchronized SiteSettingsUpdate replaceSiteSettings(long expectedRevision, SiteSettings settings)
+        public synchronized ReceiverSettingsUpdate replaceReceiverSettings(long expectedRevision, ReceiverSettings settings)
             throws BackingStoreException
         {
             if(expectedRevision != mSnapshot.revision())
             {
-                return new SiteSettingsUpdate(false, mSnapshot);
+                return new ReceiverSettingsUpdate(false, mSnapshot);
             }
             if(mFailNextSave)
             {
                 mFailNextSave = false;
                 throw new BackingStoreException("Simulated settings failure");
             }
-            mSnapshot = new SiteSettingsSnapshot(mSnapshot.revision() + 1, settings);
+            mSnapshot = new ReceiverSettingsSnapshot(mSnapshot.revision() + 1, settings);
             mSaveCount++;
-            return new SiteSettingsUpdate(true, mSnapshot);
+            return new ReceiverSettingsUpdate(true, mSnapshot);
         }
     }
 }

@@ -72,7 +72,7 @@ class WebAccessServiceTest
         assertEquals(reset, service.authenticate("user.one", replacementPassword).orElseThrow());
 
         service.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.USER);
-        service.setCapabilityTier(WebCapability.SITE_ACCESS, AccessTier.USER);
+        service.setCapabilityTier(WebCapability.WEB_ACCESS, AccessTier.USER);
         assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW));
         assertTrue(service.isAllowed(AccessTier.USER, WebCapability.CREDITS_VIEW));
         assertFalse(service.isAllowed(AccessTier.USER, WebCapability.ADMIN_ACCESS));
@@ -82,7 +82,7 @@ class WebAccessServiceTest
         WebAccessService restarted = new WebAccessService(database);
         assertEquals(2, restarted.accounts().size());
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.DASHBOARD_VIEW));
-        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.SITE_ACCESS));
+        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.WEB_ACCESS));
         assertEquals(reset, restarted.authenticate("user.one", replacementPassword).orElseThrow());
         assertFalse(databaseText(database).contains(new String(replacementPassword)));
 
@@ -200,9 +200,9 @@ class WebAccessServiceTest
     @Test
     void definesEveryCapabilityAndLocksFixedPolicies()
     {
-        assertEquals(15, WebCapability.registry().size());
-        for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems",
-            "conventional", "credits", "csv-export", "call-audio", "user-settings", "admin-users",
+        assertEquals(14, WebCapability.registry().size());
+        for(String id: new String[]{"web-access", "dashboard", "live", "tuner-spectrum", "radio",
+            "credits", "csv-export", "call-audio", "user-settings", "admin-users",
             "admin-access", "admin-aliases", "admin-settings", "receiver-health"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);

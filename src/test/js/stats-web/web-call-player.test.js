@@ -96,9 +96,41 @@ async function main() {
       target_form: 'TALKGROUP', target_id: 56735, timeslot: 0,
       playback_target: {
         key: 'system:p25:bee00:49f:talkgroup:56735', kind: 'talkgroup',
-        system_key: 'p25:bee00:49f', label: 'Talkgroup 56735'
+        radio_system_key: 'p25:bee00:49f', label: 'Talkgroup 56735'
       }
     };
+
+    const labels = Object.create(WebCallPlayer.prototype);
+    assert.equal(labels.callLabel({
+      channel: 'Fire Dispatch', decoder: 'NBFM', target_form: 'TALKGROUP', target_id: 1,
+      target_alias: 'Synthetic route', source_id: '',
+      playback_target: { key: 'channel:conventional-am', kind: 'channel', label: 'Fire Dispatch' }
+    }), 'Fire Dispatch', 'Analog calls must use the saved channel instead of the synthetic TGID');
+    assert.equal(labels.callLabel({
+      channel: 'DMR Repeater', protocol: 'DMR', target_form: 'TALKGROUP', target_id: 91,
+      target_alias: 'Operations', source_id: '',
+      playback_target: {
+        key: 'channel:conventional-dmr:timeslot:2', kind: 'channel_timeslot',
+        label: 'DMR Repeater · Timeslot 2'
+      }
+    }), 'Operations · TGID 91', 'A real conventional DMR target must remain visible in the call label');
+    assert.equal(labels.targetLabel({
+      protocol: 'DMR', target_alias: 'Operations', target_id: 91,
+      playback_target: {
+        key: 'channel:conventional-dmr:timeslot:2', kind: 'channel_timeslot',
+        label: 'DMR Repeater · Timeslot 2'
+      }
+    }), 'DMR Repeater · Timeslot 2', 'Hold and Avoid must describe their channel-and-timeslot scope');
+    assert.equal(labels.callLabel({
+      channel: 'P25 Conventional', protocol: 'P25', target_form: 'TALKGROUP', target_id: 1201,
+      source_id: '', playback_target: {
+        key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional'
+      }
+    }), 'TGID 1201', 'A real conventional P25 talkgroup must remain visible in the call label');
+    assert.equal(labels.targetLabel({
+      protocol: 'P25', target_id: 1201,
+      playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
+    }), 'P25 Conventional', 'Hold and Avoid must remain channel-scoped for conventional P25');
 
     const normalized = Object.assign(Object.create(WebCallPlayer.prototype), { arrivalSequence: 0 });
     const normalizedCall = normalized.normalizeCall({

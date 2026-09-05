@@ -120,19 +120,6 @@ class StatsRequestTest
     }
 
     @Test
-    void keepsPathIdentifiersOutOfTheQueryContract()
-    {
-        StatsRequest request = StatsRequest.from(URI.create("/?limit=20"))
-            .withPathParameter("site_guid", 1234);
-        assertEquals(1234, request.requiredIdentifier("site_guid"));
-        assertEquals(20, request.limit());
-        assertDoesNotThrow(request::requireFullyConsumed);
-
-        assertInvalidParameter("site_guid", () -> StatsRequest.from(URI.create("/?site_guid=1234"))
-            .withPathParameter("site_guid", 1234));
-    }
-
-    @Test
     void preflightsEndpointSpecificParametersWithoutMarkingThemConsumed()
     {
         StatsRequest accepted = StatsRequest.from(URI.create("/?limit=20&sort=name"));

@@ -161,11 +161,11 @@ final class StatsAliasCatalog
         List<Map<String,Object>> totals = queryRows(connection, "SELECT count(*) AS count FROM alias_list");
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("rows", rows);
-        response.put("count", totals.isEmpty() ? 0 : number(totals.getFirst().get("count")));
+        response.put("total_count", totals.isEmpty() ? 0 : number(totals.getFirst().get("count")));
         response.put("limit", request.limit());
         response.put("offset", request.offset());
-        response.put("hasMore", hasMore);
-        response.put("nextOffset", hasMore ? request.offset() + request.limit() : null);
+        response.put("has_more", hasMore);
+        response.put("next_offset", hasMore ? request.offset() + request.limit() : null);
         response.put("families", List.of("p25", "dmr", "nxdn", "nbfm"));
         response.put("matcher_types", MATCHERS.keySet().stream().sorted().toList());
         return response;
@@ -200,8 +200,8 @@ final class StatsAliasCatalog
             response.put("rows", rows);
             response.put("limit", request.limit());
             response.put("offset", request.offset());
-            response.put("hasMore", hasMore);
-            response.put("nextOffset", hasMore ? request.offset() + request.limit() : null);
+            response.put("has_more", hasMore);
+            response.put("next_offset", hasMore ? request.offset() + request.limit() : null);
             return response;
         }
 
@@ -221,8 +221,8 @@ final class StatsAliasCatalog
         response.put("rows", rows);
         response.put("limit", request.limit());
         response.put("offset", request.offset());
-        response.put("hasMore", hasMore);
-        response.put("nextOffset", hasMore ? request.offset() + request.limit() : null);
+        response.put("has_more", hasMore);
+        response.put("next_offset", hasMore ? request.offset() + request.limit() : null);
         return response;
     }
 

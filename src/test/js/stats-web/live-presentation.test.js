@@ -115,11 +115,11 @@ const untouched = behavior.livePresentedRow(idle, {
 });
 assert.equal(untouched, idle, 'Rows that need no presentation change should not be copied');
 
-const systems = functionSource('liveSystemsSection');
-assert.doesNotMatch(systems, /activeRowOrders|activeOrders/,
+const channels = functionSource('liveChannelsSection');
+assert.doesNotMatch(channels, /activeRowOrders|activeOrders/,
   'Frontend ordering must come from the authoritative snapshot without duplicate state');
-assert.match(systems, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
+assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
   'Conventional tables stay sortable while active-only trunked tables retain activation order');
-assert.match(systems, /if \(!tableIds\.has\(tableId\)\) removeTable\(tableId\)/,
+assert.match(channels, /if \(!tableIds\.has\(tableId\)\) removeTable\(tableId\)/,
   'A resync must remove local tables absent from the authoritative snapshot');
-assert.match(systems, /if \(activeFilter && selection && !incoming\.has\(selection\.rowKey\)\) clearSelection\(\)/);
+assert.match(channels, /if \(activeFilter && selection && !incoming\.has\(selection\.rowKey\)\) clearSelection\(\)/);

@@ -11,7 +11,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sun.net.httpserver.HttpExchange;
-import io.github.dsheirer.web.settings.WebSiteSettingsService;
+import io.github.dsheirer.web.settings.WebReceiverSettingsService;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -24,23 +24,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Administrator-only endpoint for the traffic timing that changes receiver behavior for everyone. */
-public final class WebSiteSettingsHttpController
+public final class WebReceiverSettingsHttpController
 {
-    public static final String PATH = "/api/v1/admin/site-settings";
+    public static final String PATH = "/api/v1/admin/receiver-settings";
     private static final int MAXIMUM_BODY_BYTES = 512;
     private static final Pattern ETAG = Pattern.compile("\"([1-9][0-9]*)\"");
-    private static final Logger mLog = LoggerFactory.getLogger(WebSiteSettingsHttpController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(WebReceiverSettingsHttpController.class);
     private static final ObjectMapper MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-    private final WebSiteSettingsService mSettings;
+    private final WebReceiverSettingsService mSettings;
 
-    public WebSiteSettingsHttpController(WebSiteSettingsService settings)
+    public WebReceiverSettingsHttpController(WebReceiverSettingsService settings)
     {
-        mSettings = Objects.requireNonNull(settings, "Web site settings service cannot be null");
+        mSettings = Objects.requireNonNull(settings, "Web receiver settings service cannot be null");
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -67,17 +67,17 @@ public final class WebSiteSettingsHttpController
                 }
                 case "PUT" -> {
                     long expectedRevision = requireRevision(exchange);
-                    WebSiteSettingsService.Settings requested = read(exchange);
+                    WebReceiverSettingsService.Settings requested = read(exchange);
                     try
                     {
-                        WebSiteSettingsService.ReplaceResult result = mSettings.replace(expectedRevision, requested);
+                        WebReceiverSettingsService.ReplaceResult result = mSettings.replace(expectedRevision, requested);
                         send(exchange, result.updated() ? 200 : 409, result.snapshot());
                     }
                     catch(BackingStoreException exception)
                     {
-                        mLog.error("Unable to save site settings", exception);
+                        mLog.error("Unable to save receiver settings", exception);
                         ApiHttpResponse.sendError(exchange, 500, "settings_save_failed",
-                            "Site settings could not be saved");
+                            "Receiver settings could not be saved");
                     }
                 }
                 default -> {
@@ -92,11 +92,11 @@ public final class WebSiteSettingsHttpController
         }
         catch(IllegalArgumentException exception)
         {
-            ApiHttpResponse.sendError(exchange, 422, "invalid_site_settings", exception.getMessage());
+            ApiHttpResponse.sendError(exchange, 422, "invalid_receiver_settings", exception.getMessage());
         }
     }
 
-    private static void send(HttpExchange exchange, int status, WebSiteSettingsService.Snapshot snapshot)
+    private static void send(HttpExchange exchange, int status, WebReceiverSettingsService.Snapshot snapshot)
         throws IOException
     {
         exchange.getResponseHeaders().set("ETag", quoteRevision(snapshot.revision()));
@@ -133,12 +133,12 @@ public final class WebSiteSettingsHttpController
     {
         if(revision < 1)
         {
-            throw new IllegalArgumentException("Site-settings revision must be positive");
+            throw new IllegalArgumentException("Receiver-settings revision must be positive");
         }
         return "\"" + revision + "\"";
     }
 
-    private static WebSiteSettingsService.Settings read(HttpExchange exchange) throws IOException, RequestException
+    private static WebReceiverSettingsService.Settings read(HttpExchange exchange) throws IOException, RequestException
     {
         String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         if(contentType == null || !"application/json".equals(contentType.toLowerCase(Locale.ROOT)
@@ -181,19 +181,19 @@ public final class WebSiteSettingsHttpController
             }
             try
             {
-                WebSiteSettingsService.Settings settings =
-                    MAPPER.readValue(body, WebSiteSettingsService.Settings.class);
+                WebReceiverSettingsService.Settings settings =
+                    MAPPER.readValue(body, WebReceiverSettingsService.Settings.class);
 
                 if(settings == null)
                 {
-                    throw new RequestException(422, "invalid_site_settings", "Site settings are invalid");
+                    throw new RequestException(422, "invalid_receiver_settings", "Receiver settings are invalid");
                 }
 
                 return settings;
             }
             catch(IOException exception)
             {
-                throw new RequestException(422, "invalid_site_settings", "Site settings are invalid");
+                throw new RequestException(422, "invalid_receiver_settings", "Receiver settings are invalid");
             }
         }
         finally

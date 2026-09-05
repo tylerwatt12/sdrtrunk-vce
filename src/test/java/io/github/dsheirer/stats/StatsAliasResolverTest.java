@@ -38,9 +38,9 @@ class StatsAliasResolverTest
     Path mTemporaryFolder;
 
     @Test
-    void classifiesObservedTalkgroupsWithinOnlyTheSelectedAliasListAndObservesCommittedChanges() throws Exception
+    void classifiesObservedGroupIdentitiesWithinOnlyTheSelectedAliasListAndObservesCommittedChanges() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("observed-talkgroups.sqlite");
+        Path database = mTemporaryFolder.resolve("observed-group-identities.sqlite");
         createDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -84,7 +84,7 @@ class StatsAliasResolverTest
             reservedMaximum.put("p25_home_talkgroup_id", 0xFFFF);
             List<Map<String,Object>> rows = rows(exact, ordinarySameNumber, range, none, unknown,
                 reservedZero, reservedMaximum);
-            resolver.resolveObservedTalkgroups(connection, rows);
+            resolver.resolveObservedGroupIdentities(connection, rows);
 
             assertEquals("exact", exact.get("match_kind"));
             assertEquals(2L, ((Number)exact.get("matched_alias_id")).longValue());
@@ -114,7 +114,7 @@ class StatsAliasResolverTest
                     id, alias_list_id, name, matcher_type, protocol, value
                 ) VALUES (5, 1, 'New Exact', 'TALKGROUP', 'APCO25', 800)
                 """);
-            resolver.resolveObservedTalkgroups(connection, rows(range));
+            resolver.resolveObservedGroupIdentities(connection, rows(range));
             assertEquals("exact", range.get("match_kind"));
             assertEquals("New Exact", range.get("matched_alias_name"));
         }
@@ -318,7 +318,7 @@ class StatsAliasResolverTest
             north.put("alias_list_id", 1L);
             Map<String,Object> south = observedP25Row(700);
             south.put("alias_list_id", 2L);
-            resolver.resolveObservedTalkgroups(connection, rows(north, south));
+            resolver.resolveObservedGroupIdentities(connection, rows(north, south));
             assertEquals("Dispatch", north.get("matched_alias_name"));
             assertEquals("South Dispatch", south.get("matched_alias_name"),
                 "channel-level views continue to use that channel's exact Alias List");
@@ -421,7 +421,7 @@ class StatsAliasResolverTest
             Map<String,Object> selected = observedP25Row(42);
             Map<String,Object> irrelevant = observedP25Row(99);
             irrelevant.put("alias_list_id", 2L);
-            resolver.resolveObservedTalkgroups(connection, rows(selected, irrelevant));
+            resolver.resolveObservedGroupIdentities(connection, rows(selected, irrelevant));
 
             assertEquals("exact", selected.get("match_kind"));
             assertEquals("Selected 42", selected.get("matched_alias_name"));
@@ -531,12 +531,12 @@ class StatsAliasResolverTest
         return row;
     }
 
-    private static Map<String,Object> observedP25Row(int talkgroup)
+    private static Map<String,Object> observedP25Row(int groupIdentity)
     {
         Map<String,Object> row = p25Row();
         row.put("topology", "TRUNKED");
         row.put("alias_list_id", 1L);
-        row.put("talkgroup_id", talkgroup);
+        row.put("group_identity_id", groupIdentity);
         row.put("protocol_code", 1);
         row.put("p25_identity_state_code", 1);
         return row;

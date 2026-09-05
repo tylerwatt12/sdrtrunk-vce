@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Protects the protocol-neutral dashboard contract. Browser smoke testing exercises behavior; these source checks
- * prevent call outcomes, receiver health, raw decoder names, and site observations from being mixed together again.
+ * prevent call outcomes, receiver health, raw decoder names, and channel observations from being mixed together again.
  */
 class StatsWebDashboardUiContractTest
 {
@@ -40,8 +40,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.indexOf("if (tab === 'health')") <
             dashboard.indexOf("await signalHealthSection()"));
         assertTrue(dashboard.contains("'Monitored Coverage'"));
-        assertTrue(dashboard.contains("'Recent Sites / Channels'"));
-        assertTrue(dashboard.contains("dashboard.recent_receivers"));
+        assertTrue(dashboard.contains("'Recent Channels'"));
+        assertTrue(dashboard.contains("dashboard.recent_channels"));
         assertTrue(dashboard.contains("'Logical Call Totals · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Call Activity · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Logical Calls by Conventional Channel · Last 24 Hours'"));
@@ -55,8 +55,8 @@ class StatsWebDashboardUiContractTest
         assertFalse(dashboard.contains("topTalkgroups"));
         assertFalse(dashboard.contains("topRadios"));
         assertFalse(dashboard.contains("P25 Trunked"));
-        assertTrue(dashboard.contains("counts.trunked_systems"));
-        assertTrue(dashboard.contains("counts.trunked_sites"));
+        assertTrue(dashboard.contains("counts.radio_systems"));
+        assertTrue(dashboard.contains("counts.trunked_channels"));
         assertTrue(dashboard.contains("counts.conventional_channels"));
         assertFalse(dashboard.contains("counts.talkgroups"));
         assertFalse(dashboard.contains("counts.radios"));
@@ -98,8 +98,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(activity.contains("(nextOffset) => void loadRadios(nextOffset, true)"));
         assertTrue(activity.contains("if (restorePagingFocus) pager.focus()"));
         assertTrue(activity.contains("failure.querySelector('.async-section-retry')?.focus()"));
-        assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
-        assertTrue(activity.contains("Systems & Sites access is required to list source radios."));
+        assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
+        assertTrue(activity.contains("Radio access is required to list source radios."));
         assertTrue(activity.contains("renderIsCurrent(renderContext)"));
         assertTrue(activity.contains("new AbortController()"));
         assertTrue(activity.contains("removeEventListener('abort', abortFromPage)"));
@@ -116,8 +116,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(columns.contains("label: 'Alias'"));
         assertTrue(columns.contains("label: 'Observations'"));
         assertTrue(columns.contains("label: 'Last Seen'"));
-        assertTrue(system.contains("row.resolved_channel_name"));
-        assertTrue(system.contains("row.scope_token || row.guid || row.configuration_id"));
+        assertTrue(system.contains("row.name"));
+        assertFalse(system.contains("row.resolved_channel_name"));
+        assertTrue(system.contains("row.radio_system_key || row.configuration_id"));
         assertTrue(system.contains("entityReferenceAllowed(row.entity_ref)"));
         assertTrue(system.contains("entityTarget(row.entity_ref)"));
         assertFalse(system.contains("context_key"));
@@ -125,7 +126,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(system.contains("dashboard-identity-context"));
         assertTrue(radio.contains("row.radio_entity_ref"));
         assertTrue(radio.contains("entityReferenceAllowed(reference)"));
-        assertTrue(radio.contains("entityTarget(reference, { 'conventional-detail': 'radios' })"));
+        assertTrue(radio.contains("entityTarget(reference, { channel: 'radios' })"));
         assertFalse(radio.contains("radioLink(row"));
         assertTrue(pager.contains("node('button', 'secondary', 'Previous')"));
         assertTrue(pager.contains("node('button', 'secondary', 'Next')"));
@@ -153,10 +154,10 @@ class StatsWebDashboardUiContractTest
         String health = declaration(source, "const dashboardHealthColumns = [");
         String calls = declaration(source, "const dashboardCallSourceColumns = [");
         String identities = function(source, "function dashboardIdentityColumns(identityLabel)");
-        String context = function(source, "function dashboardReceiverContext(row)");
-        assertTrue(health.contains("label: 'Site / Channel'"));
+        String context = function(source, "function dashboardChannelContext(row)");
+        assertTrue(health.contains("label: 'Channel'"));
         assertTrue(health.contains("label: 'Mode'"));
-        assertTrue(health.contains("label: 'Context'"));
+        assertTrue(health.contains("label: 'Radio Context'"));
         assertTrue(health.contains("label: 'MHz'"));
         assertTrue(health.contains("label: 'Seen'"));
         assertFalse(health.contains("label: 'System'"));
@@ -197,7 +198,7 @@ class StatsWebDashboardUiContractTest
         String modeLabel = function(source, "function dashboardModeLabel(row)");
         String mode = function(source, "function dashboardMode(row)");
         String decoder = function(source, "function decoderLabel(value, compact = false)");
-        String live = function(source, "function liveSystemsSection(onSelectionChange)");
+        String live = function(source, "function liveChannelsSection(onSelectionChange)");
         assertTrue(modeLabel.contains("`${family}-T`"));
         assertTrue(modeLabel.contains("`${family}-C`"));
         assertTrue(modeLabel.contains("!['P25', 'DMR', 'NXDN'].includes(family)"));
@@ -222,7 +223,7 @@ class StatsWebDashboardUiContractTest
         String identityLink = function(source, "function dashboardIdentityLink(row, label = dashboardIdentityId(row))");
         assertFalse(receiverLink.contains("detail_available"));
         assertTrue(receiverLink.contains("dashboardChannelKind(row) === 'TRUNKED'"));
-        assertTrue(receiverLink.contains("siteNameSummary(row"));
+        assertTrue(receiverLink.contains("channelNameSummary(row"));
         assertTrue(receiverLink.contains("entityReferenceAllowed(row.entity_ref)"));
         assertTrue(receiverLink.contains("if (target) return anchor(label, target)"));
         assertFalse(identityLink.contains("identity_detail_available"));
@@ -236,17 +237,18 @@ class StatsWebDashboardUiContractTest
     void summarizesTrunkedNameAndSiteWithoutChangingConventionalLabels() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String parts = function(source, "function siteDisplayParts(row)");
-        String summary = function(source, "function siteNameSummaryValue(primary, secondary, target = '')");
+        String parts = function(source, "function channelDisplayParts(row)");
+        String summary = function(source, "function identitySummaryValue(primary, secondary, target = '')");
         String sourceLabel = function(source, "function callSourceLabel(row)");
-        assertTrue(parts.contains("configuredNameValue(row)"));
-        assertTrue(parts.contains("configuredSiteValue(row)"));
+        assertTrue(parts.contains("nameValue(row)"));
+        assertTrue(parts.contains("siteNameValue(row)"));
         assertTrue(parts.contains("!sameSiteText(site, primary)"));
-        assertTrue(summary.contains("site-name-summary-primary"));
-        assertTrue(summary.contains("site-name-summary-context"));
+        assertTrue(summary.contains("identity-summary-primary"));
+        assertTrue(summary.contains("identity-summary-context"));
         assertTrue(sourceLabel.indexOf("dashboardChannelKind(row) === 'TRUNKED'") <
-            sourceLabel.indexOf("row.channel_name"));
-        assertTrue(sourceLabel.contains("if (row.channel_name) return row.channel_name"));
+            sourceLabel.indexOf("row.name"));
+        assertTrue(sourceLabel.contains("if (row.name) return row.name"));
+        assertFalse(sourceLabel.contains("row.channel_name"));
     }
 
     @Test
@@ -268,18 +270,18 @@ class StatsWebDashboardUiContractTest
     void keepsSignalHealthInStableNameOrder() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String sorter = function(source, "function sortSignalSites(sites)");
+        String sorter = function(source, "function sortSignalChannels(channels)");
         String section = function(source, "async function signalHealthSection()");
-        assertTrue(sorter.contains("siteLabel(left).localeCompare(siteLabel(right)"));
-        assertTrue(sorter.contains("left.guid"));
+        assertTrue(sorter.contains("channelLabel(left).localeCompare(channelLabel(right)"));
+        assertTrue(sorter.contains("left.configuration_id"));
         assertFalse(sorter.contains("decode_health_pct"));
         assertFalse(section.contains("Highest decode"));
         assertFalse(section.contains("Weakest signal"));
-        String tile = function(source, "function updateSignalCurrentTile(tile, site)");
-        assertTrue(tile.contains("siteNameSummary(site)"));
-        assertTrue(tile.contains("dashboardReceiverContext(site)"));
-        String context = function(source, "function dashboardReceiverContext(row)");
-        assertTrue(context.contains("row.site_kind"));
+        String tile = function(source, "function updateSignalCurrentTile(tile, channel)");
+        assertTrue(tile.contains("channelNameSummary(channel)"));
+        assertTrue(tile.contains("dashboardChannelContext(channel)"));
+        String context = function(source, "function dashboardChannelContext(row)");
+        assertTrue(context.contains("dashboardChannelKind(row)"));
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
         assertTrue(context.contains("`Site ${isP25(row) ? hex(row.site_id, 2) : " +
             "identifierNumber(row.site_id)}`"));
@@ -297,8 +299,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains(".dashboard-summary-section .summary-band"));
         assertTrue(css.contains(".dashboard-identity-context"));
         assertTrue(css.contains(".dashboard-mode"));
-        assertTrue(css.contains(".site-name-summary"));
-        assertTrue(css.contains(".site-name-summary-context"));
+        assertTrue(css.contains(".identity-summary"));
+        assertTrue(css.contains(".identity-summary-context"));
         assertTrue(css.contains(".dashboard-activity-layout"));
         assertTrue(css.contains(".dashboard-activity-donut"));
         assertTrue(css.contains(".dashboard-activity-segment:focus-visible"));

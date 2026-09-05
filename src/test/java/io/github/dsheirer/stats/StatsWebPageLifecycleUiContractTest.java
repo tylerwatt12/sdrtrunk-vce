@@ -24,14 +24,14 @@ class StatsWebPageLifecycleUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
-        int systems = source.indexOf("import * as systemsDirectory from './features/systems-directory.js';");
+        int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
         int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=134\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
         assertTrue(application >= 0);
         assertFalse(html.contains("<script src=\"/assets/core/page-lifecycle.js"));
-        assertFalse(html.contains("<script src=\"/assets/features/systems-directory.js"));
+        assertFalse(html.contains("<script src=\"/assets/features/radio-systems-directory.js"));
         assertTrue(html.contains("class=\"content\" aria-live=\"polite\" aria-busy=\"true\""));
         assertTrue(html.contains("<div class=\"loading\" role=\"status\">Loading</div>"));
     }
@@ -50,15 +50,15 @@ class StatsWebPageLifecycleUiContractTest
         assertOrdered(beginPage, "content.replaceChildren(...children);",
             "content.setAttribute('aria-busy', 'false');");
 
-        String system = function(source, "async function renderSystem()");
-        assertOrdered(system, "const response = await api(systemApiPath(systemScope.scope));",
+        String system = function(source, "async function renderRadioSystem()");
+        assertOrdered(system, "const response = await api(radioSystemApiPath(radioSystem.radio_system_key));",
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(system, "if (!renderIsCurrent(renderContext)) return;", "window.history.replaceState");
 
-        String siteSettings = function(source, "async function renderSiteSettings()");
-        assertOrdered(siteSettings, "await renderAdminSiteBehaviorSettings();",
+        String receiverSettings = function(source, "async function renderReceiverSettings()");
+        assertOrdered(receiverSettings, "await renderAdminReceiverBehaviorSettings();",
             "if (!renderIsCurrent(renderContext)) return;");
-        assertOrdered(siteSettings, "if (!renderIsCurrent(renderContext)) return;",
+        assertOrdered(receiverSettings, "if (!renderIsCurrent(renderContext)) return;",
             "await renderAdminRadioReferenceSettings();");
     }
 
@@ -101,18 +101,19 @@ class StatsWebPageLifecycleUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String signalHealth = function(source, "async function signalHealthSection()");
-        String siteSignal = function(source, "async function siteSignalHistorySection(site)");
-        String talkgroupHistory = function(source, "async function talkgroupActivityHistorySection(scopeParameters)");
+        String channelSignal = function(source, "async function channelSignalHistorySection(channel)");
+        String groupIdentityHistory = function(source,
+            "async function groupIdentityActivityHistorySection(scopeParameters)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         String timeout = function(source, "function pageTimeout(callback, delay)");
         String close = function(source, "function closePageConnections()");
-        String qualityChart = function(source, "function qualityHistoryChart(site, response, metric, domain)");
+        String qualityChart = function(source, "function qualityHistoryChart(channel, response, metric, domain)");
 
         assertOrdered(signalHealth, "await loadCurrent(true, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(loadCurrent, 10_000);");
-        assertOrdered(siteSignal, "await load(rangeControl.buttons, true, true);",
+        assertOrdered(channelSignal, "await load(rangeControl.buttons, true, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");
-        assertOrdered(talkgroupHistory, "await load(rangeControl.buttons, true, true);",
+        assertOrdered(groupIdentityHistory, "await load(rangeControl.buttons, true, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");
         assertOrdered(activity, "const data = await api('/api/v1/activity'",
             "if (!renderIsCurrent(renderContext)) return;");

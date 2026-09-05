@@ -13,12 +13,12 @@ import java.util.UUID;
 public final class ViewWebP25BandplanOverrideRequest extends JavaFxWindowRequest
 {
     private final P25SiteIdentity mIdentity;
-    private final String mRadioResolveId;
+    private final String mConfigurationId;
 
-    public ViewWebP25BandplanOverrideRequest(P25SiteIdentity identity, String radioResolveId)
+    public ViewWebP25BandplanOverrideRequest(P25SiteIdentity identity, String configurationId)
     {
         mIdentity = Objects.requireNonNull(identity, "P25 site identity cannot be null");
-        mRadioResolveId = canonicalRadioResolveId(radioResolveId);
+        mConfigurationId = canonicalConfigurationId(configurationId);
     }
 
     public P25SiteIdentity getIdentity()
@@ -26,14 +26,14 @@ public final class ViewWebP25BandplanOverrideRequest extends JavaFxWindowRequest
         return mIdentity;
     }
 
-    public String getRadioResolveId()
+    public String getConfigurationId()
     {
-        return mRadioResolveId;
+        return mConfigurationId;
     }
 
-    private static String canonicalRadioResolveId(String radioResolveId)
+    private static String canonicalConfigurationId(String configurationId)
     {
-        String candidate = Objects.requireNonNull(radioResolveId, "RadioResolve ID cannot be null");
+        String candidate = Objects.requireNonNull(configurationId, "Channel configuration ID cannot be null");
 
         try
         {
@@ -49,6 +49,6 @@ public final class ViewWebP25BandplanOverrideRequest extends JavaFxWindowRequest
             //Report one stable validation error below.
         }
 
-        throw new IllegalArgumentException("RadioResolve ID must be a canonical lowercase UUID");
+        throw new IllegalArgumentException("Channel configuration ID must be a canonical lowercase UUID");
     }
 }

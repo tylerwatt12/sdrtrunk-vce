@@ -1047,9 +1047,15 @@ export class WebCallPlayer {
       String(call.source_id);
     const targetType = this.identifierType(call.target_form, 'TGID');
     const sourceType = this.identifierType(call.source_form, 'Radio');
-    const target = call.target_alias ?
-      `${call.target_alias}${targetId ? ` · ${targetType} ${targetId}` : ''}` :
-      (targetId ? `${targetType} ${targetId}` : call.channel || 'Unknown target');
+    const playbackLabel = typeof call.playback_target?.label === 'string' ?
+      call.playback_target.label.trim() : '';
+    const analogMode = String(call.decoder || call.protocol || '').trim().toUpperCase();
+    const analog = ['AM', 'NBFM'].includes(analogMode);
+    const target = analog ?
+      (playbackLabel || call.channel || 'Saved channel') :
+      (call.target_alias ?
+        `${call.target_alias}${targetId ? ` · ${targetType} ${targetId}` : ''}` :
+        (targetId ? `${targetType} ${targetId}` : call.channel || 'Unknown target'));
     const source = call.source_alias ?
       `${call.source_alias}${sourceId ? ` · ${sourceType} ${sourceId}` : ''}` :
       (sourceId ? `${sourceType} ${sourceId}` : '');

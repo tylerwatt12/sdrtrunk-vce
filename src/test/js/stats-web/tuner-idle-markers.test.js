@@ -73,6 +73,7 @@ function harness(liveAllowed = true) {
   vm.runInContext(source.slice(source.indexOf('const TUNER_ACTIVITY_PRIORITY'),
     source.indexOf('const RADIO_REFERENCE_DETAIL_CACHE_LIMIT')), context);
   [
+    'function protocol(value)', 'function protocolFamily(row)', 'function isAnalogChannel(row)',
     'function channelTagSet(...values)', 'function tunerStoredBoolean(key, fallback)',
     'function storeTunerBoolean(key, value)', 'function tunerActivityStatus(row, includeIdle = false)',
     'function updateSpectrumActivityTable(table)', 'function activeCarriers(includeIdle = false)',

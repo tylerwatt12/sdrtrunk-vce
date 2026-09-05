@@ -91,12 +91,12 @@ The format 3-to-4 step establishes separate logical-call and P25 site-observatio
 boundary. It does not invent those new metrics from older physical receiver-leg activity.
 
 The format 4-to-5 step normalizes web accounts, password verifiers, per-user browser preferences, configurable access
-overrides, and the site-settings revision. It gives every active saved channel one exact configuration UUID and kind
+overrides, and the receiver-settings revision. It gives every active saved channel one exact configuration UUID and kind
 and rebuilds its deterministic database query projections from the authoritative channel document. Those old query
 columns are reproducible derived state, so a stale value there is replaced rather than mistaken for administrator
-configuration. Trunked channels must also have a nonblank RadioResolve GUID. The step drops and counts recognized
+configuration. Trunked channels must also have a nonblank RadioResolve ID. The step drops and counts recognized
 MPT-1327 and sound-card channel rows, retired web-policy overrides, and superseded personal-setting storage. It still
-refuses a malformed or ambiguous authoritative channel document, identity, kind, RadioResolve GUID, account,
+refuses a malformed or ambiguous authoritative channel document, identity, kind, RadioResolve ID, account,
 credential, access policy, or shared preference instead of guessing. Password verifier material, roles,
 authentication revisions, supported access overrides, shared receiver preferences, and active supported channels are
 preserved exactly or converted deterministically. Published Alpha profiles can contain the former shared browser
@@ -104,11 +104,11 @@ presentation values without any web account because those builds did not support
 valid case the migration retains the bounded legacy values until setup creates the primary administrator, assigns the
 converted preferences to that account, and only then removes the superseded storage.
 
-The format 5-to-6 step changes configured conventional activity identity from the old RadioResolve GUID key to the
-saved channel's configuration UUID key. It updates the existing `receiver_context` row in place, so its stable row ID
-and every linked activity, summary, and identity row are preserved. A missing activity context needs no change. An
-already-canonical context is accepted. A case mismatch, duplicate GUID match, nonconventional context, unexpected key,
-or occupied target key is refused rather than merged or guessed.
+The format 5-to-6 step changes configured conventional activity identity from the old external RadioResolve ID to the
+saved channel's configuration UUID. It rewrites the existing activity owner in place, preserving its row ID and all
+linked activity, summary, and identity rows. A missing activity owner needs no change. An already-canonical owner is
+accepted. A case mismatch, duplicate external-ID match, nonconventional owner, unexpected key, or occupied target is
+refused rather than merged or guessed.
 
 The format 6-to-7 step upgrades every complete per-user browser preference document from version 1 to version 2. It
 preserves existing personal settings, enables conversation grouping with a four-call burst limit, and increments each
@@ -128,7 +128,7 @@ The format 8-to-9 step upgrades every exact version-3 per-user browser preferenc
 active-trunked-channel filtering, retain-last-call-on-idle-rows, and clear-voice-quality-when-idle choices. Filtering
 defaults off. The other two choices are copied from the former receiver-wide values into every existing account, or
 default false when the corresponding shared value is absent. The step then removes only those two obsolete shared
-keys from portable Java preferences while preserving traffic-grant age-out, the site-settings revision, and every
+keys from portable Java preferences while preserving traffic-grant age-out, the receiver-settings revision, and every
 unrelated value. Every affected user preference revision is incremented; malformed documents and exhausted revisions
 are refused.
 

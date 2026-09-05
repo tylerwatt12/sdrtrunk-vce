@@ -54,9 +54,6 @@ class StatsApiProtocolTest
     void mapsSharedAndProtocolSpecificSemantics()
     {
         assertAll(
-            () -> assertEquals("linked_system", StatsApiProtocol.P25.scopeKind(1)),
-            () -> assertEquals("receiver_context", StatsApiProtocol.DMR.scopeKind(2)),
-            () -> assertEquals("unknown", StatsApiProtocol.NXDN.scopeKind(0)),
             () -> assertEquals("standard", StatsApiProtocol.P25.addressDomain(2)),
             () -> assertEquals("standard", StatsApiProtocol.NXDN.addressDomain(0)),
             () -> assertEquals("nxdn_type_c", StatsApiProtocol.NXDN.addressDomain(1)),
@@ -101,40 +98,41 @@ class StatsApiProtocolTest
     @Test
     void exposesOneProtocolNeutralCapabilityMatrix()
     {
-        Map<String,Boolean> p25System = StatsApiProtocol.P25.systemCapabilities();
+        Map<String,Boolean> p25System = StatsApiProtocol.P25.radioSystemCapabilities();
         assertAll(
-            () -> assertTrue(p25System.get("sites")),
+            () -> assertTrue(p25System.get("channels")),
             () -> assertTrue(p25System.get("group_identities")),
             () -> assertTrue(p25System.get("radios")),
             () -> assertTrue(p25System.get("activity")),
             () -> assertTrue(p25System.get("talker_aliases")),
             () -> assertTrue(p25System.get("current_affiliations")),
-            () -> assertTrue(p25System.get("radio_site_presence")),
+            () -> assertTrue(p25System.get("radio_channel_presence")),
             () -> assertTrue(p25System.get("patch_groups")));
 
-        Map<String,Boolean> dmrSystem = StatsApiProtocol.DMR.systemCapabilities();
+        Map<String,Boolean> dmrSystem = StatsApiProtocol.DMR.radioSystemCapabilities();
         assertAll(
-            () -> assertTrue(dmrSystem.get("sites")),
+            () -> assertTrue(dmrSystem.get("channels")),
             () -> assertFalse(dmrSystem.get("current_affiliations")),
-            () -> assertFalse(dmrSystem.get("radio_site_presence")),
+            () -> assertFalse(dmrSystem.get("radio_channel_presence")),
             () -> assertFalse(dmrSystem.get("patch_groups")));
 
-        Map<String,Boolean> nxdnSite = StatsApiProtocol.NXDN.siteCapabilities();
+        Map<String,Boolean> nxdnChannel = StatsApiProtocol.NXDN.trunkedChannelCapabilities();
         assertAll(
-            () -> assertTrue(nxdnSite.get("channels")),
-            () -> assertTrue(nxdnSite.get("neighbors")),
-            () -> assertTrue(nxdnSite.get("quality")),
-            () -> assertFalse(nxdnSite.get("current_affiliations")),
-            () -> assertFalse(nxdnSite.get("radio_site_presence")),
-            () -> assertFalse(nxdnSite.get("frequency_bands")),
-            () -> assertFalse(nxdnSite.get("patch_groups")));
+            () -> assertTrue(nxdnChannel.get("channels")),
+            () -> assertTrue(nxdnChannel.get("neighbors")),
+            () -> assertTrue(nxdnChannel.get("quality")),
+            () -> assertFalse(nxdnChannel.get("current_affiliations")),
+            () -> assertFalse(nxdnChannel.get("radio_channel_presence")),
+            () -> assertFalse(nxdnChannel.get("frequency_bands")),
+            () -> assertFalse(nxdnChannel.get("patch_groups")));
 
-        Map<String,Boolean> p25Site = StatsApiProtocol.P25.siteCapabilities();
+        Map<String,Boolean> p25Channel = StatsApiProtocol.P25.trunkedChannelCapabilities();
         assertAll(
-            () -> assertTrue(p25Site.get("current_affiliations")),
-            () -> assertTrue(p25Site.get("radio_site_presence")));
+            () -> assertTrue(p25Channel.get("current_affiliations")),
+            () -> assertTrue(p25Channel.get("radio_channel_presence")));
 
-        Map<String,Boolean> conventional = StatsApiProtocol.NBFM.siteCapabilities();
-        assertTrue(conventional.values().stream().noneMatch(Boolean::booleanValue));
+        Map<String,Boolean> conventional = StatsApiProtocol.NBFM.conventionalChannelCapabilities();
+        assertFalse(conventional.get("group_identities"));
+        assertFalse(conventional.get("radios"));
     }
 }

@@ -249,16 +249,16 @@ class StatsAliasResolver
     }
 
     /**
-     * Resolves each observed talkgroup or patch identity only against the alias-list ID carried by that row. Unlike the
+     * Resolves each observed group identity only against the Alias List ID carried by that row. Unlike the
      * normal system enrichment, this projection deliberately does not consider another list assigned to a second
      * receiver for the same P25 system: the Alias Editor needs to show whether the selected list itself has an exact
      * definition, a range definition, or no definition for the observed identity.
      *
-     * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code talkgroup_id}, and
+     * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code group_identity_id}, and
      * {@code alias_list_id}. Trunked P25 rows may also carry a decoded home identity, but matching and alias creation
      * deliberately use only the local talkgroup address.</p>
      */
-    void resolveObservedTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
+    void resolveObservedGroupIdentities(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         if(rows.isEmpty())
         {
@@ -273,7 +273,7 @@ class StatsAliasResolver
 
         for(Map<String,Object> row: rows)
         {
-            Integer identifier = integer(row.get("talkgroup_id"));
+            Integer identifier = integer(row.get("group_identity_id"));
             Integer protocol = integer(row.get("protocol_code"));
             Long aliasListId = positiveLong(row.get("alias_list_id"));
             RuleIndex rules = protocol != null ? switch(protocol)
@@ -420,7 +420,7 @@ class StatsAliasResolver
 
         Set<Long> aliasLists = systemKey != null ? aliasListsBySystem.getOrDefault(systemKey, Set.of()) : Set.of();
         Rule best = index.best(identifier, aliasLists);
-        apply(row, best, prefix);
+        applyPresentation(row, best, prefix);
     }
 
     private void enrichByAssignedAliasList(List<Map<String,Object>> rows, List<Rule> rules, String identifierColumn,
@@ -453,12 +453,24 @@ class StatsAliasResolver
     {
         if(rule != null)
         {
+            applyPresentation(row, rule, prefix);
+            row.put(prefix + "list_id", rule.aliasListId());
+            row.put(prefix + "list_name", rule.aliasListName());
+        }
+    }
+
+    /**
+     * Applies only the alias facts that are meaningful across every channel-owned Alias List for a radio system.
+     * The matching rule deliberately does not make any one Alias List look system-owned.
+     */
+    private static void applyPresentation(Map<String,Object> row, Rule rule, String prefix)
+    {
+        if(rule != null)
+        {
             row.put(prefix + "name", rule.name());
             row.put(prefix + "description", rule.description());
             row.put(prefix + "group", rule.group());
             row.put(prefix + "color", rule.color());
-            row.put(prefix + "list_id", rule.aliasListId());
-            row.put(prefix + "list_name", rule.aliasListName());
         }
     }
 
@@ -542,15 +554,15 @@ class StatsAliasResolver
         return new Snapshot(
             index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("talkgroup_id", row -> protocolCode(row) == 1)))),
+                    source("group_identity_id", row -> protocolCode(row) == 1)))),
             RuleIndex.empty(),
             index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("talkgroup_id", row -> protocolCode(row) == 3)))),
+                    source("group_identity_id", row -> protocolCode(row) == 3)))),
             RuleIndex.empty(),
             index(loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("talkgroup_id", row -> protocolCode(row) == 4)))),
+                    source("group_identity_id", row -> protocolCode(row) == 4)))),
             RuleIndex.empty());
     }
 

@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Renderer-neutral mutable state for one browser Live Systems activity table.
+ * Renderer-neutral mutable state for one browser live channel activity table.
  *
  * <p>All mutation is confined to {@link ChannelActivityModel}'s activity worker. Published snapshots are immutable,
  * so web consumers never need a lock or access to live receiver state.</p>

@@ -44,7 +44,7 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_ALIAS_REFERENCES = 8;
     private final ActivitySource mActivitySource;
     private final WebEntityNavigationCatalog mNavigationCatalog;
-    private final StatsLiveEventHub mSystemsHub =
+    private final StatsLiveEventHub mChannelActivityHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicBoolean mRunning = new AtomicBoolean();
     /** Single latest-value handoff. Saturation coalesces stale web updates instead of delaying channel activity. */
@@ -55,7 +55,7 @@ final class StatsLiveService implements AutoCloseable
     private final Object mEncodedSnapshotLock = new Object();
     private final Listener<ChannelActivityEvent> mChannelActivityListener = this::receiveChannelActivity;
 
-    private volatile EncodedSnapshot mEncodedSystemSnapshot;
+    private volatile EncodedSnapshot mEncodedChannelActivitySnapshot;
     private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation =
         WebEntityNavigationCatalog.Snapshot.empty();
     private volatile Thread mProjectionWorker;
@@ -133,8 +133,8 @@ final class StatsLiveService implements AutoCloseable
                 }
             }
 
-            mSystemsHub.close();
-            mEncodedSystemSnapshot = null;
+            mChannelActivityHub.close();
+            mEncodedChannelActivitySnapshot = null;
             mPublishedNavigation = WebEntityNavigationCatalog.Snapshot.empty();
         }
 
@@ -151,11 +151,11 @@ final class StatsLiveService implements AutoCloseable
         }
     }
 
-    StatsLiveEventHub.Subscription subscribeSystems()
+    StatsLiveEventHub.Subscription subscribeChannelActivity()
     {
         synchronized(mLifecycleLock)
         {
-            return mRunning.get() ? mSystemsHub.subscribe() : null;
+            return mRunning.get() ? mChannelActivityHub.subscribe() : null;
         }
     }
 
@@ -231,9 +231,9 @@ final class StatsLiveService implements AutoCloseable
                 return;
             }
 
-            mEncodedSystemSnapshot = null;
+            mEncodedChannelActivitySnapshot = null;
             mPublishedNavigation = navigation;
-            mSystemsHub.publish("activity_table", Map.copyOf(update));
+            mChannelActivityHub.publish("activity_table", Map.copyOf(update));
         }
 
         if(mProjectionResyncRequired.getAndSet(false))
@@ -244,7 +244,7 @@ final class StatsLiveService implements AutoCloseable
             {
                 if(mRunning.get())
                 {
-                    mSystemsHub.publish("activity_resync", Map.of("snapshot", authoritative));
+                    mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
                 }
             }
         }
@@ -266,9 +266,9 @@ final class StatsLiveService implements AutoCloseable
         {
             if(mRunning.get() && mPublishedNavigation != navigation)
             {
-                mEncodedSystemSnapshot = null;
+                mEncodedChannelActivitySnapshot = null;
                 mPublishedNavigation = navigation;
-                mSystemsHub.publish("activity_resync", Map.of("snapshot", authoritative));
+                mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
             }
         }
     }
@@ -336,7 +336,7 @@ final class StatsLiveService implements AutoCloseable
     {
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
-        EncodedSnapshot cached = mEncodedSystemSnapshot;
+        EncodedSnapshot cached = mEncodedChannelActivitySnapshot;
 
         if(cached != null && cached.revision() == source.revision() && cached.navigation() == navigation)
         {
@@ -345,7 +345,7 @@ final class StatsLiveService implements AutoCloseable
 
         synchronized(mEncodedSnapshotLock)
         {
-            cached = mEncodedSystemSnapshot;
+            cached = mEncodedChannelActivitySnapshot;
 
             if(cached != null && cached.revision() == source.revision() && cached.navigation() == navigation)
             {
@@ -379,7 +379,7 @@ final class StatsLiveService implements AutoCloseable
             }
 
             EncodedSnapshot encoded = new EncodedSnapshot(source.revision(), navigation, best);
-            mEncodedSystemSnapshot = encoded;
+            mEncodedChannelActivitySnapshot = encoded;
             return encoded.payload();
         }
     }
@@ -414,8 +414,7 @@ final class StatsLiveService implements AutoCloseable
                                                     WebEntityNavigationCatalog.Snapshot navigation)
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
-        WebEntityNavigationCatalog.Channel tableChannel =
-            navigation.channel(snapshot.configurationId(), null);
+        WebEntityNavigationCatalog.Channel tableChannel = navigation.channel(snapshot.configurationId());
         table.put("table_id", boundedText(snapshot.tableId(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("title", boundedText(snapshot.title(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("system_name", boundedText(snapshot.systemName(), MAXIMUM_LIVE_TEXT_LENGTH));
@@ -451,7 +450,7 @@ final class StatsLiveService implements AutoCloseable
                                                   WebEntityNavigationCatalog.Snapshot catalog)
     {
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
-        WebEntityNavigationCatalog.Channel rowChannel = catalog.channel(snapshot.configurationId(), null);
+        WebEntityNavigationCatalog.Channel rowChannel = catalog.channel(snapshot.configurationId());
 
         if(rowChannel == null)
         {

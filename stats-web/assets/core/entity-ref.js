@@ -23,23 +23,20 @@
     if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return null;
     const kind = text(reference.kind);
     const key = text(reference.key);
-    if (kind === 'system' && exactKeys(reference, ['kind', 'key']) && key) {
-      return `/?${new URLSearchParams({ view: 'system', scope: key })}`;
+    if (kind === 'radio_system' && exactKeys(reference, ['kind', 'key']) && key) {
+      return `/?${new URLSearchParams({ view: 'radio-system', radio_system_key: key })}`;
     }
-    if (kind === 'site' && exactKeys(reference, ['kind', 'key']) && uuid(key)) {
-      return `/?${new URLSearchParams({ view: 'site', guid: key })}`;
-    }
-    if (kind === 'conventional' && exactKeys(reference, ['kind', 'key']) && uuid(key)) {
-      return `/?${new URLSearchParams({ view: 'conventional-detail', id: key })}`;
+    if (kind === 'channel' && exactKeys(reference, ['kind', 'key']) && uuid(key)) {
+      return `/?${new URLSearchParams({ view: 'channel', configuration_id: key })}`;
     }
     if (['talkgroup', 'patch_group', 'radio'].includes(kind) &&
-        exactKeys(reference, ['kind', 'scope', 'id'])) {
-      const scope = text(reference.scope);
+        exactKeys(reference, ['kind', 'radio_system_key', 'id'])) {
+      const radioSystemKey = text(reference.radio_system_key);
       const id = numericId(reference.id);
-      if (!scope || id === null) return null;
-      const view = kind === 'radio' ? 'radio' : 'talkgroup';
-      const values = { view, scope, id: String(id) };
-      if (kind === 'patch_group') values.kind = 'patch_group';
+      if (!radioSystemKey || id === null) return null;
+      const view = kind === 'radio' ? 'radio' : 'group-identity';
+      const values = { view, radio_system_key: radioSystemKey, id: String(id) };
+      if (kind !== 'radio') values.kind = kind;
       return `/?${new URLSearchParams(values)}`;
     }
     return null;

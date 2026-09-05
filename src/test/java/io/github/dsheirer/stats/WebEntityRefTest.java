@@ -24,29 +24,27 @@ class WebEntityRefTest
     @Test
     void exposesOnlyTheCanonicalFieldsForEachClosedShape()
     {
-        assertEquals(Map.of("kind", "system", "key", "p25:BEE00:49F:alias-list:1"),
-            WebEntityRef.system("p25:BEE00:49F:alias-list:1").toMap());
-        assertEquals(Map.of("kind", "site", "key", "728d2d66-de4e-476b-a696-919f32dd4d12"),
-            WebEntityRef.site("728d2d66-de4e-476b-a696-919f32dd4d12").toMap());
-        assertEquals(Map.of("kind", "conventional", "key", "728d2d66-de4e-476b-a696-919f32dd4d12"),
-            WebEntityRef.conventional("728d2d66-de4e-476b-a696-919f32dd4d12").toMap());
-        assertEquals(Map.of("kind", "talkgroup", "scope", "dmr:guid:site", "id", 91),
-            WebEntityRef.talkgroup("dmr:guid:site", 91).toMap());
-        assertEquals(Map.of("kind", "patch_group", "scope", "p25:scope", "id", 700),
+        assertEquals(Map.of("kind", "radio_system", "key", "p25:bee00:49f"),
+            WebEntityRef.radioSystem("p25:bee00:49f").toMap());
+        assertEquals(Map.of("kind", "channel", "key", "728d2d66-de4e-476b-a696-919f32dd4d12"),
+            WebEntityRef.channel("728d2d66-de4e-476b-a696-919f32dd4d12").toMap());
+        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "dmr:channel:test", "id", 91),
+            WebEntityRef.talkgroup("dmr:channel:test", 91).toMap());
+        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:scope", "id", 700),
             WebEntityRef.patchGroup("p25:scope", 700).toMap());
-        assertEquals(Map.of("kind", "radio", "scope", "nxdn:guid:site", "id", 1201),
-            WebEntityRef.radio("nxdn:guid:site", 1201).toMap());
+        assertEquals(Map.of("kind", "radio", "radio_system_key", "nxdn:channel:test", "id", 1201),
+            WebEntityRef.radio("nxdn:channel:test", 1201).toMap());
     }
 
     @Test
     void rejectsPartialOrInvalidReferencesAndOmitsAnUnresolvedReference()
     {
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.system(" "));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.site("site-guid"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.site("1-1-1-1-1"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radioSystem(" "));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("site-guid"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("1-1-1-1-1"));
         assertThrows(IllegalArgumentException.class,
-            () -> WebEntityRef.site("728D2D66-DE4E-476B-A696-919F32DD4D12"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.conventional("not-a-uuid"));
+            () -> WebEntityRef.channel("728D2D66-DE4E-476B-A696-919F32DD4D12"));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("not-a-uuid"));
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radio("scope", 0));
 
         Map<String,Object> row = new LinkedHashMap<>();

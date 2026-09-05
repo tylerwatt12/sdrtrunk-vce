@@ -103,9 +103,9 @@ backfill either metric from older physical call activity; every other preservati
 registered migration step.
 
 Global database format 5 introduced normalized web users, exact password verifiers and roles,
-per-user browser preferences, configurable access overrides, a site-settings revision, and canonical saved-channel
+per-user browser preferences, configurable access overrides, a receiver-settings revision, and canonical saved-channel
 identities. Active conventional channels use their configuration UUID; active trunked channels use both their
-configuration UUID and nonblank RadioResolve GUID. The format 4-to-5 step preserves supported accounts, access,
+configuration UUID and nonblank RadioResolve ID. The format 4-to-5 step preserves supported accounts, access,
 receiver preferences, and active channel configuration; rebuilds reproducible channel query projections from each
 authoritative channel document even when the old derived columns are stale; moves personal browser choices into each
 account; and drops and counts recognized retired MPT-1327 and sound-card rows, retired web-policy overrides, and
@@ -115,10 +115,10 @@ An Alpha profile with no account may still contain the older shared presentation
 through migration and assigned to the primary administrator when setup creates it; their legacy storage is removed
 only after that account safely owns the converted preferences.
 
-Global database format 6 rekeys existing configured conventional
-receiver contexts from the former RadioResolve GUID key to the saved channel configuration UUID key. The same context
-row ID is retained, so linked activity history remains attached. Databases with conflicting, duplicated, malformed,
-or otherwise ambiguous context identities are refused instead of merged or repaired.
+Global database format 6 rekeys existing configured conventional activity owners from the former external
+RadioResolve ID to the saved channel configuration UUID. The same owner row ID is retained, so linked activity
+history remains attached. Databases with conflicting, duplicated, malformed, or otherwise ambiguous identities are
+refused instead of merged or repaired.
 
 Global database format 7 adds Conversation Mode. Its format 6-to-7 step upgrades each exact per-user browser
 preference document to add Conversation Mode and the bounded calls-before-switching value. It preserves every other
@@ -136,7 +136,7 @@ documents and exhausted revisions are refused rather than repaired or defaulted.
 Global database format 9 added three per-user Live presentation choices in its format 8-to-9 step.
 Active-trunked-channel filtering defaults off. Retaining the last call on idle rows and clearing idle voice quality
 inherit the previous receiver-wide values for every existing account, defaulting false when those shared values are
-absent. The two obsolete shared keys are removed while traffic-grant age-out, the site-settings revision, and every
+absent. The two obsolete shared keys are removed while traffic-grant age-out, the receiver-settings revision, and every
 unrelated portable preference remain intact.
 
 Global database format 13 adds one bounded setup-progress record in the existing `application_settings` table. The

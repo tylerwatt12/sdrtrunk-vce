@@ -26,18 +26,17 @@ class StatsCsvExportTest
     void writesExcelCompatibleRfc4180CsvAndProtectsFormulaCells() throws Exception
     {
         Map<String,Object> row = Map.ofEntries(
-            Map.entry("protocol", "P25"), Map.entry("configured_system", "County, Public Safety"),
+            Map.entry("protocol", "P25"), Map.entry("system_name", "County, Public Safety"),
             Map.entry("radio_system_key", "p25:bee00:348"), Map.entry("wacn", 0xBEE00),
-            Map.entry("system_id", 0x348), Map.entry("talkgroup_id", 56132),
-            Map.entry("target_kind_code", 1), Map.entry("alias_name", "  =HYPERLINK(\"bad\")"),
+            Map.entry("system_id", 0x348), Map.entry("group_identity_id", 56132),
+            Map.entry("group_identity_kind_code", 1), Map.entry("alias_name", "  =HYPERLINK(\"bad\")"),
             Map.entry("alias_description", "Line one\nLine two"), Map.entry("alias_group", "+Formula"),
-            Map.entry("alias_list_id", 1),
             Map.entry("logical_call_count", 12), Map.entry("recorded_logical_call_count", 4),
             Map.entry("stream_submitted_logical_call_count", 3),
             Map.entry("encrypted_logical_call_count", 2), Map.entry("signaling_observation_count", 7),
             Map.entry("first_seen_ms", 1_000), Map.entry("last_seen_ms", 2_000));
 
-        StatsCsvExport export = StatsCsvExport.create("system-talkgroups", "County", List.of(row));
+        StatsCsvExport export = StatsCsvExport.create("radio-system-group-identities", "County", List.of(row));
         byte[] content = export.content();
         assertEquals((byte)0xEF, content[0]);
         assertEquals((byte)0xBB, content[1]);
@@ -55,8 +54,9 @@ class StatsCsvExportTest
             assertEquals("'+Formula", parsed.get("group"));
             assertEquals("1970-01-01T00:00:01Z", parsed.get("first_seen_utc"));
             assertEquals("BEE00", parsed.get("wacn_hex"));
-            assertEquals("56132", parsed.get("talkgroup_id"));
-            assertEquals("1", parsed.get("alias_list_id"));
+            assertEquals("56132", parsed.get("group_identity_id"));
+            assertEquals("talkgroup", parsed.get("group_identity_kind"));
+            assertFalse(parser.getHeaderMap().containsKey("alias_list_id"));
             assertEquals("p25:bee00:348", parsed.get("radio_system_key"));
         }
     }
@@ -64,16 +64,16 @@ class StatsCsvExportTest
     @Test
     void writesHeadersForAnEmptyDataset() throws Exception
     {
-        StatsCsvExport export = StatsCsvExport.create("conventional-radios", "empty", List.of());
+        StatsCsvExport export = StatsCsvExport.create("channel-radios", "empty", List.of());
         String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
-        assertTrue(csv.startsWith("protocol,configuration_id,alias_list,frequency_hz"));
+        assertTrue(csv.startsWith("protocol,configuration_id,radio_system_key,alias_list,frequency_hz"));
         assertEquals(0, export.rowCount());
     }
 
     @Test
     void normalizesConventionalProtocolAndMissingTimeslot() throws Exception
     {
-        StatsCsvExport export = StatsCsvExport.create("conventional-channels", "all", List.of(Map.of(
+        StatsCsvExport export = StatsCsvExport.create("channels", "all", List.of(Map.of(
             "protocol_code", 2, "configuration_id", "00000000-0000-0000-0000-000000000001",
             "channel_name", "P25 Phase 2",
             "frequency_hz", 851_012_500L, "timeslot", -1, "logical_call_count", 1)));
@@ -131,11 +131,12 @@ class StatsCsvExportTest
 
         List<Map<String,Object>> tooMany = Collections.nCopies(StatsCsvExport.MAX_ROWS + 1, Map.of());
         StatsApiException rows = assertThrows(StatsApiException.class,
-            () -> StatsCsvExport.create("system-radios", "test", tooMany));
+            () -> StatsCsvExport.create("radio-system-radios", "test", tooMany));
         assertEquals(413, rows.status());
 
         StatsApiException bytes = assertThrows(StatsApiException.class, () -> StatsCsvExport.create(
-            "system-talkgroups", "test", List.of(Map.of("alias_description", "x".repeat(2_000))), 256));
+            "radio-system-group-identities", "test",
+            List.of(Map.of("alias_description", "x".repeat(2_000))), 256));
         assertEquals(413, bytes.status());
     }
 }

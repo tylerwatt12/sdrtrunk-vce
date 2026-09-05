@@ -500,7 +500,7 @@ public class JavaFxWindowManager extends Application
     public void process(ViewWebP25BandplanOverrideRequest request)
     {
         execute(() -> new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService)
-            .openP25BandplanOverride(mConfigurationStage, request.getIdentity(), request.getRadioResolveId()));
+            .openP25BandplanOverride(mConfigurationStage, request.getIdentity(), request.getConfigurationId()));
     }
 
     /**

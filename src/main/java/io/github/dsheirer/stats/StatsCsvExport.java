@@ -46,7 +46,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
         return create(dataset, selectionLabel, rows, MAX_BYTES);
     }
 
-    static StatsCsvExport create(String dataset, String selectionLabel, List<Map<String,Object>> rows, int maximumBytes)
+    static StatsCsvExport create(String dataset, String selectionLabel, List<Map<String,Object>> rows,
+                                 int maximumBytes)
         throws IOException
     {
         if(rows.size() > MAX_ROWS)
@@ -90,28 +91,27 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     {
         return switch(dataset)
         {
-            case "system-talkgroups" -> List.of(
-                text("protocol", "protocol"), text("system_name", "configured_system"),
+            case "radio-system-group-identities" -> List.of(
+                text("protocol", "protocol"), text("system_name", "system_name"),
                 text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
-                number("talkgroup_id", "talkgroup_id"),
+                number("group_identity_id", "group_identity_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
-                text("formatted_talkgroup_id", row -> nxdnDisplay(row, "talkgroup_id")),
-                text("identity_type", row -> numberValue(row.get("target_kind_code")) == 3 ? "patch_group" :
-                    "talkgroup"), text("alias", "alias_name"), text("description", "alias_description"),
-                text("group", "alias_group"), number("alias_list_id", "alias_list_id"),
-                text("alias_list", "alias_list_name"),
+                text("formatted_group_identity_id", row -> nxdnDisplay(row, "group_identity_id")),
+                text("group_identity_kind", StatsCsvExport::groupIdentityKind),
+                text("alias", "alias_name"), text("description", "alias_description"),
+                text("group", "alias_group"),
                 number("logical_calls", "logical_call_count"),
-                number("site_observations", "site_observation_count"),
+                number("channel_observations", "channel_observation_count"),
                 number("recorded_logical_calls", "recorded_logical_call_count"),
                 number("stream_submitted_logical_calls", "stream_submitted_logical_call_count"),
                 number("encrypted_logical_calls", "encrypted_logical_call_count"),
                 number("signaling_observations", "signaling_observation_count"),
                 time("first_seen_utc", "first_seen_ms"), time("last_seen_utc", "last_seen_ms")
             );
-            case "system-radios" -> List.of(
-                text("protocol", "protocol"), text("system_name", "configured_system"),
+            case "radio-system-radios" -> List.of(
+                text("protocol", "protocol"), text("system_name", "system_name"),
                 text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
@@ -119,12 +119,12 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_radio_id", row -> nxdnDisplay(row, "radio_id")),
                 text("alias", "alias_name"), text("description", "alias_description"),
-                text("group", "alias_group"), number("alias_list_id", "alias_list_id"),
-                text("alias_list", "alias_list_name"),
+                text("group", "alias_group"),
                 text("talker_alias", "last_talker_alias"),
                 time("talker_alias_seen_utc", "last_talker_alias_seen_ms"),
-                number("last_talkgroup_id", "last_talkgroup_id"),
-                text("last_talkgroup_alias", "last_talkgroup_alias_name"),
+                number("last_group_identity_id", "last_group_identity_id"),
+                text("last_group_identity_kind", StatsCsvExport::lastGroupIdentityKind),
+                text("last_group_identity_alias", "last_group_identity_alias_name"),
                 number("affiliated_talkgroup_id", "affiliated_talkgroup_id"),
                 text("affiliated_talkgroup_alias", "affiliated_talkgroup_alias_name"),
                 time("affiliation_confirmed_utc", "affiliation_confirmed_at_ms"),
@@ -135,18 +135,17 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
-            case "site-channels" -> List.of(
-                text("protocol", "site_protocol"), text("system_name", "site_system_name"),
+            case "channel-frequencies" -> List.of(
+                text("protocol", "protocol"), text("system_name", "system_name"),
                 text("radio_system_key", "radio_system_key"), text("configuration_id", "configuration_id"),
-                text("site_name", "site_name"), text("wacn_hex", row -> siteP25Hex(row, "site_wacn", 5)),
-                number("wacn", "site_wacn"),
-                text("system_id_hex", row -> siteP25Hex(row, "site_system_id", 3)),
-                number("system_id", "site_system_id"), number("network_id", "site_network_id"),
-                text("rfss_hex", row -> siteP25Hex(row, "site_rfss", 2)), number("rfss", "site_rfss"),
-                text("site_id_hex", row -> siteP25Hex(row, "site_number", 2)),
-                number("site_id", row -> firstValue(row, "site_number", "site_id")),
-                text("nac_hex", row -> siteP25Hex(row, "site_nac", 3)), number("nac", "site_nac"),
-                number("ran", "site_ran"), text("channel", row -> firstValue(row, "channel_number",
+                text("channel_name", "name"),
+                text("wacn_hex", row -> p25Hex(row, "wacn", 5)), number("wacn", "wacn"),
+                text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
+                number("system_id", "system_id"), number("network_id", "network_id"),
+                text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
+                text("site_id_hex", row -> p25Hex(row, "site_id", 2)), number("site_id", "site_id"),
+                text("nac_hex", row -> p25Hex(row, "nac", 3)), number("nac", "nac"),
+                number("ran", "ran"), text("channel", row -> firstValue(row, "channel_number",
                     "channel_key")), text("p25_descriptor", "descriptor"),
                 text("inbound_channel", "inbound_channel_number"), number("timeslot", "timeslot"),
                 number("tdma", "tdma"), number("timeslots", "timeslots"),
@@ -164,18 +163,17 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("observations", "observation_count"), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
-            case "site-neighbors" -> List.of(
-                text("protocol", "site_protocol"), text("system_name", "site_system_name"),
+            case "channel-neighbors" -> List.of(
+                text("protocol", "protocol"), text("system_name", "system_name"),
                 text("radio_system_key", "radio_system_key"), text("configuration_id", "configuration_id"),
-                text("source_site_name", "site_name"), text("entry_type", "entry_type"),
+                text("channel_name", "name"), text("entry_type", "entry_type"),
                 text("neighbor_name", "neighbor_name"),
-                text("wacn_hex", row -> siteP25Hex(row, "wacn", 5)), number("wacn", "wacn"),
-                text("system_id_hex", row -> siteP25Hex(row, "system_id", 3)),
+                text("wacn_hex", row -> p25Hex(row, "wacn", 5)), number("wacn", "wacn"),
+                text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
-                text("rfss_hex", row -> siteP25Hex(row, "rfss", 2)), number("rfss", "rfss"),
-                text("site_id_hex", row -> siteP25Hex(row, "site", 2)),
-                number("site_id", row -> firstValue(row, "site", "site_id")),
-                text("lra_hex", row -> siteP25Hex(row, "lra", 2)), number("lra", "lra"),
+                text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
+                text("site_id_hex", row -> p25Hex(row, "site_id", 2)), number("site_id", "site_id"),
+                text("lra_hex", row -> p25Hex(row, "lra", 2)), number("lra", "lra"),
                 text("channel", row -> firstValue(row, "channel_descriptor", "channel_number")),
                 number("control_frequency_hz", row -> firstValue(row, "downlink_hz", "frequency_hz")),
                 text("control_frequency_mhz", row -> megahertz(firstValue(row, "downlink_hz", "frequency_hz"))),
@@ -190,10 +188,12 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("observations", "observation_count"), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
-            case "conventional-channels" -> List.of(
+            case "channels" -> List.of(
                 text("protocol", row -> protocol(row.get("protocol_code"))),
-                text("configuration_id", "configuration_id"),
-                text("channel_name", "channel_name"), text("alias_list", "alias_list_name"),
+                text("configuration_id", "configuration_id"), text("radio_system_key", "radio_system_key"),
+                text("type", "channel_kind"), text("system_name", "system_name"),
+                text("site_name", "site_name"),
+                text("channel_name", "name"), text("alias_list", "alias_list_name"),
                 text("decoder", "decoder"), number("configured_frequency_hz", "primary_frequency_hz"),
                 text("configured_frequency_mhz", row -> megahertz(row.get("primary_frequency_hz"))),
                 number("observed_frequency_hz", "frequency_hz"),
@@ -203,11 +203,13 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("last_event_type", StatsCsvExport::lastEventType), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
-            case "conventional-talkgroups" -> List.of(
-                text("protocol", row -> "DMR"), text("configuration_id", "configuration_id"),
+            case "channel-group-identities" -> List.of(
+                text("protocol", row -> protocol(firstValue(row, "protocol_code"))),
+                text("configuration_id", "configuration_id"), text("radio_system_key", "radio_system_key"),
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
-                number("timeslot", "timeslot"), number("talkgroup_id", "talkgroup_id"),
+                number("timeslot", "timeslot"), number("group_identity_id", "group_identity_id"),
+                text("group_identity_kind", StatsCsvExport::groupIdentityKind),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"), number("logical_calls", "logical_call_count"),
                 number("encrypted_logical_calls", "encrypted_logical_call_count"),
@@ -215,8 +217,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("last_source_alias", "last_source_alias_name"), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
-            case "conventional-radios" -> List.of(
-                text("protocol", row -> "DMR"), text("configuration_id", "configuration_id"),
+            case "channel-radios" -> List.of(
+                text("protocol", row -> protocol(firstValue(row, "protocol_code"))),
+                text("configuration_id", "configuration_id"), text("radio_system_key", "radio_system_key"),
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
                 number("timeslot", "timeslot"), number("radio_id", "radio_id"),
@@ -234,10 +237,10 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("last_seen_utc", "last_seen_ms")
             );
             case "signal-health" -> List.of(
-                text("protocol", "protocol"), text("system_name", row -> firstValue(row,
-                    "configured_system", "channel_name")), text("radio_system_key", "radio_system_key"),
+                text("protocol", "protocol"), text("system_name", "system_name"),
+                text("radio_system_key", "radio_system_key"),
                 text("configuration_id", "configuration_id"),
-                text("site_name", "channel_name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                text("channel_name", "name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
@@ -259,11 +262,11 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("dropped_bits_rolling_30s", "dropped_bits"),
                 time("last_valid_decode_utc", "last_valid_decode_ms")
             );
-            case "site-quality" -> List.of(
-                text("protocol", "protocol"), text("system_name", row -> firstValue(row,
-                    "configured_system", "channel_name")), text("radio_system_key", "radio_system_key"),
+            case "channel-quality" -> List.of(
+                text("protocol", "protocol"), text("system_name", "system_name"),
+                text("radio_system_key", "radio_system_key"),
                 text("configuration_id", "configuration_id"),
-                text("site_name", "channel_name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                text("channel_name", "name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
@@ -380,11 +383,6 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
         return "P25".equals(row.get("protocol")) ? hex(row.get(key), width) : "";
     }
 
-    private static String siteP25Hex(Map<String,Object> row, String key, int width)
-    {
-        return "P25".equals(row.get("site_protocol")) ? hex(row.get(key), width) : "";
-    }
-
     private static String nxdnDisplay(Map<String,Object> row, String key)
     {
         if(!"NXDN".equals(row.get("protocol")) || numberValue(row.get("address_domain_code")) != 2 ||
@@ -424,7 +422,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
 
         if(protocol == StatsApiProtocol.UNKNOWN)
         {
-            protocol = StatsApiProtocol.fromName(String.valueOf(firstValue(row, "protocol", "site_protocol")));
+            protocol = StatsApiProtocol.fromName(String.valueOf(row.get("protocol")));
         }
 
         return protocol;
@@ -433,6 +431,26 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static String addressDomain(Map<String,Object> row)
     {
         return apiProtocol(row).addressDomain(numberValue(row.get("address_domain_code")));
+    }
+
+    private static String groupIdentityKind(Map<String,Object> row)
+    {
+        return identityKind(row.get("group_identity_kind_code"));
+    }
+
+    private static String lastGroupIdentityKind(Map<String,Object> row)
+    {
+        return identityKind(row.get("last_group_identity_kind_code"));
+    }
+
+    private static String identityKind(Object value)
+    {
+        return switch((int)numberValue(value))
+        {
+            case 1 -> "talkgroup";
+            case 3 -> "patch_group";
+            default -> "";
+        };
     }
 
     private static String variant(Map<String,Object> row)

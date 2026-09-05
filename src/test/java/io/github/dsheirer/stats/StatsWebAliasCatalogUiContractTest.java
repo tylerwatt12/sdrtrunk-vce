@@ -172,8 +172,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("options.dcs_codes?.[0] || 'n023'"));
         assertTrue(source.contains("Current (outside suggestion limit)"));
         assertTrue(source.contains("aliasCloneOptionValue(source.icon_name"));
-        assertTrue(source.contains("aliasStreamOptionSelected(selectedStreams.has(streamName)"));
-        assertTrue(source.contains("Missing: ${streamName}"));
+        assertTrue(source.contains("aliasStreamOptionSelected(selectedStreams.has(configurationId)"));
+        assertTrue(source.contains("`Missing destination (${configurationId})`"));
         assertTrue(source.contains("error.code = failure?.code"));
         assertTrue(source.contains("color: aliasEditorColorValue(form.elements.color)"));
         assertTrue(source.contains("color.dataset.originalColor"));
@@ -188,10 +188,10 @@ class StatsWebAliasCatalogUiContractTest
     void keepsActivityBreakdownFocusedAndRetainsDetailsInTheAliasDialog() throws Exception
     {
         String source = source();
-        String columns = function(source, "function aliasEditorScopeBreakdownColumns()");
+        String columns = function(source, "function aliasEditorSourceBreakdownColumns()");
         String activity = function(source, "function aliasActivityContent(response)");
 
-        assertTrue(columns.contains("availableValue(row.scope_label)"));
+        assertTrue(columns.contains("availableValue(row.source_label)"));
         assertTrue(columns.contains("availableValue(row.topology)"));
         assertTrue(columns.contains("aliasMetricValue(row, 'logical_call_count')"));
         assertTrue(columns.contains("aliasMetricValue(row, 'signaling_observation_count')"));
@@ -202,7 +202,7 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertFalse(columns.contains(repeated), () -> "Repeated scope field remains " + repeated);
         }
-        assertTrue(activity.contains("aliasEditorScopeBreakdownColumns()"));
+        assertTrue(activity.contains("aliasEditorSourceBreakdownColumns()"));
         assertTrue(activity.contains("grant_observation_count"));
         assertTrue(activity.contains("relationship_count"));
         assertTrue(activity.contains("retained call and signaling activity"));
@@ -400,37 +400,37 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
-    void exposesUnmatchedPolicyAndBoundedObservedTalkgroupDiscovery() throws Exception
+    void exposesUnmatchedPolicyAndBoundedObservedGroupIdentityDiscovery() throws Exception
     {
         String source = source();
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
         String view = function(source, "function aliasEditorView(selectedList)");
         String renderer = function(source, "async function renderAliases()");
-        String discoverySupport = function(source, "function observedTalkgroupDiscoverySupported(selectedList)");
+        String discoverySupport = function(source, "function observedGroupIdentityDiscoverySupported(selectedList)");
         String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
         String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList)");
         String checkbox = function(source, "function aliasCheckOption(labelText, control)");
-        String observed = function(source, "function renderObservedTalkgroups(main, page, selectedList)");
-        String prefill = function(source, "function observedTalkgroupPrefill(row, selectedList)");
-        String identity = function(source, "function observedTalkgroupIdentity(row)");
-        String key = function(source, "function observedTalkgroupKey(row)");
-        String focusKey = function(source, "function observedTalkgroupFocusKey(row)");
+        String observed = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
+        String prefill = function(source, "function observedGroupIdentityPrefill(row, selectedList)");
+        String identity = function(source, "function observedGroupIdentityValue(row)");
+        String key = function(source, "function observedGroupIdentityKey(row)");
+        String focusKey = function(source, "function observedGroupIdentityFocusKey(row)");
         String homeIdentity = function(source, "function observedP25HomeIdentity(row)");
-        String time = function(source, "function observedTalkgroupTime(row, value)");
-        String create = function(source, "function observedTalkgroupCreateButton(row, selectedList)");
-        String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
+        String time = function(source, "function observedGroupIdentityTime(row, value)");
+        String create = function(source, "function observedGroupIdentityCreateButton(row, selectedList)");
+        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
         String editor = function(source,
             "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
 
         assertFalse(source.contains("alias_match_kind"));
         assertTrue(tabs.contains("'Discover'"));
-        assertTrue(renderer.contains("`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`"));
+        assertTrue(renderer.contains("`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`"));
         assertTrue(renderer.contains("include_exact: false"));
         assertTrue(renderer.contains("options?.alias_list && options?.revision !== undefined"));
         assertTrue(renderer.contains("aliasEditorContext.selectedList = selectedList"));
         assertTrue(source.contains("aliasTab: 'discover'"));
-        assertTrue(tabs.contains("observedTalkgroupDiscoverySupported(selectedList)"));
-        assertTrue(view.contains("observedTalkgroupDiscoverySupported(selectedList)"));
+        assertTrue(tabs.contains("observedGroupIdentityDiscoverySupported(selectedList)"));
+        assertTrue(view.contains("observedGroupIdentityDiscoverySupported(selectedList)"));
         assertTrue(renderer.contains("aliasEditorView(selectedList)"));
         assertTrue(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
         assertFalse(discoverySupport.contains("'NBFM'"));
@@ -439,7 +439,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(policy.contains("aliasCheckOption('Record calls', record)"));
         assertTrue(editor.contains("aliasCheckOption('Record calls', record)"));
         assertFalse(policy.contains("aliasFormField('Record calls', record)"));
-        assertTrue(observed.contains("observedTalkgroupMatchKind(row) !== 'exact'"));
+        assertTrue(observed.contains("observedGroupIdentityMatchKind(row) !== 'exact'"));
         assertTrue(observed.contains("defaultSort: 'last_seen'"));
         assertTrue(observed.contains("pager({ ...page, rows })"));
 
@@ -466,7 +466,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(prefill.contains("name: ''"));
         assertTrue(prefill.contains("type: 'talkgroup'"));
         assertFalse(source.contains("P25_FULLY_QUALIFIED_TALKGROUP"));
-        assertTrue(prefill.contains("!observedTalkgroupPromotionSupported(row)"));
+        assertTrue(prefill.contains("!observedGroupIdentityPromotionSupported(row)"));
         assertTrue(prefill.contains("['ordinary', 'stable_fully_qualified'].includes(observedP25IdentityState(row))"));
         assertTrue(prefill.contains("topology || '').toUpperCase() === 'CONVENTIONAL'"));
         for(String field: new String[]{"wacn", "system_id", "talkgroup_id"})
@@ -476,28 +476,28 @@ class StatsWebAliasCatalogUiContractTest
             assertTrue(key.contains("home." + field), () -> "Observed row key omits qualifier " + field);
         }
         assertTrue(key.contains("row?.topology"));
-        assertTrue(key.contains("observedTalkgroupProtocol(row)"));
-        assertTrue(key.contains("scope-key:"));
-        assertTrue(key.contains("context-key:"));
+        assertTrue(key.contains("observedGroupIdentityProtocol(row)"));
+        assertTrue(key.contains("radio-system:"));
+        assertTrue(key.contains("channel:"));
         assertTrue(homeIdentity.contains("talkgroup > 0"));
         assertTrue(homeIdentity.contains("talkgroup < 0xFFFF"));
         assertTrue(time.contains("wrapper.append(rendered, ' (hour beginning)')"));
         assertFalse(time.contains("`${rendered}"));
-        assertTrue(focusKey.contains("encodeURIComponent(observedTalkgroupKey(row))"));
-        assertTrue(prefill.contains("observedTalkgroupFocusKey(row)"));
-        assertTrue(create.contains("dataset.observedKey = observedTalkgroupFocusKey(row)"));
-        assertTrue(identity.contains("identityNumber(row, row.talkgroup_id)"));
+        assertTrue(focusKey.contains("encodeURIComponent(observedGroupIdentityKey(row))"));
+        assertTrue(prefill.contains("observedGroupIdentityFocusKey(row)"));
+        assertTrue(create.contains("dataset.observedKey = observedGroupIdentityFocusKey(row)"));
+        assertTrue(identity.contains("identityNumber(row, row.group_identity_id)"));
         assertTrue(detail.contains("'Decoded Home'"));
         assertTrue(detail.contains("'Local Talkgroup'"));
         assertTrue(detail.contains("other recognized signaling actions"));
-        assertTrue(create.contains("!observedTalkgroupPromotionSupported(row)"));
+        assertTrue(create.contains("!observedGroupIdentityPromotionSupported(row)"));
         assertTrue(create.contains("'Review only'"));
-        assertTrue(create.contains("observedTalkgroupPromotionReason(row)"));
-        assertTrue(detail.contains("observedTalkgroupPromotionSupported(row)"));
+        assertTrue(create.contains("observedGroupIdentityPromotionReason(row)"));
+        assertTrue(detail.contains("observedGroupIdentityPromotionSupported(row)"));
         assertTrue(prefill.contains("stream_as_talkgroup: null"));
         assertFalse(prefill.contains("copy_actions_from_alias_id"));
         assertFalse(editor.contains("rangeActionsPromise"));
-        assertTrue(editor.contains("aliasStreamOptionSelected(selectedStreams.has(streamName)"));
+        assertTrue(editor.contains("aliasStreamOptionSelected(selectedStreams.has(configurationId)"));
     }
 
     @Test
@@ -508,7 +508,7 @@ class StatsWebAliasCatalogUiContractTest
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
             ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",
             ".alias-tone-actions", ".alias-conflict-list",
-            ".alias-scan-list-option", ".observed-talkgroup-table-host", ".observed-talkgroup-detail",
+            ".alias-scan-list-option", ".observed-group-identity-table-host", ".observed-group-identity-detail",
             ".alias-policy-modal"})
         {
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);

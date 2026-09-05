@@ -59,9 +59,9 @@ class StatsWebServerServiceBindAddressTest
     void acceptsOnlyRegisteredFixedPaths()
     {
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/systems/p25%3ABEE00%3A348"), "/api/v1/systems/p25:BEE00:348"));
+            URI.create("/api/v1/radio-systems/p25%3ABEE00%3A348"), "/api/v1/radio-systems/p25:BEE00:348"));
         assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/api/system?scope=p25%3ABEE00%3A348"), "/api/v1/systems/p25:BEE00:348"));
+            URI.create("/api/system?scope=p25%3ABEE00%3A348"), "/api/v1/radio-systems/p25:BEE00:348"));
         assertTrue(StatsWebServerService.hasExactPath(
             URI.create("/api/v1/live/multiplex?client_id=00000000-0000-0000-0000-000000000001"),
             StatsApiV1.LIVE_MULTIPLEX));
@@ -72,11 +72,11 @@ class StatsWebServerServiceBindAddressTest
         assertTrue(StatsWebServerService.hasExactPath(
             URI.create("/api/v1/diagnostics/tuners"), StatsApiV1.TUNER_DIAGNOSTICS));
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/exports/system-talkgroups.csv"),
-            StatsApiV1.EXPORTS + "/system-talkgroups.csv"));
+            URI.create("/api/v1/exports/radio-system-group-identities.csv"),
+            StatsApiV1.EXPORTS + "/radio-system-group-identities.csv"));
         assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/api/export.csv?dataset=system-talkgroups"),
-            StatsApiV1.EXPORTS + "/system-talkgroups.csv"));
+            URI.create("/api/export.csv?dataset=radio-system-group-identities"),
+            StatsApiV1.EXPORTS + "/radio-system-group-identities.csv"));
     }
 
     @Test
@@ -231,9 +231,9 @@ class StatsWebServerServiceBindAddressTest
     void appliesDownloadAndSecurityHeadersToCsvResponses()
     {
         Headers headers = new Headers();
-        StatsWebServerService.applyCsvHeaders(headers, "sdrtrunk-system-radios-test.csv");
+        StatsWebServerService.applyCsvHeaders(headers, "sdrtrunk-radio-system-radios-test.csv");
         assertEquals("text/csv; charset=utf-8", headers.getFirst("Content-Type"));
-        assertEquals("attachment; filename=\"sdrtrunk-system-radios-test.csv\"",
+        assertEquals("attachment; filename=\"sdrtrunk-radio-system-radios-test.csv\"",
             headers.getFirst("Content-Disposition"));
         assertEquals("no-store", headers.getFirst("Cache-Control"));
         assertEquals("nosniff", headers.getFirst("X-Content-Type-Options"));

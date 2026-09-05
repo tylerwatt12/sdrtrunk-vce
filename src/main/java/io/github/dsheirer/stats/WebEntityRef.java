@@ -27,34 +27,29 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
 
     Map<String,Object> toMap();
 
-    static KeyRef system(String scopeToken)
+    static KeyRef radioSystem(String systemKey)
     {
-        return new KeyRef(Kind.SYSTEM, requireText(scopeToken, "System scope"));
+        return new KeyRef(Kind.RADIO_SYSTEM, requireText(systemKey, "Radio system key"));
     }
 
-    static KeyRef site(String guid)
+    static KeyRef channel(String configurationId)
     {
-        return new KeyRef(Kind.SITE, canonicalUuid(guid, "Site GUID"));
+        return new KeyRef(Kind.CHANNEL, canonicalUuid(configurationId, "Configuration ID"));
     }
 
-    static KeyRef conventional(String configurationId)
+    static ScopedIdentityRef talkgroup(String systemKey, int identifier)
     {
-        return new KeyRef(Kind.CONVENTIONAL, canonicalUuid(configurationId, "Configuration ID"));
+        return new ScopedIdentityRef(Kind.TALKGROUP, requireText(systemKey, "Radio system key"), identifier);
     }
 
-    static ScopedIdentityRef talkgroup(String scopeToken, int identifier)
+    static ScopedIdentityRef patchGroup(String systemKey, int identifier)
     {
-        return new ScopedIdentityRef(Kind.TALKGROUP, requireText(scopeToken, "System scope"), identifier);
+        return new ScopedIdentityRef(Kind.PATCH_GROUP, requireText(systemKey, "Radio system key"), identifier);
     }
 
-    static ScopedIdentityRef patchGroup(String scopeToken, int identifier)
+    static ScopedIdentityRef radio(String systemKey, int identifier)
     {
-        return new ScopedIdentityRef(Kind.PATCH_GROUP, requireText(scopeToken, "System scope"), identifier);
-    }
-
-    static ScopedIdentityRef radio(String scopeToken, int identifier)
-    {
-        return new ScopedIdentityRef(Kind.RADIO, requireText(scopeToken, "System scope"), identifier);
+        return new ScopedIdentityRef(Kind.RADIO, requireText(systemKey, "Radio system key"), identifier);
     }
 
     static void put(Map<String,Object> target, WebEntityRef reference)
@@ -102,7 +97,7 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
 
     enum Kind
     {
-        SYSTEM("system"), SITE("site"), CONVENTIONAL("conventional"), TALKGROUP("talkgroup"),
+        RADIO_SYSTEM("radio_system"), CHANNEL("channel"), TALKGROUP("talkgroup"),
         PATCH_GROUP("patch_group"), RADIO("radio");
 
         private final String mWireName;
@@ -122,9 +117,9 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
     {
         public KeyRef
         {
-            if(kind != Kind.SYSTEM && kind != Kind.SITE && kind != Kind.CONVENTIONAL)
+            if(kind != Kind.RADIO_SYSTEM && kind != Kind.CHANNEL)
             {
-                throw new IllegalArgumentException("Key references support only system, site, and conventional");
+                throw new IllegalArgumentException("Key references support only radio systems and channels");
             }
 
             key = requireText(key, "Entity key");
@@ -140,7 +135,7 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
         }
     }
 
-    record ScopedIdentityRef(Kind kind, String scope, int id) implements WebEntityRef
+    record ScopedIdentityRef(Kind kind, String radioSystemKey, int id) implements WebEntityRef
     {
         public ScopedIdentityRef
         {
@@ -153,7 +148,7 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
                 throw new IllegalArgumentException("Identity ID must be positive");
             }
 
-            scope = requireText(scope, "System scope");
+            radioSystemKey = requireText(radioSystemKey, "Radio system key");
         }
 
         @Override
@@ -161,7 +156,7 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
         {
             Map<String,Object> value = new LinkedHashMap<>();
             value.put("kind", kind.wireName());
-            value.put("scope", scope);
+            value.put("radio_system_key", radioSystemKey);
             value.put("id", id);
             return Map.copyOf(value);
         }

@@ -799,17 +799,17 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         Map<String,Object> server = map(webStatus.get("server"));
-        Map<String,Object> transport = map(server.get("liveTransport"));
-        long rejected = number(transport.get("rejectedClients"));
-        long slow = number(transport.get("slowDisconnects"));
-        long dropped = number(transport.get("eventDrops"));
+        Map<String,Object> transport = map(server.get("live_transport"));
+        long rejected = number(transport.get("rejected_clients"));
+        long slow = number(transport.get("slow_disconnects"));
+        long dropped = number(transport.get("event_drops"));
         long observerTotal = rejected + slow + dropped;
         delta("observer:web", observerTotal, now);
-        rows.add(row("web", "Web live transport", number(transport.get("activeClients")), "clients",
+        rows.add(row("web", "Web live transport", number(transport.get("active_clients")), "clients",
             observerTotal > 0 ? "info" : "healthy", "rejected=" + rejected +
                 "; slow_disconnects=" + slow + "; observer_event_drops=" + dropped));
 
-        Map<String,Object> webPlayer = map(webStatus.get("webPlayer"));
+        Map<String,Object> webPlayer = map(webStatus.get("web_player"));
         long webCapacityDrops = number(webPlayer.get("dropped_encoder_capacity"));
         long webEncoderFailures = number(webPlayer.get("encoder_failures"));
         long webAudioLosses = webCapacityDrops + webEncoderFailures;

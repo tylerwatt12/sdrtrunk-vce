@@ -21,7 +21,7 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * Immutable snapshot of one browser Live Systems activity table.
+ * Immutable snapshot of one browser live channel activity table.
  */
 public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
                                       String channelName, String configurationId, boolean controlActive,

@@ -237,10 +237,10 @@ async function main() {
   assert.doesNotMatch(scannerPlaybackSource, /preferences\.presentation/);
   assert.match(appSource, /id = 'scanner-settings'/);
   assert.match(appSource, /openScannerSettings\('#scanner-settings'\)/);
-  const liveSystemsSource = functionBinding(appSource, 'liveSystemsSection');
-  assert.match(liveSystemsSource, /layoutMenuHost: titleActions/);
-  assert.match(liveSystemsSource, /iconGlyph\('icon-live-presentation'\)/);
-  assert.match(liveSystemsSource, /section\('Live Systems', host, titleActions\)/);
+  const liveChannelsSource = functionBinding(appSource, 'liveChannelsSection');
+  assert.match(liveChannelsSource, /layoutMenuHost: titleActions/);
+  assert.match(liveChannelsSource, /iconGlyph\('icon-live-presentation'\)/);
+  assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
   assert.match(appSource, /layoutMenuOpen: reopenLayoutMenu/);
@@ -305,16 +305,16 @@ async function main() {
     'Settings cards must be appended as elements instead of converted to text');
   const playbackAccessSource = functionBinding(appSource, 'synchronizePlaybackAccess');
   assert.match(playbackAccessSource, /if \(!userPreferenceController\.snapshot\(\)\.loaded\) return/);
-  const siteSettingsRequestSource = functionBinding(appSource, 'requestSiteSettings');
-  assert.match(siteSettingsRequestSource, /headers\['If-Match'\] = `"\$\{revision\}"`/);
-  const siteSettingsSource = functionBinding(appSource, 'renderAdminSiteBehaviorSettings');
-  assert.match(siteSettingsSource, /error\?\.code === 'site_settings_conflict'/);
-  assert.match(siteSettingsSource, /apply\(error\.current\)/);
-  assert.match(siteSettingsSource, /Current server values were reloaded/);
+  const receiverSettingsRequestSource = functionBinding(appSource, 'requestReceiverSettings');
+  assert.match(receiverSettingsRequestSource, /headers\['If-Match'\] = `"\$\{revision\}"`/);
+  const receiverSettingsSource = functionBinding(appSource, 'renderAdminReceiverBehaviorSettings');
+  assert.match(receiverSettingsSource, /error\?\.code === 'receiver_settings_conflict'/);
+  assert.match(receiverSettingsSource, /apply\(error\.current\)/);
+  assert.match(receiverSettingsSource, /Current server values were reloaded/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);
-  const decodeSiteSettings = vm.runInNewContext(
-    `(function(value) ${functionBinding(appSource, 'decodeSiteSettingsEnvelope')})`);
-  assert.deepEqual(JSON.parse(JSON.stringify(decodeSiteSettings({
+  const decodeReceiverSettings = vm.runInNewContext(
+    `(function(value) ${functionBinding(appSource, 'decodeReceiverSettingsEnvelope')})`);
+  assert.deepEqual(JSON.parse(JSON.stringify(decodeReceiverSettings({
     revision: 2,
     settings: {
       traffic_grant_age_out_milliseconds: 1000
@@ -325,40 +325,40 @@ async function main() {
       traffic_grant_age_out_milliseconds: 1000
     }
   });
-  assert.throws(() => decodeSiteSettings({
+  assert.throws(() => decodeReceiverSettings({
     revision: 0,
     settings: {
       traffic_grant_age_out_milliseconds: 1000
     }
-  }), /invalid Site Settings/);
-  const siteRequests = [];
-  const siteResponses = [];
-  const requestSiteSettings = vm.runInNewContext(
+  }), /invalid Receiver Settings/);
+  const receiverSettingsRequests = [];
+  const receiverSettingsResponses = [];
+  const requestReceiverSettings = vm.runInNewContext(
     `(async function(method = 'GET', settings = null, revision = null) ${
-      functionBinding(appSource, 'requestSiteSettings')})`, {
-      decodeSiteSettingsEnvelope: decodeSiteSettings,
+      functionBinding(appSource, 'requestReceiverSettings')})`, {
+      decodeReceiverSettingsEnvelope: decodeReceiverSettings,
       jsonDocumentFetch: async (url, options) => {
-        siteRequests.push([url, options]);
-        return siteResponses.shift();
+        receiverSettingsRequests.push([url, options]);
+        return receiverSettingsResponses.shift();
       }
     });
-  const requestedSiteSettings = {
+  const requestedReceiverSettings = {
     traffic_grant_age_out_milliseconds: 1200
   };
-  siteResponses.push(response(200, { revision: 4, settings: requestedSiteSettings }));
-  assert.deepEqual(JSON.parse(JSON.stringify(await requestSiteSettings('PUT', requestedSiteSettings, 3))),
-    { revision: 4, settings: requestedSiteSettings });
-  assert.equal(siteRequests.at(-1)[0], '/api/v1/admin/site-settings');
-  assert.equal(siteRequests.at(-1)[1].headers['If-Match'], '"3"');
-  assert.equal(siteRequests.at(-1)[1].body, JSON.stringify(requestedSiteSettings));
-  const currentSiteSettings = {
+  receiverSettingsResponses.push(response(200, { revision: 4, settings: requestedReceiverSettings }));
+  assert.deepEqual(JSON.parse(JSON.stringify(await requestReceiverSettings('PUT', requestedReceiverSettings, 3))),
+    { revision: 4, settings: requestedReceiverSettings });
+  assert.equal(receiverSettingsRequests.at(-1)[0], '/api/v1/admin/receiver-settings');
+  assert.equal(receiverSettingsRequests.at(-1)[1].headers['If-Match'], '"3"');
+  assert.equal(receiverSettingsRequests.at(-1)[1].body, JSON.stringify(requestedReceiverSettings));
+  const currentReceiverSettings = {
     traffic_grant_age_out_milliseconds: 900
   };
-  siteResponses.push(response(409, { revision: 5, settings: currentSiteSettings }));
-  await assert.rejects(requestSiteSettings('PUT', requestedSiteSettings, 4), (error) => {
-    assert.equal(error.code, 'site_settings_conflict');
+  receiverSettingsResponses.push(response(409, { revision: 5, settings: currentReceiverSettings }));
+  await assert.rejects(requestReceiverSettings('PUT', requestedReceiverSettings, 4), (error) => {
+    assert.equal(error.code, 'receiver_settings_conflict');
     assert.deepEqual(JSON.parse(JSON.stringify(error.current)),
-      { revision: 5, settings: currentSiteSettings });
+      { revision: 5, settings: currentReceiverSettings });
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
@@ -376,11 +376,11 @@ async function main() {
   });
   [
     'aliasCatalogCoreColumns', 'aliasCustomConfigurationColumns',
-    'aliasEditorScopeBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
-    'dashboardIdentityColumns', 'systemRadioColumns', 'p25SiteChannelColumns',
-    'trunkedSiteChannelColumns', 'p25SiteNeighborColumns', 'trunkedSiteNeighborColumns',
-    'activityColumns', 'conventionalColumns', 'conventionalTalkgroupColumns',
-    'conventionalRadioColumns'
+    'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
+    'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
+    'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
+    'activityColumns', 'channelDirectoryColumns', 'channelGroupIdentityColumns',
+    'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
       .map((match) => match[1]);
@@ -389,8 +389,8 @@ async function main() {
     assert.equal(new Set(ids).size, ids.length, `${name} repeats a column ID`);
   });
   [
-    'siteColumns', 'dashboardHealthColumns', 'dashboardCallSourceColumns',
-    'dashboardActivityRadioColumns', 'talkgroupColumns'
+    'radioSystemChannelColumns', 'dashboardHealthColumns', 'dashboardCallSourceColumns',
+    'dashboardActivityRadioColumns', 'groupIdentityColumns'
   ].forEach((name) => {
     const ids = [...arrayBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
       .map((match) => match[1]);
@@ -403,44 +403,44 @@ async function main() {
   const identifierNumber = (value) => value !== null && value !== undefined && value !== '' &&
     Number.isFinite(Number(value)) && Number(value) >= 0 ? String(Math.trunc(Number(value))) : '';
   const number = (value) => Number(value || 0).toLocaleString('en-US');
-  const siteDirectoryIdentity = vm.runInNewContext(
-    `(function(row) ${functionBinding(appSource, 'siteDirectoryIdentity')})`, {
+  const channelDirectoryRfIdentity = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'channelDirectoryRfIdentity')})`, {
       isP25: (row) => row.protocol === 'P25', identifierNumber, hex
     });
-  const siteDirectoryDetails = vm.runInNewContext(
-    `(function(row) ${functionBinding(appSource, 'siteDirectoryDetails')})`, {
-      siteDirectoryIdentity, number
+  const channelDirectoryDetails = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'channelDirectoryDetails')})`, {
+      channelDirectoryRfIdentity, number
     });
-  const siteDescriptors = vm.runInNewContext(`(${arrayBinding(appSource, 'siteColumns')})`, {
-    siteNameSummary: () => '', siteLabel: () => '', siteDirectoryDetails,
+  const channelDescriptors = vm.runInNewContext(`(${arrayBinding(appSource, 'radioSystemChannelColumns')})`, {
+    channelNameSummary: () => '', channelLabel: () => '', channelDirectoryDetails,
     frequency: () => '', dateTime: () => ''
   });
-  const siteDetailsColumn = siteDescriptors.find((column) => column.id === 'details');
-  assert.equal(siteDetailsColumn.render({ protocol: 'P25', rfss: 1, site_id: 1, nac: 0x293, bands: 2 }),
+  const channelDetailsColumn = channelDescriptors.find((column) => column.id === 'details');
+  assert.equal(channelDetailsColumn.render({ protocol: 'P25', rfss: 1, site_id: 1, nac: 0x293, bands: 2 }),
     'RFSS 01 · Site 01 · NAC 293 · 2 band plans');
-  assert.equal(siteDetailsColumn.render({ protocol: 'DMR', site_id: 1, ran: 7 }), 'Site 1 · RAN 7');
-  assert.equal(siteDetailsColumn.render({ protocol: 'P25', site: 1 }), '',
+  assert.equal(channelDetailsColumn.render({ protocol: 'DMR', site_id: 1, ran: 7 }), 'Site 1 · RAN 7');
+  assert.equal(channelDetailsColumn.render({ protocol: 'P25', site: 1 }), '',
     'Legacy site fields must not be inferred');
 
-  const dashboardReceiverContext = vm.runInNewContext(
-    `(function(row) ${functionBinding(appSource, 'dashboardReceiverContext')})`, {
+  const dashboardChannelContext = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'dashboardChannelContext')})`, {
       dashboardChannelKind: (row) => String(row.channel_kind || '').toUpperCase(),
-      isP25: (row) => row.protocol === 'P25', systemLabel: (row) => row.system || '',
+      isP25: (row) => row.protocol === 'P25', radioSystemLabel: (row) => row.system || '',
       trunkedSystemLabel: (row) => row.system || '', identifierNumber, hex
     });
-  assert.equal(dashboardReceiverContext({ protocol: 'P25', site_kind: 'trunked', system: 'BEE00-941',
+  assert.equal(dashboardChannelContext({ protocol: 'P25', channel_kind: 'trunked', system: 'BEE00-941',
     rfss: 1, site_id: 2, nac: 0x293 }), 'BEE00-941 · RFSS 01 · Site 02 · NAC 293');
-  assert.equal(dashboardReceiverContext({ protocol: 'NXDN', site_kind: 'trunked', system: 'County',
+  assert.equal(dashboardChannelContext({ protocol: 'NXDN', channel_kind: 'trunked', system: 'County',
     site_id: 4, ran: 7 }), 'County · Site 4 · RAN 7');
 
   const decoderLabel = vm.runInNewContext(
     `(function(value, compact = false) ${functionBinding(appSource, 'decoderLabel')})`);
-  const conventionalMode = vm.runInNewContext(
-    `(function(row) ${functionBinding(appSource, 'conventionalMode')})`, {
+  const channelMode = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'channelMode')})`, {
       protocolFamily: (row) => row.protocol, decoderLabel
     });
-  assert.equal(conventionalMode({ protocol: 'DMR', decoder: 'DMR' }), 'DMR');
-  assert.equal(conventionalMode({ protocol: 'P25', decoder: 'P25_PHASE1' }), 'P25 · P25 P1');
+  assert.equal(channelMode({ protocol: 'DMR', decoder: 'DMR' }), 'DMR');
+  assert.equal(channelMode({ protocol: 'P25', decoder: 'P25_PHASE1' }), 'P25 · P25 P1');
 
   const timeslotLabel = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'timeslotLabel')})`, { identifierNumber });
@@ -451,12 +451,12 @@ async function main() {
     `(function(row) ${functionBinding(appSource, 'trunkedVariant')})`);
   const identityDomainLabel = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'identityDomainLabel')})`);
-  const systemsDirectoryDetails = vm.runInNewContext(
-    `(function(row) ${functionBinding(appSource, 'systemsDirectoryDetails')})`, {
-      siteDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
+  const radioSystemsDirectoryDetails = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'radioSystemsDirectoryDetails')})`, {
+      channelDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
       trunkedVariant, identityDomainLabel, identifierNumber
     });
-  assert.equal(systemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
+  assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
     address_domain: 'nxdn_type_c', network_id: 1, system_id: 2 }),
   'Type-C · Network 1 · System 2');
 
@@ -488,9 +488,9 @@ async function main() {
   assert.equal(radioTableType('radios', [{ id: 'radio' }, { id: 'talker-alias' }]),
     'radios.talker-alias');
   assert.equal(radioTableType('radios', [
-    { id: 'radio' }, { id: 'talker-alias' }, { id: 'affiliation' }, { id: 'affiliated-site' }
-  ]), 'radios.talker-alias-affiliation-site');
-  assert.match(appSource, /radioTableType\('talkgroup-radios', columns\)/);
+    { id: 'radio' }, { id: 'talker-alias' }, { id: 'affiliation' }, { id: 'confirmed-channel' }
+  ]), 'radios.talker-alias-affiliation-channel');
+  assert.match(appSource, /radioTableType\('group-identity-radios', columns\)/);
   assert.match(appSource, /type: 'system-action-observations'/);
 
   const player = Object.create(playerModule.WebCallPlayer.prototype);
@@ -531,7 +531,8 @@ async function main() {
   assert.equal(routes.resolve(registry, '?view=scanner').id, 'scanner');
   assert.equal(routes.resolve(registry, '?view=missing'), null);
   assert.equal(registry.admin.allowed(), false);
-  assert.equal(registry.site.parent, 'systems');
+  assert.equal(registry['radio-system'].parent, 'radio-systems');
+  assert.equal(registry.channel.parent, 'channels');
   assert.throws(() => routes.createRegistry({ ...handlers, extra: () => {} }, () => true), /Unknown route/);
   assert.throws(() => routes.createRegistry({ ...handlers, scanner: null }, () => true), /Missing route/);
 
@@ -623,8 +624,8 @@ async function main() {
     schema: ['name', 'frequency', 'status'], column_order: ['name', 'frequency', 'status'],
     column_widths: {}, hidden_columns: ['name', 'frequency', 'status']
   }).reset_reason, 'all-columns-hidden');
-  assert.equal(tableLayouts.tableId('live.systems'), 'live.systems');
-  assert.throws(() => tableLayouts.tableId('Live Systems'), /valid stable ID/);
+  assert.equal(tableLayouts.tableId('live.channels'), 'live.channels');
+  assert.throws(() => tableLayouts.tableId('Live Channels'), /valid stable ID/);
   assert.throws(() => tableLayouts.schema([{ id: 'same' }, { id: 'same' }]), /unique/);
   assert.throws(() => tableLayouts.schema([{ label: 'No ID' }]), /valid stable ID/);
   const schemaRegistry = new Map();
@@ -650,32 +651,30 @@ async function main() {
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'WEST (2)');
   assert.equal(pageTitles.derive({ routeId: 'scanner', pageTitle: 'Scanner',
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 0 } }), 'WEST');
-  assert.equal(pageTitles.derive({ routeId: 'site', pageTitle: 'Site BEE00:941 01-01 (Control)',
+  assert.equal(pageTitles.derive({ routeId: 'channel', pageTitle: 'Channel BEE00:941 01-01 (Control)',
     prependPlaying: true, playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }),
-  'WEST (2) - sdrtrunk-vce - Site BEE00:941 01-01 (Control)');
-  assert.equal(pageTitles.derive({ routeId: 'site', pageTitle: 'Site', prependPlaying: false,
-    playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'sdrtrunk-vce - Site');
+  'WEST (2) - sdrtrunk-vce - Channel BEE00:941 01-01 (Control)');
+  assert.equal(pageTitles.derive({ routeId: 'channel', pageTitle: 'Channel', prependPlaying: false,
+    playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'sdrtrunk-vce - Channel');
   assert.equal(pageTitles.safeText('A\u202e\n B'), 'A B');
 
-  assert.equal(entityRefs.href({ kind: 'system', key: 'p25:BEE00:941:alias-list:1' }),
-    '/?view=system&scope=p25%3ABEE00%3A941%3Aalias-list%3A1');
+  assert.equal(entityRefs.href({ kind: 'radio_system', key: 'p25:BEE00:941' }),
+    '/?view=radio-system&radio_system_key=p25%3ABEE00%3A941');
   assert.equal(entityRefs.href({
-    kind: 'talkgroup', scope: 'p25:BEE00:49F:alias-list:1', id: 56735
-  }), '/?view=talkgroup&scope=p25%3ABEE00%3A49F%3Aalias-list%3A1&id=56735');
-  const siteUuid = '728d2d66-de4e-476b-a696-919f32dd4d12';
+    kind: 'talkgroup', radio_system_key: 'p25:BEE00:49F', id: 56735
+  }), '/?view=group-identity&radio_system_key=p25%3ABEE00%3A49F&id=56735&kind=talkgroup');
   const channelUuid = 'fd6dd61b-a7d8-4fa0-9b7d-c46382827ca8';
-  assert.equal(entityRefs.href({ kind: 'site', key: siteUuid }), `/?view=site&guid=${siteUuid}`);
-  assert.equal(entityRefs.href({ kind: 'conventional', key: channelUuid }),
-    `/?view=conventional-detail&id=${channelUuid}`);
-  assert.equal(entityRefs.href({ kind: 'patch_group', scope: 'scope', id: 12 }),
-    '/?view=talkgroup&scope=scope&id=12&kind=patch_group');
-  assert.equal(entityRefs.href({ kind: 'talkgroup', scope: '', id: 12 }), null);
-  assert.equal(entityRefs.href({ kind: 'site', key: '' }), null);
-  assert.equal(entityRefs.href({ kind: 'site', key: siteUuid.toUpperCase() }), null);
-  assert.equal(entityRefs.href({ kind: 'conventional', key: '728d2d66-de4e-476b-a696' }), null);
-  assert.equal(entityRefs.href({ kind: 'site', key: siteUuid, scope: 'extra' }), null);
-  assert.equal(entityRefs.href({ kind: 'radio', scope: 'scope', id: 12, key: 'extra' }), null);
-  assert.equal(entityRefs.href({ kind: 'radio', scope: 'scope', id: 0 }), null);
+  assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid }),
+    `/?view=channel&configuration_id=${channelUuid}`);
+  assert.equal(entityRefs.href({ kind: 'patch_group', radio_system_key: 'p25:1:2', id: 12 }),
+    '/?view=group-identity&radio_system_key=p25%3A1%3A2&id=12&kind=patch_group');
+  assert.equal(entityRefs.href({ kind: 'talkgroup', radio_system_key: '', id: 12 }), null);
+  assert.equal(entityRefs.href({ kind: 'channel', key: '' }), null);
+  assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid.toUpperCase() }), null);
+  assert.equal(entityRefs.href({ kind: 'channel', key: '728d2d66-de4e-476b-a696' }), null);
+  assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid, radio_system_key: 'extra' }), null);
+  assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: 'p25:1:2', id: 12, key: 'extra' }), null);
+  assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: 'p25:1:2', id: 0 }), null);
 
   const requests = [];
   const queuedResponses = [];

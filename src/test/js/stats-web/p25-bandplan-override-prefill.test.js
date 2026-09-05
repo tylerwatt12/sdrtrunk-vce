@@ -43,7 +43,7 @@ function constantSource(name, ending) {
 const behavior = vm.runInNewContext(`(() => {
   ${constantSource('P25_OVERRIDE_CREATE_ROUTE_KEYS', ']);')}
   ${functionSource('p25OverrideCreateRouteProfile')}
-  ${functionSource('p25OverrideCreateRouteGuid')}
+  ${functionSource('p25OverrideCreateRouteConfigurationId')}
   ${functionSource('p25OverrideDetectedBands')}
   ${functionSource('p25OverrideSameScope')}
   let route = new URLSearchParams();
@@ -53,7 +53,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('clearP25OverrideCreateRoute')}
   return {
     profile: (value) => p25OverrideCreateRouteProfile(new URLSearchParams(value)),
-    guid: (value) => p25OverrideCreateRouteGuid(new URLSearchParams(value)),
+    configurationId: (value) => p25OverrideCreateRouteConfigurationId(new URLSearchParams(value)),
     detectedBands: (value, profile) => p25OverrideDetectedBands(value, profile),
     sameScope: p25OverrideSameScope,
     clear: (value) => {
@@ -69,8 +69,8 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-const siteGuid = '728d2d66-de4e-476b-a696-919f32dd4d12';
-const validQuery = `createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=02&guid=${siteGuid}`;
+const configurationId = '728d2d66-de4e-476b-a696-919f32dd4d12';
+const validQuery = `createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}`;
 const valid = behavior.profile(validQuery);
 assert.deepEqual(plain(valid), {
   wacn: 0xBEE00,
@@ -78,9 +78,9 @@ assert.deepEqual(plain(valid), {
   rfss: 0x01,
   site: 0x02
 });
-assert.equal(behavior.guid(validQuery), siteGuid);
+assert.equal(behavior.configurationId(validQuery), configurationId);
 assert.deepEqual(plain(behavior.profile(
-  `createP25Override=1&wacn=bee00&system=49f&rfss=0a&site=0b&guid=${siteGuid}`)), {
+  `createP25Override=1&wacn=bee00&system=49f&rfss=0a&site=0b&configuration_id=${configurationId}`)), {
   wacn: 0xBEE00,
   system: 0x49F,
   rfss: 0x0A,
@@ -88,23 +88,24 @@ assert.deepEqual(plain(behavior.profile(
 });
 
 for (const query of [
-  `wacn=BEE00&system=49F&rfss=01&site=02&guid=${siteGuid}`,
-  `createP25Override=0&wacn=BEE00&system=49F&rfss=01&site=02&guid=${siteGuid}`,
-  `createP25Override=1&wacn=BEE00&system=49F&rfss=01&guid=${siteGuid}`,
-  `createP25Override=1&wacn=EE00&system=49F&rfss=01&site=02&guid=${siteGuid}`,
-  `createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=GG&guid=${siteGuid}`
+  `wacn=BEE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}`,
+  `createP25Override=0&wacn=BEE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}`,
+  `createP25Override=1&wacn=BEE00&system=49F&rfss=01&configuration_id=${configurationId}`,
+  `createP25Override=1&wacn=EE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}`,
+  `createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=GG&configuration_id=${configurationId}`
 ]) {
   assert.equal(behavior.profile(query), null, `Invalid site identity was accepted: ${query}`);
 }
 
 for (const query of [
   'createP25Override=1',
-  'createP25Override=0&guid=728d2d66-de4e-476b-a696-919f32dd4d12',
-  'createP25Override=1&guid=728D2D66-DE4E-476B-A696-919F32DD4D12',
-  'createP25Override=1&guid=728d2d66-de4e-476b-a696-919f32dd4d1',
-  'createP25Override=1&guid=not-a-guid'
+  'createP25Override=0&configuration_id=728d2d66-de4e-476b-a696-919f32dd4d12',
+  'createP25Override=1&configuration_id=728D2D66-DE4E-476B-A696-919F32DD4D12',
+  'createP25Override=1&configuration_id=728d2d66-de4e-476b-a696-919f32dd4d1',
+  'createP25Override=1&configuration_id=not-a-configuration-id'
 ]) {
-  assert.equal(behavior.guid(query), null, `Invalid site GUID was accepted: ${query}`);
+  assert.equal(behavior.configurationId(query), null,
+    `Invalid channel configuration ID was accepted: ${query}`);
 }
 
 assert.deepEqual(plain(behavior.detectedBands({
@@ -176,7 +177,7 @@ assert.equal(behavior.sameScope(valid, {
 }), false, 'A system-wide profile is not the same scope as the requested site profile.');
 
 assert.deepEqual(plain(behavior.clear(
-  `view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=02&guid=${siteGuid}&q=keep`)), {
+  `view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}&q=keep`)), {
   query: 'view=admin&tab=p25-bandplans&q=keep',
   replacement: '/?view=admin&tab=p25-bandplans&q=keep'
 });
@@ -186,7 +187,7 @@ assert.match(render, /const createRequested = route\.has\('createP25Override'\)/
 assert.match(render, /p25OverrideSameScope\(profile, requestedProfile\)/);
 assert.match(render, /if \(!requestedCard\)/,
   'Only a missing exact site card may produce a new draft.');
-assert.match(render, /api\(siteApiPath\(requestedGuid, 'frequency-bands'\)\)/,
+assert.match(render, /api\(channelApiPath\(requestedConfigurationId, 'frequency-bands'\)\)/,
   'A missing exact site profile must load its existing detected band-plan resource.');
 assert.match(render, /p25OverrideDetectedBands\(detected, requestedProfile\)/);
 assert.match(render, /list\.prepend\(requestedCard\)/);

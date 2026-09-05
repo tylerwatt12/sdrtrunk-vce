@@ -144,7 +144,7 @@ class WebAccessControllersTest
             assertFalse(anonymous.get("authenticated").booleanValue());
             assertEquals("public", anonymous.get("tier").textValue());
             assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
-            assertTrue(anonymous.at("/capabilities/site-access").booleanValue());
+            assertTrue(anonymous.at("/capabilities/web-access").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-aliases").booleanValue());
             assertEquals(200, send(client, request(origin, "/public-protected").GET()).statusCode());
@@ -236,12 +236,12 @@ class WebAccessControllersTest
             assertEquals(403, send(client, mutation(origin, ADMIN_ALIASES_PATH, listener)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
-            String requireSiteLogin = OBJECT_MAPPER.writeValueAsString(
-                Map.of("capability", "site-access", "tier", "user"));
-            HttpResponse<String> siteLocked = send(client, mutation(origin, "/api/v1/admin/access", admin)
-                .PUT(HttpRequest.BodyPublishers.ofString(requireSiteLogin)));
-            assertEquals(200, siteLocked.statusCode());
-            assertEquals("user", data(siteLocked).get("required_tier").textValue());
+            String requireWebLogin = OBJECT_MAPPER.writeValueAsString(
+                Map.of("capability", "web-access", "tier", "user"));
+            HttpResponse<String> webLocked = send(client, mutation(origin, "/api/v1/admin/access", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(requireWebLogin)));
+            assertEquals(200, webLocked.statusCode());
+            assertEquals("user", data(webLocked).get("required_tier").textValue());
             assertEquals(401, send(client, request(origin, "/protected").GET()).statusCode());
             assertEquals(401, send(client, request(origin, "/public-protected").GET()).statusCode());
             assertEquals(200, send(client, request(origin, "/protected")
@@ -249,7 +249,7 @@ class WebAccessControllersTest
             assertEquals(200, send(client, request(origin, "/public-protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
             JsonNode lockedAnonymous = data(send(client, request(origin, "/api/v1/auth/session").GET()));
-            assertFalse(lockedAnonymous.at("/capabilities/site-access").booleanValue());
+            assertFalse(lockedAnonymous.at("/capabilities/web-access").booleanValue());
             assertFalse(lockedAnonymous.at("/capabilities/credits").booleanValue());
 
             String uppercaseTier = OBJECT_MAPPER.writeValueAsString(
@@ -340,13 +340,13 @@ class WebAccessControllersTest
             assertThrows(IllegalArgumentException.class,
                 () -> WebSessionHttpController.desktopAliasHandoffPath(0, 41));
             P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
-            String p25SiteGuid = "abcdefab-cdef-abcd-efab-cdefabcdefab";
+            String configurationId = "abcdefab-cdef-abcd-efab-cdefabcdefab";
             assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE00/49F/01/01/" + p25SiteGuid,
-                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, p25SiteGuid));
+                    "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId,
+                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, configurationId));
             assertThrows(IllegalArgumentException.class,
                 () -> WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
-                    p25SiteGuid.toUpperCase()));
+                    configurationId.toUpperCase()));
             HttpResponse<String> arbitraryRedirect = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "?target=https%3A%2F%2Fattacker.example").GET());
@@ -356,20 +356,20 @@ class WebAccessControllersTest
             assertEquals(404, malformedAliasTarget.statusCode());
             HttpResponse<String> malformedP25Target = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/100000/49F/01/01/" + p25SiteGuid).GET());
+                    "/p25-bandplan-overrides/100000/49F/01/01/" + configurationId).GET());
             assertEquals(404, malformedP25Target.statusCode());
             HttpResponse<String> nonHexP25Target = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE0+/49F/01/01/" + p25SiteGuid).GET());
+                    "/p25-bandplan-overrides/BEE0+/49F/01/01/" + configurationId).GET());
             assertEquals(404, nonHexP25Target.statusCode());
-            HttpResponse<String> missingP25Guid = send(client,
+            HttpResponse<String> missingConfigurationId = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "/p25-bandplan-overrides/BEE00/49F/01/01").GET());
-            assertEquals(404, missingP25Guid.statusCode());
-            HttpResponse<String> uppercaseP25Guid = send(client,
+            assertEquals(404, missingConfigurationId.statusCode());
+            HttpResponse<String> uppercaseConfigurationId = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE00/49F/01/01/" + p25SiteGuid.toUpperCase()).GET());
-            assertEquals(404, uppercaseP25Guid.statusCode());
+                    "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId.toUpperCase()).GET());
+            assertEquals(404, uppercaseConfigurationId.statusCode());
 
             HttpResponse<String> handoff = send(client,
                 request(origin, WebSessionHttpController.desktopAliasHandoffPath()).GET());
@@ -397,11 +397,11 @@ class WebAccessControllersTest
             assertTrue(authenticationService.armDesktopAdministratorHandoff());
             HttpResponse<String> p25Handoff = send(client,
                 request(origin, WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
-                    p25SiteGuid))
+                    configurationId))
                     .header("Cookie", cookie).GET());
             assertEquals(303, p25Handoff.statusCode());
-            assertEquals("/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&guid=" +
-                    p25SiteGuid,
+            assertEquals("/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&configuration_id=" +
+                    configurationId,
                 p25Handoff.headers().firstValue("Location").orElseThrow());
 
             HttpResponse<String> expiredExactHandoff = send(client,

@@ -44,8 +44,8 @@ class StatsLiveServiceTest
 
         service.start();
 
-        try(StatsLiveEventHub.Subscription first = service.subscribeSystems();
-            StatsLiveEventHub.Subscription second = service.subscribeSystems())
+        try(StatsLiveEventHub.Subscription first = service.subscribeChannelActivity();
+            StatsLiveEventHub.Subscription second = service.subscribeChannelActivity())
         {
             assertNotNull(first);
             assertNotNull(second);
@@ -79,7 +79,7 @@ class StatsLiveServiceTest
                 .map(table -> (List<?>)table.get("rows"))
                 .anyMatch(rows -> rows != null && !rows.isEmpty()));
 
-            try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
+            try(StatsLiveEventHub.Subscription ignored = service.subscribeChannelActivity())
             {
                 assertEquals(2, tables(service).size());
                 Map<String,Object> trunked = tables(service).stream()
@@ -144,7 +144,7 @@ class StatsLiveServiceTest
         StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         service.start();
 
-        try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
         {
             source.publish(conventionalActivity("IDLE"));
             assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "IDLE");

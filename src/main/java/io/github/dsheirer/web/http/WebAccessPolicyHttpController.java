@@ -19,7 +19,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Administrator-only endpoint for configurable site-access policies. */
+/** Administrator-only endpoint for configurable web-access policies. */
 public final class WebAccessPolicyHttpController
 {
     public static final String PATH = "/api/v1/admin/access";

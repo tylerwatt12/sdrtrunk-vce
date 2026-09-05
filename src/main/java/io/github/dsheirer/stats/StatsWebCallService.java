@@ -586,6 +586,7 @@ final class StatsWebCallService implements AutoCloseable
         Identifier<?> source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier<?> target = identifiers != null ? identifiers.getToIdentifier() : null;
         AudioCallRecordingMetadata recordingMetadata = snapshot.recordingMetadata();
+        CallLegSource callLegSource = snapshot.callLegSource();
         CallPlaybackTarget playbackTarget = CallPlaybackTarget.from(snapshot, target);
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         putText(value, "call_id", id);
@@ -598,16 +599,13 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "radio_system_key", playbackTarget != null ? playbackTarget.radioSystemKey() : null);
         putText(value, "site", recordingMetadata != null ? recordingMetadata.siteName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY));
-        putText(value, "site_identity", recordingMetadata != null ? recordingMetadata.radioResolveId() : null);
-        Object radioResolveId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
-            Form.RADIORESOLVE_ID, Role.ANY);
-        putText(value, "site_guid", radioResolveId);
         putText(value, "channel", recordingMetadata != null ? recordingMetadata.channelName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
-        putText(value, "channel_identity", recordingMetadata != null ? recordingMetadata.channelIdentity() :
-            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY));
-        Object configurationId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
+        Object identifierConfigurationId = identifierValue(identifiers, IdentifierClass.CONFIGURATION,
             Form.UNIQUE_ID, Role.ANY);
+        String configurationId = callLegSource != null && callLegSource.channelConfigurationId() != null ?
+            callLegSource.channelConfigurationId() : identifierConfigurationId != null ?
+                String.valueOf(identifierConfigurationId) : null;
         putText(value, "configuration_id", configurationId);
         putText(value, "alias_list", recordingMetadata != null ? recordingMetadata.aliasListName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY));
@@ -643,7 +641,6 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "lcn", identifierValue(identifiers, IdentifierClass.DECODER, Form.CHANNEL_NAME,
             Role.BROADCAST));
         putIdentifierValue(value, "network_id", identifiers, Form.NETWORK);
-        CallLegSource callLegSource = snapshot.callLegSource();
         P25SiteIdentity learnedP25Site = callLegSource != null ? callLegSource.p25SiteIdentity() : null;
 
         if(learnedP25Site != null)
@@ -665,17 +662,15 @@ final class StatsWebCallService implements AutoCloseable
         putIdentifierValue(value, "ran", identifiers, Form.RAN);
         WebEntityNavigationCatalog.Snapshot navigation = mNavigationCatalog != null ?
             mNavigationCatalog.snapshot() : WebEntityNavigationCatalog.Snapshot.empty();
-        WebEntityNavigationCatalog.Channel channel = navigation.channel(
-            configurationId != null ? String.valueOf(configurationId) : null,
-            radioResolveId != null ? String.valueOf(radioResolveId) : null);
+        WebEntityNavigationCatalog.Channel channel = navigation.channel(configurationId);
 
         if(channel != null)
         {
             WebEntityRef.put(value, channel.entityRef());
 
-            if(channel.systemRef() != null)
+            if(channel.radioSystemRef() != null)
             {
-                value.put("system_entity_ref", channel.systemRef().toMap());
+                value.put("radio_system_entity_ref", channel.radioSystemRef().toMap());
             }
 
             WebEntityRef sourceReference = navigationReference(channel, source);

@@ -101,12 +101,12 @@ class ReceiverHealthServiceTest
             clock::get))
         {
             service.setWebStatusSupplier(() -> Map.of(
-                "server", Map.of("liveTransport", Map.of(
-                    "activeClients", 1,
-                    "rejectedClients", 0,
-                    "slowDisconnects", 0,
-                    "eventDrops", eventDrops.get())),
-                "webPlayer", Map.of(),
+                "server", Map.of("live_transport", Map.of(
+                    "active_clients", 1,
+                    "rejected_clients", 0,
+                    "slow_disconnects", 0,
+                    "event_drops", eventDrops.get())),
+                "web_player", Map.of(),
                 "diagnostics", Map.of()));
             service.sampleNow();
 
@@ -133,8 +133,8 @@ class ReceiverHealthServiceTest
             clock::get))
         {
             service.setWebStatusSupplier(() -> Map.of(
-                "server", Map.of("liveTransport", Map.of()),
-                "webPlayer", Map.of(
+                "server", Map.of("live_transport", Map.of()),
+                "web_player", Map.of(
                     "published_calls", 7,
                     "active_feeds", 1,
                     "encoder_queue_depth", 0,
@@ -207,9 +207,9 @@ class ReceiverHealthServiceTest
                     throw new IllegalStateException("temporary observer failure");
                 }
 
-                return Map.of("server", Map.of("liveTransport", Map.of(
-                    "activeClients", 0, "rejectedClients", 0, "slowDisconnects", 0, "eventDrops", 2)),
-                    "webPlayer", Map.of(), "diagnostics", Map.of());
+                return Map.of("server", Map.of("live_transport", Map.of(
+                    "active_clients", 0, "rejected_clients", 0, "slow_disconnects", 0, "event_drops", 2)),
+                    "web_player", Map.of(), "diagnostics", Map.of());
             });
             service.sampleNow();
             assertTrue(rows(service.snapshot().get("active")).isEmpty());

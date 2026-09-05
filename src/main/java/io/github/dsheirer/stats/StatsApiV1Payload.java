@@ -26,12 +26,12 @@ final class StatsApiV1Payload
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> INTERNAL_FIELDS = Set.of(
-        "radio_system_id", "channel_id", "system_key", "p25_system_key", "resolved_system_key", "site_type",
-        "protocol_code",
-        "scope_kind_code", "variant_code",
-        "identity_domain_code", "identity_kind_code", "target_kind_code", "last_talkgroup_kind_code",
-        "last_counterpart_kind_code", "p25_identity_state_code", "p25_home_wacn", "p25_home_system_id",
-        "p25_home_talkgroup_id", "channel_kind_code", "kind_code", "identity_role_code", "model_code",
+        "radio_system_id", "channel_id", "identity_id", "system_key", "site_type", "protocol_code", "variant_code",
+        "address_domain_code", "location_category_code", "identity_kind_code", "target_kind_code",
+        "group_identity_kind_code", "group_identity_kind_label", "last_group_identity_kind_code",
+        "last_counterpart_kind_code", "last_counterpart_id", "p25_identity_state_code", "p25_home_wacn",
+        "p25_home_system_id",
+        "p25_home_talkgroup_id", "channel_kind_code", "identity_role_code", "model_code",
         "brand_code", "mode_code", "channel_type_code", "service_flags", "failure_code", "role_flags",
         "status_flags", "last_event_type_code");
     private static final Set<String> LEGACY_METRIC_FIELDS = Set.of(
@@ -48,12 +48,12 @@ final class StatsApiV1Payload
         "data_service", "registration_service", "tdma", "voice_service", "encrypted", "record_enabled",
         "active_rfss_network_connection",
         "ranged", "exact", "overlap", "has_fdma", "has_tdma", "has_unknown",
-        "site_names_truncated", "talkgroups_truncated", "radios_truncated",
+        "channel_names_truncated", "talkgroups_truncated", "radios_truncated",
         "members_truncated", "channel_key_truncated", "descriptor_truncated", "callsign_truncated",
         "logical_channels_truncated", "currently_affiliated");
     private static final Set<String> ENUM_FIELDS = Set.of(
         "type", "category", "event_type", "source_form", "target_form", "state", "metrics_state",
-        "identity_role", "channel_kind", "site_kind", "action", "topology", "entry_type");
+        "identity_role", "channel_kind", "action", "topology", "entry_type");
 
     private StatsApiV1Payload()
     {
@@ -81,13 +81,14 @@ final class StatsApiV1Payload
         StatsApiProtocol protocol = protocol(source, inheritedProtocol);
         String rawProtocol = source.path("protocol").isTextual() ? source.path("protocol").textValue() : null;
         boolean aliasRecord = source.has("alias_list_id") && source.has("matcher_type");
-        boolean identityRecord = source.has("scope_kind_code") || source.has("identity_kind_code") ||
-            source.has("target_kind_code") || source.has("p25_identity_state_code") ||
-            source.has("talkgroup_id") || source.has("radio_id") || source.has("identity_id");
-        boolean siteRecord = !identityRecord && (source.has("variant_code") || source.has("guid")) &&
-            (source.has("site_id") || source.has("ran") || source.has("rfss") || source.has("site"));
+        boolean identityRecord = source.has("identity_kind_code") || source.has("target_kind_code") ||
+            source.has("group_identity_kind_code") || source.has("p25_identity_state_code") ||
+            source.has("group_identity_id") || source.has("talkgroup_id") || source.has("radio_id") ||
+            source.has("identity_id");
+        boolean channelObservationRecord = !identityRecord && source.has("variant_code") &&
+            (source.has("site_id") || source.has("ran") || source.has("rfss"));
         boolean protocolRecord = source.has("protocol_code") || source.has("protocol") || identityRecord ||
-            siteRecord || source.has("system_key") || source.has("configuration_id");
+            channelObservationRecord || source.has("radio_system_key") || source.has("configuration_id");
         ObjectNode presented = OBJECT_MAPPER.createObjectNode();
         Iterator<Map.Entry<String,JsonNode>> fields = source.fields();
 
@@ -100,8 +101,7 @@ final class StatsApiV1Payload
             {
                 continue;
             }
-
-            if("protocol".equals(name) && field.getValue().isTextual())
+            else if("protocol".equals(name) && field.getValue().isTextual())
             {
                 presented.put(name, protocol.wireName());
             }
@@ -113,7 +113,7 @@ final class StatsApiV1Payload
             {
                 presented.put(name, aliasMatcherType(field.getValue().textValue()));
             }
-            else if(Set.of("identity_kind", "target_kind", "last_talkgroup_kind", "last_counterpart_kind")
+            else if(Set.of("identity_kind", "target_kind", "group_identity_kind", "last_group_identity_kind")
                 .contains(name) && field.getValue().isTextual())
             {
                 presented.put(name, identityKind(field.getValue().textValue()));
@@ -140,13 +140,6 @@ final class StatsApiV1Payload
             }
         }
 
-        if(protocol == StatsApiProtocol.P25 && source.has("site") && source.path("site").isValueNode() &&
-            !source.path("site").isNull())
-        {
-            presented.set("site_id", transform(source.get("site"), protocol));
-            presented.remove("site");
-        }
-
         if(protocol != StatsApiProtocol.UNKNOWN && protocolRecord)
         {
             presented.put("protocol", protocol.wireName());
@@ -157,11 +150,6 @@ final class StatsApiV1Payload
             presented.put("protocol_variant", "APCO25_PHASE2".equals(rawProtocol) ? "phase_2" : "phase_1");
         }
 
-        if(source.get("scope_kind_code") instanceof JsonNode scopeKind && scopeKind.isNumber())
-        {
-            presented.put("scope_kind", protocol.scopeKind(scopeKind.longValue()));
-        }
-
         if((protocol == StatsApiProtocol.DMR || protocol == StatsApiProtocol.NXDN) &&
             source.get("variant_code") instanceof JsonNode variant && variant.isNumber())
         {
@@ -170,8 +158,8 @@ final class StatsApiV1Payload
 
         putIdentityKind(source, presented, "identity_kind_code", "identity_kind");
         putIdentityKind(source, presented, "target_kind_code", "target_kind");
-        putIdentityKind(source, presented, "last_talkgroup_kind_code", "last_talkgroup_kind");
-        putIdentityKind(source, presented, "last_counterpart_kind_code", "last_counterpart_kind");
+        putIdentityKind(source, presented, "group_identity_kind_code", "group_identity_kind");
+        putIdentityKind(source, presented, "last_group_identity_kind_code", "last_group_identity_kind");
 
         JsonNode channelKind = source.get("channel_kind_code");
 
@@ -180,42 +168,31 @@ final class StatsApiV1Payload
             presented.put("channel_kind", channelKind.intValue() == 1 ? "trunked" : "conventional");
         }
 
-        JsonNode contextKind = source.get("kind_code");
-
-        if(contextKind != null && contextKind.isNumber())
+        if(source.get("address_domain_code") instanceof JsonNode domain && domain.isNumber())
         {
-            presented.put("context_kind", contextKind.intValue() == 1 ? "trunked" : "conventional");
+            String addressDomain = protocol.addressDomain(domain.longValue());
+            presented.put("address_domain", addressDomain);
+            addNxdnDisplays(presented, addressDomain);
         }
 
-        if(source.get("identity_domain_code") instanceof JsonNode domain && domain.isNumber())
+        if(source.get("location_category_code") instanceof JsonNode category && category.isNumber())
         {
-            if(identityRecord || !siteRecord && source.has("system_key"))
+            if(protocol == StatsApiProtocol.DMR)
             {
-                String addressDomain = protocol.addressDomain(domain.longValue());
-                presented.put("address_domain", addressDomain);
-                addNxdnDisplays(presented, addressDomain);
-            }
-            else if(protocol == StatsApiProtocol.DMR)
-            {
-                presented.put("model", protocol.siteClassification(domain.longValue()));
+                presented.put("model", protocol.siteClassification(category.longValue()));
             }
             else if(protocol == StatsApiProtocol.NXDN)
             {
-                presented.put("location_category", protocol.siteClassification(domain.longValue()));
+                presented.put("location_category", protocol.siteClassification(category.longValue()));
             }
         }
 
-        addProtocolSiteFields(source, presented, protocol);
+        addProtocolChannelFields(source, presented, protocol);
         addChannelFields(source, presented);
         addNeighborFields(source, presented);
         addLastEventType(source, presented);
 
         addP25Qualification(source, presented, protocol);
-
-        if(presented.has("sourceActivity24h"))
-        {
-            presented.set("source_activity_24h", presented.remove("sourceActivity24h"));
-        }
 
         return presented;
     }
@@ -320,7 +297,7 @@ final class StatsApiV1Payload
         presented.set("qualification", qualification);
     }
 
-    private static void addProtocolSiteFields(ObjectNode source, ObjectNode presented, StatsApiProtocol protocol)
+    private static void addProtocolChannelFields(ObjectNode source, ObjectNode presented, StatsApiProtocol protocol)
     {
         JsonNode brand = source.get("brand_code");
         if(protocol == StatsApiProtocol.DMR && brand != null && brand.isNumber())
