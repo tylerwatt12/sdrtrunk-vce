@@ -362,7 +362,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 16, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 17, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');

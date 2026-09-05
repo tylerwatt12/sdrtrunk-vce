@@ -4608,6 +4608,205 @@ function unmatchedTalkgroupsSupported(selectedList) {
   return ['P25', 'DMR', 'NXDN', 'NBFM'].includes(aliasListFamily(selectedList));
 }
 
+function openAliasTransferModal(selectedList) {
+  const listId = aliasListId(selectedList);
+  const endpoint = `/api/v1/admin/alias-lists/${listId}/transfer`;
+  const options = aliasEditorContext?.options || {};
+  const body = node('div', 'alias-editor-form alias-transfer');
+  body.append(node('p', 'modal-introduction', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)}. ` +
+    'Transfer alias configuration only. History, counters, and Alias List Defaults are not imported.'));
+  const tabBar = node('div', 'toolbar');
+  const panels = new Map();
+  const tabButtons = new Map();
+  const show = (name) => {
+    panels.forEach((panel, key) => { panel.hidden = key !== name; });
+    tabButtons.forEach((button, key) => button.setAttribute('aria-pressed', String(key === name)));
+  };
+  ['Import', 'Review', 'Export'].forEach((name) => {
+    const button = node('button', 'button secondary', name);
+    button.type = 'button';
+    button.addEventListener('click', () => show(name));
+    tabButtons.set(name, button);
+    tabBar.append(button);
+    panels.set(name, node('div', 'alias-transfer-panel'));
+  });
+  body.append(tabBar, ...panels.values());
+  const form = node('form', 'alias-editor-form');
+  panels.get('Import').append(form);
+  const field = (title, control) => {
+    const label = node('label', 'alias-form-field');
+    control.setAttribute('aria-label', title);
+    label.append(node('span', '', title), control);
+    return label;
+  };
+  const format = node('select');
+  [['VCE', 'VCE alias configuration CSV'], ['RADIOREFERENCE', 'RadioReference talkgroup CSV']].forEach(([value, text]) => {
+    const option = node('option', '', text); option.value = value; format.append(option);
+  });
+  const mode = node('select');
+  [['UPDATE_ADD', 'Update/Add'], ['REPLACE', 'Replace entire list']].forEach(([value, text]) => {
+    const option = node('option', '', text); option.value = value; mode.append(option);
+  });
+  const file = node('input'); file.type = 'file'; file.accept = '.csv,text/csv'; file.required = true;
+  form.append(field('Format', format), field('Mode', mode), field('CSV file (up to 8 MiB / 10,000 aliases)', file));
+  const help = node('details');
+  help.append(node('summary', '', 'CSV format and assignment rules'), node('p', '',
+    'VCE: use Export to obtain the exact header and all configuration fields. Names in scan_lists and ' +
+    'streaming_destinations are JSON arrays, for example ["Dispatch","Fire"]. Empty arrays clear assignments. ' +
+    'Other empty optional fields clear their values. Column names and order must match exactly.'), node('p', '',
+    'RadioReference header: Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category. ' +
+    'Existing aliases update name, description, and group only. New fully encrypted talkgroups have recording, ' +
+    'scan-list playback, and streaming disabled. Download talkgroups for a system compatible with this list.'));
+  form.append(help);
+  const defaults = node('fieldset', 'alias-stream-options');
+  defaults.append(node('legend', '', 'Assignments for new aliases'), node('p', 'muted',
+    'Used when the file has no assignment fields. Existing aliases retain their local settings.'));
+  const record = node('select');
+  [['', 'Use Alias List Defaults'], ['true', 'Record calls'], ['false', 'Do not record']].forEach(([value, text]) => {
+    const option = node('option', '', text); option.value = value; record.append(option);
+  });
+  defaults.append(field('Recording', record));
+  const namePicker = (title, choices, suffix) => {
+    const wrapper = node('fieldset', 'alias-stream-options');
+    wrapper.append(node('legend', '', title));
+    const override = node('input'); override.type = 'checkbox';
+    wrapper.append(aliasCheckOption('Choose assignments (an empty selection means none)', override));
+    const input = node('input'); input.type = 'text'; input.placeholder = 'Type an exact configured name';
+    const suggestions = node('datalist'); suggestions.id = `alias-transfer-${suffix}-${listId}`;
+    [...new Set(choices)].forEach((name) => { const option = node('option'); option.value = name; suggestions.append(option); });
+    input.setAttribute('list', suggestions.id);
+    const add = node('button', 'button secondary', 'Add'); add.type = 'button';
+    const selected = node('div', 'alias-transfer-names');
+    const values = new Set();
+    const draw = () => {
+      selected.replaceChildren();
+      values.forEach((name) => {
+        const remove = node('button', 'button secondary', `${name} ×`); remove.type = 'button';
+        remove.setAttribute('aria-label', `Remove ${name}`);
+        remove.addEventListener('click', () => { values.delete(name); draw(); invalidate(); });
+        selected.append(remove);
+      });
+    };
+    add.addEventListener('click', () => {
+      if(input.value) { values.add(input.value); input.value = ''; override.checked = true; draw(); invalidate(); }
+    });
+    input.addEventListener('keydown', (event) => {
+      if(event.key === 'Enter') { event.preventDefault(); add.click(); }
+    });
+    wrapper.append(field('Configured name', input), suggestions, add, selected);
+    defaults.append(wrapper);
+    return () => {
+      if(input.value) throw new Error(`Click Add for the typed ${title.toLowerCase()} name first.`);
+      return override.checked ? [...values] : null;
+    };
+  };
+  const scans = namePicker('Scan lists', (options.scan_lists || []).map((list) => list.name), 'scans');
+  const streams = namePicker('Streaming destinations', (options.streams || []).map((stream) => stream.name), 'streams');
+  form.append(defaults);
+  const previewButton = node('button', 'button', 'Preview import'); previewButton.type = 'submit';
+  const errorHost = node('div', 'alias-form-message'); errorHost.setAttribute('role', 'status');
+  form.append(previewButton);
+  const review = panels.get('Review');
+  const summary = node('p');
+  const rowsHost = node('div');
+  const pagerHost = node('div', 'toolbar');
+  const confirm = node('input'); confirm.type = 'checkbox';
+  const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
+  const apply = node('button', 'button', 'Apply import'); apply.type = 'button'; apply.disabled = true;
+  review.append(summary, rowsHost, pagerHost, confirmLabel, apply);
+  const exportLink = anchor('Export list configuration CSV', endpoint, 'button');
+  exportLink.setAttribute('download', '');
+  panels.get('Export').append(node('p', '', 'Exports every alias in this list, including matchers, appearance, ' +
+    'recording, scan lists, and named streaming destinations. Import this file using the VCE format. ' +
+    'Referenced scan lists, destinations, and icons must exist on the receiving installation.'), exportLink);
+  body.append(errorHost);
+  let request = null;
+  let preview = null;
+  let busy = false;
+  const modal = openReadOnlyModal(`Import / Export · ${selectedList.name}`, body, {
+    id: `alias-transfer-${listId}`, className: 'alias-editor-modal alias-transfer-modal',
+    returnFocusSelector: '.alias-transfer-button'
+  });
+  if (!modal) return;
+  const invalidate = () => {
+    request = null; preview = null; apply.disabled = true; confirm.checked = false;
+    summary.textContent = 'Choose a file and preview the import.'; rowsHost.replaceChildren(); pagerHost.replaceChildren();
+    confirmLabel.hidden = mode.value !== 'REPLACE';
+    defaults.disabled = format.value !== 'RADIOREFERENCE';
+    modal.setDirty(Boolean(file.files?.length));
+  };
+  const updateApply = () => { apply.disabled = busy || !preview || preview.counts.error > 0 ||
+    (request.mode === 'REPLACE' && !confirm.checked); };
+  const setBusy = (value) => {
+    busy = value; modal.setBusy(value);
+    form.querySelectorAll('input,select,button').forEach((control) => { control.disabled = value; });
+    defaults.disabled = value || format.value !== 'RADIOREFERENCE';
+    pagerHost.querySelectorAll('button').forEach((button) => { button.disabled = value; });
+    updateApply();
+  };
+  const loadPreview = async (offset = 0) => {
+    setBusy(true); errorHost.replaceChildren();
+    try {
+      const response = await requestJson(endpoint, { method: 'POST', body: { ...request, action: 'preview', offset } });
+      preview = response; confirm.checked = false;
+      summary.textContent = Object.entries(response.counts).map(([key, count]) => `${number(count)} ${key}`).join(' · ');
+      rowsHost.replaceChildren();
+      response.rows.forEach((row) => {
+        const detail = node('details', 'alias-transfer-row');
+        detail.append(node('summary', '', `${row.result.toUpperCase()} · ${row.name || '(unnamed)'}${row.row ? ` · row ${row.row}` : ''}`));
+        if (row.error) detail.append(node('p', 'error', row.error));
+        if (row.changes.length) detail.append(table(row.changes, [
+          { id: 'field', label: 'Field', render: (change) => change.field.replaceAll('_', ' ') },
+          { id: 'before', label: 'Current', render: (change) => change.before || '—' },
+          { id: 'after', label: 'Proposed', render: (change) => change.after || '—' }
+        ], '', { type: 'alias-import-changes', sortable: false }));
+        rowsHost.append(detail);
+      });
+      pagerHost.replaceChildren(node('span', '', `${offset + 1}–${Math.min(offset + 100, response.total)} of ${response.total}`));
+      for (const [label, next] of [['Previous', offset - 100], ['Next', offset + 100]]) {
+        if(next >= 0 && next < response.total) {
+          const button = node('button', 'button secondary', label); button.type = 'button';
+          button.addEventListener('click', () => loadPreview(next)); pagerHost.append(button);
+        }
+      }
+      show('Review');
+    } catch(error) { preview = null; errorHost.append(node('div', 'error', error.message)); }
+    finally { setBusy(false); }
+  };
+  form.addEventListener('input', invalidate);
+  form.addEventListener('change', invalidate);
+  confirm.addEventListener('change', updateApply);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); errorHost.replaceChildren();
+    try {
+      const selected = file.files?.[0];
+      if(!selected || selected.size > 8 * 1024 * 1024) throw new Error('Select a CSV file no larger than 8 MiB.');
+      setBusy(true);
+      request = { format: format.value, mode: mode.value, csv: await selected.text(), defaults: format.value === 'RADIOREFERENCE' ? {
+        recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans(), streams: streams()
+      } : null };
+      await loadPreview();
+    } catch(error) { errorHost.append(node('div', 'error', error.message)); setBusy(false); }
+  });
+  apply.addEventListener('click', async () => {
+    if(apply.disabled) return;
+    setBusy(true); errorHost.replaceChildren();
+    try {
+      const result = await requestJson(endpoint, { method: 'POST', body: { ...request, action: 'apply',
+        revision: preview.revision, digest: preview.digest, confirm_replace: confirm.checked } });
+      modal.setBusy(false); modal.setDirty(false);
+      const counts = preview.counts;
+      await finishAliasMutation(modal, result);
+      openReadOnlyModal('Alias import complete', node('p', '',
+        `${counts.added} added · ${counts.updated} updated · ${counts.deleted} deleted · ${counts.unchanged} unchanged`));
+    } catch(error) {
+      preview = null; errorHost.append(node('div', 'error', `${error.message}. Preview again before retrying.`));
+      setBusy(false);
+    }
+  });
+  invalidate(); show('Import');
+}
+
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listId = aliasListId(selectedList);
   const options = aliasEditorContext?.options || {};
@@ -5249,6 +5448,10 @@ async function renderAliases() {
   remove.type = 'button';
   remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
   listActions.append(add);
+  const transfer = node('button', 'button secondary alias-transfer-button', 'Import / Export');
+  transfer.type = 'button';
+  transfer.addEventListener('click', () => openAliasTransferModal(selectedList));
+  listActions.append(transfer);
   if (unmatchedTalkgroupsSupported(selectedList)) {
     const policy = node('button', 'button secondary alias-policy-button', 'Alias List Defaults');
     policy.type = 'button';
