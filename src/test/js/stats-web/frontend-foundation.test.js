@@ -512,9 +512,10 @@ async function main() {
   assert.equal(player.maximumQueued, 100);
   const canonicalCall = player.normalizeCall({
     call_id: 'call-1', audio_url: '/api/v1/calls/call-1/audio', started_at_ms: 1,
-    completed_at_ms: 2, scan_list_ids: [1], protocol: 'P25', radio_system_key: 'p25:1:2',
+    completed_at_ms: 2, scan_list_ids: [1], protocol: 'P25', radio_system_key: 'p25:00001:002',
     target_form: 'TALKGROUP', target_id: 1,
-    playback_target: { key: 'p25:1:2:talkgroup:1', kind: 'talkgroup', label: 'Talkgroup 1' }
+    playback_target: { key: 'system:p25:00001:002:v1-g-00001-002-1', kind: 'talkgroup',
+      label: 'Talkgroup 1' }
   });
   assert.equal(canonicalCall._callId, 'call-1');
   assert.deepEqual(canonicalCall._matchedScanListIds, ['1']);
@@ -691,6 +692,54 @@ async function main() {
     identity_key: 'v1-r-00001-002-0' }), null);
   assert.equal(entityRefs.href({ kind: 'patch_group', radio_system_key: 'dmr:channel:' + channelUuid,
     identity_key: 'v1-p-x-x-12' }), null);
+
+  const canonicalRadioSystemKeys = [
+    'p25:00000:000', 'p25:fffff:fff',
+    `dmr:channel:${channelUuid}`,
+    'dmr:tier3:tiny:0', 'dmr:tier3:tiny:511',
+    'dmr:tier3:small:0', 'dmr:tier3:small:127',
+    'dmr:tier3:large:0', 'dmr:tier3:large:15',
+    'dmr:tier3:huge:0', 'dmr:tier3:huge:3',
+    'nxdn-c:global:0', 'nxdn-c:global:1023',
+    'nxdn-c:regional:0', 'nxdn-c:regional:16383',
+    'nxdn-c:local:0', 'nxdn-c:local:131071',
+    `nxdn-c:channel:${channelUuid}`, `nxdn-d:channel:${channelUuid}`
+  ];
+  for (const systemKey of canonicalRadioSystemKeys) {
+    assert.notEqual(entityRefs.href({ kind: 'radio_system', key: systemKey }), null, systemKey);
+    const identityKey = systemKey.startsWith('p25:') ? 'v1-r-00000-000-1' : 'v1-r-x-x-1';
+    assert.notEqual(entityRefs.href({ kind: 'radio', radio_system_key: systemKey,
+      identity_key: identityKey }), null, `scoped ${systemKey}`);
+  }
+
+  const invalidRadioSystemKeys = [
+    null, 1, {}, '', ' ', '\u00a0',
+    ' p25:bee00:49f', 'p25:bee00:49f ', 'p25:bee00:49f\t', 'p25:bee00:49f\n',
+    'P25:bee00:49f', 'p25:BEE00:49f', 'p25:bee00:49F',
+    'p25:bee0:49f', 'p25:0bee00:49f', 'p25:bee00:49', 'p25:bee00:049f',
+    'p25:100000:000', 'p25:00000:1000', 'p25:beeg0:49f', 'p25:bee00:49f:extra',
+    `p25:channel:${channelUuid}`,
+    `dmr:channel:${channelUuid.toUpperCase()}`, 'dmr:channel:1-1-1-1-1',
+    'dmr:channel:not-a-uuid',
+    'dmr:tier3:TINY:1', 'dmr:tier3:unknown:1', 'dmr:tier3:tiny:-1',
+    'dmr:tier3:tiny:-0', 'dmr:tier3:tiny:+1', 'dmr:tier3:tiny:01',
+    'dmr:tier3:tiny:1.0', 'dmr:tier3:tiny:1e0', 'dmr:tier3:tiny:0x1',
+    'dmr:tier3:tiny:999999999999999999999999999999999999',
+    'dmr:tier3:tiny:512', 'dmr:tier3:small:128', 'dmr:tier3:large:16',
+    'dmr:tier3:huge:4', 'dmr:tier3:tiny:1:extra',
+    'nxdn-c:GLOBAL:1', 'nxdn-c:reserved:1', 'nxdn-c:global:-1',
+    'nxdn-c:global:-0', 'nxdn-c:global:+1', 'nxdn-c:global:01',
+    'nxdn-c:global:1024', 'nxdn-c:regional:16384', 'nxdn-c:local:131072',
+    'nxdn-c:local:999999999999999999999999999999999999',
+    'nxdn-d:global:1', `nxdn-c:channel:${channelUuid.toUpperCase()}`,
+    `nxdn-d:channel:${channelUuid.toUpperCase()}`, `nxdn:channel:${channelUuid}`,
+    `unknown:channel:${channelUuid}`
+  ];
+  for (const systemKey of invalidRadioSystemKeys) {
+    assert.equal(entityRefs.href({ kind: 'radio_system', key: systemKey }), null, String(systemKey));
+    assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: systemKey,
+      identity_key: 'v1-r-x-x-1' }), null, `scoped ${String(systemKey)}`);
+  }
 
   const requests = [];
   const queuedResponses = [];

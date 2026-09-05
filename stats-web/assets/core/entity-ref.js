@@ -29,10 +29,31 @@
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(key) ? key : '';
   }
 
+  function radioSystemKey(value) {
+    if (typeof value !== 'string' || value !== value.trim()) return '';
+    if (/^p25:[0-9a-f]{5}:[0-9a-f]{3}$/.test(value)) return value;
+    if (/^(?:dmr|nxdn-c|nxdn-d):channel:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) {
+      return value;
+    }
+    const dmr = /^dmr:tier3:(tiny|small|large|huge):(0|[1-9][0-9]*)$/.exec(value);
+    if (dmr) {
+      const network = Number(dmr[2]);
+      const maximum = { tiny: 511, small: 127, large: 15, huge: 3 }[dmr[1]];
+      return Number.isSafeInteger(network) && network <= maximum ? value : '';
+    }
+    const nxdn = /^nxdn-c:(global|regional|local):(0|[1-9][0-9]*)$/.exec(value);
+    if (nxdn) {
+      const system = Number(nxdn[2]);
+      const maximum = { global: 1023, regional: 16383, local: 131071 }[nxdn[1]];
+      return Number.isSafeInteger(system) && system <= maximum ? value : '';
+    }
+    return '';
+  }
+
   function href(reference) {
     if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return null;
     const kind = text(reference.kind);
-    const key = text(reference.key);
+    const key = kind === 'radio_system' ? radioSystemKey(reference.key) : text(reference.key);
     if (kind === 'radio_system' && exactKeys(reference, ['kind', 'key']) && key) {
       return `/?${new URLSearchParams({ view: 'radio-system', radio_system_key: key })}`;
     }
@@ -41,11 +62,11 @@
     }
     if (['talkgroup', 'patch_group', 'radio'].includes(kind) &&
         exactKeys(reference, ['kind', 'radio_system_key', 'identity_key'])) {
-      const radioSystemKey = text(reference.radio_system_key);
+      const systemKey = radioSystemKey(reference.radio_system_key);
       const key = identityKey(reference.identity_key, kind);
-      if (!radioSystemKey || !key) return null;
+      if (!systemKey || !key) return null;
       const view = kind === 'radio' ? 'radio' : 'group-identity';
-      const values = { view, radio_system_key: radioSystemKey, identity_key: key };
+      const values = { view, radio_system_key: systemKey, identity_key: key };
       return `/?${new URLSearchParams(values)}`;
     }
     return null;

@@ -9,10 +9,20 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Creates the stable internal key for a trunked radio system. */
 public final class RadioSystemKey
 {
+    private static final Pattern P25_KEY = Pattern.compile("p25:[0-9a-f]{5}:[0-9a-f]{3}");
+    private static final Pattern CHANNEL_KEY = Pattern.compile(
+        "(?:dmr|nxdn-c|nxdn-d):channel:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})");
+    private static final Pattern DMR_TIER_3_KEY = Pattern.compile(
+        "dmr:tier3:(tiny|small|large|huge):(0|[1-9][0-9]*)");
+    private static final Pattern NXDN_TYPE_C_KEY = Pattern.compile(
+        "nxdn-c:(global|regional|local):(0|[1-9][0-9]*)");
+
     private RadioSystemKey()
     {
     }
@@ -31,6 +41,30 @@ public final class RadioSystemKey
         }
 
         return String.format(Locale.ROOT, "p25:%05x:%03x", wacn, systemId);
+    }
+
+    /**
+     * Creates the native ETSI Tier III radio-system key. The model selects the exact network-ID width.
+     */
+    public static String dmrTier3(String model, Integer network)
+    {
+        String canonicalModel = canonicalToken(model);
+        int maximum = dmrNetworkMaximum(canonicalModel);
+
+        return network != null && network >= 0 && network <= maximum ?
+            "dmr:tier3:" + canonicalModel + ':' + network : null;
+    }
+
+    /**
+     * Creates the native NXDN Type-C radio-system key. The location category selects the exact system-ID width.
+     */
+    public static String nxdnTypeC(String locationCategory, Integer system)
+    {
+        String canonicalCategory = canonicalToken(locationCategory);
+        int maximum = nxdnSystemMaximum(canonicalCategory);
+
+        return system != null && system >= 0 && system <= maximum ?
+            "nxdn-c:" + canonicalCategory + ':' + system : null;
     }
 
     /**
@@ -53,7 +87,59 @@ public final class RadioSystemKey
 
     public static boolean isP25Native(String key)
     {
-        return key != null && key.matches("p25:[0-9a-f]{5}:[0-9a-f]{3}");
+        return key != null && P25_KEY.matcher(key).matches();
+    }
+
+    /**
+     * Parses and returns an exact canonical radio-system key. Alternate spellings, padding, whitespace, and unknown
+     * protocol scopes are rejected instead of being normalized.
+     *
+     * @throws IllegalArgumentException when the supplied key is not one of the current canonical forms
+     */
+    public static String parse(String key)
+    {
+        if(key == null || key.isEmpty() || !key.equals(key.strip()))
+        {
+            throw invalidKey();
+        }
+
+        if(P25_KEY.matcher(key).matches())
+        {
+            return key;
+        }
+
+        Matcher channel = CHANNEL_KEY.matcher(key);
+        if(channel.matches() && canonicalUuidExact(channel.group(1)))
+        {
+            return key;
+        }
+
+        Matcher dmrTier3 = DMR_TIER_3_KEY.matcher(key);
+        if(dmrTier3.matches() && withinMaximum(dmrTier3.group(2), dmrNetworkMaximum(dmrTier3.group(1))))
+        {
+            return key;
+        }
+
+        Matcher nxdnTypeC = NXDN_TYPE_C_KEY.matcher(key);
+        if(nxdnTypeC.matches() && withinMaximum(nxdnTypeC.group(2), nxdnSystemMaximum(nxdnTypeC.group(1))))
+        {
+            return key;
+        }
+
+        throw invalidKey();
+    }
+
+    public static boolean isCanonical(String key)
+    {
+        try
+        {
+            parse(key);
+            return true;
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return false;
+        }
     }
 
     private static String canonicalUuid(String value)
@@ -71,5 +157,63 @@ public final class RadioSystemKey
         {
             return null;
         }
+    }
+
+    private static boolean canonicalUuidExact(String value)
+    {
+        try
+        {
+            return value != null && UUID.fromString(value).toString().equals(value);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return false;
+        }
+    }
+
+    private static String canonicalToken(String value)
+    {
+        return value != null && !value.isBlank() && value.equals(value.strip()) ?
+            value.toLowerCase(Locale.ROOT) : null;
+    }
+
+    private static boolean withinMaximum(String value, int maximum)
+    {
+        try
+        {
+            return maximum >= 0 && Integer.parseInt(value) <= maximum;
+        }
+        catch(NumberFormatException exception)
+        {
+            return false;
+        }
+    }
+
+    private static int dmrNetworkMaximum(String model)
+    {
+        return switch(model != null ? model : "")
+        {
+            case "tiny" -> 0x1FF;
+            case "small" -> 0x7F;
+            case "large" -> 0xF;
+            case "huge" -> 0x3;
+            default -> -1;
+        };
+    }
+
+    private static int nxdnSystemMaximum(String locationCategory)
+    {
+        return switch(locationCategory != null ? locationCategory : "")
+        {
+            case "global" -> 0x3FF;
+            case "regional" -> 0x3FFF;
+            case "local" -> 0x1FFFF;
+            default -> -1;
+        };
+    }
+
+    private static IllegalArgumentException invalidKey()
+    {
+        return new IllegalArgumentException("Radio system key is not canonical");
     }
 }
