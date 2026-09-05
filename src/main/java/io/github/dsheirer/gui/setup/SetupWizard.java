@@ -358,9 +358,18 @@ public final class SetupWizard extends JDialog
             var rows = query.executeQuery())
         {
             java.util.ArrayList<String> names = new java.util.ArrayList<>();
-            while(rows.next()) { names.add(rows.getString(1)); autoStartNeedsJmbe |= SetupReadiness.requiresJmbe(rows.getString(2)); }
+            while(rows.next())
+            {
+                names.add(autoStartLabel(rows.getString(1)));
+                autoStartNeedsJmbe |= SetupReadiness.requiresJmbe(rows.getString(2));
+            }
             autoStart = List.copyOf(names);
         }
+    }
+
+    static String autoStartLabel(String name)
+    {
+        return name == null || name.isBlank() ? "(Unnamed channel)" : name;
     }
 
     private void revalidateSettings() throws Exception

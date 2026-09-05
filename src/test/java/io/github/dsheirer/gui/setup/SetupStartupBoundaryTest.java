@@ -61,6 +61,13 @@ class SetupStartupBoundaryTest
         assertFalse(SetupReadiness.requiresJmbe("unsupported"));
     }
 
+    @Test void autoStartReviewAcceptsUnnamedChannels()
+    {
+        assertEquals("(Unnamed channel)", SetupWizard.autoStartLabel(null));
+        assertEquals("(Unnamed channel)", SetupWizard.autoStartLabel("  "));
+        assertEquals("Dispatch", SetupWizard.autoStartLabel("Dispatch"));
+    }
+
     @Test void completedSessionOffersDeferredBenchmarkOnNextLaunch()
     {
         SetupProgress progress = new SetupProgress(true, false);
