@@ -78,34 +78,29 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
         String configurationId = source != null ?
             ChannelConfigurationKey.canonical(source.channelConfigurationId()) : null;
 
-        if(configurationId == null)
+        if(configurationId == null || source.decoderType() == null || source.channelKind() == null)
         {
             return null;
         }
 
-        ChannelConfigurationPolicy.ChannelKind channelKind = source != null ? source.channelKind() : null;
-        DecoderType decoderType = source != null ? source.decoderType() : null;
-        Protocol configuredProtocol = canonicalProtocol(decoderType != null ? decoderType.getProtocol() :
-            Protocol.UNKNOWN);
+        ChannelConfigurationPolicy.ChannelKind channelKind = source.channelKind();
+        DecoderType decoderType = source.decoderType();
+        Protocol configuredProtocol = canonicalProtocol(decoderType.getProtocol());
         Protocol targetProtocol = canonicalProtocol(target != null ? target.getProtocol() : Protocol.UNKNOWN);
-        if(configuredProtocol != Protocol.UNKNOWN && targetProtocol != Protocol.UNKNOWN &&
+
+        if(configuredProtocol == Protocol.UNKNOWN || targetProtocol != Protocol.UNKNOWN &&
             configuredProtocol != targetProtocol)
         {
             return null;
         }
-        Protocol protocol = configuredProtocol != Protocol.UNKNOWN ? configuredProtocol : targetProtocol;
-        TrunkedIdentityDomain identityDomain = source != null ? source.identityDomain() :
-            TrunkedIdentityDomain.STANDARD;
+
+        Protocol protocol = configuredProtocol;
+        TrunkedIdentityDomain identityDomain = source.identityDomain();
         if(protocol == Protocol.NXDN &&
             (!TrunkedIdentityEligibility.nxdnIdentifierMatchesDomain(target, identityDomain) ||
                 !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers, identityDomain)))
         {
             return null;
-        }
-
-        if(channelKind == null)
-        {
-            channelKind = inferredChannelKind(identifiers, decoderType);
         }
 
         if(channelKind == ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL)
@@ -289,22 +284,6 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
         Identifier<?> identifier = identifiers != null ?
             identifiers.getIdentifier(IdentifierClass.NETWORK, form, Role.BROADCAST) : null;
         return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
-    }
-
-    private static ChannelConfigurationPolicy.ChannelKind inferredChannelKind(IdentifierCollection identifiers,
-                                                                               DecoderType decoderType)
-    {
-        if(identifiers != null && !identifiers.getIdentifiers(Form.TRAFFIC_CHANNEL).isEmpty())
-        {
-            return ChannelConfigurationPolicy.ChannelKind.TRUNKED;
-        }
-
-        return switch(decoderType != null ? decoderType : DecoderType.P25_CONVENTIONAL)
-        {
-            case P25_PHASE1, P25_PHASE2 -> ChannelConfigurationPolicy.ChannelKind.TRUNKED;
-            case AM, NBFM, P25_CONVENTIONAL -> ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL;
-            default -> null;
-        };
     }
 
     private static Protocol canonicalProtocol(Protocol protocol)

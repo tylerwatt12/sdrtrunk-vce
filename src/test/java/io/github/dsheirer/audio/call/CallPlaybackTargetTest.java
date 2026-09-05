@@ -206,6 +206,18 @@ class CallPlaybackTargetTest
             target(typeDSource, typeD, 0).key());
     }
 
+    @Test
+    void incompleteSourceMetadataCannotBecomeAPlaybackTarget()
+    {
+        CallLegSource missingDecoder = new CallLegSource(null, CHANNEL_A, "Display name", null, 1, null,
+            TrunkedIdentityDomain.STANDARD, ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false);
+        CallLegSource missingKind = new CallLegSource(DecoderType.NBFM, CHANNEL_A, "Display name", null, 1, null,
+            TrunkedIdentityDomain.STANDARD, null, false);
+
+        assertNull(target(missingDecoder, new NBFMTalkgroup(1), 0));
+        assertNull(target(missingKind, new NBFMTalkgroup(1), 0));
+    }
+
     private static CallLegSource source(DecoderType decoderType, String configurationId, P25SiteIdentity p25,
                                         ChannelConfigurationPolicy.ChannelKind channelKind)
     {

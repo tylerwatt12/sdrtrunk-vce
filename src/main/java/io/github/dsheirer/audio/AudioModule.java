@@ -19,6 +19,7 @@
 package io.github.dsheirer.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.SquelchState;
@@ -53,7 +54,16 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
      */
     public AudioModule(AliasList aliasList, int timeslot, long maxAudioSegmentLength, boolean audioFilterEnable)
     {
-        super(aliasList, timeslot, maxAudioSegmentLength);
+        this(aliasList, timeslot, maxAudioSegmentLength, audioFilterEnable, CallLegSource.UNKNOWN);
+    }
+
+    /**
+     * Creates an Audio Module with the stable saved-channel identity attached to every emitted call.
+     */
+    public AudioModule(AliasList aliasList, int timeslot, long maxAudioSegmentLength, boolean audioFilterEnable,
+                       CallLegSource callLegSource)
+    {
+        super(aliasList, timeslot, maxAudioSegmentLength, callLegSource);
         mAudioFilterEnable = audioFilterEnable;
     }
 

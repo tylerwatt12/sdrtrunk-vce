@@ -204,7 +204,7 @@ public class DecoderFactory
 
         modules.add(new AMDecoder(config));
         modules.add(new AMDecoderState(channel.getName(), config));
-        modules.add(new AudioModule(aliasList, 0, 60000, false));
+        modules.add(new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList)));
     }
 
     /**
@@ -461,7 +461,7 @@ public class DecoderFactory
         DecodeConfigNBFM decodeConfigNBFM = (DecodeConfigNBFM)decodeConfig;
         modules.add(new NBFMDecoder(decodeConfigNBFM));
         modules.add(new NBFMDecoderState(channel.getName(), decodeConfigNBFM));
-        modules.add(new AudioModule(aliasList, 0, 60000, false));
+        modules.add(new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList)));
     }
 
     /**
