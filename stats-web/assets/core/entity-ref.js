@@ -8,7 +8,14 @@
     const key = text(value);
     const match = /^v1-([grp])-(x|[0-9a-f]{5})-(x|[0-9a-f]{3})-([0-9]+)$/.exec(key);
     const expected = { talkgroup: 'g', patch_group: 'p', radio: 'r' }[kind];
-    return match && match[1] === expected ? key : '';
+    if (!match || match[1] !== expected) return '';
+    const noHome = match[2] === 'x' && match[3] === 'x';
+    if ((match[2] === 'x') !== (match[3] === 'x') || (kind === 'patch_group' && noHome)) return '';
+    const identifier = Number(match[4]);
+    if (!Number.isSafeInteger(identifier) || identifier < 1 || String(identifier) !== match[4]) return '';
+    const maximum = kind === 'radio' ? (noHome ? 0xFFFFFF : 9_999_999) :
+      (noHome ? 0xFFFFFF : 0xFFFE);
+    return identifier <= maximum ? key : '';
   }
 
   function exactKeys(value, keys) {

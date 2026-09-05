@@ -46,7 +46,10 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveRowIsActive')}
   ${functionSource('livePresentedRow')}
   ${functionSource('livePresentedTableRows')}
-  return { liveRowIsActive, livePresentedRow, livePresentedTableRows };
+  ${functionSource('liveIdentityType')}
+  ${functionSource('liveIdentityLabel')}
+  return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
+    liveIdentityType, liveIdentityLabel };
 })()`);
 
 const preferences = {
@@ -56,6 +59,14 @@ const preferences = {
 };
 const row = (key, status, extra = {}) => ({ key, status, ...extra });
 const keys = (rows) => JSON.parse(JSON.stringify(rows.map((value) => value.key)));
+
+assert.equal(behavior.liveIdentityType({ target_form: 'PATCH_GROUP' }, 'target'), 'patch_group');
+assert.equal(behavior.liveIdentityType({
+  target_entity_ref: { kind: 'patch_group', radio_system_key: 'p25:bee00:49f',
+    identity_key: 'v1-p-bee00-49f-4400' }
+}, 'target'), 'patch_group');
+assert.equal(behavior.liveIdentityLabel({ target_matcher: { type: 'patch_group' } }, 'target'), 'patch group');
+assert.equal(behavior.liveIdentityLabel({ target_form: 'PATCH_GROUP' }, 'target', true), 'Patch Group');
 
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);

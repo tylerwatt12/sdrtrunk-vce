@@ -11,6 +11,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
@@ -146,32 +147,45 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
 
         private static MatcherReference matcher(Identifier<?> identifier)
         {
-            if(identifier == null || !identifier.isValid() || !(identifier.getValue() instanceof Number value))
+            if(identifier == null || !identifier.isValid())
             {
                 return null;
             }
 
-            String type = identifier.getForm() == Form.RADIO ? "radio" :
-                identifier.getForm() == Form.TALKGROUP ? "talkgroup" :
-                    identifier.getForm() == Form.PATCH_GROUP ? "patch_group" : null;
-            String protocol = protocol(identifier.getProtocol());
+            boolean patchGroup = false;
+            Identifier<?> primary = identifier;
+            if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+            {
+                patchGroup = true;
+                primary = patch.getValue().getPatchGroup();
+            }
+
+            if(primary == null || !primary.isValid() || !(primary.getValue() instanceof Number value))
+            {
+                return null;
+            }
+
+            String type = patchGroup ? "patch_group" : primary.getForm() == Form.RADIO ? "radio" :
+                primary.getForm() == Form.TALKGROUP ? "talkgroup" : null;
+            String protocol = protocol(primary.getProtocol());
 
             if(type == null || protocol == null)
             {
                 return null;
             }
 
-            String variant = identifier.getProtocol() == Protocol.APCO25_PHASE2 ? "phase_2" :
-                identifier.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
+            String variant = primary.getProtocol() == Protocol.APCO25_PHASE2 ? "phase_2" :
+                primary.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
             String identityKey = null;
-            if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+            if(primary instanceof FullyQualifiedRadioIdentifier radio)
             {
                 identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_RADIO, radio.getWacn(),
                     radio.getSystem(), radio.getRadio());
             }
-            else if(identifier instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+            else if(primary instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
             {
-                identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_TALKGROUP,
+                identityKey = RadioSystemIdentityKey.format(patchGroup ? RadioSystemIdentityKey.KIND_PATCH_GROUP :
+                        RadioSystemIdentityKey.KIND_TALKGROUP,
                     talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup());
             }
             return new MatcherReference(type, protocol, variant, value.intValue(), identityKey);

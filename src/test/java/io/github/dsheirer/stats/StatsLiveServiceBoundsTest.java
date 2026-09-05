@@ -208,7 +208,8 @@ class StatsLiveServiceBoundsTest
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
         ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
             "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
-            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
+            List.of(), new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", null, 4400,
+                "v1-p-bee00-49f-4400"));
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
             "Primary", configurationId, true, true, List.of(), List.of(row));
@@ -224,8 +225,8 @@ class StatsLiveServiceBoundsTest
             assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
                 "identity_key", "v1-r-bee00-49f-1201"),
                 projected.get("source_entity_ref"));
-            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:49f",
-                "identity_key", "v1-g-bee00-49f-4400"),
+            assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-p-bee00-49f-4400"),
                 projected.get("target_entity_ref"));
         }
         finally

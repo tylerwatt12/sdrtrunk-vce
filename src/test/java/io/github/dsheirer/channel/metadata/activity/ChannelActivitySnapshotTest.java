@@ -11,7 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -106,6 +109,25 @@ class ChannelActivitySnapshotTest
             navigation.targetAliases().getFirst());
         assertEquals(new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400),
             navigation.targetMatcher());
+    }
+
+    @Test
+    void carriesCanonicalFullyQualifiedP25PatchGroupNavigation()
+    {
+        String configurationId = "3ba9d443-cbe2-436e-9d78-ccff9f66943f";
+        Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        ChannelActivityTableState table = new ChannelActivityTableState("Site", channel, null);
+        ChannelActivityRow row = table.getOrCreate("traffic", channel,
+            ChannelActivityRow.Role.TRAFFIC, 851_262_500L, null);
+        row.setTarget(APCO25PatchGroup.create(new PatchGroup(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(4400, 0xBEE00, 0x49F, 4400))));
+        table.refresh(row);
+
+        ChannelActivitySnapshot.MatcherReference target =
+            table.getLatestSnapshot().rows().getFirst().navigation().targetMatcher();
+        assertEquals(new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", "phase_1", 4400,
+            "v1-p-bee00-49f-4400"), target);
     }
 
     @Test

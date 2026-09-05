@@ -12900,17 +12900,26 @@ function liveExistingAliasHref(reference) {
 
 function liveIdentityType(row, kind) {
   const matcherType = String(row?.[`${kind}_matcher`]?.type || '').trim().toLowerCase();
-  if (matcherType === 'talkgroup' || matcherType === 'radio') return matcherType;
+  if (['talkgroup', 'patch_group', 'radio'].includes(matcherType)) return matcherType;
+  const referenceType = String(row?.[`${kind}_entity_ref`]?.kind || '').trim().toLowerCase();
+  if (['talkgroup', 'patch_group', 'radio'].includes(referenceType)) return referenceType;
   const form = String(row?.[`${kind}_form`] || '').trim().toUpperCase();
+  if (form.includes('PATCH_GROUP')) return 'patch_group';
   if (form.includes('RADIO')) return 'radio';
   if (form.includes('TALKGROUP')) return 'talkgroup';
   return '';
 }
 
+function liveIdentityLabel(row, kind, titleCase = false) {
+  const type = liveIdentityType(row, kind);
+  if (type === 'radio') return titleCase ? 'Radio' : 'radio';
+  if (type === 'patch_group') return titleCase ? 'Patch Group' : 'patch group';
+  return titleCase ? 'Talkgroup' : 'talkgroup';
+}
+
 function liveIdentityInfo(row, kind) {
   if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) return null;
-  const type = liveIdentityType(row, kind);
-  const identityLabel = type === 'radio' ? 'radio' : 'talkgroup';
+  const identityLabel = liveIdentityLabel(row, kind);
   const direct = entityRefHref(row?.[`${kind}_entity_ref`]);
   if (direct) return {
     target: direct,
@@ -12945,8 +12954,7 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
   trigger.addEventListener('click', (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    const type = liveIdentityType(row, kind);
-    const identityLabel = type === 'radio' ? 'radio' : 'talkgroup';
+    const identityLabel = liveIdentityLabel(row, kind);
     const modalBody = node('div', 'tuner-frequency-action-body');
     modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${String(label)}.`));
     const actions = node('div', 'tuner-frequency-action-list');
@@ -12958,7 +12966,7 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
       node('small', '', info.description));
     actions.append(manage, infoLink);
     modalBody.append(actions);
-    openReadOnlyModal(`${identityLabel === 'radio' ? 'Radio' : 'Talkgroup'} ${row?.[`${kind}_id`] || ''}`,
+    openReadOnlyModal(`${liveIdentityLabel(row, kind, true)} ${row?.[`${kind}_id`] || ''}`,
       modalBody, { id: 'live-identity-actions', className: 'frequency-action-modal',
         returnFocusSelector: `#${id}` });
   });

@@ -667,23 +667,30 @@ async function main() {
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'sdrtrunk-vce - Channel');
   assert.equal(pageTitles.safeText('A\u202e\n B'), 'A B');
 
-  assert.equal(entityRefs.href({ kind: 'radio_system', key: 'p25:BEE00:941' }),
-    '/?view=radio-system&radio_system_key=p25%3ABEE00%3A941');
+  assert.equal(entityRefs.href({ kind: 'radio_system', key: 'p25:bee00:941' }),
+    '/?view=radio-system&radio_system_key=p25%3Abee00%3A941');
   assert.equal(entityRefs.href({
-    kind: 'talkgroup', radio_system_key: 'p25:BEE00:49F', id: 56735
-  }), '/?view=group-identity&radio_system_key=p25%3ABEE00%3A49F&id=56735&kind=talkgroup');
+    kind: 'talkgroup', radio_system_key: 'p25:bee00:49f', identity_key: 'v1-g-bee00-49f-56735'
+  }), '/?view=group-identity&radio_system_key=p25%3Abee00%3A49f&identity_key=v1-g-bee00-49f-56735');
   const channelUuid = 'fd6dd61b-a7d8-4fa0-9b7d-c46382827ca8';
   assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid }),
     `/?view=channel&configuration_id=${channelUuid}`);
-  assert.equal(entityRefs.href({ kind: 'patch_group', radio_system_key: 'p25:1:2', id: 12 }),
-    '/?view=group-identity&radio_system_key=p25%3A1%3A2&id=12&kind=patch_group');
-  assert.equal(entityRefs.href({ kind: 'talkgroup', radio_system_key: '', id: 12 }), null);
+  assert.equal(entityRefs.href({
+    kind: 'patch_group', radio_system_key: 'p25:00001:002', identity_key: 'v1-p-00001-002-12'
+  }), '/?view=group-identity&radio_system_key=p25%3A00001%3A002&identity_key=v1-p-00001-002-12');
+  assert.equal(entityRefs.href({
+    kind: 'talkgroup', radio_system_key: '', identity_key: 'v1-g-00001-002-12'
+  }), null);
   assert.equal(entityRefs.href({ kind: 'channel', key: '' }), null);
   assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid.toUpperCase() }), null);
   assert.equal(entityRefs.href({ kind: 'channel', key: '728d2d66-de4e-476b-a696' }), null);
   assert.equal(entityRefs.href({ kind: 'channel', key: channelUuid, radio_system_key: 'extra' }), null);
-  assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: 'p25:1:2', id: 12, key: 'extra' }), null);
-  assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: 'p25:1:2', id: 0 }), null);
+  assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: 'p25:00001:002',
+    identity_key: 'v1-r-00001-002-12', key: 'extra' }), null);
+  assert.equal(entityRefs.href({ kind: 'radio', radio_system_key: 'p25:00001:002',
+    identity_key: 'v1-r-00001-002-0' }), null);
+  assert.equal(entityRefs.href({ kind: 'patch_group', radio_system_key: 'dmr:channel:' + channelUuid,
+    identity_key: 'v1-p-x-x-12' }), null);
 
   const requests = [];
   const queuedResponses = [];
