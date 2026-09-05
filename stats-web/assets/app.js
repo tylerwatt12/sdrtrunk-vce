@@ -1112,10 +1112,24 @@ function aliasLabel(row, prefix = 'alias_') {
 }
 
 function radioSystemLabel(row) {
-  if (!isP25(row)) return savedChannelScopeLabel(row);
-  const wacn = hex(row.wacn, 5);
-  const system = hex(row.system_id, 3);
-  return wacn && system ? `${wacn}-${system}` : wacn || system;
+  if (isP25(row)) {
+    const wacn = hex(row.wacn, 5);
+    const system = hex(row.system_id, 3);
+    return wacn && system ? `${wacn}-${system}` : wacn || system;
+  }
+  if (isSavedChannelRadioSystem(row)) return savedChannelScopeLabel(row);
+  if (protocolFamily(row) === 'DMR') {
+    const model = semanticLabel(row.model);
+    const network = identifierNumber(row.network_id);
+    return ['DMR Tier III', model ? `${model} model` : '', network ? `Network ${network}` : '']
+      .filter(Boolean).join(' · ');
+  }
+  if (protocolFamily(row) === 'NXDN') {
+    const category = semanticLabel(row.location_category);
+    const system = identifierNumber(row.system_id);
+    return ['NXDN Type-C', category, system ? `System ${system}` : ''].filter(Boolean).join(' · ');
+  }
+  return `${protocolFamily(row) || 'Unknown'} radio system`;
 }
 
 function savedChannelScopeLabel(row) {
@@ -1123,8 +1137,12 @@ function savedChannelScopeLabel(row) {
   return `${family ? `${family} ` : ''}saved channel scope`;
 }
 
+function isSavedChannelRadioSystem(row) {
+  return /^(?:dmr|nxdn-c|nxdn-d):channel:/.test(String(row?.radio_system_key || ''));
+}
+
 function radioSystemOwnerLabel(row) {
-  return isP25(row) ? 'Radio System' : 'Saved channel scope';
+  return isSavedChannelRadioSystem(row) ? 'Saved channel scope' : 'Radio System';
 }
 
 function radioSystemValue(row) {
@@ -13491,6 +13509,18 @@ function radioSystemsDirectoryDetails(row) {
       row.system_id == null ? '' : `System ${hex(row.system_id, 3)}`
     ].filter(Boolean).join(' · ');
   }
+  if (!isSavedChannelRadioSystem(row)) {
+    if (protocolFamily(row) === 'DMR') {
+      return [trunkedVariant(row), semanticLabel(row.model),
+        row.network_id == null ? '' : `Network ${identifierNumber(row.network_id)}`]
+        .filter(Boolean).join(' · ');
+    }
+    if (protocolFamily(row) === 'NXDN') {
+      return [trunkedVariant(row), semanticLabel(row.location_category),
+        row.system_id == null ? '' : `System ${identifierNumber(row.system_id)}`]
+        .filter(Boolean).join(' · ');
+    }
+  }
   const variant = trunkedVariant(row);
   const domain = identityDomainLabel(row);
   const variantKey = variant.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -13515,7 +13545,7 @@ function radioSystemsDirectoryContent(data) {
     { id: 'directory-name', label: 'Radio System / Channel', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
       if (row.directory_type === 'radio_system') {
-        const label = isP25(row) ? (row.system_name || 'P25 radio system') : savedChannelScopeLabel(row);
+        const label = row.system_name || radioSystemLabel(row);
         const heading = node('strong');
         heading.append(radioSystemLink(row.entity_ref, label));
         wrapper.append(heading);
@@ -13561,7 +13591,7 @@ async function renderRadioSystems() {
   });
   if (!beginPage(renderContext,
     pageHeader('Radio Systems',
-      'P25 radio systems plus DMR and NXDN data kept separate for each saved receiver channel'),
+      'Browse trunked radio systems and the saved receiver channels that receive them'),
     searchBar('Search protocol, system, channel, or name'), directory.element)) return;
   await directory.load(
     () => radioSystemsDirectory.load(apiPage, pageParameters()),
@@ -13584,9 +13614,8 @@ async function renderRadioSystem() {
     route.set('tab', tab);
     window.history.replaceState({}, '', currentHref());
   }
-  const pageContext = isP25(system) ?
-    (system.channel_names || `${protocolFamily(system)} trunked system`) :
-    [system.channel_names, 'Scoped to this saved channel'].filter(Boolean).join(' · ');
+  const pageContext = [system.channel_names, isSavedChannelRadioSystem(system) ?
+    'Scoped to this saved channel' : radioSystemsDirectoryDetails(system)].filter(Boolean).join(' · ');
   if (!beginPage(renderContext,
     pageHeader(radioSystemValue(system), pageContext),
     radioSystemTabs(system, tab))) return;
@@ -13620,7 +13649,8 @@ async function renderRadioSystem() {
     if (!page.rows.length) block.querySelector('.empty').textContent = 'No talker aliases recorded for this system';
     content.append(block);
   } else if (tab === 'activity') {
-    await renderActivity(radioSystem, isP25(system) ? 'System Activity' : 'Saved Channel Activity');
+    await renderActivity(radioSystem,
+      isSavedChannelRadioSystem(system) ? 'Saved Channel Activity' : 'System Activity');
   } else {
     const infoColumn = node('div', 'entity-info-column system-info-column');
     const blocks = [section('Directory', metrics([
@@ -13640,7 +13670,7 @@ async function renderRadioSystem() {
         ['Currently Affiliated', system.affiliated_radios]
       ], true)));
     }
-    blocks.push(section(isP25(system) ? 'System Info' : 'Saved Channel Scope', keyValues([
+    blocks.push(section(isSavedChannelRadioSystem(system) ? 'Saved Channel Scope' : 'System Info', keyValues([
       [radioSystemOwnerLabel(system), radioSystemInfoValue(system)],
       ['Alias Lists', radioSystemAliasLists(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]

@@ -58,24 +58,31 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     }
 
     @Test
-    void describesDmrAndNxdnParentsAsSavedChannelScopes() throws Exception
+    void distinguishesProvenNativeSystemsFromSavedChannelFallbacks() throws Exception
     {
         String app = readText(APP_JAVASCRIPT);
         String label = function(app, "function radioSystemLabel(row)");
         String savedScope = function(app, "function savedChannelScopeLabel(row)");
+        String scopeTest = function(app, "function isSavedChannelRadioSystem(row)");
         String details = function(app, "function radioSystemsDirectoryDetails(row)");
         String directory = function(app, "async function renderRadioSystems()");
         String page = function(app, "async function renderRadioSystem()");
 
-        assertTrue(label.contains("if (!isP25(row)) return savedChannelScopeLabel(row)"));
+        assertTrue(label.contains("if (isSavedChannelRadioSystem(row)) return savedChannelScopeLabel(row)"));
+        assertTrue(label.contains("row.model"));
+        assertTrue(label.contains("row.network_id"));
+        assertTrue(label.contains("row.location_category"));
+        assertTrue(label.contains("row.system_id"));
         assertTrue(savedScope.contains("saved channel scope"));
+        assertTrue(scopeTest.contains("dmr|nxdn-c|nxdn-d"));
         assertTrue(details.contains("'Scoped to this saved channel'"));
-        assertFalse(details.contains("`Network ${identifierNumber(row.network_id)}`"));
-        assertFalse(details.contains("`System ${identifierNumber(row.system_id)}`"));
-        assertTrue(directory.contains("DMR and NXDN data kept separate for each saved receiver channel"));
-        assertTrue(page.contains("'Scoped to this saved channel'"));
-        assertTrue(page.contains("isP25(system) ? 'System Activity' : 'Saved Channel Activity'"));
-        assertTrue(page.contains("isP25(system) ? 'System Info' : 'Saved Channel Scope'"));
+        assertTrue(details.contains("`Network ${identifierNumber(row.network_id)}`"));
+        assertTrue(details.contains("`System ${identifierNumber(row.system_id)}`"));
+        assertTrue(directory.contains("saved receiver channels that receive them"));
+        assertTrue(page.contains("isSavedChannelRadioSystem(system) ?"));
+        assertTrue(page.contains("'Saved Channel Activity' : 'System Activity'"));
+        assertTrue(page.contains("'Saved Channel Scope' : 'System Info'"));
+        assertFalse(directory.contains("kept separate for each saved receiver channel"));
     }
 
     @Test
