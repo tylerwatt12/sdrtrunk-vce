@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 class RadioSystemSchemaTest
 {
     private static final String CONFIGURATION_ID = "123e4567-e89b-42d3-a456-426614174000";
+    private static final String P25_CONFIGURATION_ID = "223e4567-e89b-42d3-a456-426614174000";
 
     @Test
     void rejectsInvalidSystemAndSummaryFacts() throws Exception
@@ -102,6 +103,117 @@ class RadioSystemSchemaTest
                 """.formatted(radioSystemId));
 
             assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+        }
+    }
+
+    @Test
+    void validationHonorsP25ObservedLocalBoundaries() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            long radioSystemId = seedP25System(connection);
+            long talkgroupIdentityId = seedP25Identity(connection, radioSystemId, 1, 91);
+            long radioIdentityId = seedP25Identity(connection, radioSystemId, 2, 831_102);
+            long channelId = scalar(connection,
+                "SELECT id FROM receiver_channel WHERE radio_system_id=" + radioSystemId);
+            execute(connection, """
+                INSERT INTO trunked_radio_affiliation(
+                    radio_system_id, radio_identity_id, talkgroup_identity_id, channel_id,
+                    radio_observed_local_id, talkgroup_observed_local_id, confirmed_at_ms)
+                VALUES (%d, %d, %d, %d, 0xFFFFFC, 0xFFFE, 1000)
+                """.formatted(radioSystemId, radioIdentityId, talkgroupIdentityId, channelId));
+
+            ReceiverActivitySchema.validate(connection);
+
+            execute(connection, """
+                UPDATE trunked_radio_affiliation SET radio_observed_local_id=0xFFFFFD
+                WHERE radio_system_id=%d AND radio_identity_id=%d
+                """.formatted(radioSystemId, radioIdentityId));
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+
+            execute(connection, """
+                UPDATE trunked_radio_affiliation
+                SET radio_observed_local_id=0xFFFFFC, talkgroup_observed_local_id=0xFFFF
+                WHERE radio_system_id=%d AND radio_identity_id=%d
+                """.formatted(radioSystemId, radioIdentityId));
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+        }
+    }
+
+    @Test
+    void validationRejectsDmrGatewayPresenceEvidence() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            long radioSystemId = seedSystem(connection);
+            long radioIdentityId = seedIdentity(connection, radioSystemId, 2, 101);
+            long channelId = scalar(connection,
+                "SELECT id FROM receiver_channel WHERE radio_system_id=" + radioSystemId);
+            execute(connection, """
+                INSERT INTO trunked_radio_channel_presence(
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id,
+                    evidence_code, confirmed_at_ms)
+                VALUES (%d, %d, %d, 101, 1, 1000)
+                """.formatted(radioSystemId, radioIdentityId, channelId));
+            execute(connection, """
+                INSERT INTO trunked_radio_channel_presence_clear(
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id, cleared_at_ms)
+                VALUES (%d, %d, %d, 101, 1000)
+                """.formatted(radioSystemId, radioIdentityId, channelId));
+
+            ReceiverActivitySchema.validate(connection);
+
+            execute(connection, """
+                UPDATE trunked_radio_channel_presence SET observed_local_id=0xFFFEC0
+                WHERE radio_system_id=%d AND radio_identity_id=%d
+                """.formatted(radioSystemId, radioIdentityId));
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+
+            execute(connection, """
+                UPDATE trunked_radio_channel_presence SET observed_local_id=101
+                WHERE radio_system_id=%d AND radio_identity_id=%d
+                """.formatted(radioSystemId, radioIdentityId));
+            execute(connection, """
+                UPDATE trunked_radio_channel_presence_clear SET observed_local_id=0xFFFEC0
+                WHERE radio_system_id=%d AND radio_identity_id=%d
+                """.formatted(radioSystemId, radioIdentityId));
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+        }
+    }
+
+    @Test
+    void validationUsesNxdnAddressDomainForPresenceEvidence() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET decoder_type='NXDN', address_domain_code=1
+                WHERE configuration_id='%s'
+                """.formatted(CONFIGURATION_ID));
+            long radioSystemId = seedChannelScopedSystem(connection, "nxdn-c", 4, 1);
+            long radioIdentityId = seedIdentity(connection, radioSystemId, 2, 101);
+            long channelId = scalar(connection,
+                "SELECT id FROM receiver_channel WHERE radio_system_id=" + radioSystemId);
+            execute(connection, """
+                INSERT INTO trunked_radio_channel_presence(
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id,
+                    evidence_code, confirmed_at_ms)
+                VALUES (%d, %d, %d, 0xFFF1, 1, 1000)
+                """.formatted(radioSystemId, radioIdentityId, channelId));
+
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+
+            execute(connection, """
+                UPDATE configuration_channel SET address_domain_code=2
+                WHERE configuration_id='%s'
+                """.formatted(CONFIGURATION_ID));
+            execute(connection, """
+                UPDATE radio_system
+                SET system_key='nxdn-d:channel:%s', address_domain_code=2
+                WHERE id=%d
+                """.formatted(CONFIGURATION_ID, radioSystemId));
+            ReceiverActivitySchema.validate(connection);
         }
     }
 
@@ -250,17 +362,52 @@ class RadioSystemSchemaTest
 
     private static long seedSystem(Connection connection) throws Exception
     {
+        return seedChannelScopedSystem(connection, "dmr", 3, 0);
+    }
+
+    private static long seedChannelScopedSystem(Connection connection, String keyProtocol, int protocolCode,
+                                                int addressDomainCode) throws Exception
+    {
         execute(connection, """
             INSERT INTO radio_system(
                 system_key, configuration_id, protocol_code, address_domain_code, first_seen_ms, last_seen_ms)
-            VALUES ('dmr:channel:%s', '%s', 3, 0, 1000, 1000)
-            """.formatted(CONFIGURATION_ID, CONFIGURATION_ID));
-        long systemId = scalar(connection, "SELECT id FROM radio_system");
+            VALUES ('%s:channel:%s', '%s', %d, %d, 1000, 1000)
+            """.formatted(keyProtocol, CONFIGURATION_ID, CONFIGURATION_ID, protocolCode, addressDomainCode));
+        long systemId = scalar(connection,
+            "SELECT id FROM radio_system WHERE configuration_id='" + CONFIGURATION_ID + "'");
         execute(connection, """
             INSERT INTO receiver_channel(
                 configuration_id, first_seen_ms, last_seen_ms, radio_system_id, radio_system_assigned_at_ms)
             VALUES ('%s', 1000, 1000, %d, 1000)
             """.formatted(CONFIGURATION_ID, systemId));
+        return systemId;
+    }
+
+    private static long seedP25System(Connection connection) throws Exception
+    {
+        execute(connection, """
+            INSERT INTO configuration_channel(
+                configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                auto_start, decoder_type, primary_frequency_hz, config_json
+            ) VALUES (
+                '%s', 'TRUNKED', 1, 'P25 system', 'P25 site', 'Control',
+                0, 'P25_PHASE1', 851012500, '{}'
+            )
+            """.formatted(P25_CONFIGURATION_ID));
+        execute(connection, """
+            INSERT INTO radio_system(
+                system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                first_seen_ms, last_seen_ms)
+            VALUES ('p25:bee00:3a9', 1, 0, 0xBEE00, 0x3A9, 1000, 1000)
+            """);
+        long systemId = scalar(connection,
+            "SELECT id FROM radio_system WHERE system_key='p25:bee00:3a9'");
+        execute(connection, """
+            INSERT INTO receiver_channel(
+                configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                radio_system_assigned_at_ms)
+            VALUES ('%s', 1000, 1000, %d, 1000)
+            """.formatted(P25_CONFIGURATION_ID, systemId));
         return systemId;
     }
 
@@ -271,6 +418,21 @@ class RadioSystemSchemaTest
             INSERT INTO radio_system_identity_summary(
                 radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms)
             VALUES (%d, %d, %d, 1000, 1000)
+            """.formatted(radioSystemId, kind, identity));
+        return scalar(connection, """
+            SELECT id FROM radio_system_identity_summary
+            WHERE radio_system_id=%d AND identity_kind_code=%d AND identity_id=%d
+            """.formatted(radioSystemId, kind, identity));
+    }
+
+    private static long seedP25Identity(Connection connection, long radioSystemId, int kind, int identity)
+        throws Exception
+    {
+        execute(connection, """
+            INSERT INTO radio_system_identity_summary(
+                radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                identity_id, first_seen_ms, last_seen_ms)
+            VALUES (%d, %d, 0xBEE00, 0x3A9, %d, 1000, 1000)
             """.formatted(radioSystemId, kind, identity));
         return scalar(connection, """
             SELECT id FROM radio_system_identity_summary

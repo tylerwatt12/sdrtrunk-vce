@@ -2117,6 +2117,7 @@ final class RadioSystemSchema
         }
 
         validateIdentitySemantics(connection);
+        validateObservedLocalIdentitySemantics(connection);
     }
 
     /** SQLite cannot make the child identity range depend on its parent protocol without duplicating protocol. */
@@ -2165,6 +2166,83 @@ final class RadioSystemSchema
                 }
             }
         }
+    }
+
+    /** Child evidence ranges depend on the protocol and, for NXDN, the saved channel address domain. */
+    private static void validateObservedLocalIdentitySemantics(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT affiliation.radio_system_id, affiliation.radio_identity_id,
+                    affiliation.radio_observed_local_id, affiliation.talkgroup_observed_local_id,
+                    system.protocol_code, system.address_domain_code
+                FROM trunked_radio_affiliation affiliation
+                JOIN radio_system system ON system.id = affiliation.radio_system_id
+                ORDER BY affiliation.radio_system_id, affiliation.radio_identity_id
+                """))
+        {
+            while(resultSet.next())
+            {
+                int protocolCode = resultSet.getInt("protocol_code");
+                TrunkedIdentityDomain domain = identityDomain(resultSet.getInt("address_domain_code"));
+                Integer radioLocalId = nullableInteger(resultSet, "radio_observed_local_id");
+                Integer talkgroupLocalId = nullableInteger(resultSet, "talkgroup_observed_local_id");
+
+                if(!isValidObservedLocalIdentity(protocolCode, domain,
+                    TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, radioLocalId) ||
+                    !isValidObservedLocalIdentity(protocolCode, domain,
+                        TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP, talkgroupLocalId))
+                {
+                    throw new SQLException("Trunked radio affiliation [system=" +
+                        resultSet.getInt("radio_system_id") + ", radio=" +
+                        resultSet.getInt("radio_identity_id") +
+                        "] has local identity evidence incompatible with its protocol and address domain");
+                }
+            }
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT 'trunked_radio_channel_presence' AS child_table,
+                    presence.radio_system_id, presence.radio_identity_id, presence.channel_id,
+                    presence.observed_local_id, system.protocol_code, system.address_domain_code
+                FROM trunked_radio_channel_presence presence
+                JOIN radio_system system ON system.id = presence.radio_system_id
+                UNION ALL
+                SELECT 'trunked_radio_channel_presence_clear',
+                    presence_clear.radio_system_id, presence_clear.radio_identity_id,
+                    presence_clear.channel_id, presence_clear.observed_local_id,
+                    system.protocol_code, system.address_domain_code
+                FROM trunked_radio_channel_presence_clear presence_clear
+                JOIN radio_system system ON system.id = presence_clear.radio_system_id
+                ORDER BY child_table, radio_system_id, radio_identity_id, channel_id
+                """))
+        {
+            while(resultSet.next())
+            {
+                int protocolCode = resultSet.getInt("protocol_code");
+                TrunkedIdentityDomain domain = identityDomain(resultSet.getInt("address_domain_code"));
+                Integer localId = nullableInteger(resultSet, "observed_local_id");
+
+                if(!isValidObservedLocalIdentity(protocolCode, domain,
+                    TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, localId))
+                {
+                    throw new SQLException("Trunked radio presence evidence in [" +
+                        resultSet.getString("child_table") + "; system=" +
+                        resultSet.getInt("radio_system_id") + ", radio=" +
+                        resultSet.getInt("radio_identity_id") + ", channel=" +
+                        resultSet.getInt("channel_id") +
+                        "] is incompatible with its protocol and address domain");
+                }
+            }
+        }
+    }
+
+    private static boolean isValidObservedLocalIdentity(int protocolCode, TrunkedIdentityDomain domain,
+                                                        int identityKindCode, Integer localId)
+    {
+        return localId == null || TrunkedIdentityPolicy.isObservedLocalIdentity(protocolCode, domain,
+            identityKindCode, localId, protocolCode == TrunkedIdentityPolicy.PROTOCOL_P25);
     }
 
     private static void validatePrimaryKey(Connection connection, String table, List<String> expected)
