@@ -542,9 +542,7 @@ final class StatsAliasCatalog
         {
             List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
             List<Map<String,Object>> counts = queryRows(connection, """
-                SELECT route.alias_id, count(*) AS route_count,
-                    max(length(coalesce(nullif(trim(json_extract(stream.config_json, '$.name')), ''),
-                        route.broadcast_configuration_id))) AS maximum_name_length
+                SELECT route.alias_id, count(*) AS route_count
                 FROM alias_broadcast_channel route
                 JOIN configuration_broadcast_stream stream
                   ON stream.configuration_id = route.broadcast_configuration_id
@@ -561,12 +559,6 @@ final class StatsAliasCatalog
                 {
                     throw new StatsApiException(413, "alias_routes_too_large",
                         "An alias has too many broadcast channels");
-                }
-
-                if(number(count.get("maximum_name_length")) > MAX_BROADCAST_CHANNEL_NAME_CHARACTERS)
-                {
-                    throw new StatsApiException(413, "alias_routes_too_large",
-                        "An alias broadcast channel name is too long");
                 }
 
                 routeTotal += routes;
