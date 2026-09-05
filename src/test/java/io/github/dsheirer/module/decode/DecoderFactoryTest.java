@@ -113,7 +113,7 @@ class DecoderFactoryTest
     }
 
     @Test
-    void usesInferredLegacyDmrModeForRotationStates()
+    void channelMapDoesNotInferDmrModeForRotationStates()
     {
         DecodeConfigDMR noMap = new DecodeConfigDMR();
         DecodeConfigDMR withMap = new DecodeConfigDMR();
@@ -124,6 +124,10 @@ class DecoderFactoryTest
 
         assertEquals(List.of(State.CALL, State.ENCRYPTED, State.DATA),
             DecoderFactory.dmrRotationActiveStates(noMap));
+        assertEquals(List.of(State.CALL, State.ENCRYPTED, State.DATA),
+            DecoderFactory.dmrRotationActiveStates(withMap));
+
+        withMap.setChannelMode(DMRChannelMode.TRUNKED);
         assertEquals(List.of(State.CONTROL), DecoderFactory.dmrRotationActiveStates(withMap));
     }
 

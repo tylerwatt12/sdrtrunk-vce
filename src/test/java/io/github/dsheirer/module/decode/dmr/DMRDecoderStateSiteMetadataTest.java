@@ -76,6 +76,7 @@ class DMRDecoderStateSiteMetadataTest
     {
         Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
         DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
         TimeslotFrequency mapping = new TimeslotFrequency();
         mapping.setNumber(802);
         mapping.setDownlinkFrequency(139_518_750L);

@@ -83,18 +83,14 @@ public class DecodeConfigDMR extends DecodeConfiguration
         mChannelMode = channelMode != null ? channelMode : DMRChannelMode.CONVENTIONAL;
     }
 
-    /**
-     * Indicates if this channel is explicitly or implicitly configured for conventional operation.
-     */
+    /** Indicates if this channel is configured for conventional operation. */
     @JsonIgnore
     public boolean isConventional()
     {
         return getChannelMode() == DMRChannelMode.CONVENTIONAL;
     }
 
-    /**
-     * Indicates if this channel is explicitly or implicitly configured for trunked operation.
-     */
+    /** Indicates if this channel is configured for trunked operation. */
     @JsonIgnore
     public boolean isTrunked()
     {

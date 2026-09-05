@@ -365,11 +365,10 @@ public class AliasDatabaseStore
             }
             for(BroadcastChannel broadcastChannel: alias.getBroadcastChannels())
             {
-                if(broadcastChannel == null || broadcastChannel.getChannelName() == null ||
-                    broadcastChannel.getChannelName().isBlank())
+                if(broadcastChannel == null || !broadcastChannel.isValid())
                 {
                     throw new SQLException("Alias [" + alias.getName() +
-                        "] contains a blank broadcast route");
+                        "] contains an invalid broadcast route");
                 }
             }
         }
