@@ -96,6 +96,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
+                text("variant", StatsCsvExport::radioSystemVariant),
+                text("model", StatsCsvExport::dmrRadioSystemModel),
+                text("location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
                 text("identity_key", "identity_key"), number("native_id", "native_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
@@ -115,6 +118,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
+                text("variant", StatsCsvExport::radioSystemVariant),
+                text("model", StatsCsvExport::dmrRadioSystemModel),
+                text("location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
                 text("identity_key", "identity_key"), number("native_id", "native_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
@@ -450,6 +456,25 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static String variant(Map<String,Object> row)
     {
         return apiProtocol(row).variant(numberValue(row.get("variant_code")));
+    }
+
+    private static String radioSystemVariant(Map<String,Object> row)
+    {
+        return row.get("variant") instanceof String value && !value.isBlank() ?
+            apiProtocol(row).variant(value) : "";
+    }
+
+    private static String dmrRadioSystemModel(Map<String,Object> row)
+    {
+        return apiProtocol(row) == StatsApiProtocol.DMR && row.get("dmr_model_code") instanceof Number model ?
+            StatsApiProtocol.DMR.siteClassification(model.longValue()) : "";
+    }
+
+    private static String nxdnRadioSystemLocationCategory(Map<String,Object> row)
+    {
+        return apiProtocol(row) == StatsApiProtocol.NXDN &&
+            row.get("nxdn_location_category_code") instanceof Number category ?
+            StatsApiProtocol.NXDN.siteClassification(category.longValue()) : "";
     }
 
     private static String aliasProtocol(Map<String,Object> row)

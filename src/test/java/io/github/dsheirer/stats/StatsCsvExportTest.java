@@ -73,6 +73,32 @@ class StatsCsvExportTest
     }
 
     @Test
+    void writesAuthoritativeDmrAndNxdnRadioSystemDimensions() throws Exception
+    {
+        StatsCsvExport groups = StatsCsvExport.create("radio-system-group-identities", "DMR", List.of(Map.ofEntries(
+            Map.entry("protocol", "DMR"), Map.entry("radio_system_key", "dmr:tier3:small:42"),
+            Map.entry("variant", "TIER_III"), Map.entry("dmr_model_code", 2),
+            Map.entry("network_id", 42), Map.entry("identity_key", "v1-g-42-100"),
+            Map.entry("native_id", 100), Map.entry("group_identity_kind_code", 1))));
+        CSVRecord dmr = firstRecord(groups);
+        assertEquals("tier_iii", dmr.get("variant"));
+        assertEquals("small", dmr.get("model"));
+        assertEquals("", dmr.get("location_category"));
+        assertEquals("42", dmr.get("network_id"));
+
+        StatsCsvExport radios = StatsCsvExport.create("radio-system-radios", "NXDN", List.of(Map.ofEntries(
+            Map.entry("protocol", "NXDN"), Map.entry("radio_system_key", "nxdn-c:local:303"),
+            Map.entry("variant", "TYPE_C"), Map.entry("nxdn_location_category_code", 3),
+            Map.entry("system_id", 303), Map.entry("identity_key", "v1-r-303-200"),
+            Map.entry("native_id", 200))));
+        CSVRecord nxdn = firstRecord(radios);
+        assertEquals("type_c", nxdn.get("variant"));
+        assertEquals("", nxdn.get("model"));
+        assertEquals("local", nxdn.get("location_category"));
+        assertEquals("303", nxdn.get("system_id"));
+    }
+
+    @Test
     void normalizesConventionalProtocolAndMissingTimeslot() throws Exception
     {
         StatsCsvExport export = StatsCsvExport.create("channels", "all", List.of(Map.of(
@@ -140,5 +166,15 @@ class StatsCsvExportTest
             "radio-system-group-identities", "test",
             List.of(Map.of("alias_description", "x".repeat(2_000))), 256));
         assertEquals(413, bytes.status());
+    }
+
+    private static CSVRecord firstRecord(StatsCsvExport export) throws Exception
+    {
+        String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
+        try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+            .parse(new StringReader(csv)))
+        {
+            return parser.getRecords().getFirst();
+        }
     }
 }
