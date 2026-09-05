@@ -704,15 +704,31 @@ final class StatsWebCallService implements AutoCloseable
     private static WebEntityRef navigationReference(WebEntityNavigationCatalog.Channel channel,
                                                     Identifier<?> identifier)
     {
-        if(channel == null || identifier == null || identifier instanceof FullyQualifiedRadioIdentifier ||
-            identifier instanceof FullyQualifiedTalkgroupIdentifier)
+        if(channel == null || identifier == null)
         {
             return null;
+        }
+
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            return channel.identity(Form.RADIO, identifier.getProtocol(), radio.getRadio(), radio.getWacn(),
+                radio.getSystem());
+        }
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+        {
+            return channel.identity(Form.TALKGROUP, identifier.getProtocol(), talkgroup.getTalkgroup(),
+                talkgroup.getWacn(), talkgroup.getSystem());
         }
 
         int value;
 
         if(identifier instanceof PatchGroupIdentifier patchIdentifier && patchIdentifier.getValue() != null &&
+            patchIdentifier.getValue().getPatchGroup() instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+        {
+            return channel.identity(Form.PATCH_GROUP, identifier.getProtocol(), talkgroup.getTalkgroup(),
+                talkgroup.getWacn(), talkgroup.getSystem());
+        }
+        else if(identifier instanceof PatchGroupIdentifier patchIdentifier && patchIdentifier.getValue() != null &&
             patchIdentifier.getValue().getPatchGroup() != null)
         {
             value = patchIdentifier.getValue().getPatchGroup().getValue();

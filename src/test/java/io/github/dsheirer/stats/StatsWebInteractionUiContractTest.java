@@ -249,10 +249,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function neighborSiteLink(row)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source,
-            "function groupIdentityLink(row, id = row.group_identity_id, label, reference = row?.entity_ref)")
+            "function groupIdentityLink(row, id, label, reference = row?.entity_ref)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source,
-            "function radioLink(row, id = row.radio_id, label, reference = row?.entity_ref)")
+            "function radioLink(row, id, label, reference = row?.entity_ref)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source, "function callSourceLink(row)")
             .contains("entityReferenceAllowed(row.entity_ref)"));
@@ -285,7 +285,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"112\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"113\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -295,7 +295,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(status.contains("if (await reloadForWebClientRevision()) return;"));
         assertTrue(status.indexOf("await reloadForWebClientRevision()") <
             status.indexOf("capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)"));
-        assertTrue(groupIdentity.contains("api(groupIdentityApiPath(radioSystem.radio_system_key, kind, id))"));
+        assertTrue(groupIdentity.contains("api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey))"));
         assertFalse(source.contains("/api/talkgroup"));
     }
 
@@ -395,28 +395,28 @@ class StatsWebInteractionUiContractTest
     void preservesPatchKindAcrossTabsRelationshipsAndActivity() throws Exception
     {
         String source = source();
-        String tabs = function(source, "function entityTabs(view, system, id, active, radio, kind = null)");
+        String tabs = function(source, "function entityTabs(view, system, identityKey, active, radio)");
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String radio = function(source, "async function renderRadio()");
         String links = function(source,
-            "function groupIdentityLink(row, id = row.group_identity_id, label, reference = row?.entity_ref)");
-        assertTrue(tabs.contains("const values = { ...radioSystemRoute(system), id, kind }"));
+            "function groupIdentityLink(row, id, label, reference = row?.entity_ref)");
+        assertTrue(tabs.contains("const values = { ...radioSystemRoute(system), identity_key: identityKey }"));
         assertTrue(groupIdentity.contains(
-            "entityTabs('group-identity', groupIdentity, id, tab, false, kind)"));
+            "entityTabs('group-identity', groupIdentity, identityKey, tab, false)"));
         assertTrue(groupIdentity.contains(
-            "pageParameters({ group_identity_id: id, group_identity_kind: kind,"));
+            "pageParameters({ group_identity_key: identityKey,"));
         assertTrue(groupIdentity.contains(
-            "renderActivity({ ...radioSystem, group_identity_id: id, group_identity_kind: kind }"));
+            "renderActivity({ ...radioSystem, group_identity_key: identityKey }"));
         assertTrue(groupIdentity.contains(
-            "groupIdentityActivityHistorySection({ ...radioSystem,\n      group_identity_id: id, kind })"));
+            "groupIdentityActivityHistorySection({ ...radioSystem,\n      identity_key: identityKey })"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         assertFalse(activity.contains("scopeParameters.kind === 'patch'"));
         assertTrue(activity.contains("const refreshed = await api('/api/v1/activity'"));
         assertTrue(activity.contains("...scopeParameters"));
-        assertTrue(links.contains("entityRefHref(reference)"));
-        assertTrue(radio.contains("radio.last_group_identity_entity_ref"));
+        assertTrue(links.contains("entityTarget(reference, { channel: 'groups' })"));
+        assertFalse(radio.contains("radio.last_group_identity_entity_ref"));
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
-        assertTrue(source.contains("groupIdentityLink(row, row.patch_group)"));
+        assertFalse(source.contains("groupIdentityLink(row, row.patch_group)"));
         assertFalse(source.contains("target_kind_code"));
         assertFalse(source.contains("identity_kind_code"));
         assertFalse(source.contains("last_talkgroup_kind_code"));
@@ -572,7 +572,7 @@ class StatsWebInteractionUiContractTest
             .contains("String((numeric >> 11) & 0x1F).padStart(2, '0')"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
-        assertTrue(source.contains("render: (row) => identifierNumber(row.radio_id)"));
+        assertTrue(source.contains("render: (row) => identityNumber(row, radioDisplayId(row))"));
         assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
     }
 
@@ -1114,10 +1114,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(draftAlias.contains("createProtocol: protocol"));
         assertTrue(draftAlias.contains("createValue: value"));
         assertTrue(identityInfo.contains("entityRefHref(row?.[`${kind}_entity_ref`])"));
-        assertTrue(identityInfo.contains("{ channel: kind === 'source' ? 'radios' : 'group-identities' }"));
+        assertTrue(identityInfo.contains("{ channel: kind === 'source' ? 'radios' : 'groups' }"));
         assertTrue(identityInfo.contains("`Open channel ${collection}`"));
         assertTrue(scannerNavigate.contains("dashboardChannelKind(channel) === 'CONVENTIONAL'"));
-        assertTrue(scannerNavigate.contains("{ channel: 'group-identities' }"));
+        assertTrue(scannerNavigate.contains("{ channel: 'groups' }"));
         assertTrue(scannerNavigate.contains("{ channel: 'radios' }"));
         assertTrue(routedPrefill.contains("aliasMatcherDescriptor(options, type, protocol, variant)"));
         assertTrue(routedPrefill.contains("selectedList.unmatched_talkgroup_policy"));

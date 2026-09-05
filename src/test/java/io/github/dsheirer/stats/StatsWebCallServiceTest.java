@@ -49,6 +49,7 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
@@ -103,7 +104,7 @@ class StatsWebCallServiceTest
             assertEquals("CAR 9001", metadata.get("talker_alias"));
             assertEquals("APCO25", metadata.get("protocol"));
             assertEquals("p25:bee00:4a7", metadata.get("radio_system_key"));
-            assertEquals(Map.of("key", "system:p25:bee00:4a7:talkgroup:4400", "kind", "talkgroup",
+            assertEquals(Map.of("key", "system:p25:bee00:4a7:v1-g-bee00-4a7-4400", "kind", "talkgroup",
                 "radio_system_key", "p25:bee00:4a7", "label", "Talkgroup 4400"),
                 metadata.get("playback_target"));
             assertEquals(854_187_500L, metadata.get("frequency_hz"));
@@ -621,7 +622,7 @@ class StatsWebCallServiceTest
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
             WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
                 configurationId, WebEntityRef.channel(configurationId),
-                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0))));
+                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0, 0xBEE00, 0x4A7))));
         catalog.refreshNow();
 
         try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
@@ -632,10 +633,33 @@ class StatsWebCallServiceTest
             assertEquals(Map.of("kind", "channel", "key", configurationId), metadata.get("entity_ref"));
             assertEquals(Map.of("kind", "radio_system", "key", "p25:bee00:4a7"),
                 metadata.get("radio_system_entity_ref"));
-            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:4a7", "id", 9001),
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:4a7",
+                "identity_key", "v1-r-bee00-4a7-9001"),
                 metadata.get("source_entity_ref"));
-            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:4a7", "id", 4400),
+            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:4a7",
+                "identity_key", "v1-g-bee00-4a7-4400"),
                 metadata.get("target_entity_ref"));
+        }
+    }
+
+    @Test
+    void fullyQualifiedPrivateRadioUsesItsCanonicalHomeIdentityForNavigation() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000737";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0, 0xBEE00, 0x4A7))));
+        catalog.refreshNow();
+
+        try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call(APCO25FullyQualifiedRadioIdentifier.createTo(
+                404, 0xABCDE, 0x123, 1234567)));
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:4a7",
+                "identity_key", "v1-r-abcde-123-1234567"), metadata.get("target_entity_ref"));
         }
     }
 
@@ -660,7 +684,7 @@ class StatsWebCallServiceTest
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
             WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
                 authoritativeId, WebEntityRef.channel(authoritativeId),
-                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0))));
+                WebEntityRef.radioSystem("p25:bee00:4a7"), 1, 0, 0xBEE00, 0x4A7))));
         catalog.refreshNow();
 
         try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
@@ -902,7 +926,8 @@ class StatsWebCallServiceTest
             snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(), recordingMetadata,
             snapshot.voiceCallQuality(), snapshot.callLegId(), snapshot.callLegSource(),
             snapshot.callEncryptionEvidence());
-        return new CompletedAudioCall(replaced, template.audioBuffers(), template.resolvedPolicy());
+        return new CompletedAudioCall(template.logicalCallId(), replaced, template.audioBuffers(),
+            template.resolvedPolicy(), template.callLegSummaries());
     }
 
     private static CompletedAudioCall call()

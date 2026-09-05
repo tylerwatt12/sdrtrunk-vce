@@ -122,12 +122,18 @@ class WebEntityNavigationCatalogTest
     void resolvesOnlyProtocolValidIdentitiesUnderAnExactLearnedRadioSystem()
     {
         WebEntityNavigationCatalog.Channel channel = p25Snapshot().channel(CONFIGURATION_ID);
-        assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f", "id", 1201),
+        assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
+            "identity_key", "v1-r-bee00-49f-1201"),
             channel.identity(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201))
                 .toMap());
-        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f", "id", 4400),
+        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",
+            "identity_key", "v1-p-bee00-49f-4400"),
             channel.identity(new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", "phase_1", 4400))
                 .toMap());
+        assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-r-abcde-123-7654321"),
+            channel.identity(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 404,
+                "v1-r-abcde-123-7654321")).toMap());
         assertNull(channel.identity(
             new ChannelActivitySnapshot.MatcherReference("talkgroup", "dmr", null, 4400)));
         assertNull(channel.identity(
@@ -147,7 +153,7 @@ class WebEntityNavigationCatalogTest
     {
         String conventionalId = "828d2d66-de4e-476b-a696-919f32dd4d12";
         WebEntityNavigationCatalog.Channel conventional = new WebEntityNavigationCatalog.Channel(
-            conventionalId, WebEntityRef.channel(conventionalId), null, 3, 0);
+            conventionalId, WebEntityRef.channel(conventionalId), null, 3, 0, null, null);
         WebEntityNavigationCatalog.Snapshot snapshot = WebEntityNavigationCatalog.Snapshot.of(
             List.of(p25Snapshot().channel(CONFIGURATION_ID), conventional));
 
@@ -159,6 +165,6 @@ class WebEntityNavigationCatalogTest
     {
         return WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
             CONFIGURATION_ID, WebEntityRef.channel(CONFIGURATION_ID),
-            WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0)));
+            WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0, 0xBEE00, 0x49F)));
     }
 }

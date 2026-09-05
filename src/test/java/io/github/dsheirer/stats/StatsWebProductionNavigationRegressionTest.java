@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
 import java.net.URI;
 import java.nio.file.Path;
@@ -53,13 +54,15 @@ class StatsWebProductionNavigationRegressionTest
         assertEquals(RADIO_SYSTEM_KEY, system.get("radio_system_key"));
         assertEquals(Map.of("kind", "radio_system", "key", RADIO_SYSTEM_KEY), system.get("entity_ref"));
 
+        String identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_TALKGROUP,
+            0xBEE00, 0x49F, ALIAS_ONLY_TALKGROUP);
         Map<String,Object> groupIdentity = map(mDatabase.radioSystemGroupIdentity(
-            RADIO_SYSTEM_KEY, "talkgroup", ALIAS_ONLY_TALKGROUP), "group_identity");
+            RADIO_SYSTEM_KEY, identityKey), "group_identity");
         assertEquals(RADIO_SYSTEM_KEY, groupIdentity.get("radio_system_key"));
-        assertEquals(ALIAS_ONLY_TALKGROUP, number(groupIdentity.get("group_identity_id")));
+        assertEquals(ALIAS_ONLY_TALKGROUP, number(groupIdentity.get("native_id")));
         assertEquals("CuyCO Jail 35", groupIdentity.get("alias_name"));
         assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY,
-            "id", ALIAS_ONLY_TALKGROUP), groupIdentity.get("entity_ref"));
+            "identity_key", identityKey), groupIdentity.get("entity_ref"));
 
         for(String counter: List.of("logical_call_count", "source_logical_call_count",
             "target_logical_call_count", "encrypted_logical_call_count", "recorded_logical_call_count",
@@ -144,8 +147,9 @@ class StatsWebProductionNavigationRegressionTest
                 ) VALUES (91, '%s', 1, 0, 0xBEE00, 0x49F, 1000, 2000)
                 """.formatted(RADIO_SYSTEM_KEY));
             statement.executeUpdate("""
-                INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-                VALUES (91, '%s', 1000, 2000, 91)
+                INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
+                    radio_system_assigned_at_ms)
+                VALUES (91, '%s', 1000, 2000, 91, 1000)
                 """.formatted(P25_CONFIGURATION_ID));
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (

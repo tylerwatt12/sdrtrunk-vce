@@ -96,9 +96,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
-                number("group_identity_id", "group_identity_id"),
+                text("identity_key", "identity_key"), number("native_id", "native_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
-                text("formatted_group_identity_id", row -> nxdnDisplay(row, "group_identity_id")),
+                text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
                 text("group_identity_kind", StatsCsvExport::groupIdentityKind),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"),
@@ -115,16 +115,13 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
-                number("radio_id", "radio_id"),
+                text("identity_key", "identity_key"), number("native_id", "native_id"),
                 text("address_domain", StatsCsvExport::addressDomain),
-                text("formatted_radio_id", row -> nxdnDisplay(row, "radio_id")),
+                text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"),
                 text("talker_alias", "last_talker_alias"),
                 time("talker_alias_seen_utc", "last_talker_alias_seen_ms"),
-                number("last_group_identity_id", "last_group_identity_id"),
-                text("last_group_identity_kind", StatsCsvExport::lastGroupIdentityKind),
-                text("last_group_identity_alias", "last_group_identity_alias_name"),
                 number("affiliated_talkgroup_id", "affiliated_talkgroup_id"),
                 text("affiliated_talkgroup_alias", "affiliated_talkgroup_alias_name"),
                 time("affiliation_confirmed_utc", "affiliation_confirmed_at_ms"),
@@ -208,7 +205,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("configuration_id", "configuration_id"), text("radio_system_key", "radio_system_key"),
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
-                number("timeslot", "timeslot"), number("group_identity_id", "group_identity_id"),
+                number("timeslot", "timeslot"), number("native_id", "native_id"),
+                number("observed_local_id", "observed_local_id"),
                 text("group_identity_kind", StatsCsvExport::groupIdentityKind),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"), number("logical_calls", "logical_call_count"),
@@ -222,7 +220,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("configuration_id", "configuration_id"), text("radio_system_key", "radio_system_key"),
                 text("alias_list", "alias_list_name"), number("frequency_hz", "frequency_hz"),
                 text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
-                number("timeslot", "timeslot"), number("radio_id", "radio_id"),
+                number("timeslot", "timeslot"), number("native_id", "native_id"),
+                number("observed_local_id", "observed_local_id"),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"), number("logical_calls", "logical_call_count"),
                 number("source_logical_calls", "source_logical_call_count"),
@@ -436,11 +435,6 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static String groupIdentityKind(Map<String,Object> row)
     {
         return identityKind(row.get("group_identity_kind_code"));
-    }
-
-    private static String lastGroupIdentityKind(Map<String,Object> row)
-    {
-        return identityKind(row.get("last_group_identity_kind_code"));
     }
 
     private static String identityKind(Object value)

@@ -15,6 +15,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.LinkedHashMap;
@@ -209,7 +210,8 @@ final class WebEntityNavigationCatalog implements AutoCloseable
     }
 
     record Channel(String configurationId, WebEntityRef.KeyRef entityRef,
-                   WebEntityRef.KeyRef radioSystemRef, int protocolCode, int addressDomainCode)
+                   WebEntityRef.KeyRef radioSystemRef, int protocolCode, int addressDomainCode,
+                   Integer p25Wacn, Integer p25SystemId)
     {
         Channel
         {
@@ -241,10 +243,47 @@ final class WebEntityNavigationCatalog implements AutoCloseable
                 case "radio" -> Form.RADIO;
                 default -> null;
             };
+            if(form == null)
+            {
+                return null;
+            }
+            if(matcher.identityKey() != null)
+            {
+                try
+                {
+                    RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(matcher.identityKey());
+                    int expectedKind = switch(form)
+                    {
+                        case TALKGROUP -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                        case PATCH_GROUP -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+                        case RADIO -> RadioSystemIdentityKey.KIND_RADIO;
+                        default -> -1;
+                    };
+                    if(identity.kindCode() != expectedKind)
+                    {
+                        return null;
+                    }
+                    return identity(form, protocol(), identity.identityId(), identity.homeWacn(),
+                        identity.homeSystemId());
+                }
+                catch(IllegalArgumentException exception)
+                {
+                    return null;
+                }
+            }
             return identity(form, protocol(), matcher.value());
         }
 
         WebEntityRef identity(Form form, Protocol identifierProtocol, int identifier)
+        {
+            int homeWacn = protocolCode == 1 && p25Wacn != null ? p25Wacn : RadioSystemIdentityKey.NO_HOME;
+            int homeSystemId = protocolCode == 1 && p25SystemId != null ? p25SystemId :
+                RadioSystemIdentityKey.NO_HOME;
+            return identity(form, identifierProtocol, identifier, homeWacn, homeSystemId);
+        }
+
+        WebEntityRef identity(Form form, Protocol identifierProtocol, int identifier, int homeWacn,
+                              int homeSystemId)
         {
             Protocol protocol = protocol();
 
@@ -265,11 +304,26 @@ final class WebEntityNavigationCatalog implements AutoCloseable
                 return null;
             }
 
+            if(protocolCode == 1 && (homeWacn < 0 || homeSystemId < 0) ||
+                protocolCode != 1 && (homeWacn != RadioSystemIdentityKey.NO_HOME ||
+                    homeSystemId != RadioSystemIdentityKey.NO_HOME))
+            {
+                return null;
+            }
+
+            String identityKey = RadioSystemIdentityKey.format(switch(form)
+            {
+                case TALKGROUP -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                case PATCH_GROUP -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+                case RADIO -> RadioSystemIdentityKey.KIND_RADIO;
+                default -> throw new IllegalArgumentException("Unsupported identity form");
+            }, homeWacn, homeSystemId, identifier);
+
             return switch(form)
             {
-                case TALKGROUP -> WebEntityRef.talkgroup(radioSystemRef.key(), identifier);
-                case PATCH_GROUP -> WebEntityRef.patchGroup(radioSystemRef.key(), identifier);
-                case RADIO -> WebEntityRef.radio(radioSystemRef.key(), identifier);
+                case TALKGROUP -> WebEntityRef.talkgroup(radioSystemRef.key(), identityKey);
+                case PATCH_GROUP -> WebEntityRef.patchGroup(radioSystemRef.key(), identityKey);
+                case RADIO -> WebEntityRef.radio(radioSystemRef.key(), identityKey);
                 default -> null;
             };
         }

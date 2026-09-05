@@ -4,8 +4,11 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  function numericId(value) {
-    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+  function identityKey(value, kind) {
+    const key = text(value);
+    const match = /^v1-([grp])-(x|[0-9a-f]{5})-(x|[0-9a-f]{3})-([0-9]+)$/.exec(key);
+    const expected = { talkgroup: 'g', patch_group: 'p', radio: 'r' }[kind];
+    return match && match[1] === expected ? key : '';
   }
 
   function exactKeys(value, keys) {
@@ -30,13 +33,12 @@
       return `/?${new URLSearchParams({ view: 'channel', configuration_id: key })}`;
     }
     if (['talkgroup', 'patch_group', 'radio'].includes(kind) &&
-        exactKeys(reference, ['kind', 'radio_system_key', 'id'])) {
+        exactKeys(reference, ['kind', 'radio_system_key', 'identity_key'])) {
       const radioSystemKey = text(reference.radio_system_key);
-      const id = numericId(reference.id);
-      if (!radioSystemKey || id === null) return null;
+      const key = identityKey(reference.identity_key, kind);
+      if (!radioSystemKey || !key) return null;
       const view = kind === 'radio' ? 'radio' : 'group-identity';
-      const values = { view, radio_system_key: radioSystemKey, id: String(id) };
-      if (kind !== 'radio') values.kind = kind;
+      const values = { view, radio_system_key: radioSystemKey, identity_key: key };
       return `/?${new URLSearchParams(values)}`;
     }
     return null;

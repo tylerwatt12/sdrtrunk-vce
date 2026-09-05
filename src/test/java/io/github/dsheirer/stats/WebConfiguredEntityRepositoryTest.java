@@ -109,7 +109,8 @@ class WebConfiguredEntityRepositoryTest
                     name TEXT,
                     alias_list_id INTEGER,
                     decoder_type TEXT,
-                    primary_frequency_hz INTEGER
+                    primary_frequency_hz INTEGER,
+                    address_domain_code INTEGER NOT NULL DEFAULT 0
                 )
                 """);
             statement.executeUpdate("CREATE TABLE alias_list (id INTEGER PRIMARY KEY, name TEXT)");

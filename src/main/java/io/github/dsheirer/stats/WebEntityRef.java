@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -37,19 +38,19 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
         return new KeyRef(Kind.CHANNEL, canonicalUuid(configurationId, "Configuration ID"));
     }
 
-    static ScopedIdentityRef talkgroup(String systemKey, int identifier)
+    static ScopedIdentityRef talkgroup(String systemKey, String identityKey)
     {
-        return new ScopedIdentityRef(Kind.TALKGROUP, requireText(systemKey, "Radio system key"), identifier);
+        return new ScopedIdentityRef(Kind.TALKGROUP, requireText(systemKey, "Radio system key"), identityKey);
     }
 
-    static ScopedIdentityRef patchGroup(String systemKey, int identifier)
+    static ScopedIdentityRef patchGroup(String systemKey, String identityKey)
     {
-        return new ScopedIdentityRef(Kind.PATCH_GROUP, requireText(systemKey, "Radio system key"), identifier);
+        return new ScopedIdentityRef(Kind.PATCH_GROUP, requireText(systemKey, "Radio system key"), identityKey);
     }
 
-    static ScopedIdentityRef radio(String systemKey, int identifier)
+    static ScopedIdentityRef radio(String systemKey, String identityKey)
     {
-        return new ScopedIdentityRef(Kind.RADIO, requireText(systemKey, "Radio system key"), identifier);
+        return new ScopedIdentityRef(Kind.RADIO, requireText(systemKey, "Radio system key"), identityKey);
     }
 
     static void put(Map<String,Object> target, WebEntityRef reference)
@@ -135,7 +136,7 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
         }
     }
 
-    record ScopedIdentityRef(Kind kind, String radioSystemKey, int id) implements WebEntityRef
+    record ScopedIdentityRef(Kind kind, String radioSystemKey, String identityKey) implements WebEntityRef
     {
         public ScopedIdentityRef
         {
@@ -143,12 +144,21 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
             {
                 throw new IllegalArgumentException("Scoped references support only group and radio identities");
             }
-            if(id <= 0)
-            {
-                throw new IllegalArgumentException("Identity ID must be positive");
-            }
-
             radioSystemKey = requireText(radioSystemKey, "Radio system key");
+            identityKey = requireText(identityKey, "Identity key");
+            RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(identityKey);
+            int expectedKind = switch(kind)
+            {
+                case TALKGROUP -> RadioSystemIdentityKey.KIND_TALKGROUP;
+                case PATCH_GROUP -> RadioSystemIdentityKey.KIND_PATCH_GROUP;
+                case RADIO -> RadioSystemIdentityKey.KIND_RADIO;
+                default -> throw new IllegalArgumentException("Unsupported scoped identity kind");
+            };
+
+            if(identity.kindCode() != expectedKind)
+            {
+                throw new IllegalArgumentException("Identity key kind does not match the entity kind");
+            }
         }
 
         @Override
@@ -157,7 +167,7 @@ sealed interface WebEntityRef permits WebEntityRef.KeyRef, WebEntityRef.ScopedId
             Map<String,Object> value = new LinkedHashMap<>();
             value.put("kind", kind.wireName());
             value.put("radio_system_key", radioSystemKey);
-            value.put("id", id);
+            value.put("identity_key", identityKey);
             return Map.copyOf(value);
         }
     }

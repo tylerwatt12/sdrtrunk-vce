@@ -34,7 +34,7 @@ final class WebConfiguredEntityRepository
             channel.id AS channel_id, channel.first_seen_ms, channel.last_seen_ms,
             radio_system.id AS radio_system_id, radio_system.system_key AS radio_system_key,
             radio_system.protocol_code AS radio_system_protocol_code,
-            radio_system.address_domain_code
+            config.address_domain_code, radio_system.p25_wacn, radio_system.p25_system_id
         FROM configuration_channel config
         LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
         LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
@@ -99,6 +99,7 @@ final class WebConfiguredEntityRepository
             nullableLong(row.get("primary_frequency_hz")), protocol, nullableLong(row.get("channel_id")),
             nullableLong(row.get("radio_system_id")), text(row.get("radio_system_key")),
             nullableInt(row.get("radio_system_protocol_code")), nullableInt(row.get("address_domain_code")),
+            nullableInt(row.get("p25_wacn")), nullableInt(row.get("p25_system_id")),
             nullableLong(row.get("first_seen_ms")), nullableLong(row.get("last_seen_ms")));
     }
 
@@ -131,7 +132,8 @@ final class WebConfiguredEntityRepository
                              String siteName, String name, String aliasListName, Long aliasListId,
                              String decoder, Long primaryFrequencyHz, StatsApiProtocol protocol, Long channelId,
                              Long radioSystemId, String radioSystemKey, Integer radioSystemProtocolCode,
-                             Integer addressDomainCode, Long firstSeenMs, Long lastSeenMs)
+                             Integer addressDomainCode, Integer p25Wacn, Integer p25SystemId,
+                             Long firstSeenMs, Long lastSeenMs)
     {
         ConfiguredChannel
         {

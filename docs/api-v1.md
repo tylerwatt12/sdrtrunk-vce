@@ -42,8 +42,9 @@ The API has two top-level radio resources:
 - A **channel** is one saved receiver configuration, whether trunked or conventional. Its public identifier is the
   saved channel's canonical lowercase UUID in `configuration_id`.
 
-Trunked talkgroup, patch-group, and radio IDs are meaningful only inside one radio system, so their detail paths
-include `radio_system_key`. Conventional group and radio observations belong to one saved channel and are exposed
+Trunked talkgroup, patch-group, and radio identities use an opaque `identity_key` inside one radio system, so their
+detail paths include both it and `radio_system_key`. The numeric native and observed-local IDs are display facts, not
+selectors. Conventional group and radio observations belong to one saved channel and are exposed
 only under `/channels/{configuration_id}`. The same number on another system or channel is a different identity. A
 channel's user-facing name, configured site label, Alias List, and frequency are properties of that channel; they are
 not radio-system identity.
@@ -55,7 +56,7 @@ Resources can include an explicit `entity_ref` for browser navigation:
 ```
 
 ```json
-{"kind": "talkgroup", "radio_system_key": "p25:bee00:49f", "id": 56735}
+{"kind": "talkgroup", "radio_system_key": "p25:bee00:49f", "identity_key": "v1-g-bee00-49f-56735"}
 ```
 
 Valid kinds are `radio_system`, `channel`, `talkgroup`, `patch_group`, and `radio`. Consumers should use `kind`
@@ -78,10 +79,10 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/radio-systems/{radio_system_key}` | One radio system and its summary. |
 | `GET /api/v1/radio-systems/{radio_system_key}/channels` | Paged saved channels assigned to the radio system. |
 | `GET /api/v1/radio-systems/{radio_system_key}/group-identities` | Paged talkgroups and patch groups. |
-| `GET /api/v1/radio-systems/{radio_system_key}/group-identities/{talkgroup\|patch_group}/{id}` | One group identity. The path spelling is exactly `patch_group`. |
-| `GET /api/v1/radio-systems/{radio_system_key}/group-identities/{talkgroup\|patch_group}/{id}/activity` | Bounded activity history for one group identity. |
+| `GET /api/v1/radio-systems/{radio_system_key}/group-identities/{identity_key}` | One group identity. |
+| `GET /api/v1/radio-systems/{radio_system_key}/group-identities/{identity_key}/activity` | Bounded activity history for one group identity. |
 | `GET /api/v1/radio-systems/{radio_system_key}/radios` | Paged radio identities. |
-| `GET /api/v1/radio-systems/{radio_system_key}/radios/{id}` | One radio identity. |
+| `GET /api/v1/radio-systems/{radio_system_key}/radios/{identity_key}` | One radio identity. |
 | `GET /api/v1/radio-systems/{radio_system_key}/talker-aliases` | Paged latest over-the-air talker aliases. |
 | `GET /api/v1/radio-systems/{radio_system_key}/relationships` | Paged radio-to-group or group-to-radio relationships. |
 | `GET /api/v1/channels` | Paged saved trunked and conventional channels. |
@@ -139,6 +140,9 @@ DMR channel details can include tier/model, color code, LCN, and timeslot facts.
 Type-C/Type-D address-domain, RAN, channel number, and location-category facts. These are facts about observations on
 the saved channel, not alternate channel identifiers.
 
+P25 uses its native WACN and System ID to join the same radio system across saved channels. Trunked DMR and NXDN are
+intentionally scoped to one saved channel until a safe native cross-channel identity can be proven.
+
 Quality history accepts `range`, `points`, and `include_history`. `points` must be between 60 and 360. Historical
 points require a channel-specific request.
 
@@ -153,9 +157,9 @@ retained matching event before paging. Rows use `radio_system_key` for trunked a
 channel-owned activity, so the same numeric radio ID on different systems or channels remains separate.
 
 Radio-system radio and relationship pages accept `affiliated=true|false` and optional `configuration_id`. Both
-filters are applied before paging. A relationship request must include `radio_id` or `group_identity_id`. A
-`group_identity_id` also requires `group_identity_kind=talkgroup|patch_group`. Patch groups are never current
-affiliations.
+filters are applied before paging. A relationship request must include `radio_identity_key` or
+`group_identity_key`. The opaque key includes whether a group is a talkgroup or patch group; clients must not parse
+or construct it. Patch groups are never current affiliations.
 
 Authoritative channel-local registration or affiliation evidence is returned in a nullable `presence` object. Its
 owner is the saved channel, identified by `configuration_id`; it can also include RF protocol facts such as RFSS and

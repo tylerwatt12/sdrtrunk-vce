@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
@@ -166,20 +167,22 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_site_patch_group(channel_id, patch_group, version, confirmed_at_ms)
+                INSERT INTO p25_site_patch_group(channel_id, local_patch_group_id, version, confirmed_at_ms)
                 VALUES (71, 500, 1, 4000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_summary(
-                    channel_id, patch_group, version, first_seen_ms, last_seen_ms, observation_count)
+                    channel_id, local_patch_group_id, version, first_seen_ms, last_seen_ms, observation_count)
                 VALUES (71, 500, 1, 1000, 4000, 3)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_patch_group_talkgroup(channel_id, patch_group, talkgroup_id, confirmed_at_ms)
+                INSERT INTO p25_site_patch_group_talkgroup(
+                    channel_id, local_patch_group_id, local_talkgroup_id, confirmed_at_ms)
                 VALUES (71, 500, 101, 4000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_patch_group_radio(channel_id, patch_group, radio_id, confirmed_at_ms)
+                INSERT INTO p25_site_patch_group_radio(
+                    channel_id, local_patch_group_id, local_radio_id, confirmed_at_ms)
                 VALUES (71, 500, 202, 4000)
                 """);
         }
@@ -189,9 +192,9 @@ class StatsWebDatabaseTest
         Map<String,Object> talkgroup = rowsFrom(response, "talkgroups").getFirst();
         Map<String,Object> radio = rowsFrom(response, "radios").getFirst();
 
-        assertEquals(500, number(patch.get("patch_group")));
-        assertEquals(101, number(talkgroup.get("talkgroup_id")));
-        assertEquals(202, number(radio.get("radio_id")));
+        assertEquals(500, number(patch.get("local_patch_group_id")));
+        assertEquals(101, number(talkgroup.get("local_talkgroup_id")));
+        assertEquals(202, number(radio.get("local_radio_id")));
         assertFalse(patch.containsKey("entity_ref"));
         assertFalse(talkgroup.containsKey("entity_ref"));
         assertFalse(radio.containsKey("entity_ref"));
@@ -203,7 +206,7 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> groups = rows(mDatabase.channelGroupIdentities(DMR_CHANNEL, request("/")));
         assertEquals(1, groups.size());
         Map<String,Object> group = groups.getFirst();
-        assertEquals(7, number(group.get("group_identity_id")));
+        assertEquals(7, number(group.get("native_id")));
         assertEquals(1, number(group.get("group_identity_kind_code")));
         assertEquals(2, number(group.get("timeslot")));
         assertEquals("DMR Dispatch", group.get("alias_name"));
@@ -216,7 +219,7 @@ class StatsWebDatabaseTest
     {
         Map<String,Object> conflict = rows(mDatabase.radioSystemGroupIdentities(
             RADIO_SYSTEM_KEY, request("/"))).getFirst();
-        assertEquals(101, number(conflict.get("group_identity_id")));
+        assertEquals(101, number(conflict.get("native_id")));
         assertNull(conflict.get("alias_name"), "Conflicting channel-owned alias lists must not pick a winner");
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -229,10 +232,12 @@ class StatsWebDatabaseTest
             RADIO_SYSTEM_KEY, request("/"))).getFirst();
         assertEquals("Dispatch", agreed.get("alias_name"));
 
+        String identityKey = p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101);
         Map<String,Object> detail = map(mDatabase.radioSystemGroupIdentity(
-            RADIO_SYSTEM_KEY, "talkgroup", 101),
+            RADIO_SYSTEM_KEY, identityKey),
             "group_identity");
-        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY, "id", 101),
+        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY,
+            "identity_key", identityKey),
             detail.get("entity_ref"));
         assertEquals(Map.of("kind", "radio_system", "key", RADIO_SYSTEM_KEY),
             detail.get("radio_system_entity_ref"));
@@ -243,12 +248,14 @@ class StatsWebDatabaseTest
     {
         List<Map<String,Object>> radios = rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY, request("/")));
         assertEquals(1, radios.size());
-        assertEquals(202, number(radios.getFirst().get("radio_id")));
+        assertEquals(202, number(radios.getFirst().get("native_id")));
         assertEquals(RADIO_SYSTEM_KEY, radios.getFirst().get("radio_system_key"));
 
-        Map<String,Object> radio = map(mDatabase.radio(RADIO_SYSTEM_KEY, 202), "radio");
-        assertEquals(101, number(radio.get("last_group_identity_id")));
-        assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY, "id", 202),
+        String identityKey = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202);
+        Map<String,Object> radio = map(mDatabase.radio(RADIO_SYSTEM_KEY, identityKey), "radio");
+        assertFalse(radio.containsKey("last_group_identity_id"));
+        assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
+            "identity_key", identityKey),
             radio.get("entity_ref"));
     }
 
@@ -312,36 +319,39 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary (
-                    radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    logical_call_count, last_counterpart_kind_code, last_counterpart_id
-                ) VALUES (71, 3, 101, 1000, 4000, 2, 2, 202)
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7103, 71, 3, 0xBEE00, 0x49F, 101, 1000, 4000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_group_summary (
-                    radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_identity_id, group_identity_id, group_kind_code,
+                    first_seen_ms, last_seen_ms,
                     logical_call_count
-                ) VALUES (71, 202, 101, 1, 1000, 4000, 3),
-                         (71, 202, 101, 3, 1000, 4000, 2)
+                ) VALUES (71, 7102, 7101, 1, 1000, 4000, 3),
+                         (71, 7102, 7103, 3, 1000, 4000, 2)
                 """);
         }
 
         List<Map<String,Object>> groups = rows(mDatabase.radioSystemGroupIdentities(
             RADIO_SYSTEM_KEY, request("/?sort=group_identity&direction=asc")));
         assertEquals(List.of(1L, 3L), groups.stream()
-            .filter(row -> number(row.get("group_identity_id")) == 101)
+            .filter(row -> number(row.get("native_id")) == 101)
             .map(row -> number(row.get("group_identity_kind_code"))).toList());
 
+        String talkgroupKey = p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101);
+        String patchGroupKey = p25IdentityKey(RadioSystemIdentityKey.KIND_PATCH_GROUP, 101);
         Map<String,Object> talkgroup = map(mDatabase.radioSystemGroupIdentity(
-            RADIO_SYSTEM_KEY, "talkgroup", 101), "group_identity");
+            RADIO_SYSTEM_KEY, talkgroupKey), "group_identity");
         Map<String,Object> patchGroup = map(mDatabase.radioSystemGroupIdentity(
-            RADIO_SYSTEM_KEY, "patch_group", 101), "group_identity");
+            RADIO_SYSTEM_KEY, patchGroupKey), "group_identity");
         assertEquals(1, number(talkgroup.get("group_identity_kind_code")));
         assertEquals(3, number(patchGroup.get("group_identity_kind_code")));
 
         Map<String,Object> talkgroupRelationships = mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
-            request("/?group_identity_id=101&group_identity_kind=talkgroup"));
+            request("/?group_identity_key=" + talkgroupKey));
         Map<String,Object> patchRelationships = mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
-            request("/?group_identity_id=101&group_identity_kind=patch_group"));
+            request("/?group_identity_key=" + patchGroupKey));
         assertEquals(1, number(talkgroupRelationships.get("total_count")));
         assertEquals(1, number(patchRelationships.get("total_count")));
         assertEquals(1, number(rows(talkgroupRelationships).getFirst().get("group_identity_kind_code")));
@@ -370,8 +380,10 @@ class StatsWebDatabaseTest
                 ) VALUES (77, '%s', 1, 0, 0xBEE00, 0x4A0, 1000, 4000)
                 """.formatted(secondSystemKey));
             statement.executeUpdate("""
-                INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-                VALUES (77, '%s', 1000, 4000, 77)
+                INSERT INTO receiver_channel (
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms
+                ) VALUES (77, '%s', 1000, 4000, 77, 1000)
                 """.formatted(SECOND_P25_CHANNEL));
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
@@ -381,10 +393,10 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary (
-                    radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    logical_call_count, last_counterpart_kind_code, last_counterpart_id
-                ) VALUES (77, 1, 101, 1000, 4000, 8, 2, 202),
-                         (77, 2, 202, 1000, 4000, 8, 1, 101)
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7701, 77, 1, 0xBEE00, 0x4A0, 101, 1000, 4000, 8),
+                         (7702, 77, 2, 0xBEE00, 0x4A0, 202, 1000, 4000, 8)
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
@@ -399,9 +411,11 @@ class StatsWebDatabaseTest
         assertEquals(3, number(original.get("logical_call_count")));
         assertEquals(8, number(other.get("logical_call_count")));
         assertEquals("Other Dispatch", other.get("alias_name"));
-        assertEquals(RADIO_SYSTEM_KEY, map(mDatabase.radio(RADIO_SYSTEM_KEY, 202), "radio")
+        assertEquals(RADIO_SYSTEM_KEY, map(mDatabase.radio(RADIO_SYSTEM_KEY,
+            p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202)), "radio")
             .get("radio_system_key"));
-        assertEquals(secondSystemKey, map(mDatabase.radio(secondSystemKey, 202), "radio")
+        assertEquals(secondSystemKey, map(mDatabase.radio(secondSystemKey,
+            RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_RADIO, 0xBEE00, 0x4A0, 202)), "radio")
             .get("radio_system_key"));
     }
 
@@ -412,19 +426,23 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO trunked_radio_affiliation (radio_system_id, radio_id, talkgroup_id, confirmed_at_ms)
-                VALUES (71, 202, 101, 4000)
+                INSERT INTO trunked_radio_affiliation (
+                    radio_system_id, radio_identity_id, talkgroup_identity_id, channel_id,
+                    radio_observed_local_id, talkgroup_observed_local_id, confirmed_at_ms)
+                VALUES (71, 7102, 7101, 71, 202, 101, 4000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_channel_presence (
-                    radio_system_id, radio_id, channel_id, evidence_code, confirmed_at_ms
-                ) VALUES (71, 202, 71, 2, 4000)
+                    radio_system_id, radio_identity_id, channel_id, observed_local_id,
+                    evidence_code, confirmed_at_ms
+                ) VALUES (71, 7102, 71, 202, 2, 4000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_radio_group_summary (
-                    radio_system_id, radio_id, group_id, group_kind_code, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_identity_id, group_identity_id, group_kind_code,
+                    first_seen_ms, last_seen_ms,
                     logical_call_count
-                ) VALUES (71, 202, 101, 1, 1000, 4000, 3)
+                ) VALUES (71, 7102, 7101, 1, 1000, 4000, 3)
                 """);
         }
 
@@ -440,9 +458,11 @@ class StatsWebDatabaseTest
         assertTrue(rows(channelB).isEmpty());
 
         assertEquals(1, number(mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
-            request("/?radio_id=202&configuration_id=" + P25_CHANNEL_A)).get("total_count")));
+            request("/?radio_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202) +
+                "&configuration_id=" + P25_CHANNEL_A)).get("total_count")));
         assertEquals(0, number(mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
-            request("/?radio_id=202&configuration_id=" + P25_CHANNEL_B)).get("total_count")));
+            request("/?radio_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202) +
+                "&configuration_id=" + P25_CHANNEL_B)).get("total_count")));
     }
 
     @Test
@@ -458,16 +478,20 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_id, decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, decoder_type, address_domain_code, primary_frequency_hz, config_json
                 ) VALUES
                     ('%1$s', 'CONVENTIONAL', 75, 'County P25', '', 'P25 Dispatch',
-                        75, 'P25_PHASE1', 154875000, '{}'),
+                        75, 'P25_PHASE1', 0, 154875000, '{}'),
                     ('%2$s', 'CONVENTIONAL', 76, 'County NXDN', '', 'NXDN Dispatch',
-                        76, 'NXDN', 452125000, '{}')
+                        76, 'NXDN', 1, 452125000, '{}')
                 """.formatted(CONVENTIONAL_P25_CHANNEL, CONVENTIONAL_NXDN_CHANNEL));
             statement.executeUpdate("""
-                INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-                VALUES (75, '%1$s', 1000, 4000, NULL), (76, '%2$s', 1000, 4000, NULL)
+                INSERT INTO receiver_channel (
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms
+                )
+                VALUES (75, '%1$s', 1000, 4000, NULL, NULL),
+                       (76, '%2$s', 1000, 4000, NULL, NULL)
                 """.formatted(CONVENTIONAL_P25_CHANNEL, CONVENTIONAL_NXDN_CHANNEL));
             statement.executeUpdate("""
                 INSERT INTO conventional_call_identity_bucket (
@@ -490,14 +514,14 @@ class StatsWebDatabaseTest
 
         Map<String,Object> p25Group = rows(mDatabase.channelGroupIdentities(
             CONVENTIONAL_P25_CHANNEL, request("/"))).getFirst();
-        assertEquals(42, number(p25Group.get("group_identity_id")));
+        assertEquals(42, number(p25Group.get("native_id")));
         assertEquals("P25 Group", p25Group.get("alias_name"));
         assertEquals(CONVENTIONAL_P25_CHANNEL, p25Group.get("configuration_id"));
-        assertEquals("group-identities", p25Group.get("entity_tab"));
+        assertEquals("groups", p25Group.get("entity_tab"));
 
         Map<String,Object> nxdnGroup = rows(mDatabase.channelGroupIdentities(
             CONVENTIONAL_NXDN_CHANNEL, request("/"))).getFirst();
-        assertEquals(43, number(nxdnGroup.get("group_identity_id")));
+        assertEquals(43, number(nxdnGroup.get("native_id")));
         assertEquals("NXDN Group", nxdnGroup.get("alias_name"));
         assertEquals(CONVENTIONAL_NXDN_CHANNEL, nxdnGroup.get("configuration_id"));
 
@@ -505,9 +529,9 @@ class StatsWebDatabaseTest
             CONVENTIONAL_P25_CHANNEL, request("/"))).getFirst();
         Map<String,Object> nxdnRadio = rows(mDatabase.channelRadios(
             CONVENTIONAL_NXDN_CHANNEL, request("/"))).getFirst();
-        assertEquals(900, number(p25Radio.get("radio_id")));
+        assertEquals(900, number(p25Radio.get("native_id")));
         assertEquals("P25 Radio", p25Radio.get("alias_name"));
-        assertEquals(901, number(nxdnRadio.get("radio_id")));
+        assertEquals(901, number(nxdnRadio.get("native_id")));
         assertEquals("NXDN Radio", nxdnRadio.get("alias_name"));
     }
 
@@ -519,9 +543,10 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             PreparedStatement calls = connection.prepareStatement("""
                 INSERT INTO p25_site_call_identity_bucket (
-                    radio_system_id, learned_site_id, bucket_start_ms, identity_role_code,
-                    identity_kind_code, identity_id, observed_call_count, encrypted_observed_call_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
+                    identity_summary_id, observed_local_id, last_observed_at_ms,
+                    observed_call_count, encrypted_observed_call_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 """);
             Statement statement = connection.createStatement())
         {
@@ -538,12 +563,23 @@ class StatsWebDatabaseTest
                        (7132, 71, 'Zulu Radio', 'RADIO_ID', 'APCO25', 302),
                        (7299, 72, 'Other Site Only', 'TALKGROUP', 'APCO25', 999)
                 """);
-            insertP25ChannelIdentity(calls, bucket, 710, 1, 1, 102, 2);
-            insertP25ChannelIdentity(calls, bucket, 710, 1, 1, 103, 3);
-            insertP25ChannelIdentity(calls, bucket, 710, 2, 2, 301, 2);
-            insertP25ChannelIdentity(calls, bucket, 710, 2, 2, 302, 3);
-            insertP25ChannelIdentity(calls, bucket, 720, 1, 1, 999, 9);
-            insertP25ChannelIdentity(calls, bucket, 720, 2, 2, 999, 9);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms)
+                VALUES (7112, 71, 1, 0xBEE00, 0x49F, 102, 1000, 4000),
+                       (7113, 71, 1, 0xBEE00, 0x49F, 103, 1000, 4000),
+                       (7131, 71, 2, 0xBEE00, 0x49F, 301, 1000, 4000),
+                       (7132, 71, 2, 0xBEE00, 0x49F, 302, 1000, 4000),
+                       (7191, 71, 1, 0xBEE00, 0x49F, 999, 1000, 4000),
+                       (7192, 71, 2, 0xBEE00, 0x49F, 999, 1000, 4000)
+                """);
+            insertP25ChannelIdentity(calls, bucket, 710, 71, 1, 7112, 102, 2);
+            insertP25ChannelIdentity(calls, bucket, 710, 71, 1, 7113, 103, 3);
+            insertP25ChannelIdentity(calls, bucket, 710, 71, 2, 7131, 301, 2);
+            insertP25ChannelIdentity(calls, bucket, 710, 71, 2, 7132, 302, 3);
+            insertP25ChannelIdentity(calls, bucket, 720, 72, 1, 7191, 999, 9);
+            insertP25ChannelIdentity(calls, bucket, 720, 72, 2, 7192, 999, 9);
         }
 
         StatsRequest firstGroupRequest = request("/?sort=alias&direction=asc&range=24h&limit=1&offset=0");
@@ -566,7 +602,7 @@ class StatsWebDatabaseTest
         Map<String,Object> matchingGroup = mDatabase.channelGroupIdentities(P25_CHANNEL_A, groupSearch);
         groupSearch.requireFullyConsumed();
         assertEquals(List.of(103L), rows(matchingGroup).stream()
-            .map(row -> number(row.get("group_identity_id"))).toList());
+            .map(row -> number(row.get("native_id"))).toList());
 
         StatsRequest radioRequest = request("/?q=radio&sort=alias&direction=asc&limit=1&offset=0");
         Map<String,Object> firstRadio = mDatabase.channelRadios(P25_CHANNEL_A, radioRequest);
@@ -574,7 +610,7 @@ class StatsWebDatabaseTest
         assertEquals("Alpha Radio", rows(firstRadio).getFirst().get("alias_name"));
         assertEquals(true, firstRadio.get("has_more"));
         assertEquals(1, number(firstRadio.get("next_offset")));
-        assertTrue(rows(firstRadio).stream().noneMatch(row -> number(row.get("radio_id")) == 999));
+        assertTrue(rows(firstRadio).stream().noneMatch(row -> number(row.get("native_id")) == 999));
 
         StatsRequest otherSite = request("/?q=999&sort=radio&direction=asc");
         assertTrue(rows(mDatabase.channelRadios(P25_CHANNEL_A, otherSite)).isEmpty());
@@ -589,9 +625,9 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             PreparedStatement calls = connection.prepareStatement("""
                 INSERT INTO trunked_logical_call_identity_bucket (
-                    radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    radio_system_id, bucket_start_ms, identity_role_code, identity_summary_id,
                     logical_call_count, encrypted_logical_call_count, recorded_output_count, streamed_output_count
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)
+                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0)
                 """);
             Statement statement = connection.createStatement())
         {
@@ -608,17 +644,16 @@ class StatsWebDatabaseTest
                        (7904, 79, 'Zulu NXDN Radio', 'RADIO_ID', 'NXDN', 602)
                 """);
             for(int[] identity: List.of(
-                new int[]{78, 1, 1, 7}, new int[]{78, 1, 1, 8},
-                new int[]{78, 2, 2, 501}, new int[]{78, 2, 2, 502},
-                new int[]{79, 1, 1, 9}, new int[]{79, 1, 1, 10},
-                new int[]{79, 2, 2, 601}, new int[]{79, 2, 2, 602}))
+                new int[]{78, 1, 7801, 7}, new int[]{78, 1, 7802, 8},
+                new int[]{78, 2, 7803, 501}, new int[]{78, 2, 7804, 502},
+                new int[]{79, 1, 7901, 9}, new int[]{79, 1, 7902, 10},
+                new int[]{79, 2, 7903, 601}, new int[]{79, 2, 7904, 602}))
             {
                 calls.setInt(1, identity[0]);
                 calls.setLong(2, bucket);
                 calls.setInt(3, identity[1]);
                 calls.setInt(4, identity[2]);
-                calls.setInt(5, identity[3]);
-                calls.setInt(6, identity[3] % 5 + 1);
+                calls.setInt(5, identity[3] % 5 + 1);
                 calls.executeUpdate();
             }
         }
@@ -759,18 +794,18 @@ class StatsWebDatabaseTest
     void protocolReservedIdentitiesAreRejectedByDetailsAndRelationships()
     {
         StatsApiException group = assertThrows(StatsApiException.class,
-            () -> mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY, "talkgroup", 65_535));
-        assertEquals(404, group.status());
+            () -> mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY, "v1-g-bee00-49f-65535"));
+        assertEquals(400, group.status());
 
         StatsApiException groupRelationship = assertThrows(StatsApiException.class,
             () -> mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
-                request("/?group_identity_id=65535&group_identity_kind=talkgroup")));
-        assertEquals(404, groupRelationship.status());
+                request("/?group_identity_key=v1-g-bee00-49f-65535")));
+        assertEquals(400, groupRelationship.status());
 
         StatsApiException radioRelationship = assertThrows(StatsApiException.class,
             () -> mDatabase.radioSystemRelationships(RADIO_SYSTEM_KEY,
-                request("/?radio_id=16777215")));
-        assertEquals(404, radioRelationship.status());
+                request("/?radio_identity_key=v1-r-bee00-49f-16777215")));
+        assertEquals(400, radioRelationship.status());
     }
 
     @Test
@@ -798,7 +833,7 @@ class StatsWebDatabaseTest
 
         assertQualityChannel(P25_CHANNEL_A, RADIO_SYSTEM_KEY, "P25", 97);
         assertQualityChannel(DMR_TRUNKED_CHANNEL, "dmr:channel:" + DMR_TRUNKED_CHANNEL, "DMR", 94);
-        assertQualityChannel(NXDN_TRUNKED_CHANNEL, "nxdn:channel:" + NXDN_TRUNKED_CHANNEL, "NXDN", 88);
+        assertQualityChannel(NXDN_TRUNKED_CHANNEL, "nxdn-c:channel:" + NXDN_TRUNKED_CHANNEL, "NXDN", 88);
 
         StatsCsvExport export = mDatabase.csvExport("signal-health", request("/"));
         String csv = new String(export.content(), StandardCharsets.UTF_8);
@@ -819,9 +854,10 @@ class StatsWebDatabaseTest
                     SELECT 1000 UNION ALL SELECT value + 1 FROM identities WHERE value < 1149
                 )
                 INSERT INTO radio_system_identity_summary (
-                    radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms,
                     logical_call_count
-                ) SELECT 71, 1, value, 1000, 4000, value FROM identities
+                ) SELECT 71, 1, 0xBEE00, 0x49F, value, 1000, 4000, value FROM identities
                 """);
         }
 
@@ -830,12 +866,12 @@ class StatsWebDatabaseTest
         assertEquals(151, number(firstPage.get("total_count")));
         assertEquals(25, rows(firstPage).size());
         assertTrue((Boolean)firstPage.get("has_more"));
-        assertEquals(101, number(rows(firstPage).getFirst().get("group_identity_id")));
+        assertEquals(101, number(rows(firstPage).getFirst().get("native_id")));
 
         Map<String,Object> filtered = mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,
             request("/?q=1149&limit=25"));
         assertEquals(1, number(filtered.get("total_count")));
-        assertEquals(1149, number(rows(filtered).getFirst().get("group_identity_id")));
+        assertEquals(1149, number(rows(filtered).getFirst().get("native_id")));
     }
 
     @Test
@@ -846,13 +882,14 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_event (
-                    channel_id, observed_at_ms, action_code, event_type_code,
-                    source_radio_id, target_id, target_kind_code
+                    channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, target_identity_summary_id
                 ) VALUES
-                    (71, 4000, 23, NULL, 202, 101, 1),
-                    (71, 5000, 23, NULL, 202, 101, 1),
-                    (71, 6000, 12, NULL, 202, 101, 1),
-                    (71, 4000, 23, NULL, 202, 101, 1)
+                    (71, 71, 4000, 23, NULL, 202, 101, 1, 7102, 7101),
+                    (71, 71, 5000, 23, NULL, 202, 101, 1, 7102, 7101),
+                    (71, 71, 6000, 12, NULL, 202, 101, 1, 7102, 7101),
+                    (71, 71, 4000, 23, NULL, 202, 101, 1, 7102, 7101)
                 """);
         }
 
@@ -891,11 +928,12 @@ class StatsWebDatabaseTest
             List<String> aliasPlan = explain(connection, observedQuery[0].sql(),
                 observedQuery[0].parameters().toArray());
             assertTrue(aliasPlan.stream().anyMatch(detail ->
-                    detail.contains("SEARCH summary USING PRIMARY KEY") ||
-                        detail.contains("SEARCH summary USING INDEX idx_radio_system_identity")),
+                    detail.contains("SEARCH identity USING INTEGER PRIMARY KEY") ||
+                        detail.contains("SEARCH identity USING INDEX idx_radio_system_identity")),
                 () -> "Expected indexed radio-system identity lookup, plan was: " + aliasPlan);
             assertTrue(aliasPlan.stream().anyMatch(detail ->
-                    detail.contains("idx_receiver_channel_radio_system")),
+                    detail.contains("idx_receiver_channel_radio_system") ||
+                        detail.contains("sqlite_autoindex_receiver_channel_1")),
                 () -> "Expected indexed channel ownership lookup, plan was: " + aliasPlan);
             assertTrue(aliasPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
                 () -> "Alias discovery must not scan detailed activity, plan was: " + aliasPlan);
@@ -950,25 +988,40 @@ class StatsWebDatabaseTest
         statement.executeUpdate("""
             INSERT INTO configuration_channel (
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                alias_list_id, decoder_type, primary_frequency_hz, config_json
+                alias_list_id, decoder_type, address_domain_code, primary_frequency_hz, config_json
             ) VALUES
                 ('%1$s', 'TRUNKED', 78, 'Metro DMR', 'Central', 'DMR Control',
-                    78, 'DMR', 451012500, '{}'),
+                    78, 'DMR', 0, 451012500, '{}'),
                 ('%2$s', 'TRUNKED', 79, 'Regional NXDN', 'West', 'NXDN Control',
-                    79, 'NXDN', 155012500, '{}')
+                    79, 'NXDN', 1, 155012500, '{}')
             """.formatted(DMR_TRUNKED_CHANNEL, NXDN_TRUNKED_CHANNEL));
         statement.executeUpdate("""
             INSERT INTO radio_system (
-                id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
-                first_seen_ms, last_seen_ms
+                id, system_key, configuration_id, protocol_code, address_domain_code,
+                p25_wacn, p25_system_id, first_seen_ms, last_seen_ms
             ) VALUES
-                (78, 'dmr:channel:%1$s', 3, 0, NULL, NULL, 1000, 4000),
-                (79, 'nxdn:channel:%2$s', 4, 1, NULL, NULL, 1000, 4000)
+                (78, 'dmr:channel:%1$s', '%1$s', 3, 0, NULL, NULL, 1000, 4000),
+                (79, 'nxdn-c:channel:%2$s', '%2$s', 4, 1, NULL, NULL, 1000, 4000)
             """.formatted(DMR_TRUNKED_CHANNEL, NXDN_TRUNKED_CHANNEL));
         statement.executeUpdate("""
-            INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-            VALUES (78, '%1$s', 1000, 4000, 78), (79, '%2$s', 1000, 4000, 79)
+            INSERT INTO receiver_channel (
+                id, configuration_id, first_seen_ms, last_seen_ms,
+                radio_system_id, radio_system_assigned_at_ms
+            ) VALUES (78, '%1$s', 1000, 4000, 78, 1000),
+                     (79, '%2$s', 1000, 4000, 79, 1000)
             """.formatted(DMR_TRUNKED_CHANNEL, NXDN_TRUNKED_CHANNEL));
+        statement.executeUpdate("""
+            INSERT INTO radio_system_identity_summary (
+                id, radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms)
+            VALUES (7801, 78, 1, 7, 1000, 4000),
+                   (7802, 78, 1, 8, 1000, 4000),
+                   (7803, 78, 2, 501, 1000, 4000),
+                   (7804, 78, 2, 502, 1000, 4000),
+                   (7901, 79, 1, 9, 1000, 4000),
+                   (7902, 79, 1, 10, 1000, 4000),
+                   (7903, 79, 2, 601, 1000, 4000),
+                   (7904, 79, 2, 602, 1000, 4000)
+            """);
         statement.executeUpdate("""
             INSERT INTO trunked_site_snapshot (
                 channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
@@ -1014,9 +1067,13 @@ class StatsWebDatabaseTest
                 ) VALUES (71, '%s', 1, 0, 0xBEE00, 0x49F, 1000, 4000)
                 """.formatted(RADIO_SYSTEM_KEY));
             statement.executeUpdate("""
-                INSERT INTO receiver_channel (id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
-                VALUES (71, '%1$s', 1000, 4000, 71), (72, '%2$s', 1000, 4000, 71),
-                       (73, '%3$s', 1000, 4000, NULL), (74, '%4$s', 1000, 4000, NULL)
+                INSERT INTO receiver_channel (
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms
+                ) VALUES (71, '%1$s', 1000, 4000, 71, 1000),
+                         (72, '%2$s', 1000, 4000, 71, 1000),
+                         (73, '%3$s', 1000, 4000, NULL, NULL),
+                         (74, '%4$s', 1000, 4000, NULL, NULL)
                 """.formatted(P25_CHANNEL_A, P25_CHANNEL_B, ANALOG_CHANNEL, DMR_CHANNEL));
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
@@ -1027,10 +1084,11 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary (
-                    radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
-                    logical_call_count, last_counterpart_kind_code, last_counterpart_id
-                ) VALUES (71, 1, 101, 1000, 4000, 3, 2, 202),
-                         (71, 2, 202, 1000, 4000, 3, 1, 101)
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms,
+                    logical_call_count
+                ) VALUES (7101, 71, 1, 0xBEE00, 0x49F, 101, 1000, 4000, 3),
+                         (7102, 71, 2, 0xBEE00, 0x49F, 202, 1000, 4000, 3)
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (id, alias_list_id, name, group_name, matcher_type, protocol, value)
@@ -1057,16 +1115,24 @@ class StatsWebDatabaseTest
         return StatsRequest.from(URI.create(uri));
     }
 
+    private static String p25IdentityKey(int kind, int identifier)
+    {
+        return RadioSystemIdentityKey.format(kind, 0xBEE00, 0x49F, identifier);
+    }
+
     private static void insertP25ChannelIdentity(PreparedStatement statement, long bucket, int learnedSiteId,
-                                                  int role, int kind, int identifier, int calls) throws Exception
+                                                  int channelId, int role, int summaryId,
+                                                  int observedLocalId, int calls) throws Exception
     {
         statement.setInt(1, 71);
         statement.setInt(2, learnedSiteId);
-        statement.setLong(3, bucket);
-        statement.setInt(4, role);
-        statement.setInt(5, kind);
-        statement.setInt(6, identifier);
-        statement.setInt(7, calls);
+        statement.setInt(3, channelId);
+        statement.setLong(4, bucket);
+        statement.setInt(5, role);
+        statement.setInt(6, summaryId);
+        statement.setInt(7, observedLocalId);
+        statement.setLong(8, bucket + 1);
+        statement.setInt(9, calls);
         statement.executeUpdate();
     }
 

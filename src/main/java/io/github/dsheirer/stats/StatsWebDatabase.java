@@ -23,6 +23,7 @@ import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideProfile;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.preference.UserPreferences;
@@ -76,6 +77,11 @@ class StatsWebDatabase
     private static final int IDENTITY_KIND_TALKGROUP = ReceiverActivitySchema.IDENTITY_KIND_TALKGROUP;
     private static final int IDENTITY_KIND_RADIO = ReceiverActivitySchema.IDENTITY_KIND_RADIO;
     private static final int IDENTITY_KIND_PATCH_GROUP = ReceiverActivitySchema.IDENTITY_KIND_PATCH_GROUP;
+    private static final String IDENTITY_KEY_SQL = "'v1-' || CASE %1$s.identity_kind_code " +
+        "WHEN 1 THEN 'g' WHEN 2 THEN 'r' WHEN 3 THEN 'p' END || '-' || " +
+        "CASE WHEN %1$s.home_wacn = -1 THEN 'x' ELSE printf('%%05x', %1$s.home_wacn) END || '-' || " +
+        "CASE WHEN %1$s.home_system_id = -1 THEN 'x' ELSE printf('%%03x', %1$s.home_system_id) END || '-' || " +
+        "%1$s.identity_id";
     static final String DASHBOARD_CALL_ACTIVITY_SQL = """
         SELECT bucket.bucket_start_ms AS time_ms,
             system.protocol_code,
@@ -173,8 +179,11 @@ class StatsWebDatabase
                 NULL AS rfss, NULL AS system_name,
                 NULL AS network_id, NULL AS site_id, NULL AS ran, NULL AS variant_code,
                 system.address_domain_code,
-                bucket.identity_kind_code, bucket.identity_id,
-                CASE bucket.identity_kind_code WHEN 1 THEN 'Talkgroup' WHEN 2 THEN 'Radio'
+                summary.id AS identity_summary_id, summary.identity_kind_code,
+                summary.identity_id AS native_id,
+                summary.home_wacn, summary.home_system_id,
+                %s AS identity_key,
+                CASE summary.identity_kind_code WHEN 1 THEN 'Talkgroup' WHEN 2 THEN 'Radio'
                     WHEN 3 THEN 'Patch Group' ELSE 'Channel / Unknown' END AS identity_kind,
                 SUM(bucket.logical_call_count) AS logical_call_count,
                 SUM(bucket.encrypted_logical_call_count) AS encrypted_logical_call_count,
@@ -186,13 +195,12 @@ class StatsWebDatabase
             FROM trunked_logical_call_identity_bucket bucket
                 INDEXED BY idx_trunked_logical_identity_dashboard_time
             JOIN radio_system system ON system.id = bucket.radio_system_id
-            LEFT JOIN radio_system_identity_summary summary
-              ON bucket.identity_role_code = 2 AND bucket.identity_kind_code = 2
-             AND summary.radio_system_id = bucket.radio_system_id AND summary.identity_kind_code = 2
-             AND summary.identity_id = bucket.identity_id
+            JOIN radio_system_identity_summary summary
+              ON summary.radio_system_id = bucket.radio_system_id
+             AND summary.id = bucket.identity_summary_id
             WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
               AND bucket.identity_role_code = ?
-            GROUP BY bucket.radio_system_id, bucket.identity_kind_code, bucket.identity_id
+            GROUP BY bucket.radio_system_id, summary.id
 
             UNION ALL
 
@@ -210,7 +218,9 @@ class StatsWebDatabase
                 nullif(trim(config.system_name), '') AS system_name,
                 NULL AS network_id, NULL AS site_id, NULL AS ran,
                 NULL AS variant_code, coalesce(system.address_domain_code, 0) AS address_domain_code,
-                bucket.identity_kind_code, bucket.identity_id,
+                NULL AS identity_summary_id, bucket.identity_kind_code,
+                bucket.identity_id AS native_id,
+                NULL AS home_wacn, NULL AS home_system_id, NULL AS identity_key,
                 CASE bucket.identity_kind_code WHEN 1 THEN 'Talkgroup' WHEN 2 THEN 'Radio'
                     WHEN 3 THEN 'Patch Group' ELSE 'Channel / Unknown' END AS identity_kind,
                 SUM(bucket.call_count) AS logical_call_count,
@@ -234,9 +244,9 @@ class StatsWebDatabase
         )
         SELECT * FROM identity_activity
         ORDER BY logical_call_count DESC, last_active_ms DESC, protocol_code, channel_kind,
-            identity_kind_code, identity_id
+            identity_kind_code, native_id
         LIMIT ?
-        """;
+        """.formatted(IDENTITY_KEY_SQL.formatted("summary"));
     private static final List<ActivityAction> DASHBOARD_ACTIVITY_ACTIONS = List.of(
         new ActivityAction("ACKNOWLEDGE", 1, "acknowledge_count"),
         new ActivityAction("ACTIVE", 2, "active_count"),
@@ -271,20 +281,27 @@ class StatsWebDatabase
             activity.channel_kind_code,
             CASE WHEN activity.protocol_code = 11 THEN 'AM' ELSE activity.protocol END AS protocol,
             activity.action, activity.event_type,
-            activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
+            activity.source_observed_local_id AS source_radio_id,
+            activity.target_observed_local_id AS target_id,
+            activity.source_identity_key, activity.target_identity_key,
+            activity.source_identity_kind_code, activity.target_identity_kind_code,
+            activity.source_identity_id AS source_native_id,
+            activity.target_identity_id AS target_native_id,
+            activity.target_kind_code, activity.target_kind,
             activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
             activity.encryption_algorithm_id, activity.encryption_key_id,
             activity.resolved_channel_name AS name,
-            alias_list.name AS alias_list_name,
-            system.system_key AS radio_system_key, system.address_domain_code,
+            activity.resolved_alias_list_name AS alias_list_name,
+            config.alias_list_id,
+            activity.resolved_system_key AS radio_system_key, system.address_domain_code,
             coalesce(system.protocol_code, activity.protocol_code) AS protocol_code,
-            system.p25_wacn AS wacn, system.p25_system_id AS system_id
+            activity.resolved_wacn AS wacn, activity.resolved_system_id AS system_id,
+            activity.resolved_nac AS nac, activity.resolved_rfss AS rfss,
+            activity.resolved_site AS site_id
         """;
     private static final String ACTIVITY_RELATED_JOINS_SQL = """
-        LEFT JOIN receiver_channel channel ON channel.id = activity.channel_id
-        LEFT JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
-        LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
-        LEFT JOIN radio_system system ON system.id = channel.radio_system_id
+        LEFT JOIN configuration_channel config ON config.configuration_id = activity.configuration_id
+        LEFT JOIN radio_system system ON system.system_key = activity.resolved_system_key
         """;
     static final String ACTIVITY_SELECT_SQL = ACTIVITY_PROJECTION_SQL + """
         FROM receiver_activity_event_resolved activity
@@ -351,14 +368,14 @@ class StatsWebDatabase
                     %s AS signaling_observation_count
         """.formatted(TRUNKED_IDENTITY_OBSERVATION_PROJECTION_SQL, GROUP_IDENTITY_SIGNALING_COUNT_SQL).strip();
     private static final String TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL = """
-        summary.identity_kind_code, summary.identity_id,
-                    summary.p25_identity_state_code, summary.p25_home_wacn,
-                    summary.p25_home_system_id, summary.p25_home_talkgroup_id,
+        summary.id AS identity_summary_id, summary.identity_kind_code, summary.identity_id AS native_id,
+                    summary.home_wacn, summary.home_system_id,
+                    %s AS identity_key,
                     summary.first_seen_ms, summary.last_seen_ms,
                     %s,
                     summary.last_encryption_algorithm_id, summary.last_encryption_key_id,
                     summary.last_talker_alias, summary.last_talker_alias_seen_ms
-        """.formatted(TRUNKED_IDENTITY_METRIC_PROJECTION_SQL).strip();
+        """.formatted(IDENTITY_KEY_SQL.formatted("summary"), TRUNKED_IDENTITY_METRIC_PROJECTION_SQL).strip();
     private static final String TRUNKED_RELATIONSHIP_OBSERVATION_PROJECTION_SQL =
         GROUP_IDENTITY_SIGNALING_FIELDS.stream()
             .map(field -> "relationship." + field + " AS " + observationCountField(field))
@@ -385,8 +402,8 @@ class StatsWebDatabase
                     %s
         """.formatted(CONVENTIONAL_ACTIVITY_OBSERVATION_PROJECTION_SQL).strip();
     private static final String CURRENT_RELATIONSHIP_AFFILIATION_SQL =
-        "relationship.group_kind_code = 1 AND affiliation.radio_id IS NOT NULL " +
-            "AND affiliation.talkgroup_id = relationship.group_id";
+        "relationship.group_kind_code = 1 AND affiliation.radio_identity_id IS NOT NULL " +
+            "AND affiliation.talkgroup_identity_id = relationship.group_identity_id";
     private static final String RADIO_CHANNEL_SORT_SQL = "CASE WHEN presence.channel_id IS NULL THEN NULL " +
         "WHEN system.protocol_code = 1 THEN printf('%03d:%03d', " +
         "coalesce(presence_p25.rfss, -1), coalesce(presence_p25.site, -1)) " +
@@ -435,8 +452,6 @@ class StatsWebDatabase
         Map.entry("join_observation_count", "summary.join_count"),
         Map.entry("signaling_observation_count", "signaling_observation_count"),
         Map.entry("encrypted_logical_call_count", "summary.encrypted_logical_call_count"),
-        Map.entry("last_source", "CASE WHEN summary.last_counterpart_kind_code = 2 " +
-            "THEN summary.last_counterpart_id END"),
         Map.entry("first_seen", "summary.first_seen_ms"),
         Map.entry("last_seen", "summary.last_seen_ms")
     );
@@ -447,16 +462,11 @@ class StatsWebDatabase
         Map.entry("name", radioSystemAliasSortExpression("alias_radio", "summary.identity_id", "name")),
         Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
         Map.entry("talker_alias_seen", "summary.last_talker_alias_seen_ms"),
-        Map.entry("last_group_identity", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) " +
-            "THEN summary.last_counterpart_id END"),
-        Map.entry("last_group_identity_name", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) THEN " +
-            radioSystemAliasSortExpression("alias_talkgroup", "summary.last_counterpart_id", "name") + " END"),
         Map.entry("logical_call_count", "summary.logical_call_count"),
         Map.entry("grant_observation_count", "summary.grant_count"),
         Map.entry("encrypted_logical_call_count", "summary.encrypted_logical_call_count"),
-        Map.entry("affiliated_talkgroup", radioSystemAliasSortExpression("alias_talkgroup",
-            "affiliation.talkgroup_id", "name")),
-        Map.entry("affiliated", "affiliation.radio_id IS NOT NULL"),
+        Map.entry("affiliated_talkgroup", "affiliated_group.identity_id"),
+        Map.entry("affiliated", "affiliation.radio_identity_id IS NOT NULL"),
         Map.entry("affiliation_confirmed", "affiliation.confirmed_at_ms"),
         Map.entry("channel", RADIO_CHANNEL_SORT_SQL),
         Map.entry("first_seen", "summary.first_seen_ms"),
@@ -469,10 +479,6 @@ class StatsWebDatabase
         Map.entry("name", radioSystemAliasSortExpression("alias_radio", "summary.identity_id", "name")),
         Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
         Map.entry("talker_alias_seen", "summary.last_talker_alias_seen_ms"),
-        Map.entry("last_group_identity", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) " +
-            "THEN summary.last_counterpart_id END"),
-        Map.entry("last_group_identity_name", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) THEN " +
-            radioSystemAliasSortExpression("alias_talkgroup", "summary.last_counterpart_id", "name") + " END"),
         Map.entry("logical_call_count", "summary.logical_call_count"),
         Map.entry("grant_observation_count", "summary.grant_count"),
         Map.entry("encrypted_logical_call_count", "summary.encrypted_logical_call_count"),
@@ -480,12 +486,9 @@ class StatsWebDatabase
         Map.entry("last_seen", "summary.last_seen_ms")
     );
     private static final Map<String,String> RELATIONSHIP_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("radio", "relationship.radio_id"),
-        Map.entry("radio_alias", radioSystemAliasSortExpression("alias_radio", "relationship.radio_id", "name")),
+        Map.entry("radio", "radio.identity_id"),
         Map.entry("talker_alias", "lower(radio.last_talker_alias)"),
-        Map.entry("group_identity", "relationship.group_id"),
-        Map.entry("group_identity_alias",
-            radioSystemAliasSortExpression("alias_talkgroup", "relationship.group_id", "name")),
+        Map.entry("group_identity", "group_identity.identity_id"),
         Map.entry("logical_call_count", "relationship.logical_call_count"),
         Map.entry("grant_observation_count", "relationship.grant_count"),
         Map.entry("encrypted_logical_call_count", "relationship.encrypted_logical_call_count"),
@@ -519,8 +522,8 @@ class StatsWebDatabase
         Map.entry("last_seen", "summary.last_seen_ms")
     );
     private static final Map<String,String> CHANNEL_GROUP_IDENTITY_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("id", "group_identity_id"),
-        Map.entry("group_identity", "group_identity_id"),
+        Map.entry("id", "coalesce(observed_local_id, native_id)"),
+        Map.entry("group_identity", "coalesce(observed_local_id, native_id)"),
         Map.entry("kind", "group_identity_kind_code"),
         Map.entry("alias", "lower(coalesce(matched_alias_name, ''))"),
         Map.entry("name", "lower(coalesce(matched_alias_name, ''))"),
@@ -535,8 +538,8 @@ class StatsWebDatabase
         Map.entry("last_seen", "last_seen_ms")
     );
     private static final Map<String,String> CHANNEL_RADIO_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("id", "radio_id"),
-        Map.entry("radio", "radio_id"),
+        Map.entry("id", "coalesce(observed_local_id, native_id)"),
+        Map.entry("radio", "coalesce(observed_local_id, native_id)"),
         Map.entry("alias", "lower(coalesce(matched_alias_name, ''))"),
         Map.entry("name", "lower(coalesce(matched_alias_name, ''))"),
         Map.entry("frequency", "frequency_hz"),
@@ -627,7 +630,7 @@ class StatsWebDatabase
                 configured.configurationId(), WebEntityRef.channel(configured.configurationId()),
                 configured.radioSystemKey() != null ? WebEntityRef.radioSystem(configured.radioSystemKey()) : null,
                 configured.protocolCode(), configured.addressDomainCode() != null ?
-                configured.addressDomainCode() : 0)).toList()));
+                configured.addressDomainCode() : 0, configured.p25Wacn(), configured.p25SystemId())).toList()));
     }
 
     Map<String,Object> status()
@@ -700,8 +703,6 @@ class StatsWebDatabase
                     String radioSystemKey = request.requiredText("radio_system_key");
                     Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
                     rows = queryRadioSystemRadios(connection, radioSystemKey, request, queryLimit, 0);
-                    enrichRadioSystemGroupIdentities(connection, rows, "last_group_identity_id",
-                        "last_group_identity_alias_");
                     addExportMetadata(rows, Map.of(
                         "system_name", textValue(radioSystem.get("system_name")),
                         "radio_system_key", textValue(radioSystem.get("radio_system_key"))));
@@ -836,201 +837,143 @@ class StatsWebDatabase
             }
 
             String aliasListName = String.valueOf(aliasList.get("name"));
+            int protocolCode = switch(family)
+            {
+                case "P25" -> 1;
+                case "DMR" -> 3;
+                case "NXDN" -> 4;
+                default -> throw new IllegalStateException();
+            };
+            String decoderPredicate = switch(family)
+            {
+                case "P25" -> "config.decoder_type LIKE 'P25%'";
+                case "DMR" -> "config.decoder_type = 'DMR'";
+                case "NXDN" -> "config.decoder_type = 'NXDN'";
+                default -> "0";
+            };
             StringBuilder sql = new StringBuilder("""
-                WITH owned_systems AS MATERIALIZED (
-                    SELECT DISTINCT channel.radio_system_id
-                    FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
-                    JOIN receiver_channel channel
-                      ON channel.configuration_id = config.configuration_id
-                    WHERE config.alias_list_id = ? AND channel.radio_system_id IS NOT NULL
-                ), observed AS (
+                WITH observed AS (
                     SELECT ? AS alias_list_id, ? AS alias_list_name, ? AS family,
                         system.id AS radio_system_id, system.system_key AS radio_system_key,
-                        NULL AS channel_id, NULL AS configuration_id,
+                        channel.id AS channel_id, config.configuration_id,
                         system.protocol_code,
                         CASE system.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
-                            WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
-                        system.address_domain_code AS address_domain_code,
-                        summary.p25_identity_state_code, summary.p25_home_wacn,
-                        summary.p25_home_system_id, summary.p25_home_talkgroup_id,
-                        'TRUNKED' AS topology,
-                        (SELECT CASE WHEN count(DISTINCT lower(trim(config.system_name))) = 1
-                            THEN min(trim(config.system_name)) END
-                         FROM receiver_channel channel
-                         JOIN configuration_channel config
-                           ON config.configuration_id = channel.configuration_id
-                         WHERE channel.radio_system_id = system.id
-                           AND config.system_name IS NOT NULL AND trim(config.system_name) <> '') AS system_name,
-                        (SELECT group_concat(name, ', ') FROM (
-                            SELECT DISTINCT coalesce(nullif(trim(config.site_name), ''),
-                                nullif(trim(config.name), '')) AS name
-                            FROM receiver_channel channel
-                            JOIN configuration_channel config
-                              ON config.configuration_id = channel.configuration_id
-                            WHERE channel.radio_system_id = system.id
-                            ORDER BY lower(name), name LIMIT 8)) AS channel_names,
+                            WHEN 4 THEN 'NXDN' END AS protocol,
+                        config.address_domain_code, 'TRUNKED' AS topology,
+                        nullif(trim(config.system_name), '') AS system_name,
+                        coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS channel_names,
                         system.p25_wacn AS wacn, system.p25_system_id AS system_id,
-                        NULL AS network_id, NULL AS frequency_hz, NULL AS timeslot,
-                        NULL AS frequency_count, NULL AS timeslot_count,
-                        summary.identity_id AS group_identity_id,
-                        summary.identity_kind_code AS group_identity_kind_code,
-                        CASE summary.identity_kind_code WHEN 3 THEN 'Patch Group'
-                            ELSE 'Talkgroup' END AS group_identity_kind_label,
-                        summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
-                        summary.recorded_output_count AS recorded_logical_call_count,
-                        summary.streamed_output_count AS stream_submitted_logical_call_count,
-                        summary.encrypted_logical_call_count,
-                        summary.grant_count AS grant_observation_count,
-                        summary.join_count AS join_observation_count,
-                        summary.emergency_count AS emergency_observation_count,
-                        summary.register_count AS register_observation_count,
-                        summary.logout_count AS logout_observation_count,
-                        summary.denial_count AS denial_observation_count,
-                        summary.data_count AS data_observation_count,
-                        %s AS other_signaling_observation_count,
-                        %s AS signaling_observation_count,
-                        EXISTS (
-                            SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
-                            WHERE definition.alias_list_id = ?
-                              AND definition.matcher_type = 'TALKGROUP'
-                              AND definition.value = summary.identity_id
-                              AND ((system.protocol_code = 1
-                                      AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
-                                OR (system.protocol_code = 3 AND definition.protocol = 'DMR')
-                                OR (system.protocol_code = 4 AND definition.protocol = 'NXDN'))
-                        ) AS has_exact_definition
-                    FROM owned_systems owned
-                    JOIN radio_system system ON system.id = owned.radio_system_id
-                    JOIN radio_system_identity_summary summary
-                      ON summary.radio_system_id = owned.radio_system_id
-                    WHERE summary.identity_kind_code IN (1, 3)
-                      AND ((? = 'P25' AND system.protocol_code = 1)
-                        OR (? = 'DMR' AND system.protocol_code = 3)
-                        OR (? = 'NXDN' AND system.protocol_code = 4))
+                        config.primary_frequency_hz AS frequency_hz, NULL AS timeslot,
+                        identity.identity_id AS native_id,
+                        calls.observed_local_id AS group_identity_id,
+                        identity.identity_kind_code AS group_identity_kind_code,
+                        %s AS identity_key,
+                        min(calls.bucket_start_ms) AS first_seen_ms,
+                        max(calls.last_observed_at_ms) AS last_seen_ms,
+                        sum(calls.observed_call_count) AS logical_call_count,
+                        NULL AS recorded_logical_call_count,
+                        NULL AS stream_submitted_logical_call_count,
+                        sum(calls.encrypted_observed_call_count) AS encrypted_logical_call_count,
+                        NULL AS signaling_observation_count,
+                        EXISTS (SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
+                            WHERE definition.alias_list_id = ? AND definition.matcher_type = 'TALKGROUP'
+                              AND definition.value = calls.observed_local_id
+                              AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')) AS has_exact_definition
+                    FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
+                    JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
+                    JOIN radio_system system ON system.id = channel.radio_system_id
+                    JOIN p25_site_call_identity_bucket calls ON calls.channel_id = channel.id
+                      AND calls.radio_system_id = system.id AND calls.identity_role_code = 1
+                    JOIN radio_system_identity_summary identity ON identity.id = calls.identity_summary_id
+                      AND identity.radio_system_id = calls.radio_system_id
+                    WHERE config.alias_list_id = ? AND system.protocol_code = 1
+                      AND identity.identity_kind_code IN (1, 3)
+                      AND calls.observed_local_id IS NOT NULL
+                    GROUP BY channel.id, identity.id, calls.observed_local_id
 
                     UNION ALL
 
-                    SELECT ? AS alias_list_id, ? AS alias_list_name, 'P25' AS family,
+                    SELECT ? AS alias_list_id, ? AS alias_list_name, ? AS family,
                         system.id AS radio_system_id, system.system_key AS radio_system_key,
-                        NULL AS channel_id, NULL AS configuration_id,
-                        1 AS protocol_code, 'P25' AS protocol,
-                        system.address_domain_code AS address_domain_code,
-                        2 AS p25_identity_state_code, summary.home_wacn AS p25_home_wacn,
-                        summary.home_system_id AS p25_home_system_id,
-                        summary.home_talkgroup_id AS p25_home_talkgroup_id,
-                        'TRUNKED' AS topology,
-                        (SELECT CASE WHEN count(DISTINCT lower(trim(config.system_name))) = 1
-                            THEN min(trim(config.system_name)) END
-                         FROM receiver_channel channel
-                         JOIN configuration_channel config
-                           ON config.configuration_id = channel.configuration_id
-                         WHERE channel.radio_system_id = system.id
-                           AND config.system_name IS NOT NULL AND trim(config.system_name) <> '') AS system_name,
-                        NULL AS channel_names, system.p25_wacn AS wacn,
-                        system.p25_system_id AS system_id, NULL AS network_id,
-                        NULL AS frequency_hz, NULL AS timeslot,
-                        NULL AS frequency_count, NULL AS timeslot_count,
-                        0 AS group_identity_id, 1 AS group_identity_kind_code,
-                        'Talkgroup' AS group_identity_kind_label,
-                        summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
-                        summary.recorded_output_count AS recorded_logical_call_count,
-                        summary.streamed_output_count AS stream_submitted_logical_call_count,
-                        summary.encrypted_logical_call_count,
-                        summary.grant_count AS grant_observation_count,
-                        summary.join_count AS join_observation_count,
-                        summary.emergency_count AS emergency_observation_count,
-                        summary.register_count AS register_observation_count,
-                        summary.logout_count AS logout_observation_count,
-                        summary.denial_count AS denial_observation_count,
-                        summary.data_count AS data_observation_count,
-                        %s AS other_signaling_observation_count,
-                        %s AS signaling_observation_count,
-                        0 AS has_exact_definition
-                    FROM owned_systems owned
-                    JOIN radio_system system ON system.id = owned.radio_system_id
-                    JOIN p25_zero_local_fq_talkgroup_summary summary
-                      ON summary.radio_system_id = owned.radio_system_id
-                    WHERE ? = 'P25'
+                        channel.id AS channel_id, config.configuration_id,
+                        system.protocol_code,
+                        CASE system.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END AS protocol,
+                        config.address_domain_code, 'TRUNKED' AS topology,
+                        nullif(trim(config.system_name), '') AS system_name,
+                        coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS channel_names,
+                        system.p25_wacn AS wacn, system.p25_system_id AS system_id,
+                        config.primary_frequency_hz AS frequency_hz, NULL AS timeslot,
+                        identity.identity_id AS native_id,
+                        identity.identity_id AS group_identity_id,
+                        identity.identity_kind_code AS group_identity_kind_code,
+                        %s AS identity_key,
+                        min(calls.bucket_start_ms) AS first_seen_ms,
+                        max(calls.bucket_start_ms) AS last_seen_ms,
+                        sum(calls.logical_call_count) AS logical_call_count,
+                        sum(calls.recorded_output_count) AS recorded_logical_call_count,
+                        sum(calls.streamed_output_count) AS stream_submitted_logical_call_count,
+                        sum(calls.encrypted_logical_call_count) AS encrypted_logical_call_count,
+                        NULL AS signaling_observation_count,
+                        EXISTS (SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
+                            WHERE definition.alias_list_id = ? AND definition.matcher_type = 'TALKGROUP'
+                              AND definition.value = identity.identity_id
+                              AND definition.protocol = CASE system.protocol_code WHEN 3 THEN 'DMR' ELSE 'NXDN' END)
+                            AS has_exact_definition
+                    FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
+                    JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
+                    JOIN radio_system system ON system.id = channel.radio_system_id
+                    JOIN trunked_logical_call_identity_bucket calls ON calls.radio_system_id = system.id
+                      AND calls.identity_role_code = 1
+                    JOIN radio_system_identity_summary identity ON identity.id = calls.identity_summary_id
+                      AND identity.radio_system_id = calls.radio_system_id
+                    WHERE config.alias_list_id = ? AND system.protocol_code = %d
+                      AND system.protocol_code IN (3, 4) AND identity.identity_kind_code IN (1, 3)
+                    GROUP BY channel.id, identity.id
 
                     UNION ALL
 
                     SELECT ? AS alias_list_id, ? AS alias_list_name, ? AS family,
                         NULL AS radio_system_id, NULL AS radio_system_key,
                         channel.id AS channel_id, config.configuration_id,
-                        CASE config.decoder_type WHEN 'DMR' THEN 3 WHEN 'NXDN' THEN 4 ELSE 1 END
-                            AS protocol_code,
-                        CASE config.decoder_type WHEN 'DMR' THEN 'DMR' WHEN 'NXDN' THEN 'NXDN'
-                            ELSE 'P25' END AS protocol,
-                        0 AS address_domain_code,
-                        0 AS p25_identity_state_code, NULL AS p25_home_wacn,
-                        NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id,
-                        'CONVENTIONAL' AS topology,
-                        coalesce(nullif(trim(config.system_name), ''), nullif(trim(config.name), ''),
-                            config.configuration_id) AS system_name,
+                        %d AS protocol_code, ? AS protocol,
+                        config.address_domain_code, 'CONVENTIONAL' AS topology,
+                        coalesce(nullif(trim(config.system_name), ''), nullif(trim(config.name), '')) AS system_name,
                         nullif(trim(config.name), '') AS channel_names,
-                        NULL AS wacn, NULL AS system_id, NULL AS network_id,
-                        config.primary_frequency_hz AS frequency_hz,
+                        NULL AS wacn, NULL AS system_id, config.primary_frequency_hz AS frequency_hz,
                         CASE WHEN config.decoder_type = 'DMR' THEN (
-                            SELECT CASE WHEN count(DISTINCT detail.timeslot) = 1
-                                THEN min(detail.timeslot) END
+                            SELECT CASE WHEN count(DISTINCT detail.timeslot) = 1 THEN min(detail.timeslot) END
                             FROM dmr_conventional_talkgroup_summary detail
-                            WHERE detail.channel_id = channel.id
-                              AND detail.talkgroup_id = bucket.identity_id) END AS timeslot,
-                        CASE WHEN config.primary_frequency_hz IS NULL THEN 0 ELSE 1 END AS frequency_count,
-                        CASE WHEN config.decoder_type = 'DMR' THEN (
-                            SELECT count(DISTINCT detail.timeslot)
-                            FROM dmr_conventional_talkgroup_summary detail
-                            WHERE detail.channel_id = channel.id
-                              AND detail.talkgroup_id = bucket.identity_id) END AS timeslot_count,
-                        bucket.identity_id AS group_identity_id,
-                        bucket.identity_kind_code AS group_identity_kind_code,
-                        CASE bucket.identity_kind_code WHEN 3 THEN 'Patch Group'
-                            ELSE 'Talkgroup' END AS group_identity_kind_label,
+                            WHERE detail.channel_id = channel.id AND detail.talkgroup_id = bucket.identity_id) END,
+                        bucket.identity_id AS native_id, bucket.identity_id AS group_identity_id,
+                        bucket.identity_kind_code AS group_identity_kind_code, NULL AS identity_key,
                         min(bucket.bucket_start_ms) AS first_seen_ms,
                         max(bucket.bucket_start_ms) AS last_seen_ms,
                         sum(bucket.call_count) AS logical_call_count,
                         sum(bucket.recorded_count) AS recorded_logical_call_count,
                         sum(bucket.streamed_count) AS stream_submitted_logical_call_count,
                         sum(bucket.encrypted_count) AS encrypted_logical_call_count,
-                        NULL AS grant_observation_count, NULL AS join_observation_count,
-                        NULL AS emergency_observation_count, NULL AS register_observation_count,
-                        NULL AS logout_observation_count, NULL AS denial_observation_count,
-                        NULL AS data_observation_count, NULL AS other_signaling_observation_count,
                         NULL AS signaling_observation_count,
-                        EXISTS (
-                            SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
-                            WHERE definition.alias_list_id = ?
-                              AND definition.matcher_type = 'TALKGROUP'
+                        EXISTS (SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
+                            WHERE definition.alias_list_id = ? AND definition.matcher_type = 'TALKGROUP'
                               AND definition.value = bucket.identity_id
-                              AND ((config.decoder_type LIKE 'P25%%'
-                                      AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
-                                OR (config.decoder_type = 'DMR' AND definition.protocol = 'DMR')
-                                OR (config.decoder_type = 'NXDN' AND definition.protocol = 'NXDN'))
-                        ) AS has_exact_definition
+                              AND ((%d = 1 AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
+                                OR (%d = 3 AND definition.protocol = 'DMR')
+                                OR (%d = 4 AND definition.protocol = 'NXDN'))) AS has_exact_definition
                     FROM conventional_call_identity_bucket bucket
                     JOIN receiver_channel channel ON channel.id = bucket.channel_id
-                    JOIN configuration_channel config
-                      ON config.configuration_id = channel.configuration_id
-                    WHERE config.channel_kind = 'CONVENTIONAL' AND config.alias_list_id = ?
-                      AND bucket.identity_role_code = 1
+                    JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+                    WHERE config.alias_list_id = ? AND config.channel_kind = 'CONVENTIONAL'
+                      AND %s AND bucket.identity_role_code = 1
                       AND bucket.identity_kind_code IN (1, 3)
-                      AND ((? = 'P25' AND config.decoder_type LIKE 'P25%%')
-                        OR (? = 'DMR' AND config.decoder_type = 'DMR')
-                        OR (? = 'NXDN' AND config.decoder_type = 'NXDN'))
-                    GROUP BY channel.id, config.configuration_id, config.system_name, config.name,
-                        config.decoder_type, config.primary_frequency_hz,
-                        bucket.identity_kind_code, bucket.identity_id
-                )
-                SELECT * FROM observed WHERE 1 = 1
-                """.formatted(OTHER_GROUP_IDENTITY_SIGNALING_COUNT_SQL, GROUP_IDENTITY_SIGNALING_COUNT_SQL,
-                    OTHER_GROUP_IDENTITY_SIGNALING_COUNT_SQL, GROUP_IDENTITY_SIGNALING_COUNT_SQL));
+                    GROUP BY channel.id, bucket.identity_kind_code, bucket.identity_id
+                ) SELECT * FROM observed WHERE 1 = 1
+                """.formatted(IDENTITY_KEY_SQL.formatted("identity"),
+                    IDENTITY_KEY_SQL.formatted("identity"), protocolCode, protocolCode,
+                    protocolCode, protocolCode, protocolCode, decoderPredicate));
             List<Object> parameters = new ArrayList<>(List.of(
-                aliasListId,
-                aliasListId, aliasListName, family, aliasListId,
-                family, family, family,
-                aliasListId, aliasListName, family,
-                aliasListId, aliasListName, family, aliasListId,
-                aliasListId, family, family, family));
+                aliasListId, aliasListName, family, aliasListId, aliasListId,
+                aliasListId, aliasListName, family, aliasListId, aliasListId,
+                aliasListId, aliasListName, family, family, aliasListId, aliasListId));
 
             if(!includeExact)
             {
@@ -1044,17 +987,14 @@ class StatsWebDatabase
                        coalesce(radio_system_key, '') || ' ' || coalesce(configuration_id, '') || ' ' ||
                        protocol || ' ' || topology || ' ' || group_identity_kind_label || ' ' ||
                        CAST(group_identity_id AS TEXT) || ' ' ||
-                       coalesce(CAST(p25_home_wacn AS TEXT), '') || ' ' ||
-                       coalesce(CAST(p25_home_system_id AS TEXT), '') || ' ' ||
-                       coalesce(CAST(p25_home_talkgroup_id AS TEXT), '')) LIKE ?
+                       coalesce(identity_key, '') || ' ' || coalesce(CAST(native_id AS TEXT), '')) LIKE ?
                     """);
                 parameters.add(like(request.search()));
             }
 
             sql.append(" ORDER BY ").append(order(request, OBSERVED_GROUP_IDENTITY_SORT_COLUMNS, "last_seen"))
                 .append(", topology, protocol_code, coalesce(radio_system_key, configuration_id), ")
-                .append("group_identity_kind_code, group_identity_id, p25_home_wacn, p25_home_system_id, ")
-                .append("p25_home_talkgroup_id LIMIT ? OFFSET ?");
+                .append("group_identity_kind_code, group_identity_id, identity_key LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             ObservedGroupIdentityQuery query = new ObservedGroupIdentityQuery(sql.toString(), parameters);
             queryObserver.accept(query);
@@ -1669,8 +1609,11 @@ class StatsWebDatabase
                         FROM receiver_channel channel
                         JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
                         WHERE channel.radio_system_id = system.id) AS network_id,
-                    summary.identity_id AS group_identity_id,
+                    summary.id AS identity_summary_id,
+                    summary.identity_id AS native_id,
                     summary.identity_kind_code AS group_identity_kind_code,
+                    summary.home_wacn, summary.home_system_id,
+                    %s AS identity_key,
                     summary.first_seen_ms, summary.last_seen_ms,
                     summary.logical_call_count,
                     summary.encrypted_logical_call_count,
@@ -1681,27 +1624,26 @@ class StatsWebDatabase
                         FROM p25_site_call_identity_bucket site_calls
                         WHERE site_calls.radio_system_id = summary.radio_system_id
                           AND site_calls.identity_role_code = 1
-                          AND site_calls.identity_kind_code = summary.identity_kind_code
-                          AND site_calls.identity_id = summary.identity_id
+                          AND site_calls.identity_summary_id = summary.id
                     ), 0) ELSE summary.logical_call_count END AS channel_observation_count,
                     %s AS signaling_observation_count
                 FROM radio_system_identity_summary summary
                 JOIN radio_system system ON system.id = summary.radio_system_id
                 WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
-                """.formatted(GROUP_IDENTITY_SIGNALING_COUNT_SQL));
+                """.formatted(IDENTITY_KEY_SQL.formatted("summary"),
+                GROUP_IDENTITY_SIGNALING_COUNT_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
         addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
         sql.append(" ORDER BY ").append(order(request, GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        enrichRadioSystemGroupIdentities(connection, rows, "group_identity_id", "alias_");
+        enrichRadioSystemGroupIdentities(connection, rows, "native_id", "alias_");
 
         for(Map<String,Object> row: rows)
         {
             int kind = (int)number(row.get("group_identity_kind_code"));
-            int identifier = (int)number(row.get("group_identity_id"));
-            WebEntityRef.put(row, identityReference(row, kind, identifier));
+            WebEntityRef.put(row, identityReference(row, kind, textValue(row.get("identity_key"))));
         }
 
         return rows;
@@ -1727,9 +1669,9 @@ class StatsWebDatabase
             FROM radio_system_identity_summary summary
             JOIN radio_system system ON system.id = summary.radio_system_id
             LEFT JOIN trunked_radio_affiliation affiliation
-              ON affiliation.radio_system_id = system.id AND affiliation.radio_id = summary.identity_id
+              ON affiliation.radio_system_id = system.id AND affiliation.radio_identity_id = summary.id
             LEFT JOIN trunked_radio_channel_presence presence
-              ON presence.radio_system_id = system.id AND presence.radio_id = summary.identity_id
+              ON presence.radio_system_id = system.id AND presence.radio_identity_id = summary.id
             LEFT JOIN receiver_channel presence_channel ON presence_channel.id = presence.channel_id
             LEFT JOIN configuration_channel presence_config
               ON presence_config.configuration_id = presence_channel.configuration_id
@@ -1737,7 +1679,7 @@ class StatsWebDatabase
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
         addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
-        addRadioFilters(sql, parameters, request, "affiliation.radio_id IS NOT NULL");
+        addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -1759,44 +1701,40 @@ class StatsWebDatabase
                         FROM receiver_channel channel
                         JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
                         WHERE channel.radio_system_id = system.id) AS network_id,
-                    %s, summary.identity_id AS radio_id,
-                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
-                        THEN summary.last_counterpart_id END AS last_group_identity_id,
-                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
-                        THEN summary.last_counterpart_kind_code END AS last_group_identity_kind_code,
-                    affiliation.talkgroup_id AS affiliated_talkgroup_id,
+                    %s,
+                    affiliated_group.identity_id AS affiliated_talkgroup_id,
+                    %s AS affiliated_talkgroup_identity_key,
                     affiliation.confirmed_at_ms AS affiliation_confirmed_at_ms,
-                    CASE WHEN affiliation.radio_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
+                    CASE WHEN affiliation.radio_identity_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
                     %s
                 FROM radio_system_identity_summary summary
                 JOIN radio_system system ON system.id = summary.radio_system_id
                 LEFT JOIN trunked_radio_affiliation affiliation
-                  ON affiliation.radio_system_id = system.id AND affiliation.radio_id = summary.identity_id
+                  ON affiliation.radio_system_id = system.id AND affiliation.radio_identity_id = summary.id
+                LEFT JOIN radio_system_identity_summary affiliated_group
+                  ON affiliated_group.id = affiliation.talkgroup_identity_id
+                 AND affiliated_group.radio_system_id = affiliation.radio_system_id
                 %s
                 WHERE system.system_key = ? AND summary.identity_kind_code = 2
-                """.formatted(TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL, radioPresenceSelect(),
-            radioPresenceJoins("summary.identity_id")));
+                """.formatted(TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL,
+            IDENTITY_KEY_SQL.formatted("affiliated_group"), radioPresenceSelect(),
+            radioPresenceJoins("summary.id")));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
         addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
-        addRadioFilters(sql, parameters, request, "affiliation.radio_id IS NOT NULL");
+        addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        enrichRadioSystemRadios(connection, rows, "radio_id", "alias_");
-        enrichRadioSystemGroupIdentities(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
-        enrichRadioSystemGroupIdentities(connection, rows, "last_group_identity_id", "last_group_identity_alias_");
+        enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
         nestRadioPresence(rows);
 
         for(Map<String,Object> row: rows)
         {
             WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
-                (int)number(row.get("radio_id"))));
+                textValue(row.get("identity_key"))));
             WebEntityRef.put(row, "affiliated_talkgroup_entity_ref", identityReference(row,
-                IDENTITY_KIND_TALKGROUP, (int)number(row.get("affiliated_talkgroup_id"))));
-            WebEntityRef.put(row, "last_group_identity_entity_ref", identityReference(row,
-                (int)number(row.get("last_group_identity_kind_code")),
-                (int)number(row.get("last_group_identity_id"))));
+                IDENTITY_KIND_TALKGROUP, textValue(row.get("affiliated_talkgroup_identity_key"))));
         }
 
         return rows;
@@ -1831,7 +1769,7 @@ class StatsWebDatabase
     {
         return """
             LEFT JOIN trunked_radio_channel_presence presence
-              ON presence.radio_system_id = system.id AND presence.radio_id = %s
+              ON presence.radio_system_id = system.id AND presence.radio_identity_id = %s
             LEFT JOIN receiver_channel presence_channel ON presence_channel.id = presence.channel_id
             LEFT JOIN p25_site_snapshot presence_p25
               ON system.protocol_code = 1 AND presence_p25.channel_id = presence_channel.id
@@ -1935,11 +1873,7 @@ class StatsWebDatabase
                         FROM receiver_channel channel
                         JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
                         WHERE channel.radio_system_id = system.id)) AS system_id,
-                    %s, summary.identity_id AS radio_id,
-                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
-                        THEN summary.last_counterpart_id END AS last_group_identity_id,
-                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
-                        THEN summary.last_counterpart_kind_code END AS last_group_identity_kind_code
+                    %s
                 FROM radio_system_identity_summary summary
                 JOIN radio_system system ON system.id = summary.radio_system_id
                 WHERE system.system_key = ? AND summary.identity_kind_code = 2
@@ -1954,17 +1888,12 @@ class StatsWebDatabase
                 .append(", summary.identity_id LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichRadioSystemRadios(connection, rows, "radio_id", "alias_");
-            enrichRadioSystemGroupIdentities(connection, rows, "last_group_identity_id",
-                "last_group_identity_alias_");
+            enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
 
             for(Map<String,Object> row: rows)
             {
                 WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
-                    (int)number(row.get("radio_id"))));
-                WebEntityRef.put(row, "last_group_identity_entity_ref", identityReference(row,
-                    (int)number(row.get("last_group_identity_kind_code")),
-                    (int)number(row.get("last_group_identity_id"))));
+                    textValue(row.get("identity_key"))));
             }
 
             Map<String,Object> response = page(rows, request);
@@ -1989,13 +1918,16 @@ class StatsWebDatabase
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
-    Map<String,Object> radioSystemGroupIdentity(String radioSystemKey, String kind, int groupIdentity)
+    Map<String,Object> radioSystemGroupIdentity(String radioSystemKey, String identityKey)
     {
-        int identityKind = groupIdentityKindCode(kind);
+        RadioSystemIdentityKey.Identity identity = parseIdentityKey(identityKey, Set.of(
+            IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP), "identity_key");
+        int identityKind = identity.kindCode();
+        int groupIdentity = identity.identityId();
 
         return readSnapshot(connection -> {
             Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
-            requireValidIdentity(radioSystem, identityKind, groupIdentity, "Group identity not found");
+            requireCompatibleIdentity(radioSystem, identity, "Group identity not found");
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
@@ -2006,64 +1938,96 @@ class StatsWebDatabase
                         FROM receiver_channel channel
                         JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
                         WHERE channel.radio_system_id = system.id)) AS system_id,
-                    %s, summary.identity_id AS group_identity_id,
+                    %s,
                     summary.identity_kind_code AS group_identity_kind_code,
-                    CASE WHEN summary.last_counterpart_kind_code = 2
-                        THEN summary.last_counterpart_id END AS last_source_radio_id,
                     (SELECT COUNT(*) FROM trunked_radio_group_summary relationship
                         WHERE relationship.radio_system_id = summary.radio_system_id
-                          AND relationship.group_id = summary.identity_id
+                          AND relationship.group_identity_id = summary.id
                           AND relationship.group_kind_code = summary.identity_kind_code) AS radios,
                     (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
                         WHERE summary.identity_kind_code = 1
                           AND affiliation.radio_system_id = summary.radio_system_id
-                          AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_radios,
+                          AND affiliation.talkgroup_identity_id = summary.id) AS affiliated_radios,
                     (SELECT COUNT(DISTINCT presence.channel_id)
                       FROM trunked_radio_affiliation affiliation
                       JOIN trunked_radio_channel_presence presence
                         ON presence.radio_system_id = affiliation.radio_system_id
-                       AND presence.radio_id = affiliation.radio_id
+                       AND presence.radio_identity_id = affiliation.radio_identity_id
                       WHERE summary.identity_kind_code = 1
                         AND affiliation.radio_system_id = summary.radio_system_id
-                        AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_channels,
+                        AND affiliation.talkgroup_identity_id = summary.id) AS affiliated_channels,
                     CASE WHEN system.protocol_code = 1 THEN coalesce((
                         SELECT SUM(site_calls.observed_call_count)
                         FROM p25_site_call_identity_bucket site_calls
                         WHERE site_calls.radio_system_id = summary.radio_system_id
                           AND site_calls.identity_role_code = 1
-                          AND site_calls.identity_kind_code = summary.identity_kind_code
-                          AND site_calls.identity_id = summary.identity_id
+                          AND site_calls.identity_summary_id = summary.id
                     ), 0) ELSE summary.logical_call_count END AS channel_observation_count
                 FROM radio_system_identity_summary summary
                 JOIN radio_system system ON system.id = summary.radio_system_id
-                WHERE system.system_key = ? AND summary.identity_kind_code = ? AND summary.identity_id = ?
-                """.formatted(TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL), radioSystemKey, identityKind, groupIdentity);
-            enrichRadioSystemGroupIdentities(connection, rows, "group_identity_id", "alias_");
+                WHERE system.system_key = ? AND summary.identity_kind_code = ?
+                  AND summary.home_wacn = ? AND summary.home_system_id = ? AND summary.identity_id = ?
+                """.formatted(TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL), radioSystemKey, identityKind,
+                identity.homeWacn(), identity.homeSystemId(), groupIdentity);
+            enrichRadioSystemGroupIdentities(connection, rows, "native_id", "alias_");
             enrichSummaryEncryption(rows);
-            Map<String,Object> row = rows.isEmpty() ? emptyIdentity(radioSystem, identityKind, groupIdentity) :
-                rows.getFirst();
-
             if(rows.isEmpty())
             {
-                enrichRadioSystemGroupIdentities(connection, List.of(row), "group_identity_id", "alias_");
+                rows = List.of(unobservedGroupIdentity(radioSystem, identityKey, identity));
+                enrichRadioSystemGroupIdentities(connection, rows, "native_id", "alias_");
             }
+            Map<String,Object> row = rows.getFirst();
 
             row.put("capabilities", groupIdentityCapabilities((int)number(row.get("protocol_code")),
                 (int)number(row.get("group_identity_kind_code"))));
             WebEntityRef.put(row, identityKind == IDENTITY_KIND_PATCH_GROUP ?
-                WebEntityRef.patchGroup(radioSystemKey, groupIdentity) :
-                WebEntityRef.talkgroup(radioSystemKey, groupIdentity));
+                WebEntityRef.patchGroup(radioSystemKey, identityKey) :
+                WebEntityRef.talkgroup(radioSystemKey, identityKey));
             WebEntityRef.put(row, "radio_system_entity_ref", WebEntityRef.radioSystem(radioSystemKey));
-            WebEntityRef.put(row, "last_source_entity_ref", identityReference(row, IDENTITY_KIND_RADIO,
-                (int)number(row.get("last_source_radio_id"))));
             return Map.of("group_identity", row);
         });
     }
 
-    Map<String,Object> radioSystemGroupIdentityActivity(String radioSystemKey, String kind, int groupIdentity,
+    /** A valid configured Alias can be opened before the receiver has retained activity for it. */
+    private static Map<String,Object> unobservedGroupIdentity(Map<String,Object> radioSystem, String identityKey,
+                                                               RadioSystemIdentityKey.Identity identity)
+    {
+        Map<String,Object> row = new LinkedHashMap<>();
+        for(String field: List.of("radio_system_id", "radio_system_key", "protocol_code", "address_domain_code",
+            "protocol", "wacn", "system_id", "network_id", "system_name"))
+        {
+            if(radioSystem.get(field) != null)
+            {
+                row.put(field, radioSystem.get(field));
+            }
+        }
+        row.put("identity_key", identityKey);
+        row.put("native_id", identity.identityId());
+        row.put("group_identity_kind_code", identity.kindCode());
+        row.put("logical_call_count", 0L);
+        row.put("source_logical_call_count", 0L);
+        row.put("target_logical_call_count", 0L);
+        row.put("encrypted_logical_call_count", 0L);
+        row.put("recorded_logical_call_count", 0L);
+        row.put("stream_submitted_logical_call_count", 0L);
+        row.put("signaling_observation_count", 0L);
+        row.put("radios", 0L);
+        row.put("affiliated_radios", 0L);
+        row.put("affiliated_channels", 0L);
+        row.put("channel_observation_count", 0L);
+        for(String field: GROUP_IDENTITY_SIGNALING_FIELDS)
+        {
+            row.put(observationCountField(field), 0L);
+        }
+        return row;
+    }
+
+    Map<String,Object> radioSystemGroupIdentityActivity(String radioSystemKey, String identityKey,
                                                          StatsRequest request)
     {
-        int identityKind = groupIdentityKindCode(kind);
+        RadioSystemIdentityKey.Identity identity = parseIdentityKey(identityKey, Set.of(
+            IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP), "identity_key");
+        int identityKind = identity.kindCode();
         ActivityRange requestedRange = activityRange(request);
         long rangeMilliseconds = requestedRange.milliseconds();
         long sourceBuckets = Math.max(1, (rangeMilliseconds + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
@@ -2078,7 +2042,9 @@ class StatsWebDatabase
 
         return read(connection -> {
             Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
-            requireValidIdentity(radioSystem, identityKind, groupIdentity, "Group identity not found");
+            requireCompatibleIdentity(radioSystem, identity, "Group identity not found");
+            long summaryId = requireIdentitySummaryId(connection, number(radioSystem.get("radio_system_id")),
+                identity, "Group identity not found");
             List<Map<String,Object>> stored = queryRows(connection, """
                 SELECT CAST(bucket.bucket_start_ms / ? AS INTEGER) * ? AS time_ms,
                     SUM(bucket.logical_call_count) AS logical_call_count,
@@ -2087,13 +2053,13 @@ class StatsWebDatabase
                     SUM(bucket.streamed_output_count) AS stream_submitted_logical_call_count
                 FROM trunked_logical_call_identity_bucket bucket
                 WHERE bucket.radio_system_id = ? AND bucket.identity_role_code = ?
-                    AND bucket.identity_kind_code = ? AND bucket.identity_id = ?
+                    AND bucket.identity_summary_id = ?
                     AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
                 GROUP BY time_ms
                 ORDER BY time_ms
                 LIMIT ?
                 """, bucketMilliseconds, bucketMilliseconds, radioSystem.get("radio_system_id"),
-                IDENTITY_ROLE_DESTINATION, identityKind, groupIdentity, fromMilliseconds, untilMilliseconds,
+                IDENTITY_ROLE_DESTINATION, summaryId, fromMilliseconds, untilMilliseconds,
                 pointCount + 1);
 
             if(stored.size() > pointCount)
@@ -2139,8 +2105,8 @@ class StatsWebDatabase
             List<Map<String,Object>> summary = queryRows(connection, """
                 SELECT *
                 FROM radio_system_identity_summary
-                WHERE radio_system_id = ? AND identity_kind_code = ? AND identity_id = ?
-                """, radioSystem.get("radio_system_id"), identityKind, groupIdentity);
+                WHERE id = ? AND radio_system_id = ?
+                """, summaryId, radioSystem.get("radio_system_id"));
 
             if(!summary.isEmpty())
             {
@@ -2162,11 +2128,14 @@ class StatsWebDatabase
         });
     }
 
-    Map<String,Object> radio(String radioSystemKey, int radio)
+    Map<String,Object> radio(String radioSystemKey, String identityKey)
     {
+        RadioSystemIdentityKey.Identity identity = parseIdentityKey(identityKey,
+            Set.of(IDENTITY_KIND_RADIO), "identity_key");
+        int radio = identity.identityId();
         return readSnapshot(connection -> {
             Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
-            requireValidIdentity(radioSystem, IDENTITY_KIND_RADIO, radio, "Radio not found");
+            requireCompatibleIdentity(radioSystem, identity, "Radio not found");
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
@@ -2177,94 +2146,81 @@ class StatsWebDatabase
                         FROM receiver_channel channel
                         JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
                         WHERE channel.radio_system_id = system.id)) AS system_id,
-                    %s, summary.identity_id AS radio_id,
-                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
-                        THEN summary.last_counterpart_id END AS last_group_identity_id,
-                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
-                        THEN summary.last_counterpart_kind_code END AS last_group_identity_kind_code,
-                    CASE WHEN summary.last_counterpart_kind_code = 2
-                        THEN summary.last_counterpart_id END AS last_peer_radio_id,
-                    affiliation.talkgroup_id AS affiliated_talkgroup_id,
+                    %s,
+                    affiliated_group.identity_id AS affiliated_talkgroup_id,
+                    %s AS affiliated_talkgroup_identity_key,
                     affiliation.confirmed_at_ms AS affiliation_confirmed_at_ms,
-                    CASE WHEN affiliation.radio_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
+                    CASE WHEN affiliation.radio_identity_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
                     (SELECT COUNT(*) FROM trunked_radio_group_summary relationship
                         WHERE relationship.radio_system_id = summary.radio_system_id
-                          AND relationship.radio_id = summary.identity_id) AS groups,
+                          AND relationship.radio_identity_id = summary.id) AS groups,
                     %s
                 FROM radio_system_identity_summary summary
                 JOIN radio_system system ON system.id = summary.radio_system_id
                 LEFT JOIN trunked_radio_affiliation affiliation
-                  ON affiliation.radio_system_id = system.id AND affiliation.radio_id = summary.identity_id
+                  ON affiliation.radio_system_id = system.id AND affiliation.radio_identity_id = summary.id
+                LEFT JOIN radio_system_identity_summary affiliated_group
+                  ON affiliated_group.id = affiliation.talkgroup_identity_id
+                 AND affiliated_group.radio_system_id = affiliation.radio_system_id
                 %s
-                WHERE system.system_key = ? AND summary.identity_kind_code = 2 AND summary.identity_id = ?
-                """.formatted(TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL, radioPresenceSelect(),
-                radioPresenceJoins("summary.identity_id")), radioSystemKey, radio);
-            enrichRadioSystemRadios(connection, rows, "radio_id", "alias_");
-            enrichRadioSystemGroupIdentities(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
-            enrichRadioSystemGroupIdentities(connection, rows, "last_group_identity_id",
-                "last_group_identity_alias_");
-            enrichRadioSystemRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
+                WHERE system.system_key = ? AND summary.identity_kind_code = 2
+                  AND summary.home_wacn = ? AND summary.home_system_id = ? AND summary.identity_id = ?
+                """.formatted(TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL,
+                IDENTITY_KEY_SQL.formatted("affiliated_group"), radioPresenceSelect(),
+                radioPresenceJoins("summary.id")), radioSystemKey, identity.homeWacn(),
+                identity.homeSystemId(), radio);
+            enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
             enrichSummaryEncryption(rows);
             nestRadioPresence(rows);
-            Map<String,Object> row = rows.isEmpty() ? emptyIdentity(radioSystem, IDENTITY_KIND_RADIO, radio) :
-                rows.getFirst();
-
             if(rows.isEmpty())
             {
-                row.put("groups", 0L);
-                row.put("currently_affiliated", 0);
-                enrichRadioSystemRadios(connection, List.of(row), "radio_id", "alias_");
+                throw new StatsApiException(404, "Radio not found");
             }
+            Map<String,Object> row = rows.getFirst();
 
             row.put("capabilities", radioSystemCapabilities((int)number(row.get("protocol_code"))));
-            WebEntityRef.put(row, WebEntityRef.radio(radioSystemKey, radio));
+            WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
+                textValue(row.get("identity_key"))));
             WebEntityRef.put(row, "radio_system_entity_ref", WebEntityRef.radioSystem(radioSystemKey));
             WebEntityRef.put(row, "affiliated_talkgroup_entity_ref", identityReference(row,
-                IDENTITY_KIND_TALKGROUP, (int)number(row.get("affiliated_talkgroup_id"))));
-            WebEntityRef.put(row, "last_group_identity_entity_ref", identityReference(row,
-                (int)number(row.get("last_group_identity_kind_code")),
-                (int)number(row.get("last_group_identity_id"))));
-            WebEntityRef.put(row, "last_peer_entity_ref", identityReference(row, IDENTITY_KIND_RADIO,
-                (int)number(row.get("last_peer_radio_id"))));
+                IDENTITY_KIND_TALKGROUP, textValue(row.get("affiliated_talkgroup_identity_key"))));
             return Map.of("radio", row);
         });
     }
 
     Map<String,Object> radioSystemRelationships(String radioSystemKey, StatsRequest request)
     {
-        Integer groupIdentity = request.optionalIdentifier("group_identity_id");
-        Integer radio = request.optionalIdentifier("radio_id");
-        String requestedKind = request.text("group_identity_kind");
+        String groupIdentityKey = request.text("group_identity_key");
+        String radioIdentityKey = request.text("radio_identity_key");
 
-        if(groupIdentity == null && radio == null)
+        if(groupIdentityKey == null && radioIdentityKey == null)
         {
-            throw new StatsApiException(400, "radio_id or group_identity_id is required");
-        }
-        else if(groupIdentity == null && requestedKind != null)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "group_identity_kind requires group_identity_id", "group_identity_kind");
-        }
-        else if(groupIdentity != null && requestedKind == null)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "group_identity_id requires group_identity_kind", "group_identity_kind");
+            throw new StatsApiException(400, "radio_identity_key or group_identity_key is required");
         }
 
-        int groupKind = groupIdentity != null ? groupIdentityKindCode(requestedKind) : IDENTITY_KIND_TALKGROUP;
+        RadioSystemIdentityKey.Identity groupIdentity = groupIdentityKey != null ?
+            parseIdentityKey(groupIdentityKey, Set.of(IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP),
+                "group_identity_key") : null;
+        RadioSystemIdentityKey.Identity radio = radioIdentityKey != null ?
+            parseIdentityKey(radioIdentityKey, Set.of(IDENTITY_KIND_RADIO), "radio_identity_key") : null;
 
         return readSnapshot(connection -> {
             Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
 
             if(groupIdentity != null)
             {
-                requireValidIdentity(radioSystem, groupKind, groupIdentity, "Group identity not found");
+                requireCompatibleIdentity(radioSystem, groupIdentity, "Group identity not found");
             }
 
             if(radio != null)
             {
-                requireValidIdentity(radioSystem, IDENTITY_KIND_RADIO, radio, "Radio not found");
+                requireCompatibleIdentity(radioSystem, radio, "Radio not found");
             }
+
+            Long groupSummaryId = groupIdentity != null ? requireIdentitySummaryId(connection,
+                number(radioSystem.get("radio_system_id")), groupIdentity, "Group identity not found") : null;
+            Long radioSummaryId = radio != null ? requireIdentitySummaryId(connection,
+                number(radioSystem.get("radio_system_id")), radio, "Radio not found") : null;
 
             StringBuilder sql = new StringBuilder("""
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
@@ -2276,8 +2232,12 @@ class StatsWebDatabase
                         FROM receiver_channel channel
                         JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
                         WHERE channel.radio_system_id = system.id)) AS system_id,
-                    relationship.radio_system_id, relationship.radio_id,
-                    relationship.group_id AS group_identity_id,
+                    relationship.radio_system_id, radio.identity_id AS radio_native_id,
+                    radio.id AS radio_identity_summary_id,
+                    %s AS radio_identity_key,
+                    group_identity.identity_id AS group_native_id,
+                    group_identity.id AS group_identity_summary_id,
+                    %s AS group_identity_key,
                     relationship.group_kind_code AS group_identity_kind_code,
                     relationship.first_seen_ms,
                     relationship.last_seen_ms, %s,
@@ -2288,48 +2248,55 @@ class StatsWebDatabase
                     %s
                 FROM trunked_radio_group_summary relationship
                 JOIN radio_system system ON system.id = relationship.radio_system_id
-                LEFT JOIN radio_system_identity_summary radio
+                JOIN radio_system_identity_summary radio
                   ON radio.radio_system_id = relationship.radio_system_id AND radio.identity_kind_code = 2
-                 AND radio.identity_id = relationship.radio_id
+                 AND radio.id = relationship.radio_identity_id
+                JOIN radio_system_identity_summary group_identity
+                  ON group_identity.radio_system_id = relationship.radio_system_id
+                 AND group_identity.identity_kind_code = relationship.group_kind_code
+                 AND group_identity.id = relationship.group_identity_id
                 LEFT JOIN trunked_radio_affiliation affiliation
                   ON affiliation.radio_system_id = relationship.radio_system_id
-                 AND affiliation.radio_id = relationship.radio_id
+                 AND affiliation.radio_identity_id = relationship.radio_identity_id
                 %s
                 WHERE system.system_key = ?
-                """.formatted(TRUNKED_RELATIONSHIP_METRIC_PROJECTION_SQL,
+                """.formatted(IDENTITY_KEY_SQL.formatted("radio"),
+                IDENTITY_KEY_SQL.formatted("group_identity"), TRUNKED_RELATIONSHIP_METRIC_PROJECTION_SQL,
                 CURRENT_RELATIONSHIP_AFFILIATION_SQL, radioPresenceSelect(),
-                radioPresenceJoins("relationship.radio_id")));
+                radioPresenceJoins("relationship.radio_identity_id")));
             List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-            addRelationshipIdentityFilters(sql, parameters, groupIdentity, groupKind, radio);
+            addRelationshipIdentityFilters(sql, parameters, groupSummaryId, radioSummaryId);
             addRadioFilters(sql, parameters, request, CURRENT_RELATIONSHIP_AFFILIATION_SQL);
 
             sql.append(" ORDER BY ").append(order(request, RELATIONSHIP_SORT_COLUMNS, "last_seen"))
-                .append(", relationship.group_kind_code, relationship.group_id, relationship.radio_id")
+                .append(", relationship.group_kind_code, group_identity.identity_id, radio.identity_id")
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichRadioSystemRadios(connection, rows, "radio_id", "radio_alias_");
-            enrichRadioSystemGroupIdentities(connection, rows, "group_identity_id", "group_identity_alias_");
+            enrichRadioSystemRadios(connection, rows, "radio_identity_summary_id", "radio_native_id",
+                "radio_alias_");
+            enrichRadioSystemGroupIdentities(connection, rows, "group_identity_summary_id",
+                "group_native_id", "group_identity_alias_");
             nestRadioPresence(rows);
 
             for(Map<String,Object> row: rows)
             {
                 WebEntityRef.put(row, "radio_entity_ref", identityReference(row, IDENTITY_KIND_RADIO,
-                    (int)number(row.get("radio_id"))));
+                    textValue(row.get("radio_identity_key"))));
                 WebEntityRef.put(row, "group_identity_entity_ref", identityReference(row,
                     (int)number(row.get("group_identity_kind_code")),
-                    (int)number(row.get("group_identity_id"))));
+                    textValue(row.get("group_identity_key"))));
             }
 
             Map<String,Object> response = page(rows, request);
-            response.put("total_count", countRadioGroupRelationships(connection, radioSystemKey, groupIdentity,
-                groupKind, radio, request));
+            response.put("total_count", countRadioGroupRelationships(connection, radioSystemKey, groupSummaryId,
+                radioSummaryId, request));
             return response;
         });
     }
 
-    private static long countRadioGroupRelationships(Connection connection, String systemKey, Integer groupIdentity,
-                                                      int groupKind, Integer radio, StatsRequest request)
+    private static long countRadioGroupRelationships(Connection connection, String systemKey, Long groupSummaryId,
+                                                      Long radioSummaryId, StatsRequest request)
         throws SQLException
     {
         StringBuilder sql = new StringBuilder("""
@@ -2338,34 +2305,34 @@ class StatsWebDatabase
             JOIN radio_system system ON system.id = relationship.radio_system_id
             LEFT JOIN trunked_radio_affiliation affiliation
               ON affiliation.radio_system_id = relationship.radio_system_id
-             AND affiliation.radio_id = relationship.radio_id
+             AND affiliation.radio_identity_id = relationship.radio_identity_id
             LEFT JOIN trunked_radio_channel_presence presence
-              ON presence.radio_system_id = relationship.radio_system_id AND presence.radio_id = relationship.radio_id
+              ON presence.radio_system_id = relationship.radio_system_id
+             AND presence.radio_identity_id = relationship.radio_identity_id
             LEFT JOIN receiver_channel presence_channel ON presence_channel.id = presence.channel_id
             LEFT JOIN configuration_channel presence_config
               ON presence_config.configuration_id = presence_channel.configuration_id
             WHERE system.system_key = ?
             """);
         List<Object> parameters = new ArrayList<>(List.of(systemKey));
-        addRelationshipIdentityFilters(sql, parameters, groupIdentity, groupKind, radio);
+        addRelationshipIdentityFilters(sql, parameters, groupSummaryId, radioSummaryId);
         addRadioFilters(sql, parameters, request, CURRENT_RELATIONSHIP_AFFILIATION_SQL);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     private static void addRelationshipIdentityFilters(StringBuilder sql, List<Object> parameters,
-                                                       Integer groupIdentity, int groupKind, Integer radio)
+                                                       Long groupSummaryId, Long radioSummaryId)
     {
-        if(groupIdentity != null)
+        if(groupSummaryId != null)
         {
-            sql.append(" AND relationship.group_id = ? AND relationship.group_kind_code = ?");
-            parameters.add(groupIdentity);
-            parameters.add(groupKind);
+            sql.append(" AND relationship.group_identity_id = ?");
+            parameters.add(groupSummaryId);
         }
 
-        if(radio != null)
+        if(radioSummaryId != null)
         {
-            sql.append(" AND relationship.radio_id = ?");
-            parameters.add(radio);
+            sql.append(" AND relationship.radio_identity_id = ?");
+            parameters.add(radioSummaryId);
         }
     }
 
@@ -2395,7 +2362,8 @@ class StatsWebDatabase
                 SELECT COUNT(*)
                 FROM trunked_radio_channel_presence presence
                 JOIN trunked_radio_affiliation affiliation
-                  ON affiliation.radio_system_id = presence.radio_system_id AND affiliation.radio_id = presence.radio_id
+                  ON affiliation.radio_system_id = presence.radio_system_id
+                 AND affiliation.radio_identity_id = presence.radio_identity_id
                 WHERE presence.channel_id = ?
                 """, configured.channelId()));
 
@@ -2642,8 +2610,18 @@ class StatsWebDatabase
             configured.channelId() != null)
         {
             groupedSql = """
-                SELECT bucket.identity_id AS group_identity_id,
-                    bucket.identity_kind_code AS group_identity_kind_code,
+                SELECT summary.id AS identity_summary_id,
+                    summary.identity_id AS native_id,
+                    summary.identity_kind_code AS group_identity_kind_code,
+                    %s AS identity_key,
+                    (SELECT latest.observed_local_id
+                     FROM p25_site_call_identity_bucket latest
+                     WHERE latest.radio_system_id = bucket.radio_system_id
+                       AND latest.channel_id = bucket.channel_id
+                       AND latest.identity_role_code = bucket.identity_role_code
+                       AND latest.identity_summary_id = bucket.identity_summary_id
+                     ORDER BY latest.last_observed_at_ms DESC, latest.bucket_start_ms DESC
+                     LIMIT 1) AS observed_local_id,
                     SUM(bucket.observed_call_count) AS logical_call_count,
                     SUM(bucket.encrypted_observed_call_count) AS encrypted_logical_call_count,
                     NULL AS recorded_logical_call_count, NULL AS stream_submitted_logical_call_count,
@@ -2651,22 +2629,26 @@ class StatsWebDatabase
                     MIN(bucket.bucket_start_ms) AS first_seen_ms,
                     MAX(bucket.bucket_start_ms) AS last_seen_ms
                 FROM p25_site_call_identity_bucket bucket
-                JOIN p25_learned_site learned ON learned.learned_site_id = bucket.learned_site_id
-                JOIN p25_site_snapshot snapshot ON snapshot.channel_id = ?
-                  AND snapshot.rfss = learned.rfss AND snapshot.site = learned.site
+                JOIN radio_system_identity_summary summary
+                  ON summary.id = bucket.identity_summary_id
+                 AND summary.radio_system_id = bucket.radio_system_id
                 WHERE bucket.radio_system_id = ?
+                  AND bucket.channel_id = ?
                   AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-                  AND bucket.identity_role_code = ? AND bucket.identity_kind_code IN (1, 3)
-                GROUP BY bucket.identity_kind_code, bucket.identity_id
-                """;
-            parameters.addAll(List.of(configured.channelId(), radioSystemId, fromMilliseconds,
+                  AND bucket.identity_role_code = ? AND summary.identity_kind_code IN (1, 3)
+                GROUP BY summary.id
+                """.formatted(IDENTITY_KEY_SQL.formatted("summary"));
+            parameters.addAll(List.of(radioSystemId, configured.channelId(), fromMilliseconds,
                 throughMilliseconds + HOUR_MILLISECONDS, IDENTITY_ROLE_DESTINATION));
         }
         else if(radioSystemId != null && configured.protocolCode() != StatsApiProtocol.P25.databaseCode())
         {
             groupedSql = """
-                SELECT bucket.identity_id AS group_identity_id,
-                    bucket.identity_kind_code AS group_identity_kind_code,
+                SELECT summary.id AS identity_summary_id,
+                    summary.identity_id AS native_id,
+                    summary.identity_id AS observed_local_id,
+                    summary.identity_kind_code AS group_identity_kind_code,
+                    %s AS identity_key,
                     SUM(bucket.logical_call_count) AS logical_call_count,
                     SUM(bucket.encrypted_logical_call_count) AS encrypted_logical_call_count,
                     SUM(bucket.recorded_output_count) AS recorded_logical_call_count,
@@ -2675,10 +2657,13 @@ class StatsWebDatabase
                     MIN(bucket.bucket_start_ms) AS first_seen_ms,
                     MAX(bucket.bucket_start_ms) AS last_seen_ms
                 FROM trunked_logical_call_identity_bucket bucket
+                JOIN radio_system_identity_summary summary
+                  ON summary.id = bucket.identity_summary_id
+                 AND summary.radio_system_id = bucket.radio_system_id
                 WHERE bucket.radio_system_id = ? AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-                  AND bucket.identity_role_code = ? AND bucket.identity_kind_code IN (1, 3)
-                GROUP BY bucket.identity_kind_code, bucket.identity_id
-                """;
+                  AND bucket.identity_role_code = ? AND summary.identity_kind_code IN (1, 3)
+                GROUP BY summary.id
+                """.formatted(IDENTITY_KEY_SQL.formatted("summary"));
             parameters.addAll(List.of(radioSystemId, fromMilliseconds,
                 throughMilliseconds + HOUR_MILLISECONDS, IDENTITY_ROLE_DESTINATION));
         }
@@ -2688,13 +2673,13 @@ class StatsWebDatabase
         }
 
         String aliasProjection = channelAliasProjection(configured, "alias_talkgroup",
-            "grouped.group_identity_id");
+            "grouped.observed_local_id");
         StringBuilder sql = new StringBuilder("WITH grouped AS (").append(groupedSql).append("), presented AS (")
             .append("SELECT grouped.*, ")
             .append(aliasProjection).append(" FROM grouped) SELECT * FROM presented");
-        addChannelIdentitySearch(sql, parameters, search, "group_identity_id");
+        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)");
         sql.append(" ORDER BY ").append(requestedOrder)
-            .append(", group_identity_kind_code ASC, group_identity_id ASC LIMIT ? OFFSET ?");
+            .append(", group_identity_kind_code ASC, native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
         removeMatchedAliasFields(rows);
@@ -2709,7 +2694,7 @@ class StatsWebDatabase
             row.put("alias_list_name", configured.aliasListName());
             WebEntityRef.put(row, identityReference(row,
                 (int)number(row.get("group_identity_kind_code")),
-                (int)number(row.get("group_identity_id"))));
+                textValue(row.get("identity_key"))));
         }
 
         enrichChannelGroupAliases(connection, configured.protocol(), rows);
@@ -3022,14 +3007,16 @@ class StatsWebDatabase
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
                     system.p25_wacn AS wacn, system.p25_system_id AS system_id,
-                    current.patch_group, current.version,
+                    current.local_patch_group_id, current.version,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count,
                     (SELECT COUNT(*) FROM p25_site_patch_group_talkgroup member
-                     WHERE member.channel_id = current.channel_id AND member.patch_group = current.patch_group)
+                     WHERE member.channel_id = current.channel_id
+                       AND member.local_patch_group_id = current.local_patch_group_id)
                         AS talkgroup_count,
                     (SELECT COUNT(*) FROM p25_site_patch_group_radio member
-                     WHERE member.channel_id = current.channel_id AND member.patch_group = current.patch_group)
+                     WHERE member.channel_id = current.channel_id
+                       AND member.local_patch_group_id = current.local_patch_group_id)
                         AS radio_count,
                     CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
                         THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
@@ -3037,8 +3024,9 @@ class StatsWebDatabase
                 JOIN receiver_channel channel ON channel.id = current.channel_id
                 JOIN radio_system system ON system.id = channel.radio_system_id
                 LEFT JOIN p25_site_patch_group_summary summary
-                  ON summary.channel_id = current.channel_id AND summary.patch_group = current.patch_group
-                WHERE current.channel_id = ? ORDER BY current.patch_group
+                  ON summary.channel_id = current.channel_id
+                 AND summary.local_patch_group_id = current.local_patch_group_id
+                WHERE current.channel_id = ? ORDER BY current.local_patch_group_id
                 LIMIT ? OFFSET ?
                 """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, configured.channelId(),
                 groupLimit + 1, offset);
@@ -3062,7 +3050,7 @@ class StatsWebDatabase
 
                 for(Map<String,Object> group: groups)
                 {
-                    talkgroupParameters.add(group.get("patch_group"));
+                    talkgroupParameters.add(group.get("local_patch_group_id"));
                 }
 
                 talkgroupParameters.add(MAXIMUM_PATCH_MEMBERS_PER_GROUP);
@@ -3071,31 +3059,33 @@ class StatsWebDatabase
                     WITH ranked AS (
                         SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                             system.protocol_code, system.address_domain_code AS address_domain_code,
-                            system.p25_wacn AS wacn, system.p25_system_id AS system_id, current.patch_group,
-                            current.talkgroup_id, current.confirmed_at_ms, summary.first_seen_ms,
+                            system.p25_wacn AS wacn, system.p25_system_id AS system_id,
+                            current.local_patch_group_id, current.local_talkgroup_id,
+                            current.confirmed_at_ms, summary.first_seen_ms,
                             summary.last_seen_ms, summary.observation_count,
-                            row_number() OVER (PARTITION BY current.patch_group
-                                ORDER BY current.talkgroup_id) AS member_rank
+                            row_number() OVER (PARTITION BY current.local_patch_group_id
+                                ORDER BY current.local_talkgroup_id) AS member_rank
                         FROM p25_site_patch_group_talkgroup current
                         JOIN receiver_channel channel ON channel.id = current.channel_id
                         JOIN radio_system system ON system.id = channel.radio_system_id
                         LEFT JOIN p25_site_patch_group_talkgroup_summary summary
-                          ON summary.channel_id = current.channel_id AND summary.patch_group = current.patch_group
-                            AND summary.talkgroup_id = current.talkgroup_id
-                        WHERE current.channel_id = ? AND current.patch_group IN (%s)
+                          ON summary.channel_id = current.channel_id
+                         AND summary.local_patch_group_id = current.local_patch_group_id
+                         AND summary.local_talkgroup_id = current.local_talkgroup_id
+                        WHERE current.channel_id = ? AND current.local_patch_group_id IN (%s)
                     )
                     SELECT radio_system_id, radio_system_key, protocol_code, address_domain_code,
-                        wacn, system_id, patch_group, talkgroup_id, confirmed_at_ms,
+                        wacn, system_id, local_patch_group_id, local_talkgroup_id, confirmed_at_ms,
                         first_seen_ms, last_seen_ms, observation_count
                     FROM ranked WHERE member_rank <= ?
-                    ORDER BY patch_group, talkgroup_id LIMIT ?
+                    ORDER BY local_patch_group_id, local_talkgroup_id LIMIT ?
                     """.formatted(placeholders), talkgroupParameters.toArray());
                 List<Object> radioParameters = new ArrayList<>();
                 radioParameters.add(configured.channelId());
 
                 for(Map<String,Object> group: groups)
                 {
-                    radioParameters.add(group.get("patch_group"));
+                    radioParameters.add(group.get("local_patch_group_id"));
                 }
 
                 radioParameters.add(MAXIMUM_PATCH_MEMBERS_PER_GROUP);
@@ -3104,24 +3094,26 @@ class StatsWebDatabase
                     WITH ranked AS (
                         SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                             system.protocol_code, system.address_domain_code AS address_domain_code,
-                            system.p25_wacn AS wacn, system.p25_system_id AS system_id, current.patch_group,
-                            current.radio_id, current.confirmed_at_ms, summary.first_seen_ms,
+                            system.p25_wacn AS wacn, system.p25_system_id AS system_id,
+                            current.local_patch_group_id, current.local_radio_id,
+                            current.confirmed_at_ms, summary.first_seen_ms,
                             summary.last_seen_ms, summary.observation_count,
-                            row_number() OVER (PARTITION BY current.patch_group
-                                ORDER BY current.radio_id) AS member_rank
+                            row_number() OVER (PARTITION BY current.local_patch_group_id
+                                ORDER BY current.local_radio_id) AS member_rank
                         FROM p25_site_patch_group_radio current
                         JOIN receiver_channel channel ON channel.id = current.channel_id
                         JOIN radio_system system ON system.id = channel.radio_system_id
                         LEFT JOIN p25_site_patch_group_radio_summary summary
-                          ON summary.channel_id = current.channel_id AND summary.patch_group = current.patch_group
-                            AND summary.radio_id = current.radio_id
-                        WHERE current.channel_id = ? AND current.patch_group IN (%s)
+                          ON summary.channel_id = current.channel_id
+                         AND summary.local_patch_group_id = current.local_patch_group_id
+                         AND summary.local_radio_id = current.local_radio_id
+                        WHERE current.channel_id = ? AND current.local_patch_group_id IN (%s)
                     )
                     SELECT radio_system_id, radio_system_key, protocol_code, address_domain_code,
-                        wacn, system_id, patch_group, radio_id, confirmed_at_ms,
+                        wacn, system_id, local_patch_group_id, local_radio_id, confirmed_at_ms,
                         first_seen_ms, last_seen_ms, observation_count
                     FROM ranked WHERE member_rank <= ?
-                    ORDER BY patch_group, radio_id LIMIT ?
+                    ORDER BY local_patch_group_id, local_radio_id LIMIT ?
                     """.formatted(placeholders), radioParameters.toArray());
 
                 talkgroupsTruncated = talkgroups.size() > MAXIMUM_PATCH_MEMBER_ROWS;
@@ -3138,13 +3130,16 @@ class StatsWebDatabase
                 }
             }
 
-            mAliasResolver.enrichTalkgroups(connection, groups, "patch_group", "patch_alias_");
-            mAliasResolver.enrichTalkgroups(connection, talkgroups, "talkgroup_id", "alias_");
-            mAliasResolver.enrichRadios(connection, radios, "radio_id", "alias_");
+            groups.forEach(row -> row.put("alias_list_id", configured.aliasListId()));
+            talkgroups.forEach(row -> row.put("alias_list_id", configured.aliasListId()));
+            radios.forEach(row -> row.put("alias_list_id", configured.aliasListId()));
+            mAliasResolver.enrichTalkgroups(connection, groups, "local_patch_group_id", "patch_alias_");
+            mAliasResolver.enrichTalkgroups(connection, talkgroups, "local_talkgroup_id", "alias_");
+            mAliasResolver.enrichRadios(connection, radios, "local_radio_id", "alias_");
 
             for(Map<String,Object> group: groups)
             {
-                long patchGroup = number(group.get("patch_group"));
+                long patchGroup = number(group.get("local_patch_group_id"));
                 long includedTalkgroups = countPatchMembers(talkgroups, patchGroup);
                 long includedRadios = countPatchMembers(radios, patchGroup);
                 group.put("talkgroups_included", includedTalkgroups);
@@ -3187,7 +3182,7 @@ class StatsWebDatabase
 
         for(Map<String,Object> member: members)
         {
-            if(number(member.get("patch_group")) == patchGroup)
+            if(number(member.get("local_patch_group_id")) == patchGroup)
             {
                 count++;
             }
@@ -3240,7 +3235,7 @@ class StatsWebDatabase
 
             for(Map<String,Object> row: queryRows)
             {
-                if(number(row.get("radio_id")) <= 0)
+                if(number(row.get("native_id")) <= 0)
                 {
                     continue;
                 }
@@ -3338,45 +3333,73 @@ class StatsWebDatabase
         String sql = ("WITH action_slices AS MATERIALIZED (" +
             activityActionSlicesSql(action.column()) + """
             ), grouped AS MATERIALIZED (
-                SELECT CASE WHEN config.channel_kind = 'TRUNKED' THEN channel.radio_system_id END
-                        AS radio_system_id,
-                    CASE WHEN config.channel_kind <> 'TRUNKED' THEN event.channel_id END AS fallback_channel_id,
-                    MIN(event.channel_id) AS representative_channel_id,
-                    event.source_radio_id AS radio_id, COUNT(*) AS observation_count,
+                SELECT event.radio_system_id, NULL AS fallback_channel_id,
+                    NULL AS representative_channel_id, event.source_identity_summary_id,
+                    NULL AS observed_local_id, COUNT(*) AS observation_count,
                     MAX(event.observed_at_ms) AS last_seen_ms
                 FROM action_slices AS slice
-                CROSS JOIN receiver_activity_event AS event INDEXED BY idx_receiver_activity_event_channel_time
+                CROSS JOIN receiver_activity_event AS event
+                    INDEXED BY idx_receiver_activity_event_channel_time
                 JOIN receiver_channel channel ON channel.id = event.channel_id
                 JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
                 WHERE event.channel_id = slice.channel_id
                   AND event.observed_at_ms >= slice.bucket_start_ms
                   AND event.observed_at_ms < slice.bucket_start_ms + ?
                   AND event.action_code = ?
-                GROUP BY CASE WHEN config.channel_kind = 'TRUNKED' THEN channel.radio_system_id END,
-                    CASE WHEN config.channel_kind <> 'TRUNKED' THEN event.channel_id END,
-                    event.source_radio_id
+                  AND config.channel_kind = 'TRUNKED'
+                GROUP BY event.radio_system_id, event.source_identity_summary_id
+
+                UNION ALL
+
+                SELECT NULL AS radio_system_id, event.channel_id AS fallback_channel_id,
+                    event.channel_id AS representative_channel_id, NULL AS source_identity_summary_id,
+                    event.source_observed_local_id AS observed_local_id,
+                    COUNT(*) AS observation_count, MAX(event.observed_at_ms) AS last_seen_ms
+                FROM action_slices AS slice
+                CROSS JOIN receiver_activity_event AS event
+                    INDEXED BY idx_receiver_activity_event_channel_time
+                JOIN receiver_channel channel ON channel.id = event.channel_id
+                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+                WHERE event.channel_id = slice.channel_id
+                  AND event.observed_at_ms >= slice.bucket_start_ms
+                  AND event.observed_at_ms < slice.bucket_start_ms + ?
+                  AND event.action_code = ?
+                  AND config.channel_kind = 'CONVENTIONAL'
+                GROUP BY event.channel_id, event.source_observed_local_id
             ), totals AS MATERIALIZED (
                 SELECT COALESCE(SUM(observation_count), 0) AS retained_observation_count,
-                    COALESCE(SUM(CASE WHEN radio_id > 0 THEN observation_count ELSE 0 END), 0)
+                    COALESCE(SUM(CASE WHEN source_identity_summary_id IS NOT NULL OR observed_local_id > 0
+                        THEN observation_count ELSE 0 END), 0)
                         AS identified_observation_count,
-                    COALESCE(SUM(CASE WHEN radio_id > 0 THEN 1 ELSE 0 END), 0) AS total_count
+                    COALESCE(SUM(CASE WHEN source_identity_summary_id IS NOT NULL OR observed_local_id > 0
+                        THEN 1 ELSE 0 END), 0) AS total_count
                 FROM grouped
             ), paged AS MATERIALIZED (
-                SELECT radio_system_id, fallback_channel_id, representative_channel_id, radio_id,
-                    observation_count, last_seen_ms
+                SELECT radio_system_id, fallback_channel_id, representative_channel_id,
+                    source_identity_summary_id, observed_local_id, observation_count, last_seen_ms
                 FROM grouped
-                WHERE radio_id > 0
+                WHERE source_identity_summary_id IS NOT NULL OR observed_local_id > 0
                 ORDER BY observation_count DESC, last_seen_ms DESC,
                     CASE WHEN radio_system_id IS NULL THEN 1 ELSE 0 END,
-                    coalesce(radio_system_id, fallback_channel_id), radio_id
+                    coalesce(radio_system_id, fallback_channel_id),
+                    coalesce(source_identity_summary_id, observed_local_id)
                 LIMIT ? OFFSET ?
             )
             SELECT paged.radio_system_id, paged.representative_channel_id AS channel_id,
-                config.configuration_id,
-                nullif(trim(config.system_name), '') AS system_name,
-                nullif(trim(config.site_name), '') AS site_name,
-                nullif(trim(config.name), '') AS name,
-                alias_list.name AS alias_list_name, config.alias_list_id,
+                CASE WHEN paged.radio_system_id IS NULL THEN config.configuration_id END AS configuration_id,
+                CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.system_name), '') ELSE (
+                    SELECT CASE WHEN count(DISTINCT lower(trim(system_config.system_name))) = 1
+                        THEN min(trim(system_config.system_name)) END
+                    FROM receiver_channel system_channel
+                    JOIN configuration_channel system_config
+                      ON system_config.configuration_id = system_channel.configuration_id
+                    WHERE system_channel.radio_system_id = paged.radio_system_id
+                      AND system_config.system_name IS NOT NULL
+                      AND trim(system_config.system_name) <> '') END AS system_name,
+                CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.site_name), '') END AS site_name,
+                CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.name), '') END AS name,
+                CASE WHEN paged.radio_system_id IS NULL THEN alias_list.name END AS alias_list_name,
+                CASE WHEN paged.radio_system_id IS NULL THEN config.alias_list_id END AS alias_list_id,
                 system.system_key AS radio_system_key,
                 coalesce(system.address_domain_code, 0) AS address_domain_code,
                 CASE WHEN system.protocol_code IS NOT NULL THEN system.protocol_code
@@ -3395,16 +3418,19 @@ class StatsWebDatabase
                     WHEN 11 THEN 'AM'
                     ELSE 'UNKNOWN'
                 END AS protocol,
-                CASE WHEN config.channel_kind = 'TRUNKED' THEN 1
+                CASE WHEN paged.radio_system_id IS NOT NULL THEN 1
                     WHEN config.decoder_type LIKE 'P25%%' THEN 2
                     WHEN config.decoder_type = 'DMR' THEN 3 WHEN config.decoder_type = 'NXDN' THEN 4
                     ELSE 10 END AS channel_kind_code,
-                config.channel_kind,
+                CASE WHEN paged.radio_system_id IS NOT NULL THEN 'TRUNKED'
+                    ELSE config.channel_kind END AS channel_kind,
                 system.p25_wacn AS wacn,
-                coalesce(system.p25_system_id, trunked.system_id) AS system_id,
-                trunked.network_id,
-                p25.nac AS resolved_nac, p25.rfss AS resolved_rfss, p25.site AS resolved_site,
-                paged.radio_id, paged.observation_count, paged.last_seen_ms,
+                system.p25_system_id AS system_id,
+                identity.identity_id AS native_id,
+                identity.home_wacn, identity.home_system_id,
+                %s AS identity_key,
+                coalesce(paged.observed_local_id, identity.identity_id) AS observed_local_id,
+                paged.observation_count, paged.last_seen_ms,
                 totals.retained_observation_count, totals.identified_observation_count,
                 totals.total_count
             FROM totals
@@ -3413,16 +3439,17 @@ class StatsWebDatabase
             LEFT JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
             LEFT JOIN radio_system system ON system.id = paged.radio_system_id
-            LEFT JOIN p25_site_snapshot p25
-              ON p25.channel_id = channel.id
-            LEFT JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
+            LEFT JOIN radio_system_identity_summary identity
+              ON identity.id = paged.source_identity_summary_id
+             AND identity.radio_system_id = paged.radio_system_id
             ORDER BY paged.observation_count DESC, paged.last_seen_ms DESC,
                 CASE WHEN paged.radio_system_id IS NULL THEN 1 ELSE 0 END,
-                coalesce(paged.radio_system_id, paged.fallback_channel_id), paged.radio_id
-            """).formatted();
+                coalesce(paged.radio_system_id, paged.fallback_channel_id),
+                coalesce(paged.source_identity_summary_id, paged.observed_local_id)
+            """).formatted(IDENTITY_KEY_SQL.formatted("identity"));
         return queryRows(connection, sql,
             fromMilliseconds, untilMilliseconds, fromMilliseconds, untilMilliseconds,
-            HOUR_MILLISECONDS, action.code(), limit, offset);
+            HOUR_MILLISECONDS, action.code(), HOUR_MILLISECONDS, action.code(), limit, offset);
     }
 
     /**
@@ -3455,7 +3482,7 @@ class StatsWebDatabase
             return;
         }
 
-        rows.forEach(row -> row.put("source_radio_id", row.get("radio_id")));
+        rows.forEach(row -> row.put("source_radio_id", row.get("observed_local_id")));
         mAliasResolver.enrichActivity(connection, rows);
         enrichDashboardActivityEntityReferences(rows);
 
@@ -3481,7 +3508,7 @@ class StatsWebDatabase
             {
                 WebEntityRef.put(row, WebEntityRef.radioSystem(systemKey));
                 WebEntityRef.put(row, "radio_entity_ref", identityReference(row, IDENTITY_KIND_RADIO,
-                    (int)number(row.get("radio_id"))));
+                    textValue(row.get("identity_key"))));
             }
             else
             {
@@ -3526,23 +3553,11 @@ class StatsWebDatabase
     Map<String,Object> activity(StatsRequest request)
     {
         long beforeId = request.beforeId();
-        Integer groupIdentity = request.optionalIdentifier("group_identity_id");
-        Integer radio = request.optionalIdentifier("radio_id");
+        String groupIdentityKey = request.text("group_identity_key");
+        String radioIdentityKey = request.text("radio_identity_key");
         String systemKey = request.text("radio_system_key");
         String configurationId = request.text("configuration_id");
         boolean hideGrants = request.booleanValue("hide_grants", false);
-        String requestedKind = request.text("group_identity_kind");
-
-        if(groupIdentity == null && requestedKind != null)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "group_identity_kind requires group_identity_id", "group_identity_kind");
-        }
-        else if(groupIdentity != null && requestedKind == null)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "group_identity_id requires group_identity_kind", "group_identity_kind");
-        }
 
         if(configurationId != null && systemKey != null)
         {
@@ -3550,13 +3565,35 @@ class StatsWebDatabase
                 "configuration_id cannot be combined with radio_system_key", "configuration_id");
         }
 
-        int requestedGroupKind = groupIdentity != null ? groupIdentityKindCode(requestedKind) :
-            IDENTITY_KIND_TALKGROUP;
+        if((groupIdentityKey != null || radioIdentityKey != null) && systemKey == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "radio_system_key is required with an identity key", "radio_system_key");
+        }
+
+        RadioSystemIdentityKey.Identity groupIdentity = groupIdentityKey != null ? parseIdentityKey(
+            groupIdentityKey, Set.of(IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP),
+            "group_identity_key") : null;
+        RadioSystemIdentityKey.Identity radioIdentity = radioIdentityKey != null ? parseIdentityKey(
+            radioIdentityKey, Set.of(IDENTITY_KIND_RADIO), "radio_identity_key") : null;
         int limit = request.limit();
 
         return read(connection -> {
             WebConfiguredEntityRepository.ConfiguredChannel configured = configurationId != null ?
                 mConfiguredEntities.requireChannel(connection, configurationId) : null;
+
+            if(systemKey != null)
+            {
+                Map<String,Object> radioSystem = requireRadioSystem(connection, systemKey);
+                if(groupIdentity != null)
+                {
+                    requireCompatibleIdentity(radioSystem, groupIdentity, "Group identity not found");
+                }
+                if(radioIdentity != null)
+                {
+                    requireCompatibleIdentity(radioSystem, radioIdentity, "Radio not found");
+                }
+            }
 
             if(configured != null && configured.channelId() == null)
             {
@@ -3587,7 +3624,7 @@ class StatsWebDatabase
 
             if(systemKey != null)
             {
-                sql.append(" AND system.system_key = ?");
+                sql.append(" AND activity.resolved_system_key = ?");
                 parameters.add(systemKey);
             }
             if(configured != null)
@@ -3595,37 +3632,26 @@ class StatsWebDatabase
                 sql.append(" AND activity.channel_id = ?");
                 parameters.add(configured.channelId());
             }
-            if(groupIdentity != null)
+            if(groupIdentityKey != null)
             {
-                if(requestedGroupKind == IDENTITY_KIND_TALKGROUP)
-                {
-                    sql.append("""
-                         AND activity.id IN (
-                             SELECT event.id
-                             FROM receiver_activity_event event
-                             WHERE event.target_id = ? AND event.target_kind_code = ?
-                             UNION
-                             SELECT member.event_id
-                             FROM activity_event_talkgroup_member member
-                             WHERE member.talkgroup_id = ?
-                         )
-                        """);
-                    parameters.add(groupIdentity);
-                    parameters.add(requestedGroupKind);
-                    parameters.add(groupIdentity);
-                }
-                else
-                {
-                    sql.append(" AND target_id = ? AND target_kind_code = ?");
-                    parameters.add(groupIdentity);
-                    parameters.add(requestedGroupKind);
-                }
+                sql.append("""
+                     AND (activity.target_identity_key = ? OR activity.id IN (
+                         SELECT member.event_id
+                         FROM activity_event_identity_member member
+                         JOIN radio_system_identity_summary identity
+                           ON identity.id = member.identity_summary_id
+                          AND identity.radio_system_id = member.radio_system_id
+                         WHERE %s = ?
+                     ))
+                    """.formatted(IDENTITY_KEY_SQL.formatted("identity")));
+                parameters.add(groupIdentityKey);
+                parameters.add(groupIdentityKey);
             }
-            if(radio != null)
+            if(radioIdentityKey != null)
             {
-                sql.append(" AND (source_radio_id = ? OR (target_id = ? AND target_kind_code = 2))");
-                parameters.add(radio);
-                parameters.add(radio);
+                sql.append(" AND (activity.source_identity_key = ? OR activity.target_identity_key = ?)");
+                parameters.add(radioIdentityKey);
+                parameters.add(radioIdentityKey);
             }
 
             if(beforeTimestamp != null)
@@ -3665,17 +3691,19 @@ class StatsWebDatabase
             String systemKey = textValue(row.get("radio_system_key"));
             WebEntityRef sourceReference = null;
             WebEntityRef targetReference = null;
-            int source = (int)number(row.get("source_radio_id"));
-            int target = (int)number(row.get("target_id"));
             int targetKind = (int)number(row.get("target_kind_code"));
 
             if(!systemKey.isBlank())
             {
-                sourceReference = identityReference(row, IDENTITY_KIND_RADIO, source);
-                targetReference = identityReference(row, targetKind, target);
+                sourceReference = identityReference(row, IDENTITY_KIND_RADIO,
+                    textValue(row.get("source_identity_key")));
+                targetReference = identityReference(row, targetKind,
+                    textValue(row.get("target_identity_key")));
             }
             else if(conventional && channelReference != null)
             {
+                int source = (int)number(row.get("source_radio_id"));
+                int target = (int)number(row.get("target_id"));
                 sourceReference = source > 0 ? channelReference : null;
                 targetReference = target > 0 && (targetKind == IDENTITY_KIND_TALKGROUP ||
                     targetKind == IDENTITY_KIND_PATCH_GROUP || targetKind == IDENTITY_KIND_RADIO) ?
@@ -3863,7 +3891,15 @@ class StatsWebDatabase
             configured.protocolCode() == StatsApiProtocol.P25.databaseCode())
         {
             groupedSql = """
-                SELECT bucket.identity_id AS radio_id,
+                SELECT summary.id AS identity_summary_id, summary.identity_id AS native_id,
+                    %s AS identity_key,
+                    (SELECT latest.observed_local_id
+                     FROM p25_site_call_identity_bucket latest
+                     WHERE latest.radio_system_id = bucket.radio_system_id
+                       AND latest.channel_id = bucket.channel_id
+                       AND latest.identity_summary_id = bucket.identity_summary_id
+                     ORDER BY latest.last_observed_at_ms DESC, latest.bucket_start_ms DESC
+                     LIMIT 1) AS observed_local_id,
                     NULL AS frequency_hz, NULL AS timeslot,
                     MIN(bucket.bucket_start_ms) AS first_seen_ms,
                     MAX(bucket.bucket_start_ms) AS last_seen_ms,
@@ -3874,19 +3910,22 @@ class StatsWebDatabase
                     SUM(CASE WHEN bucket.identity_role_code = 1
                         THEN bucket.observed_call_count ELSE 0 END) AS target_logical_call_count
                 FROM p25_site_call_identity_bucket bucket
-                JOIN p25_learned_site learned ON learned.learned_site_id = bucket.learned_site_id
-                JOIN p25_site_snapshot snapshot ON snapshot.channel_id = ?
-                  AND snapshot.rfss = learned.rfss AND snapshot.site = learned.site
-                WHERE bucket.radio_system_id = ? AND bucket.identity_kind_code = 2
-                GROUP BY bucket.identity_id
-                """;
-            parameters.add(configured.channelId());
+                JOIN radio_system_identity_summary summary
+                  ON summary.id = bucket.identity_summary_id
+                 AND summary.radio_system_id = bucket.radio_system_id
+                WHERE bucket.radio_system_id = ? AND bucket.channel_id = ?
+                  AND summary.identity_kind_code = 2
+                GROUP BY summary.id
+                """.formatted(IDENTITY_KEY_SQL.formatted("summary"));
             parameters.add(configured.radioSystemId());
+            parameters.add(configured.channelId());
         }
         else if(configured.radioSystemId() != null)
         {
             groupedSql = """
-                SELECT bucket.identity_id AS radio_id,
+                SELECT summary.id AS identity_summary_id, summary.identity_id AS native_id,
+                    summary.identity_id AS observed_local_id,
+                    %s AS identity_key,
                     NULL AS frequency_hz, NULL AS timeslot,
                     MIN(bucket.bucket_start_ms) AS first_seen_ms,
                     MAX(bucket.bucket_start_ms) AS last_seen_ms,
@@ -3897,9 +3936,12 @@ class StatsWebDatabase
                     SUM(CASE WHEN bucket.identity_role_code = 1
                         THEN bucket.logical_call_count ELSE 0 END) AS target_logical_call_count
                 FROM trunked_logical_call_identity_bucket bucket
-                WHERE bucket.radio_system_id = ? AND bucket.identity_kind_code = 2
-                GROUP BY bucket.identity_id
-                """;
+                JOIN radio_system_identity_summary summary
+                  ON summary.id = bucket.identity_summary_id
+                 AND summary.radio_system_id = bucket.radio_system_id
+                WHERE bucket.radio_system_id = ? AND summary.identity_kind_code = 2
+                GROUP BY summary.id
+                """.formatted(IDENTITY_KEY_SQL.formatted("summary"));
             parameters.add(configured.radioSystemId());
         }
         else
@@ -3907,7 +3949,7 @@ class StatsWebDatabase
             return List.of();
         }
 
-        String aliasProjection = channelAliasProjection(configured, "alias_radio", "grouped.radio_id");
+        String aliasProjection = channelAliasProjection(configured, "alias_radio", "grouped.observed_local_id");
         StringBuilder sql = new StringBuilder("WITH grouped AS (").append(groupedSql).append("), presented AS (")
             .append("SELECT grouped.*, ? AS configuration_id, ? AS radio_system_key, ? AS protocol_code, ")
             .append("? AS address_domain_code, ? AS alias_list_name, ? AS alias_list_id, ")
@@ -3918,8 +3960,8 @@ class StatsWebDatabase
         parameters.add(configured.addressDomainCode());
         parameters.add(configured.aliasListName());
         parameters.add(configured.aliasListId());
-        addChannelIdentitySearch(sql, parameters, search, "radio_id");
-        sql.append(" ORDER BY ").append(requestedOrder).append(", radio_id ASC LIMIT ? OFFSET ?");
+        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)");
+        sql.append(" ORDER BY ").append(requestedOrder).append(", native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
         removeMatchedAliasFields(rows);
@@ -3928,7 +3970,7 @@ class StatsWebDatabase
         for(Map<String,Object> row: rows)
         {
             WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
-                (int)number(row.get("radio_id"))));
+                textValue(row.get("identity_key"))));
         }
 
         return rows;
@@ -4050,10 +4092,11 @@ class StatsWebDatabase
         if(configured.protocol() != StatsApiProtocol.DMR)
         {
             String aliasProjection = channelAliasProjection(configured, "alias_talkgroup",
-                "grouped.group_identity_id");
+                "grouped.native_id");
             StringBuilder sql = new StringBuilder("""
                 WITH grouped AS (
-                    SELECT bucket.channel_id, bucket.identity_id AS group_identity_id,
+                    SELECT bucket.channel_id, bucket.identity_id AS native_id,
+                        NULL AS observed_local_id,
                         bucket.identity_kind_code AS group_identity_kind_code,
                         NULL AS frequency_hz, NULL AS timeslot, NULL AS last_source_radio_id,
                         min(bucket.bucket_start_ms) AS first_seen_ms,
@@ -4076,10 +4119,10 @@ class StatsWebDatabase
             parameters.add(configured.configurationId());
             parameters.add(configured.aliasListName());
             parameters.add(configured.aliasListId());
-            addChannelIdentitySearch(sql, parameters, request.search(), "group_identity_id");
+            addChannelIdentitySearch(sql, parameters, request.search(), "native_id");
             sql.append(" ORDER BY ")
                 .append(order(request, CHANNEL_GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count"))
-                .append(", group_identity_kind_code ASC, group_identity_id ASC LIMIT ? OFFSET ?");
+                .append(", group_identity_kind_code ASC, native_id ASC LIMIT ? OFFSET ?");
             addLimitOffset(parameters, limit, offset);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             removeMatchedAliasFields(rows);
@@ -4088,7 +4131,7 @@ class StatsWebDatabase
             for(Map<String,Object> row: rows)
             {
                 WebEntityRef.put(row, WebEntityRef.channel(configured.configurationId()));
-                row.put("entity_tab", "group-identities");
+                row.put("entity_tab", "groups");
             }
 
             return rows;
@@ -4098,7 +4141,8 @@ class StatsWebDatabase
                 SELECT summary.channel_id, config.configuration_id,
                     list.name AS alias_list_name, config.alias_list_id,
                     summary.frequency_hz, summary.timeslot,
-                    summary.talkgroup_id AS group_identity_id,
+                    summary.talkgroup_id AS native_id,
+                    NULL AS observed_local_id,
                     1 AS group_identity_kind_code,
                     summary.first_seen_ms, summary.last_seen_ms,
                     summary.call_count AS logical_call_count,
@@ -4117,13 +4161,13 @@ class StatsWebDatabase
             .append("summary.talkgroup_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        mAliasResolver.enrichDmrTalkgroups(connection, rows, "group_identity_id", "alias_");
+        mAliasResolver.enrichDmrTalkgroups(connection, rows, "native_id", "alias_");
         mAliasResolver.enrichDmrRadios(connection, rows, "last_source_radio_id", "last_source_alias_");
 
         for(Map<String,Object> row: rows)
         {
             WebEntityRef.put(row, WebEntityRef.channel(configured.configurationId()));
-            row.put("entity_tab", "group-identities");
+            row.put("entity_tab", "groups");
         }
 
         return rows;
@@ -4157,10 +4201,11 @@ class StatsWebDatabase
 
         if(configured.protocol() != StatsApiProtocol.DMR)
         {
-            String aliasProjection = channelAliasProjection(configured, "alias_radio", "grouped.radio_id");
+            String aliasProjection = channelAliasProjection(configured, "alias_radio", "grouped.native_id");
             StringBuilder sql = new StringBuilder("""
                 WITH grouped AS (
-                    SELECT bucket.channel_id, bucket.identity_id AS radio_id,
+                    SELECT bucket.channel_id, bucket.identity_id AS native_id,
+                        NULL AS observed_local_id,
                         NULL AS frequency_hz, NULL AS timeslot,
                         min(bucket.bucket_start_ms) AS first_seen_ms,
                         max(bucket.bucket_start_ms) AS last_seen_ms,
@@ -4185,9 +4230,9 @@ class StatsWebDatabase
             parameters.add(configured.protocolCode());
             parameters.add(configured.aliasListName());
             parameters.add(configured.aliasListId());
-            addChannelIdentitySearch(sql, parameters, request.search(), "radio_id");
+            addChannelIdentitySearch(sql, parameters, request.search(), "native_id");
             sql.append(" ORDER BY ").append(order(request, CHANNEL_RADIO_SORT_COLUMNS, "logical_call_count"))
-                .append(", radio_id ASC LIMIT ? OFFSET ?");
+                .append(", native_id ASC LIMIT ? OFFSET ?");
             addLimitOffset(parameters, limit, offset);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             removeMatchedAliasFields(rows);
@@ -4205,7 +4250,8 @@ class StatsWebDatabase
         StringBuilder sql = new StringBuilder("""
                 SELECT summary.channel_id, config.configuration_id,
                     list.name AS alias_list_name, config.alias_list_id,
-                    summary.frequency_hz, summary.timeslot, summary.radio_id,
+                    summary.frequency_hz, summary.timeslot, summary.radio_id AS native_id,
+                    NULL AS observed_local_id,
                     summary.first_seen_ms, summary.last_seen_ms,
                     summary.call_count AS logical_call_count,
                     summary.source_call_count AS source_logical_call_count,
@@ -4228,7 +4274,7 @@ class StatsWebDatabase
             .append("summary.radio_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        mAliasResolver.enrichDmrRadios(connection, rows, "radio_id", "alias_");
+        mAliasResolver.enrichDmrRadios(connection, rows, "native_id", "alias_");
         mAliasResolver.enrichDmrTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
         mAliasResolver.enrichDmrRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
 
@@ -4244,35 +4290,41 @@ class StatsWebDatabase
     private void enrichChannelGroupAliases(Connection connection, StatsApiProtocol protocol,
                                             List<Map<String,Object>> rows) throws SQLException
     {
+        rows.forEach(row -> row.put("alias_lookup_id", row.get("observed_local_id") != null ?
+            row.get("observed_local_id") : row.get("native_id")));
         if(protocol == StatsApiProtocol.P25)
         {
-            mAliasResolver.enrichP25ConventionalTalkgroups(connection, rows, "group_identity_id", "alias_");
+            mAliasResolver.enrichP25ConventionalTalkgroups(connection, rows, "alias_lookup_id", "alias_");
         }
         else if(protocol == StatsApiProtocol.NXDN)
         {
-            mAliasResolver.enrichNxdnTalkgroups(connection, rows, "group_identity_id", "alias_");
+            mAliasResolver.enrichNxdnTalkgroups(connection, rows, "alias_lookup_id", "alias_");
         }
         else if(protocol == StatsApiProtocol.DMR)
         {
-            mAliasResolver.enrichDmrTalkgroups(connection, rows, "group_identity_id", "alias_");
+            mAliasResolver.enrichDmrTalkgroups(connection, rows, "alias_lookup_id", "alias_");
         }
+        rows.forEach(row -> row.remove("alias_lookup_id"));
     }
 
     private void enrichChannelRadioAliases(Connection connection, StatsApiProtocol protocol,
                                             List<Map<String,Object>> rows) throws SQLException
     {
+        rows.forEach(row -> row.put("alias_lookup_id", row.get("observed_local_id") != null ?
+            row.get("observed_local_id") : row.get("native_id")));
         if(protocol == StatsApiProtocol.P25)
         {
-            mAliasResolver.enrichP25ConventionalRadios(connection, rows, "radio_id", "alias_");
+            mAliasResolver.enrichP25ConventionalRadios(connection, rows, "alias_lookup_id", "alias_");
         }
         else if(protocol == StatsApiProtocol.NXDN)
         {
-            mAliasResolver.enrichNxdnRadios(connection, rows, "radio_id", "alias_");
+            mAliasResolver.enrichNxdnRadios(connection, rows, "alias_lookup_id", "alias_");
         }
         else if(protocol == StatsApiProtocol.DMR)
         {
-            mAliasResolver.enrichDmrRadios(connection, rows, "radio_id", "alias_");
+            mAliasResolver.enrichDmrRadios(connection, rows, "alias_lookup_id", "alias_");
         }
+        rows.forEach(row -> row.remove("alias_lookup_id"));
     }
 
     /** One bounded directory row per learned radio system. */
@@ -4840,16 +4892,18 @@ class StatsWebDatabase
             }
         }
 
-        mAliasResolver.enrichTalkgroups(connection, p25Talkgroups, "identity_id", "alias_");
-        mAliasResolver.enrichRadios(connection, p25Radios, "identity_id", "alias_");
+        mAliasResolver.enrichCanonicalSystemTalkgroups(connection, p25Talkgroups, "identity_summary_id",
+            "native_id", "alias_");
+        mAliasResolver.enrichCanonicalSystemRadios(connection, p25Radios, "identity_summary_id",
+            "native_id", "alias_");
         mAliasResolver.enrichP25ConventionalTalkgroups(connection, p25ConventionalTalkgroups,
-            "identity_id", "alias_");
+            "native_id", "alias_");
         mAliasResolver.enrichP25ConventionalRadios(connection, p25ConventionalRadios,
-            "identity_id", "alias_");
-        mAliasResolver.enrichDmrTalkgroups(connection, dmrTalkgroups, "identity_id", "alias_");
-        mAliasResolver.enrichDmrRadios(connection, dmrRadios, "identity_id", "alias_");
-        mAliasResolver.enrichNxdnTalkgroups(connection, nxdnTalkgroups, "identity_id", "alias_");
-        mAliasResolver.enrichNxdnRadios(connection, nxdnRadios, "identity_id", "alias_");
+            "native_id", "alias_");
+        mAliasResolver.enrichDmrTalkgroups(connection, dmrTalkgroups, "native_id", "alias_");
+        mAliasResolver.enrichDmrRadios(connection, dmrRadios, "native_id", "alias_");
+        mAliasResolver.enrichNxdnTalkgroups(connection, nxdnTalkgroups, "native_id", "alias_");
+        mAliasResolver.enrichNxdnRadios(connection, nxdnRadios, "native_id", "alias_");
 
         for(Map<String,Object> row: rows)
         {
@@ -4865,14 +4919,14 @@ class StatsWebDatabase
             if(hasRadioSystem)
             {
                 WebEntityRef.put(row, identityReference(row, identityKind,
-                    (int)number(row.get("identity_id"))));
+                    textValue(row.get("identity_key"))));
             }
             else if(conventionalDigital && (identityKind == IDENTITY_KIND_TALKGROUP ||
                 identityKind == IDENTITY_KIND_RADIO) &&
                 row.get("configuration_id") instanceof String configurationId && !configurationId.isBlank())
             {
                 WebEntityRef.put(row, WebEntityRef.channel(configurationId));
-                row.put("entity_tab", identityKind == IDENTITY_KIND_RADIO ? "radios" : "group-identities");
+                row.put("entity_tab", identityKind == IDENTITY_KIND_RADIO ? "radios" : "groups");
             }
         }
 
@@ -5240,34 +5294,52 @@ class StatsWebDatabase
             """, ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY);
     }
 
-    private static int groupIdentityKindCode(String kind)
+    private static RadioSystemIdentityKey.Identity parseIdentityKey(String value, Set<Integer> allowedKinds,
+                                                                     String field)
     {
-
-        if(kind == null || "talkgroup".equals(kind))
+        try
         {
-            return IDENTITY_KIND_TALKGROUP;
+            RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(value);
+            if(allowedKinds == null || !allowedKinds.contains(identity.kindCode()))
+            {
+                throw new IllegalArgumentException("Identity kind is not valid for this resource");
+            }
+            return identity;
         }
-
-        if("patch_group".equals(kind))
+        catch(IllegalArgumentException exception)
         {
-            return IDENTITY_KIND_PATCH_GROUP;
+            throw new StatsApiException(400, "invalid_path", "identity_key is not valid", field);
         }
-
-        throw new StatsApiException(400, "invalid_parameter",
-            "group_identity_kind must be talkgroup or patch_group", "group_identity_kind");
     }
 
-    /**
-     * A learned radio system owns identity lookup. Retained activity is optional, but protocol-reserved addresses do
-     * not become public entities merely because they are numerically positive.
-     */
-    private static void requireValidIdentity(Map<String,Object> radioSystem, int identityKind, int identifier,
-                                             String notFoundMessage)
+    private static void requireCompatibleIdentity(Map<String,Object> radioSystem,
+                                                   RadioSystemIdentityKey.Identity identity,
+                                                   String notFoundMessage)
     {
-        if(!validIdentity(radioSystem, identityKind, identifier))
+        int protocolCode = (int)number(radioSystem.get("protocol_code"));
+        if(!validIdentity(radioSystem, identity.kindCode(), identity.identityId()) ||
+            protocolCode == 1 != identity.hasHome())
         {
             throw new StatsApiException(404, notFoundMessage);
         }
+    }
+
+    private static long requireIdentitySummaryId(Connection connection, long radioSystemId,
+                                                  RadioSystemIdentityKey.Identity identity,
+                                                  String notFoundMessage) throws SQLException
+    {
+        List<Map<String,Object>> rows = queryRows(connection, """
+            SELECT id
+            FROM radio_system_identity_summary
+            WHERE radio_system_id = ? AND identity_kind_code = ?
+              AND home_wacn = ? AND home_system_id = ? AND identity_id = ?
+            """, radioSystemId, identity.kindCode(), identity.homeWacn(), identity.homeSystemId(),
+            identity.identityId());
+        if(rows.isEmpty())
+        {
+            throw new StatsApiException(404, notFoundMessage);
+        }
+        return number(rows.getFirst().get("id"));
     }
 
     private static boolean validIdentity(Map<String,Object> radioSystem, int identityKind, int identifier)
@@ -5297,9 +5369,23 @@ class StatsWebDatabase
         return TrunkedIdentityEligibility.isEligible(protocol, domain, form, identifier);
     }
 
-    private static WebEntityRef identityReference(Map<String,Object> radioSystem, int identityKind, int identifier)
+    private static WebEntityRef identityReference(Map<String,Object> radioSystem, int identityKind,
+                                                   String identityKey)
     {
-        if(!validIdentity(radioSystem, identityKind, identifier))
+        RadioSystemIdentityKey.Identity identity;
+
+        try
+        {
+            identity = RadioSystemIdentityKey.parse(identityKey);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
+
+        int protocolCode = (int)number(radioSystem.get("protocol_code"));
+        if(identity.kindCode() != identityKind || !validIdentity(radioSystem, identityKind, identity.identityId()) ||
+            protocolCode == 1 != identity.hasHome())
         {
             return null;
         }
@@ -5313,62 +5399,11 @@ class StatsWebDatabase
 
         return switch(identityKind)
         {
-            case IDENTITY_KIND_TALKGROUP -> WebEntityRef.talkgroup(systemKey, identifier);
-            case IDENTITY_KIND_PATCH_GROUP -> WebEntityRef.patchGroup(systemKey, identifier);
-            case IDENTITY_KIND_RADIO -> WebEntityRef.radio(systemKey, identifier);
+            case IDENTITY_KIND_TALKGROUP -> WebEntityRef.talkgroup(systemKey, identityKey);
+            case IDENTITY_KIND_PATCH_GROUP -> WebEntityRef.patchGroup(systemKey, identityKey);
+            case IDENTITY_KIND_RADIO -> WebEntityRef.radio(systemKey, identityKey);
             default -> null;
         };
-    }
-
-    /** Creates the stable lookup page for a valid identity that has no retained activity summary. */
-    private static Map<String,Object> emptyIdentity(Map<String,Object> radioSystem, int identityKind, int identifier)
-    {
-        Map<String,Object> identity = new LinkedHashMap<>();
-
-        for(String field: List.of("radio_system_id", "radio_system_key", "protocol_code", "address_domain_code",
-            "alias_list_id", "alias_list_name", "protocol", "wacn", "system_id", "network_id",
-            "system_name"))
-        {
-            if(radioSystem.get(field) != null)
-            {
-                identity.put(field, radioSystem.get(field));
-            }
-        }
-
-        identity.put("identity_kind_code", identityKind);
-        identity.put("identity_id", identifier);
-        if(identityKind == IDENTITY_KIND_RADIO)
-        {
-            identity.put("radio_id", identifier);
-        }
-        else
-        {
-            identity.put("group_identity_id", identifier);
-            identity.put("group_identity_kind_code", identityKind);
-        }
-        identity.put("p25_identity_state_code", 0);
-        identity.put("logical_call_count", 0L);
-        identity.put("source_logical_call_count", 0L);
-        identity.put("target_logical_call_count", 0L);
-        identity.put("encrypted_logical_call_count", 0L);
-        identity.put("recorded_logical_call_count", 0L);
-        identity.put("stream_submitted_logical_call_count", 0L);
-        identity.put("signaling_observation_count", 0L);
-
-        for(String field: GROUP_IDENTITY_SIGNALING_FIELDS)
-        {
-            identity.put(observationCountField(field), 0L);
-        }
-
-        if(identityKind != IDENTITY_KIND_RADIO)
-        {
-            identity.put("radios", 0L);
-            identity.put("affiliated_radios", 0L);
-            identity.put("affiliated_channels", 0L);
-            identity.put("channel_observation_count", 0L);
-        }
-
-        return identity;
     }
 
     private static boolean booleanParameter(StatsRequest request, String name, boolean defaultValue)
@@ -5391,24 +5426,44 @@ class StatsWebDatabase
                                               String identifierColumn,
                                        String prefix) throws SQLException
     {
+        enrichRadioSystemGroupIdentities(connection, rows, "identity_summary_id", identifierColumn, prefix);
+    }
+
+    private void enrichRadioSystemGroupIdentities(Connection connection, List<Map<String,Object>> rows,
+                                                   String summaryIdColumn, String identifierColumn,
+                                                   String prefix) throws SQLException
+    {
         List<Map<String,Object>> p25 = protocolRows(rows, 1);
         List<Map<String,Object>> dmr = protocolRows(rows, 3);
         List<Map<String,Object>> nxdn = protocolRows(rows, 4);
-        mAliasResolver.enrichTalkgroups(connection, p25, identifierColumn, prefix);
-        mAliasResolver.enrichDmrTalkgroups(connection, dmr, identifierColumn, prefix);
-        mAliasResolver.enrichNxdnTalkgroups(connection, nxdn, identifierColumn, prefix);
+        mAliasResolver.enrichCanonicalSystemTalkgroups(connection, p25, summaryIdColumn,
+            identifierColumn, prefix);
+        mAliasResolver.enrichCanonicalSystemTalkgroups(connection, dmr, summaryIdColumn,
+            identifierColumn, prefix);
+        mAliasResolver.enrichCanonicalSystemTalkgroups(connection, nxdn, summaryIdColumn,
+            identifierColumn, prefix);
     }
 
     private void enrichRadioSystemRadios(Connection connection, List<Map<String,Object>> rows,
                                          String identifierColumn,
                                    String prefix) throws SQLException
     {
+        enrichRadioSystemRadios(connection, rows, "identity_summary_id", identifierColumn, prefix);
+    }
+
+    private void enrichRadioSystemRadios(Connection connection, List<Map<String,Object>> rows,
+                                         String summaryIdColumn, String identifierColumn,
+                                         String prefix) throws SQLException
+    {
         List<Map<String,Object>> p25 = protocolRows(rows, 1);
         List<Map<String,Object>> dmr = protocolRows(rows, 3);
         List<Map<String,Object>> nxdn = protocolRows(rows, 4);
-        mAliasResolver.enrichRadios(connection, p25, identifierColumn, prefix);
-        mAliasResolver.enrichDmrRadios(connection, dmr, identifierColumn, prefix);
-        mAliasResolver.enrichNxdnRadios(connection, nxdn, identifierColumn, prefix);
+        mAliasResolver.enrichCanonicalSystemRadios(connection, p25, summaryIdColumn,
+            identifierColumn, prefix);
+        mAliasResolver.enrichCanonicalSystemRadios(connection, dmr, summaryIdColumn,
+            identifierColumn, prefix);
+        mAliasResolver.enrichCanonicalSystemRadios(connection, nxdn, summaryIdColumn,
+            identifierColumn, prefix);
     }
 
     private static List<Map<String,Object>> protocolRows(List<Map<String,Object>> rows, int protocolCode)
@@ -5684,7 +5739,7 @@ class StatsWebDatabase
                                                        String aliasColumn)
     {
         if(!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable) ||
-            !identifierColumn.matches("grouped\\.(?:group_identity_id|radio_id)") ||
+            !identifierColumn.matches("grouped\\.(?:native_id|observed_local_id)") ||
             !Set.of("name", "description", "group_name").contains(aliasColumn))
         {
             throw new IllegalArgumentException("Unsupported saved-channel Alias expression");
@@ -5724,7 +5779,7 @@ class StatsWebDatabase
             return;
         }
 
-        if(!"group_identity_id".equals(identifierColumn) && !"radio_id".equals(identifierColumn))
+        if(!Set.of("native_id", "coalesce(observed_local_id, native_id)").contains(identifierColumn))
         {
             throw new IllegalArgumentException("Unsupported saved-channel identity search");
         }
@@ -5757,8 +5812,7 @@ class StatsWebDatabase
                                                    String aliasColumn)
     {
         if(!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable) ||
-            !identifierColumn.matches(
-                "(?:summary|affiliation|relationship)\\.(?:identity_id|talkgroup_id|group_id|radio_id|last_counterpart_id)") ||
+            !"summary.identity_id".equals(identifierColumn) ||
             !"name".equals(aliasColumn) && !"group_name".equals(aliasColumn))
         {
             throw new IllegalArgumentException("Unsupported radio-system alias sort expression");

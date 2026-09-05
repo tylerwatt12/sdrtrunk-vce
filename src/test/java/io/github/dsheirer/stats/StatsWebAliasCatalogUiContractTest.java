@@ -415,7 +415,6 @@ class StatsWebAliasCatalogUiContractTest
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String key = function(source, "function observedGroupIdentityKey(row)");
         String focusKey = function(source, "function observedGroupIdentityFocusKey(row)");
-        String homeIdentity = function(source, "function observedP25HomeIdentity(row)");
         String time = function(source, "function observedGroupIdentityTime(row, value)");
         String create = function(source, "function observedGroupIdentityCreateButton(row, selectedList)");
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
@@ -467,27 +466,22 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(prefill.contains("type: 'talkgroup'"));
         assertFalse(source.contains("P25_FULLY_QUALIFIED_TALKGROUP"));
         assertTrue(prefill.contains("!observedGroupIdentityPromotionSupported(row)"));
-        assertTrue(prefill.contains("['ordinary', 'stable_fully_qualified'].includes(observedP25IdentityState(row))"));
+        assertFalse(source.contains("observedP25IdentityState"));
+        assertFalse(source.contains("observedP25HomeIdentity"));
+        assertFalse(source.contains("qualification?.home"));
         assertTrue(prefill.contains("topology || '').toUpperCase() === 'CONVENTIONAL'"));
-        for(String field: new String[]{"wacn", "system_id", "talkgroup_id"})
-        {
-            assertTrue(source.contains("qualification?.home?." + field),
-                () -> "Missing qualifier-safe discovery field " + field);
-            assertTrue(key.contains("home." + field), () -> "Observed row key omits qualifier " + field);
-        }
         assertTrue(key.contains("row?.topology"));
         assertTrue(key.contains("observedGroupIdentityProtocol(row)"));
         assertTrue(key.contains("radio-system:"));
         assertTrue(key.contains("channel:"));
-        assertTrue(homeIdentity.contains("talkgroup > 0"));
-        assertTrue(homeIdentity.contains("talkgroup < 0xFFFF"));
+        assertTrue(key.contains("row?.identity_key"));
+        assertTrue(key.contains("local:"));
         assertTrue(time.contains("wrapper.append(rendered, ' (hour beginning)')"));
         assertFalse(time.contains("`${rendered}"));
         assertTrue(focusKey.contains("encodeURIComponent(observedGroupIdentityKey(row))"));
         assertTrue(prefill.contains("observedGroupIdentityFocusKey(row)"));
         assertTrue(create.contains("dataset.observedKey = observedGroupIdentityFocusKey(row)"));
         assertTrue(identity.contains("identityNumber(row, row.group_identity_id)"));
-        assertTrue(detail.contains("'Decoded Home'"));
         assertTrue(detail.contains("'Local Talkgroup'"));
         assertTrue(detail.contains("other recognized signaling actions"));
         assertTrue(create.contains("!observedGroupIdentityPromotionSupported(row)"));

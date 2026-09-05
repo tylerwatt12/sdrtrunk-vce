@@ -272,13 +272,13 @@ class StatsApiV1HttpContractTest
             "/p25%3A00001%3A047/radios?affiliated=maybe");
         assertStructuredError(invalidAffiliated, 400, "invalid_parameter", "affiliated");
 
-        HttpResponse<String> kindWithoutGroupIdentity = get(StatsApiV1.RADIO_SYSTEMS +
-            "/p25%3A00001%3A047/relationships?radio_id=1&group_identity_kind=patch_group");
-        assertStructuredError(kindWithoutGroupIdentity, 400, "invalid_parameter", "group_identity_kind");
+        HttpResponse<String> retiredNumericIdentity = get(StatsApiV1.RADIO_SYSTEMS +
+            "/p25%3A00001%3A047/relationships?radio_id=1");
+        assertStructuredError(retiredNumericIdentity, 400, "unknown_parameter", "radio_id");
 
-        HttpResponse<String> removedPatchSpelling = get(StatsApiV1.ACTIVITY +
-            "?group_identity_id=1&group_identity_kind=patch");
-        assertStructuredError(removedPatchSpelling, 400, "invalid_parameter", "group_identity_kind");
+        HttpResponse<String> invalidIdentityKey = get(StatsApiV1.ACTIVITY +
+            "?group_identity_key=patch");
+        assertStructuredError(invalidIdentityKey, 400, "invalid_parameter", "group_identity_key");
 
         HttpResponse<String> missingRadioAction = get(StatsApiV1.ACTIVITY_RADIOS + "?range=24h");
         assertStructuredError(missingRadioAction, 400, "invalid_parameter", "action");
@@ -307,7 +307,7 @@ class StatsApiV1HttpContractTest
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
 
         HttpResponse<String> missingCursor = get(StatsApiV1.ACTIVITY +
-            "?before_id=999&group_identity_id=1&group_identity_kind=patch_group&radio_id=2" +
+            "?before_id=999&group_identity_key=v1-p-bee00-49f-1&radio_identity_key=v1-r-bee00-49f-2" +
             "&radio_system_key=p25:test&hide_grants=true&limit=1");
         assertEquals(200, missingCursor.statusCode(), missingCursor.body());
         JsonNode emptyPage = OBJECT_MAPPER.readTree(missingCursor.body());
@@ -354,21 +354,23 @@ class StatsApiV1HttpContractTest
     void groupIdentityDetailUsesTheP25RadioSystemKey() throws Exception
     {
         String radioSystemKey = "p25:bee00:49f";
+        String identityKey = "v1-g-bee00-49f-56735";
         HttpResponse<String> canonical = get(StatsApiV1.RADIO_SYSTEMS +
-            "/p25%3Abee00%3A49f/group-identities/talkgroup/56735");
+            "/p25%3Abee00%3A49f/group-identities/" + identityKey);
         assertEquals(200, canonical.statusCode(), canonical.body());
         JsonNode identity = OBJECT_MAPPER.readTree(canonical.body()).at("/data");
         assertEquals(radioSystemKey, identity.at("/radio_system_key").textValue(), canonical.body());
-        assertEquals(56_735, identity.at("/group_identity_id").intValue(), canonical.body());
+        assertEquals(56_735, identity.at("/native_id").intValue(), canonical.body());
         assertEquals("talkgroup", identity.at("/group_identity_kind").textValue(), canonical.body());
         assertEquals("talkgroup", identity.at("/entity_ref/kind").textValue(), canonical.body());
         assertEquals(radioSystemKey, identity.at("/entity_ref/radio_system_key").textValue(), canonical.body());
+        assertEquals(identityKey, identity.at("/entity_ref/identity_key").textValue(), canonical.body());
         assertEquals(0, identity.at("/logical_call_count").longValue(), canonical.body());
         assertEquals(0, identity.at("/recorded_logical_call_count").longValue(), canonical.body());
         assertEquals(0, identity.at("/stream_submitted_logical_call_count").longValue(), canonical.body());
 
         HttpResponse<String> removedAliasListQualifiedKey = get(StatsApiV1.RADIO_SYSTEMS +
-            "/p25%3Abee00%3A49f%3Aalias-list%3A1/group-identities/talkgroup/56735");
+            "/p25%3Abee00%3A49f%3Aalias-list%3A1/group-identities/" + identityKey);
         assertStructuredError(removedAliasListQualifiedKey, 404, "not_found", null);
     }
 

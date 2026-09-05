@@ -63,25 +63,12 @@ class StatsAliasResolverTest
 
             StatsAliasResolver resolver = new StatsAliasResolver();
             Map<String,Object> exact = observedP25Row(1700);
-            exact.put("p25_identity_state_code", 2);
-            exact.put("p25_home_wacn", 0xBEE00);
-            exact.put("p25_home_system_id", 0x348);
-            exact.put("p25_home_talkgroup_id", 700);
             Map<String,Object> ordinarySameNumber = observedP25Row(700);
             Map<String,Object> range = observedP25Row(800);
             Map<String,Object> none = observedP25Row(1200);
             Map<String,Object> unknown = observedP25Row(1201);
-            unknown.put("p25_identity_state_code", 0);
             Map<String,Object> reservedZero = observedP25Row(0);
-            reservedZero.put("p25_identity_state_code", 2);
-            reservedZero.put("p25_home_wacn", 0xBEE00);
-            reservedZero.put("p25_home_system_id", 0x348);
-            reservedZero.put("p25_home_talkgroup_id", 0);
             Map<String,Object> reservedMaximum = observedP25Row(0xFFFF);
-            reservedMaximum.put("p25_identity_state_code", 2);
-            reservedMaximum.put("p25_home_wacn", 0xBEE00);
-            reservedMaximum.put("p25_home_system_id", 0x348);
-            reservedMaximum.put("p25_home_talkgroup_id", 0xFFFF);
             List<Map<String,Object>> rows = rows(exact, ordinarySameNumber, range, none, unknown,
                 reservedZero, reservedMaximum);
             resolver.resolveObservedGroupIdentities(connection, rows);
@@ -246,6 +233,7 @@ class StatsAliasResolverTest
             List<Map<String,Object>> radios = rows(p25Row());
             radios.getFirst().put("radio_id", 800);
             List<Map<String,Object>> activity = rows(p25Row(), p25Row());
+            activity.forEach(row -> row.put("alias_list_id", 1L));
             activity.get(0).put("source_radio_id", 800);
             activity.get(0).put("target_kind_code", 1);
             activity.get(0).put("target_id", 700);
@@ -329,6 +317,71 @@ class StatsAliasResolverTest
             resolver.enrichTalkgroups(connection, rows(missing));
             assertNull(missing.get("alias_name"),
                 "system-level views require the identity to resolve in every assigned Alias List");
+        }
+    }
+
+    @Test
+    void p25AliasesUseEachChannelsObservedLocalAddressAndWithholdAmbiguousSystemMetrics() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-local-alias-evidence.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'North', 'P25'), (2, 'South', 'P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'North Unit', 'RADIO_ID', 'APCO25', 100),
+                       (2, 2, 'South Unit', 'RADIO_ID', 'APCO25', 200),
+                       (3, 1, 'North Dispatch', 'TALKGROUP', 'APCO25', 300),
+                       (4, 2, 'South Dispatch', 'TALKGROUP', 'APCO25', 300)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            insertP25Channel(statement, 78, SECOND_P25_CONFIGURATION_ID, SECOND_P25_RADIORESOLVE_ID, 2);
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site(
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (701, 77, 1, 1, 1, 2), (702, 77, 1, 2, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (7001, 77, 2, 0xABCDE, 0x123, 9000001, 1, 2),
+                         (7002, 77, 1, 0xABCDE, 0x123, 5000, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
+                    identity_summary_id, observed_local_id, last_observed_at_ms,
+                    observed_call_count, encrypted_observed_call_count
+                ) VALUES (77, 701, 77, 0, 2, 7001, 100, 1, 1, 0),
+                         (77, 702, 78, 0, 2, 7001, 200, 1, 1, 0),
+                         (77, 701, 77, 0, 1, 7002, 300, 1, 1, 0),
+                         (77, 702, 78, 0, 1, 7002, 300, 1, 1, 0)
+                """);
+
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> north = activityRow("APCO25", 1, 1, 100, 300, 1);
+            Map<String,Object> south = activityRow("APCO25", 1, 2, 200, 300, 1);
+            resolver.enrichActivity(connection, rows(north, south));
+            assertEquals("North Unit", north.get("source_alias_name"));
+            assertEquals("North Dispatch", north.get("target_alias_name"));
+            assertEquals("South Unit", south.get("source_alias_name"));
+            assertEquals("South Dispatch", south.get("target_alias_name"));
+
+            Map<String,Object> roamingRadio = canonicalEvidenceRow(7001, 2, 9_000_001);
+            Map<String,Object> sameNumberInTwoLists = canonicalEvidenceRow(7002, 1, 5_000);
+            resolver.resolveEvidenceAliases(connection, rows(roamingRadio, sameNumberInTwoLists));
+            assertNull(roamingRadio.get("resolved_alias_id"),
+                "system totals must not be assigned when channel-local addresses resolve to different Aliases");
+            assertNull(sameNumberInTwoLists.get("resolved_alias_id"),
+                "equal numbers in different Alias Lists must not make either Alias own system totals");
         }
     }
 
@@ -538,7 +591,17 @@ class StatsAliasResolverTest
         row.put("alias_list_id", 1L);
         row.put("group_identity_id", groupIdentity);
         row.put("protocol_code", 1);
-        row.put("p25_identity_state_code", 1);
+        return row;
+    }
+
+    private static Map<String,Object> canonicalEvidenceRow(long summaryId, int identityKind, int identityId)
+    {
+        Map<String,Object> row = p25Row();
+        row.put("protocol_code", 1);
+        row.put("topology", "TRUNKED");
+        row.put("identity_summary_id", summaryId);
+        row.put("identity_kind_code", identityKind);
+        row.put("identity_id", identityId);
         return row;
     }
 

@@ -88,6 +88,28 @@ class StatsAliasResolver
         enrich(rows, rules, aliasLists, identifierColumn, prefix);
     }
 
+    /**
+     * Resolves a canonical group identity shown at radio-system scope. P25 identities use the local address observed
+     * by each exact saved channel and only present an Alias when every applicable channel/list pair agrees. DMR and
+     * NXDN radio systems are owned by one saved channel, so their one assigned Alias List is authoritative.
+     */
+    void enrichCanonicalSystemTalkgroups(Connection connection, List<Map<String,Object>> rows,
+                                         String summaryIdColumn, String identifierColumn, String prefix)
+        throws SQLException
+    {
+        enrichCanonicalSystemIdentities(connection, rows, RuleType.TALKGROUP, summaryIdColumn, identifierColumn,
+            prefix);
+    }
+
+    /** See {@link #enrichCanonicalSystemTalkgroups(Connection, List, String, String, String)}. */
+    void enrichCanonicalSystemRadios(Connection connection, List<Map<String,Object>> rows,
+                                     String summaryIdColumn, String identifierColumn, String prefix)
+        throws SQLException
+    {
+        enrichCanonicalSystemIdentities(connection, rows, RuleType.RADIO, summaryIdColumn, identifierColumn,
+            prefix);
+    }
+
     void enrichActivity(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         if(rows.isEmpty())
@@ -96,32 +118,29 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        Map<String,Set<Long>> aliasLists = loadAliasLists(connection, systemKeys(rows));
-        Snapshot snapshot = activitySnapshot(connection, rows, aliasLists);
+        Snapshot snapshot = activitySnapshot(connection, rows);
 
         for(Map<String,Object> row: rows)
         {
-            enrichActivityIdentity(row, snapshot, aliasLists, true, "source_radio_id", "source_alias_");
+            enrichActivityIdentity(row, snapshot, true, "source_radio_id", "source_alias_");
             Integer targetKind = integer(row.get("target_kind_code"));
 
             if(targetKind != null && (targetKind == 1 || targetKind == 3))
             {
-                enrichActivityIdentity(row, snapshot, aliasLists, false, "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, false, "target_id", "target_alias_");
             }
             else if(targetKind != null && targetKind == 2)
             {
-                enrichActivityIdentity(row, snapshot, aliasLists, true, "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, true, "target_id", "target_alias_");
             }
         }
     }
 
     /**
-     * Activity spans several protocols and ownership models. P25 trunked identities resolve against the alias lists
-     * assigned to their system, while conventional P25 and all DMR/NXDN identities resolve only against the alias
-     * list assigned to the exact saved channel.
+     * Activity is channel-owned evidence. Every identity resolves its observed local address against the Alias List
+     * assigned to that exact saved channel; another channel in a shared P25 system must never lend an alias.
      */
-    private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot,
-                                        Map<String,Set<Long>> aliasLists, boolean radio,
+    private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot, boolean radio,
                                         String identifierColumn, String prefix)
     {
         String protocol = string(row.get("protocol"));
@@ -142,15 +161,7 @@ class StatsAliasResolver
         {
             rules = radio ? snapshot.radios() : snapshot.talkgroups();
 
-            if(Integer.valueOf(1).equals(integer(row.get("channel_kind_code"))) ||
-                integer(row.get("wacn")) != null && integer(row.get("system_id")) != null)
-            {
-                enrich(row, rules, aliasLists, identifierColumn, prefix);
-            }
-            else
-            {
-                enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
-            }
+            enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
         }
     }
 
@@ -192,7 +203,9 @@ class StatsAliasResolver
 
         requireBoundedRows(rows);
         Map<String,Set<Long>> systemAliasLists = loadAliasLists(connection, systemKeys(rows));
-        Snapshot snapshot = evidenceSnapshot(connection, rows, systemAliasLists);
+        Map<Long,List<LocalEvidence>> p25Evidence = loadP25LocalEvidence(connection, rows,
+            "identity_summary_id");
+        Snapshot snapshot = evidenceSnapshot(connection, rows, systemAliasLists, p25Evidence);
         RuleIndex p25Talkgroups = snapshot.talkgroups();
         RuleIndex p25Radios = snapshot.radios();
         RuleIndex dmrTalkgroups = snapshot.dmrTalkgroups();
@@ -230,10 +243,20 @@ class StatsAliasResolver
 
             if(trunkedP25)
             {
-                String systemKey = string(row.get("radio_system_key"));
-                Set<Long> aliasLists = systemKey != null ?
-                    systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
-                best = rules.best(identifier, aliasLists);
+                Long summaryId = positiveLong(row.get("identity_summary_id"));
+                List<LocalEvidence> local = summaryId != null ?
+                    p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
+                if(!local.isEmpty())
+                {
+                    best = rules.best(local, true);
+                }
+                else
+                {
+                    String systemKey = string(row.get("radio_system_key"));
+                    Set<Long> aliasLists = systemKey != null ?
+                        systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
+                    best = rules.bestSameAlias(identifier, aliasLists);
+                }
             }
             else
             {
@@ -297,10 +320,10 @@ class StatsAliasResolver
                 }
                 else if(protocol == 1)
                 {
-                    //Conventional call buckets predate qualifier-aware P25 identity storage. They remain useful for
+                    //Conventional call buckets predate canonical P25 identity storage. They remain useful for
                     //review, but creating an ordinary Alias from them could mislabel a fully-qualified destination.
                     best = rules.best(identifier, aliasListId);
-                    promotionReason = "Conventional P25 observations do not retain identity qualification yet";
+                    promotionReason = "Conventional P25 observations do not retain canonical identity evidence yet";
                 }
                 else
                 {
@@ -403,6 +426,95 @@ class StatsAliasResolver
         }
     }
 
+    private void enrichCanonicalSystemIdentities(Connection connection, List<Map<String,Object>> rows,
+                                                 RuleType type, String summaryIdColumn, String identifierColumn,
+                                                 String prefix) throws SQLException
+    {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
+        requireBoundedRows(rows);
+        Map<String,Set<Long>> aliasListsBySystem = loadAliasLists(connection, systemKeys(rows));
+        Map<Long,List<LocalEvidence>> p25Evidence = loadP25LocalEvidence(connection, rows, summaryIdColumn);
+        RuleTargets p25Targets = new RuleTargets();
+        RuleTargets dmrTargets = new RuleTargets();
+        RuleTargets nxdnTargets = new RuleTargets();
+
+        for(Map<String,Object> row: rows)
+        {
+            Integer protocol = integer(row.get("protocol_code"));
+            Integer identifier = integer(row.get(identifierColumn));
+            String systemKey = string(row.get("radio_system_key"));
+            if(protocol == null || identifier == null || systemKey == null)
+            {
+                continue;
+            }
+
+            if(protocol == 1)
+            {
+                Long summaryId = positiveLong(row.get(summaryIdColumn));
+                List<LocalEvidence> evidence = summaryId != null ?
+                    p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
+                if(evidence.isEmpty())
+                {
+                    p25Targets.add(aliasListsBySystem.getOrDefault(systemKey, Set.of()), identifier);
+                }
+                else
+                {
+                    for(LocalEvidence item: evidence)
+                    {
+                        p25Targets.add(Set.of(item.aliasListId()), item.observedLocalId());
+                    }
+                }
+            }
+            else if(protocol == 3)
+            {
+                dmrTargets.add(aliasListsBySystem.getOrDefault(systemKey, Set.of()), identifier);
+            }
+            else if(protocol == 4)
+            {
+                nxdnTargets.add(aliasListsBySystem.getOrDefault(systemKey, Set.of()), identifier);
+            }
+        }
+
+        RuleIndex p25 = index(loadRules(connection, type, P25_PROTOCOLS, p25Targets));
+        RuleIndex dmr = index(loadRules(connection, type, DMR_PROTOCOLS, dmrTargets));
+        RuleIndex nxdn = index(loadRules(connection, type, NXDN_PROTOCOLS, nxdnTargets));
+
+        for(Map<String,Object> row: rows)
+        {
+            Integer protocol = integer(row.get("protocol_code"));
+            Integer identifier = integer(row.get(identifierColumn));
+            String systemKey = string(row.get("radio_system_key"));
+            if(protocol == null || identifier == null || systemKey == null)
+            {
+                continue;
+            }
+
+            Rule best = null;
+            if(protocol == 1)
+            {
+                Long summaryId = positiveLong(row.get(summaryIdColumn));
+                List<LocalEvidence> evidence = summaryId != null ?
+                    p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
+                best = evidence.isEmpty() ? p25.best(identifier,
+                    aliasListsBySystem.getOrDefault(systemKey, Set.of())) : p25.best(evidence, false);
+            }
+            else if(protocol == 3)
+            {
+                best = dmr.best(identifier, aliasListsBySystem.getOrDefault(systemKey, Set.of()));
+            }
+            else if(protocol == 4)
+            {
+                best = nxdn.best(identifier, aliasListsBySystem.getOrDefault(systemKey, Set.of()));
+            }
+
+            applyPresentation(row, best, prefix);
+        }
+    }
+
     /**
      * Bulk table exports can contain tens of thousands of identities.  Index exact rules once so each row only
      * evaluates rules for its identifier plus the comparatively small set of ranged rules.
@@ -486,8 +598,7 @@ class StatsAliasResolver
         return new RuleIndex(Map.copyOf(rulesByAliasList));
     }
 
-    private Snapshot activitySnapshot(Connection connection, List<Map<String,Object>> rows,
-                                      Map<String,Set<Long>> systemAliasLists) throws SQLException
+    private Snapshot activitySnapshot(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         Predicate<Map<String,Object>> talkgroupTarget = row -> {
             Integer kind = integer(row.get("target_kind_code"));
@@ -498,10 +609,10 @@ class StatsAliasResolver
 
         return new Snapshot(
             index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
-                ruleTargets(rows, row -> p25AliasLists(row, systemAliasLists),
+                ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("target_id", row -> protocolCode(row) == 1 && talkgroupTarget.test(row))))),
             index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
-                ruleTargets(rows, row -> p25AliasLists(row, systemAliasLists),
+                ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("source_radio_id", row -> protocolCode(row) == 1),
                     source("target_id", row -> protocolCode(row) == 1 && radioTarget.test(row))))),
             index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
@@ -521,20 +632,20 @@ class StatsAliasResolver
     }
 
     private Snapshot evidenceSnapshot(Connection connection, List<Map<String,Object>> rows,
-                                      Map<String,Set<Long>> systemAliasLists) throws SQLException
+                                      Map<String,Set<Long>> systemAliasLists,
+                                      Map<Long,List<LocalEvidence>> p25Evidence) throws SQLException
     {
         Predicate<Map<String,Object>> talkgroup = row -> !Integer.valueOf(2)
             .equals(integer(row.get("identity_kind_code")));
         Predicate<Map<String,Object>> radio = row -> Integer.valueOf(2)
             .equals(integer(row.get("identity_kind_code")));
 
+        RuleTargets p25TalkgroupTargets = canonicalEvidenceTargets(rows, p25Evidence, systemAliasLists, talkgroup);
+        RuleTargets p25RadioTargets = canonicalEvidenceTargets(rows, p25Evidence, systemAliasLists, radio);
+
         return new Snapshot(
-            index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
-                ruleTargets(rows, row -> p25AliasLists(row, systemAliasLists),
-                    source("identity_id", row -> protocolCode(row) == 1 && talkgroup.test(row))))),
-            index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
-                ruleTargets(rows, row -> p25AliasLists(row, systemAliasLists),
-                    source("identity_id", row -> protocolCode(row) == 1 && radio.test(row))))),
+            index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS, p25TalkgroupTargets)),
+            index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, p25RadioTargets)),
             index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("identity_id", row -> protocolCode(row) == 3 && talkgroup.test(row))))),
@@ -547,6 +658,41 @@ class StatsAliasResolver
             index(loadRules(connection, RuleType.RADIO, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("identity_id", row -> protocolCode(row) == 4 && radio.test(row))))));
+    }
+
+    private static RuleTargets canonicalEvidenceTargets(List<Map<String,Object>> rows,
+                                                        Map<Long,List<LocalEvidence>> p25Evidence,
+                                                        Map<String,Set<Long>> systemAliasLists,
+                                                        Predicate<Map<String,Object>> include)
+    {
+        RuleTargets targets = new RuleTargets();
+        for(Map<String,Object> row: rows)
+        {
+            if(protocolCode(row) != 1 || !include.test(row))
+            {
+                continue;
+            }
+            Long summaryId = positiveLong(row.get("identity_summary_id"));
+            List<LocalEvidence> local = summaryId != null ?
+                p25Evidence.getOrDefault(summaryId, List.of()) : List.of();
+            if(!local.isEmpty())
+            {
+                for(LocalEvidence item: local)
+                {
+                    targets.add(Set.of(item.aliasListId()), item.observedLocalId());
+                }
+            }
+            else
+            {
+                Integer identifier = integer(row.get("identity_id"));
+                String systemKey = string(row.get("radio_system_key"));
+                if(identifier != null && systemKey != null)
+                {
+                    targets.add(systemAliasLists.getOrDefault(systemKey, Set.of()), identifier);
+                }
+            }
+        }
+        return targets;
     }
 
     private Snapshot observedSnapshot(Connection connection, List<Map<String,Object>> rows) throws SQLException
@@ -564,6 +710,129 @@ class StatsAliasResolver
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("group_identity_id", row -> protocolCode(row) == 4)))),
             RuleIndex.empty());
+    }
+
+    /**
+     * Loads only channel-owned local-address evidence for the bounded canonical P25 identities in this response.
+     * The canonical home identity is never used as an Alias lookup value when a receiver observed a different local
+     * address on a site.
+     */
+    private Map<Long,List<LocalEvidence>> loadP25LocalEvidence(Connection connection,
+                                                               List<Map<String,Object>> rows,
+                                                               String summaryIdColumn) throws SQLException
+    {
+        Set<Long> requested = new LinkedHashSet<>();
+        for(Map<String,Object> row: rows)
+        {
+            if(protocolCode(row) == 1)
+            {
+                Long summaryId = positiveLong(row.get(summaryIdColumn));
+                if(summaryId != null)
+                {
+                    requested.add(summaryId);
+                }
+            }
+        }
+
+        if(requested.isEmpty())
+        {
+            return Map.of();
+        }
+
+        Map<Long,Set<LocalEvidence>> evidence = new LinkedHashMap<>();
+        List<Long> ids = List.copyOf(requested);
+        int evidenceCount = 0;
+
+        for(int offset = 0; offset < ids.size(); offset += QUERY_VALUE_CHUNK)
+        {
+            List<Long> chunk = ids.subList(offset, Math.min(ids.size(), offset + QUERY_VALUE_CHUNK));
+            String sql = """
+                WITH requested(identity_summary_id) AS (VALUES %s), local_evidence AS (
+                    SELECT bucket.identity_summary_id, bucket.channel_id, bucket.observed_local_id
+                    FROM requested
+                    JOIN p25_site_call_identity_bucket bucket
+                      ON bucket.identity_summary_id = requested.identity_summary_id
+                    WHERE bucket.observed_local_id IS NOT NULL
+                    UNION
+                    SELECT event.source_identity_summary_id, event.channel_id,
+                        event.source_observed_local_id
+                    FROM requested
+                    JOIN receiver_activity_event event
+                      ON event.source_identity_summary_id = requested.identity_summary_id
+                    WHERE event.source_observed_local_id IS NOT NULL
+                    UNION
+                    SELECT event.target_identity_summary_id, event.channel_id,
+                        event.target_observed_local_id
+                    FROM requested
+                    JOIN receiver_activity_event event
+                      ON event.target_identity_summary_id = requested.identity_summary_id
+                    WHERE event.target_observed_local_id IS NOT NULL
+                    UNION
+                    SELECT member.identity_summary_id, event.channel_id, member.observed_local_id
+                    FROM requested
+                    JOIN activity_event_identity_member member
+                      ON member.identity_summary_id = requested.identity_summary_id
+                    JOIN receiver_activity_event event ON event.id = member.event_id
+                    WHERE member.observed_local_id IS NOT NULL
+                    UNION
+                    SELECT presence.radio_identity_id, presence.channel_id, presence.observed_local_id
+                    FROM requested
+                    JOIN trunked_radio_channel_presence presence
+                      ON presence.radio_identity_id = requested.identity_summary_id
+                    WHERE presence.observed_local_id IS NOT NULL
+                    UNION
+                    SELECT affiliation.radio_identity_id, affiliation.channel_id,
+                        affiliation.radio_observed_local_id
+                    FROM requested
+                    JOIN trunked_radio_affiliation affiliation
+                      ON affiliation.radio_identity_id = requested.identity_summary_id
+                    WHERE affiliation.radio_observed_local_id IS NOT NULL
+                    UNION
+                    SELECT affiliation.talkgroup_identity_id, affiliation.channel_id,
+                        affiliation.talkgroup_observed_local_id
+                    FROM requested
+                    JOIN trunked_radio_affiliation affiliation
+                      ON affiliation.talkgroup_identity_id = requested.identity_summary_id
+                    WHERE affiliation.talkgroup_observed_local_id IS NOT NULL
+                )
+                SELECT DISTINCT local_evidence.identity_summary_id, config.alias_list_id,
+                    local_evidence.observed_local_id
+                FROM local_evidence
+                JOIN receiver_channel channel ON channel.id = local_evidence.channel_id
+                JOIN radio_system system ON system.id = channel.radio_system_id
+                JOIN configuration_channel config
+                  ON config.configuration_id = channel.configuration_id
+                WHERE system.protocol_code = 1 AND config.alias_list_id IS NOT NULL
+                  AND local_evidence.observed_local_id > 0
+                ORDER BY local_evidence.identity_summary_id, config.alias_list_id,
+                    local_evidence.observed_local_id
+                LIMIT ?
+                """.formatted(valuesPlaceholders(chunk.size()));
+
+            try(PreparedStatement statement = connection.prepareStatement(sql))
+            {
+                int parameter = bind(statement, 1, chunk);
+                statement.setInt(parameter, MAX_RULE_LOOKUP_PAIRS - evidenceCount + 1);
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        if(++evidenceCount > MAX_RULE_LOOKUP_PAIRS)
+                        {
+                            throw tooLarge("Alias lookup references too many channel-local identity pairs");
+                        }
+                        long summaryId = resultSet.getLong("identity_summary_id");
+                        LocalEvidence item = new LocalEvidence(resultSet.getLong("alias_list_id"),
+                            resultSet.getInt("observed_local_id"));
+                        evidence.computeIfAbsent(summaryId, ignored -> new LinkedHashSet<>()).add(item);
+                    }
+                }
+            }
+        }
+
+        Map<Long,List<LocalEvidence>> result = new LinkedHashMap<>();
+        evidence.forEach((key, value) -> result.put(key, List.copyOf(value)));
+        return Map.copyOf(result);
     }
 
     private Map<String,Set<Long>> loadAliasLists(Connection connection, Set<String> systemKeys)
@@ -590,8 +859,7 @@ class StatsAliasResolver
                 JOIN receiver_channel channel ON channel.radio_system_id = system.id
                 JOIN configuration_channel configuration
                   ON configuration.configuration_id = channel.configuration_id
-                WHERE system.protocol_code = 1
-                  AND configuration.alias_list_id IS NOT NULL
+                WHERE configuration.alias_list_id IS NOT NULL
                 LIMIT ?
                 """.formatted(valuesPlaceholders(chunk.size()));
 
@@ -868,6 +1136,8 @@ class StatsAliasResolver
 
     private record RuleTarget(long aliasListId, int identifier) {}
 
+    private record LocalEvidence(long aliasListId, int observedLocalId) {}
+
     private static final class RuleTargets
     {
         private final Set<RuleTarget> mPairs = new LinkedHashSet<>();
@@ -1017,6 +1287,56 @@ class StatsAliasResolver
                 }
             }
 
+            return best;
+        }
+
+        private Rule bestSameAlias(int identifier, Set<Long> aliasLists)
+        {
+            if(aliasLists.isEmpty())
+            {
+                return null;
+            }
+
+            Rule best = null;
+            for(long aliasListId: aliasLists)
+            {
+                Rule candidate = best(identifier, aliasListId);
+                if(candidate == null || best != null && candidate.aliasId() != best.aliasId())
+                {
+                    return null;
+                }
+                best = candidate;
+            }
+            return best;
+        }
+
+        /**
+         * Resolves channel-local evidence. Presentation consensus permits equivalent Alias definitions in distinct
+         * lists for system pages; metric attribution can require the exact same Alias row and therefore returns no
+         * winner when two lists merely happen to look alike.
+         */
+        private Rule best(List<LocalEvidence> evidence, boolean requireSameAliasId)
+        {
+            if(evidence.isEmpty())
+            {
+                return null;
+            }
+
+            Rule best = null;
+            for(LocalEvidence item: evidence)
+            {
+                Rule candidate = best(item.observedLocalId(), item.aliasListId());
+                if(candidate == null || best != null && (requireSameAliasId ?
+                    candidate.aliasId() != best.aliasId() : !candidate.hasSamePresentationAs(best)))
+                {
+                    return null;
+                }
+
+                if(best == null || candidate.aliasId() < best.aliasId())
+                {
+                    best = candidate;
+                }
+            }
             return best;
         }
     }

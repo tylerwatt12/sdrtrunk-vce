@@ -21,11 +21,13 @@ class StatsApiV1PayloadTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> INTERNAL_FIELDS = Set.of(
-        "radio_system_id", "channel_id", "identity_id", "system_key", "protocol_code", "variant_code",
+        "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
+        "group_identity_summary_id", "source_identity_summary_id", "target_identity_summary_id",
+        "representative_channel_id", "fallback_channel_id", "identity_id", "system_key",
+        "protocol_code", "variant_code",
         "address_domain_code", "location_category_code", "identity_kind_code", "target_kind_code",
         "group_identity_kind_code", "group_identity_kind_label", "last_group_identity_kind_code",
-        "last_counterpart_kind_code", "last_counterpart_id", "p25_identity_state_code",
-        "p25_home_wacn", "p25_home_system_id", "p25_home_talkgroup_id", "channel_kind_code",
+        "home_wacn", "home_system_id", "channel_kind_code",
         "identity_role_code", "model_code", "brand_code", "mode_code", "channel_type_code",
         "service_flags", "failure_code", "role_flags", "status_flags", "last_event_type_code");
 
@@ -85,9 +87,10 @@ class StatsApiV1PayloadTest
         Map<String,Object> identity = Map.ofEntries(
             Map.entry("radio_system_id", 77), Map.entry("radio_system_key", "p25:bee00:348"),
             Map.entry("protocol_code", 1), Map.entry("address_domain_code", 0),
-            Map.entry("group_identity_id", 205), Map.entry("group_identity_kind_code", 3),
-            Map.entry("p25_identity_state_code", 2), Map.entry("p25_home_wacn", 0xBEE00),
-            Map.entry("p25_home_system_id", 0x348), Map.entry("p25_home_talkgroup_id", 205));
+            Map.entry("identity_summary_id", 99), Map.entry("native_id", 205),
+            Map.entry("identity_key", "v1-p-bee00-348-205"),
+            Map.entry("group_identity_kind_code", 3), Map.entry("home_wacn", 0xBEE00),
+            Map.entry("home_system_id", 0x348));
         JsonNode payload = StatsApiV1Payload.present(Map.of(
             "radio_system_id", 77, "radio_system_key", "p25:bee00:348", "protocol_code", 1,
             "address_domain_code", 0, "capabilities", Map.of("activity", true),
@@ -96,13 +99,30 @@ class StatsApiV1PayloadTest
         assertEquals("p25", payload.path("protocol").textValue());
         assertEquals("standard", payload.path("address_domain").textValue());
         assertEquals("p25:bee00:348", payload.path("radio_system_key").textValue());
-        assertEquals(205, payload.at("/group_identities/0/group_identity_id").intValue());
+        assertEquals(205, payload.at("/group_identities/0/native_id").intValue());
+        assertEquals("v1-p-bee00-348-205", payload.at("/group_identities/0/identity_key").textValue());
         assertEquals("patch_group", payload.at("/group_identities/0/group_identity_kind").textValue());
         assertFalse(payload.at("/group_identities/0").has("talkgroup_id"));
-        assertEquals("stable_fully_qualified",
-            payload.at("/group_identities/0/qualification/state").textValue());
-        assertEquals(0xBEE00, payload.at("/group_identities/0/qualification/home/wacn").intValue());
+        assertFalse(payload.at("/group_identities/0").has("qualification"));
         assertNoInternalFields(payload);
+    }
+
+    @Test
+    void removesRelationshipJoinIdsWhileKeepingCanonicalIdentityFields()
+    {
+        JsonNode relationship = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("identity_key", "v1-r-bee00-348-205"),
+            Map.entry("native_id", 205),
+            Map.entry("radio_identity_summary_id", 11),
+            Map.entry("group_identity_summary_id", 12),
+            Map.entry("source_identity_summary_id", 13),
+            Map.entry("target_identity_summary_id", 14),
+            Map.entry("representative_channel_id", 15),
+            Map.entry("fallback_channel_id", 16)));
+
+        assertEquals("v1-r-bee00-348-205", relationship.path("identity_key").textValue());
+        assertEquals(205, relationship.path("native_id").intValue());
+        assertNoInternalFields(relationship);
     }
 
     @Test

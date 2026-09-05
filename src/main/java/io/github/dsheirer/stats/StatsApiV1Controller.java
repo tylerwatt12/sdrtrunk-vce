@@ -98,7 +98,7 @@ final class StatsApiV1Controller
         server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
                 requireNoSegments(segments);
-                request.requireOnly("before_id", "group_identity_id", "group_identity_kind", "radio_id",
+                request.requireOnly("before_id", "group_identity_key", "radio_identity_key",
                     "radio_system_key", "configuration_id", "hide_grants", "limit");
                 return page(mDatabase.activity(request));
             })));
@@ -229,7 +229,7 @@ final class StatsApiV1Controller
             else if(segments.size() == 3)
             {
                 request.requireOnly();
-                return unwrap(mDatabase.radio(radioSystemKey, pathIdentifier("radio_id", segments.get(2))), "radio");
+                return unwrap(mDatabase.radio(radioSystemKey, segments.get(2)), "radio");
             }
         }
         else if("talker-aliases".equals(resource) && segments.size() == 2)
@@ -239,7 +239,7 @@ final class StatsApiV1Controller
         }
         else if("relationships".equals(resource) && segments.size() == 2)
         {
-            request.requireOnly("group_identity_id", "group_identity_kind", "radio_id", "affiliated",
+            request.requireOnly("group_identity_key", "radio_identity_key", "affiliated",
                 "configuration_id", "sort", "direction", "limit", "offset");
             return page(mDatabase.radioSystemRelationships(radioSystemKey, request));
         }
@@ -254,29 +254,22 @@ final class StatsApiV1Controller
             request.requireOnly("q", "sort", "direction", "limit", "offset");
             return page(mDatabase.radioSystemGroupIdentities(radioSystemKey, request));
         }
-        else if(segments.size() != 4 && segments.size() != 5)
+        else if(segments.size() != 3 && segments.size() != 4)
         {
             throw notFound();
         }
 
-        String kind = switch(segments.get(2))
-        {
-            case "talkgroup" -> "talkgroup";
-            case "patch_group" -> "patch_group";
-            default -> throw new StatsApiException(400, "invalid_path",
-                "group identity kind must be talkgroup or patch_group", "kind");
-        };
-        int identityId = pathIdentifier("group_identity_id", segments.get(3));
+        String identityKey = segments.get(2);
 
-        if(segments.size() == 4)
+        if(segments.size() == 3)
         {
             request.requireOnly();
-            return unwrap(mDatabase.radioSystemGroupIdentity(radioSystemKey, kind, identityId), "group_identity");
+            return unwrap(mDatabase.radioSystemGroupIdentity(radioSystemKey, identityKey), "group_identity");
         }
-        else if("activity".equals(segments.get(4)))
+        else if("activity".equals(segments.get(3)))
         {
             request.requireOnly("range");
-            return mDatabase.radioSystemGroupIdentityActivity(radioSystemKey, kind, identityId, request);
+            return mDatabase.radioSystemGroupIdentityActivity(radioSystemKey, identityKey, request);
         }
 
         throw notFound();

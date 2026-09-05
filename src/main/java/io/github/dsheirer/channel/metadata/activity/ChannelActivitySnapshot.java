@@ -13,6 +13,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -145,9 +146,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
 
         private static MatcherReference matcher(Identifier<?> identifier)
         {
-            if(identifier == null || !identifier.isValid() ||
-                identifier instanceof FullyQualifiedRadioIdentifier ||
-                identifier instanceof FullyQualifiedTalkgroupIdentifier || !(identifier.getValue() instanceof Number value))
+            if(identifier == null || !identifier.isValid() || !(identifier.getValue() instanceof Number value))
             {
                 return null;
             }
@@ -164,7 +163,18 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
 
             String variant = identifier.getProtocol() == Protocol.APCO25_PHASE2 ? "phase_2" :
                 identifier.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
-            return new MatcherReference(type, protocol, variant, value.intValue());
+            String identityKey = null;
+            if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+            {
+                identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_RADIO, radio.getWacn(),
+                    radio.getSystem(), radio.getRadio());
+            }
+            else if(identifier instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
+            {
+                identityKey = RadioSystemIdentityKey.format(RadioSystemIdentityKey.KIND_TALKGROUP,
+                    talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup());
+            }
+            return new MatcherReference(type, protocol, variant, value.intValue(), identityKey);
         }
 
         private static List<AliasReference> aliasReferences(List<Alias> aliases)
@@ -244,7 +254,11 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         }
     }
 
-    public record MatcherReference(String type, String protocol, String variant, int value)
+    public record MatcherReference(String type, String protocol, String variant, int value, String identityKey)
     {
+        public MatcherReference(String type, String protocol, String variant, int value)
+        {
+            this(type, protocol, variant, value, null);
+        }
     }
 }

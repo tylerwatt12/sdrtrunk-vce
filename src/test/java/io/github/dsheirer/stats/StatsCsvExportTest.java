@@ -28,7 +28,8 @@ class StatsCsvExportTest
         Map<String,Object> row = Map.ofEntries(
             Map.entry("protocol", "P25"), Map.entry("system_name", "County, Public Safety"),
             Map.entry("radio_system_key", "p25:bee00:348"), Map.entry("wacn", 0xBEE00),
-            Map.entry("system_id", 0x348), Map.entry("group_identity_id", 56132),
+            Map.entry("system_id", 0x348), Map.entry("identity_key", "v1-g-bee00-348-56132"),
+            Map.entry("native_id", 56132),
             Map.entry("group_identity_kind_code", 1), Map.entry("alias_name", "  =HYPERLINK(\"bad\")"),
             Map.entry("alias_description", "Line one\nLine two"), Map.entry("alias_group", "+Formula"),
             Map.entry("logical_call_count", 12), Map.entry("recorded_logical_call_count", 4),
@@ -54,7 +55,8 @@ class StatsCsvExportTest
             assertEquals("'+Formula", parsed.get("group"));
             assertEquals("1970-01-01T00:00:01Z", parsed.get("first_seen_utc"));
             assertEquals("BEE00", parsed.get("wacn_hex"));
-            assertEquals("56132", parsed.get("group_identity_id"));
+            assertEquals("v1-g-bee00-348-56132", parsed.get("identity_key"));
+            assertEquals("56132", parsed.get("native_id"));
             assertEquals("talkgroup", parsed.get("group_identity_kind"));
             assertFalse(parser.getHeaderMap().containsKey("alias_list_id"));
             assertEquals("p25:bee00:348", parsed.get("radio_system_key"));

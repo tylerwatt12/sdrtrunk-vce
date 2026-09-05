@@ -202,7 +202,7 @@ class StatsLiveServiceBoundsTest
         WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
             WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
                 configurationId, WebEntityRef.channel(configurationId),
-                WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0))), 60_000L);
+                WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0, 0xBEE00, 0x49F))), 60_000L);
         catalog.refreshNow();
         TestChannelActivitySource source = new TestChannelActivitySource();
         StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
@@ -221,9 +221,11 @@ class StatsLiveServiceBoundsTest
             Map<String,Object> projected = rows(table).getFirst();
             assertEquals(Map.of("kind", "channel", "key", configurationId), table.get("entity_ref"));
             assertEquals(Map.of("kind", "channel", "key", configurationId), projected.get("entity_ref"));
-            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f", "id", 1201),
+            assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-r-bee00-49f-1201"),
                 projected.get("source_entity_ref"));
-            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:49f", "id", 4400),
+            assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "p25:bee00:49f",
+                "identity_key", "v1-g-bee00-49f-4400"),
                 projected.get("target_entity_ref"));
         }
         finally
@@ -258,7 +260,7 @@ class StatsLiveServiceBoundsTest
             {
                 loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
                     configurationId, WebEntityRef.channel(configurationId),
-                    WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0))));
+                    WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0, 0xBEE00, 0x49F))));
                 catalog.refreshNow();
 
                 boolean resynchronized = false;

@@ -28,12 +28,15 @@ class WebEntityRefTest
             WebEntityRef.radioSystem("p25:bee00:49f").toMap());
         assertEquals(Map.of("kind", "channel", "key", "728d2d66-de4e-476b-a696-919f32dd4d12"),
             WebEntityRef.channel("728d2d66-de4e-476b-a696-919f32dd4d12").toMap());
-        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "dmr:channel:test", "id", 91),
-            WebEntityRef.talkgroup("dmr:channel:test", 91).toMap());
-        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:scope", "id", 700),
-            WebEntityRef.patchGroup("p25:scope", 700).toMap());
-        assertEquals(Map.of("kind", "radio", "radio_system_key", "nxdn:channel:test", "id", 1201),
-            WebEntityRef.radio("nxdn:channel:test", 1201).toMap());
+        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", "dmr:channel:test",
+                "identity_key", "v1-g-x-x-91"),
+            WebEntityRef.talkgroup("dmr:channel:test", "v1-g-x-x-91").toMap());
+        assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:scope",
+                "identity_key", "v1-p-bee00-49f-700"),
+            WebEntityRef.patchGroup("p25:scope", "v1-p-bee00-49f-700").toMap());
+        assertEquals(Map.of("kind", "radio", "radio_system_key", "nxdn:channel:test",
+                "identity_key", "v1-r-x-x-1201"),
+            WebEntityRef.radio("nxdn:channel:test", "v1-r-x-x-1201").toMap());
     }
 
     @Test
@@ -45,7 +48,9 @@ class WebEntityRefTest
         assertThrows(IllegalArgumentException.class,
             () -> WebEntityRef.channel("728D2D66-DE4E-476B-A696-919F32DD4D12"));
         assertThrows(IllegalArgumentException.class, () -> WebEntityRef.channel("not-a-uuid"));
-        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radio("scope", 0));
+        assertThrows(IllegalArgumentException.class, () -> WebEntityRef.radio("scope", "v1-r-x-x-0"));
+        assertThrows(IllegalArgumentException.class,
+            () -> WebEntityRef.radio("scope", "v1-g-x-x-1"));
 
         Map<String,Object> row = new LinkedHashMap<>();
         WebEntityRef.put(row, null);

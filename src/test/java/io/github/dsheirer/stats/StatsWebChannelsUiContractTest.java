@@ -62,7 +62,7 @@ class StatsWebChannelsUiContractTest
 
         assertTrue(tabs.contains("['AM', 'NBFM']"));
         assertTrue(tabs.contains("if (!analog && channelCapability(channel, 'group_identities'))"));
-        assertTrue(groupColumns.contains("key: 'group_identity_id'"));
+        assertTrue(groupColumns.contains("groupIdentityDisplayId(row)"));
         assertTrue(groupColumns.contains("groupIdentityLabel(row)"));
         assertTrue(groupColumns.contains("key: 'timeslot'"));
         assertTrue(groupColumns.contains("label: 'Slot'"));
