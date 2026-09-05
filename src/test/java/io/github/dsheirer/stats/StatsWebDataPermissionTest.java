@@ -66,8 +66,8 @@ class StatsWebDataPermissionTest
         {
             server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.USER);
 
-            assertEquals(403, server.get(StatsApiV1.ACTIVITY, null).statusCode());
-            assertEquals(403,
+            assertEquals(401, server.get(StatsApiV1.ACTIVITY, null).statusCode());
+            assertEquals(401,
                 server.get(StatsApiV1.ACTIVITY + "?configuration_id=" + CONFIGURATION_ID, null).statusCode());
 
             String listener = server.login();

@@ -39,6 +39,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class TrunkedSiteMetadataMapperTest
 {
+    private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000122";
+
     @TempDir
     Path mTemporaryFolder;
 
@@ -314,6 +316,7 @@ class TrunkedSiteMetadataMapperTest
     private static Channel channel(long frequency)
     {
         Channel channel = new Channel("Control");
+        channel.setConfigurationId(CONFIGURATION_ID);
         channel.setSystem("Metro Radio");
         channel.setSite("Downtown");
         channel.setAliasListName("County");

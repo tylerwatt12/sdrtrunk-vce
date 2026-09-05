@@ -467,7 +467,7 @@ async function main() {
     });
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
     address_domain: 'nxdn_type_c', network_id: 1, system_id: 2 }),
-  'Type-C · Network 1 · System 2');
+  'Scoped to this saved channel · Type-C');
 
   const receiverHealthSeverity = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'receiverHealthSeverity')})`);

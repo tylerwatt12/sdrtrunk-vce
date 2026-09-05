@@ -27,23 +27,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ControlChannelQualityRegistryTest
 {
+    private static final String CHANNEL_A = "00000000-0000-0000-0000-000000000001";
+    private static final String CHANNEL_B = "00000000-0000-0000-0000-000000000002";
+    private static final String CHANNEL_C = "00000000-0000-0000-0000-000000000003";
+    private static final String CHANNEL_D = "00000000-0000-0000-0000-000000000004";
+    private static final String CHANNEL_E = "00000000-0000-0000-0000-000000000005";
+
     @Test
     void exposesOnlyFreshActiveFiniteDecodeHealth()
     {
         AtomicLong now = new AtomicLong(10_000L);
         ControlChannelQualityRegistry registry = new ControlChannelQualityRegistry(2_000L, now::get);
-        registry.receive(quality("fresh", 9_000L, true, 91.5d));
-        registry.receive(quality("stale", 7_999L, true, 99.0d));
-        registry.receive(quality("inactive", 9_900L, false, 100.0d));
-        registry.receive(quality("missing-health", 9_900L, true, null));
-        registry.receive(quality("future", 10_001L, true, 100.0d));
+        registry.receive(quality(CHANNEL_A, 9_000L, true, 91.5d));
+        registry.receive(quality(CHANNEL_B, 7_999L, true, 99.0d));
+        registry.receive(quality(CHANNEL_C, 9_900L, false, 100.0d));
+        registry.receive(quality(CHANNEL_D, 9_900L, true, null));
+        registry.receive(quality(CHANNEL_E, 10_001L, true, 100.0d));
 
-        assertEquals(91.5d, registry.getDecodeHealthPercent("fresh").orElseThrow());
-        assertTrue(registry.getDecodeHealthPercent("stale").isEmpty());
-        assertTrue(registry.getDecodeHealthPercent("inactive").isEmpty());
-        assertTrue(registry.getDecodeHealthPercent("missing-health").isEmpty());
-        assertTrue(registry.getDecodeHealthPercent("future").isEmpty());
-        assertTrue(registry.getDecodeHealthPercent("unknown").isEmpty());
+        assertEquals(91.5d, registry.getDecodeHealthPercent(CHANNEL_A).orElseThrow());
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_B).isEmpty());
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_C).isEmpty());
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_D).isEmpty());
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_E).isEmpty());
+        assertTrue(registry.getDecodeHealthPercent("00000000-0000-0000-0000-000000000099").isEmpty());
     }
 
     @Test
@@ -51,14 +57,14 @@ class ControlChannelQualityRegistryTest
     {
         AtomicLong now = new AtomicLong(10_000L);
         ControlChannelQualityRegistry registry = new ControlChannelQualityRegistry(2_000L, now::get);
-        registry.receive(quality("site-a", 9_900L, true, 75.0d));
-        registry.receive(quality("site-a", 9_800L, false, null));
+        registry.receive(quality(CHANNEL_A, 9_900L, true, 75.0d));
+        registry.receive(quality(CHANNEL_A, 9_800L, false, null));
 
-        assertEquals(75.0d, registry.getDecodeHealthPercent("site-a").orElseThrow());
+        assertEquals(75.0d, registry.getDecodeHealthPercent(CHANNEL_A).orElseThrow());
         assertEquals(1, registry.size());
 
-        registry.receive(quality("site-a", 9_901L, false, null));
-        assertTrue(registry.getDecodeHealthPercent("site-a").isEmpty());
+        registry.receive(quality(CHANNEL_A, 9_901L, false, null));
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_A).isEmpty());
 
         registry.clear();
         assertEquals(0, registry.size());
@@ -70,19 +76,19 @@ class ControlChannelQualityRegistryTest
         AtomicLong now = new AtomicLong(10_000L);
         ControlChannelQualityRegistry registry = new ControlChannelQualityRegistry(2_000L, now::get);
         registry.receive(quality(" ", 9_900L, true, 90.0d));
-        registry.receive(quality("zero-time", 0L, true, 90.0d));
-        registry.receive(quality("nan", 9_900L, true, Double.NaN));
-        registry.receive(quality("too-high", 9_900L, true, 101.0d));
+        registry.receive(quality(CHANNEL_A, 0L, true, 90.0d));
+        registry.receive(quality(CHANNEL_B, 9_900L, true, Double.NaN));
+        registry.receive(quality(CHANNEL_C, 9_900L, true, 101.0d));
 
         assertEquals(2, registry.size());
-        assertTrue(registry.getDecodeHealthPercent("nan").isEmpty());
-        assertTrue(registry.getDecodeHealthPercent("too-high").isEmpty());
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_B).isEmpty());
+        assertTrue(registry.getDecodeHealthPercent(CHANNEL_C).isEmpty());
     }
 
-    private static ControlChannelQualitySnapshot quality(String guid, long observedAt, boolean active,
+    private static ControlChannelQualitySnapshot quality(String configurationId, long observedAt, boolean active,
                                                          Double decodeHealth)
     {
-        return new ControlChannelQualitySnapshot(null, guid, 851_012_500L, observedAt, active, -45.0d, -46.0d,
+        return new ControlChannelQualitySnapshot(null, configurationId, 851_012_500L, observedAt, active, -45.0d, -46.0d,
             -50.0d, -40.0d, decodeHealth, 100L, 1L, 0L, 0L, 0L, observedAt);
     }
 }

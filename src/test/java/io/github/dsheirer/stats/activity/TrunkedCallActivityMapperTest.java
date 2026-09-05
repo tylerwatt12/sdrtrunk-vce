@@ -49,8 +49,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 class TrunkedCallActivityMapperTest
 {
-    private static final String DMR_GUID = "123e4567-e89b-12d3-a456-426614174001";
-    private static final String NXDN_GUID = "123e4567-e89b-12d3-a456-426614174002";
+    private static final String DMR_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174011";
+    private static final String NXDN_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174012";
+    private static final String DMR_RADIORESOLVE_ID = "123e4567-e89b-12d3-a456-426614174001";
+    private static final String NXDN_RADIORESOLVE_ID = "123e4567-e89b-12d3-a456-426614174002";
 
     @TempDir
     Path mTemporaryFolder;
@@ -84,8 +86,9 @@ class TrunkedCallActivityMapperTest
     void mapsNxdnEncryptionAndAddressDomainWithoutInventingATimeslot()
     {
         Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId(NXDN_CONFIGURATION_ID);
         parent.setDecodeConfiguration(new DecodeConfigNXDN(TransmissionMode.TYPE_D));
-        parent.setRadioResolveId(NXDN_GUID);
+        parent.setRadioResolveId(NXDN_RADIORESOLVE_ID);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
         identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
@@ -185,12 +188,13 @@ class TrunkedCallActivityMapperTest
     private static Channel dmrParent()
     {
         Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId(DMR_CONFIGURATION_ID);
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
         parent.setDecodeConfiguration(config);
         parent.setSite("Downtown");
         parent.setAliasListName("Metro DMR");
-        parent.setRadioResolveId(DMR_GUID);
+        parent.setRadioResolveId(DMR_RADIORESOLVE_ID);
         return parent;
     }
 
@@ -228,7 +232,7 @@ class TrunkedCallActivityMapperTest
                     radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('%s', 'TRUNKED', 0, 'Metro', 'Downtown', 'DMR Site',
                     '%s', 0, 'DMR', 451012500, '{}')
-                """.formatted(channel.getConfigurationId(), DMR_GUID));
+                """.formatted(channel.getConfigurationId(), DMR_RADIORESOLVE_ID));
         }
     }
 

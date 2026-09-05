@@ -88,14 +88,14 @@ class P25SiteIdentityUiContractTest
         assertTrue(control.contains("mStatus.setManaged(visible)"));
         assertTrue(control.contains("mStatus.setVisible(visible)"));
         assertTrue(control.contains("Create override"));
-        assertTrue(control.contains("mChannel.radioResolveIdProperty().get()"));
-        assertTrue(control.contains("new ViewWebP25BandplanOverrideRequest(identity, radioResolveId)"));
+        assertTrue(control.contains("mChannel.getPersistedConfigurationId()"));
+        assertTrue(control.contains("new ViewWebP25BandplanOverrideRequest(identity, configurationId)"));
         assertTrue(control.contains("MyEventBus.getGlobalEventBus().post("));
         assertTrue(control.contains("mRegistry.addChangeListener("));
         assertTrue(control.contains("mRegistry.removeChangeListener("));
         assertTrue(control.contains("boolean createVisible = visible && !matched"));
         assertTrue(control.contains("mCreate.setManaged(createVisible)"));
         assertTrue(control.contains("mCreate.setVisible(createVisible)"));
-        assertTrue(control.contains("mChannel.radioResolveIdProperty().get() == null"));
+        assertTrue(control.contains("mChannel.getPersistedConfigurationId() == null"));
     }
 }

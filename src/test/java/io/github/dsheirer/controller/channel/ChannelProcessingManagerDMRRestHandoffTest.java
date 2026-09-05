@@ -98,6 +98,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -362,6 +363,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10_000);
         Channel parent = channel(1);
         parent.setAliasListName(AUDIO_ALIAS_LIST_NAME);
+        parent.setAliasListId(1L);
         List<AudioCallEvent> audioEvents = new CopyOnWriteArrayList<>();
         manager.addAudioCallListener(audioEvents::add);
 
@@ -1704,6 +1706,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
     private static Channel channel(int trafficPoolSize)
     {
         Channel channel = new Channel("Capacity Plus", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(UUID.randomUUID().toString());
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
         config.setTrafficChannelPoolSize(trafficPoolSize);
@@ -1718,6 +1721,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
     private static Channel trackingChannel(int trafficPoolSize)
     {
         Channel channel = new Channel("Capacity Plus", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(UUID.randomUUID().toString());
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
         config.setTrafficChannelPoolSize(trafficPoolSize);
@@ -1732,6 +1736,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
     private static BlockingStandardChannel blockingChannel(int trafficPoolSize)
     {
         BlockingStandardChannel channel = new BlockingStandardChannel();
+        channel.setConfigurationId(UUID.randomUUID().toString());
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
         config.setTrafficChannelPoolSize(trafficPoolSize);
