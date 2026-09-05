@@ -34,8 +34,8 @@ public final class TrunkedSiteMetadataClassifier
      */
     public static boolean isKnownTrunkingMetadata(ProtocolSiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful() || event.channel() == null ||
-            !event.channel().isStandardChannel() || event.channel().isTrafficChannel() ||
+        if(event == null || !event.isUseful() || event.receiverContext() == null ||
+            !event.receiverContext().isStandardChannel() || event.receiverContext().isTrafficChannel() ||
             event.snapshot().protocol() == null)
         {
             return false;

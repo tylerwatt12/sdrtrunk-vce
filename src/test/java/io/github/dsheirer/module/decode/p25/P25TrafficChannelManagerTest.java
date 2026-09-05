@@ -19,6 +19,7 @@ import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.TimeslotMessage;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
@@ -29,6 +30,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
@@ -94,6 +96,7 @@ class P25TrafficChannelManagerTest
     {
         long frequency = 154_875_000L;
         Channel parentChannel = new Channel("Conventional");
+        parentChannel.setConfigurationId("00000000-0000-0000-0000-000000000401");
         parentChannel.setDecodeConfiguration(new DecodeConfigP25Conventional());
         P25TrafficChannelManager manager = new P25TrafficChannelManager(parentChannel);
         MutableIdentifierCollection identifiers = identifiers(1201,
@@ -117,10 +120,11 @@ class P25TrafficChannelManagerTest
         }
 
         assertEquals(2, subscriber.events.size());
-        assertSame(parentChannel, subscriber.events.get(0).channel());
-        assertEquals(1_000L, subscriber.events.get(0).event().getTimeStart());
-        assertEquals(frequency, subscriber.events.get(0).event().getChannelDescriptor().getDownlinkFrequency());
-        assertEquals(1_300L, subscriber.events.get(1).event().getTimeStart());
+        assertEquals(parentChannel.getPersistedConfigurationId(), subscriber.events.get(0).configurationId());
+        assertEquals(DecoderType.P25_CONVENTIONAL, subscriber.events.get(0).decoderType());
+        assertEquals(1_000L, subscriber.events.get(0).startedAtEpochMilliseconds());
+        assertEquals(frequency, subscriber.events.get(0).frequencyHertz());
+        assertEquals(1_300L, subscriber.events.get(1).startedAtEpochMilliseconds());
     }
 
     @Test
@@ -159,9 +163,10 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
-    void publishesTalkerAliasWithoutActiveCallTracker()
+    void keepsLocalTalkerAliasButDoesNotPersistItWithoutAnActiveCall()
     {
         Channel parentChannel = new Channel("Control");
+        parentChannel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x348, 1, 1));
         P25TrafficChannelManager manager = new P25TrafficChannelManager(parentChannel);
         RadioIdentifier radio = APCO25RadioIdentifier.createFrom(1811524);
         P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CAR 201");
@@ -182,12 +187,39 @@ class P25TrafficChannelManagerTest
         }
 
         assertTrue(manager.getTalkerAliasManager().hasAlias(radio));
-        TrunkedTalkerAliasEvent event = subscriber.event.get();
-        assertNotNull(event);
-        assertEquals(parentChannel, event.channel());
-        assertEquals(radio, event.radio());
-        assertEquals(alias, event.alias());
-        assertEquals(2000L, event.timestamp());
+        assertNull(subscriber.event.get());
+    }
+
+    @Test
+    void talkerAliasKeepsTheSystemCapturedWhenItsCallStarted()
+    {
+        long frequency = 851_012_500L;
+        int talkgroup = 56_138;
+        Channel parentChannel = new Channel("Control");
+        parentChannel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        parentChannel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x348, 1, 1));
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parentChannel);
+        RadioIdentifier radio = APCO25RadioIdentifier.createFrom(1_811_524);
+        MutableIdentifierCollection identifiers = identifiers(talkgroup, radio);
+        manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+            DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_000L, null);
+        parentChannel.setP25SiteIdentity(new P25SiteIdentity(0xAAAAA, 0x123, 2, 2));
+        P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CAR 201");
+        TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            manager.processP1MotorolaTalkerAlias(frequency, radio, APCO25Talkgroup.create(talkgroup), alias,
+                identifiers, 1_100L);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+
+        assertNotNull(subscriber.event.get());
+        assertEquals("p25:bee00:348", subscriber.event.get().radioSystemKey());
     }
 
     @Test

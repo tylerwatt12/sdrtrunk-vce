@@ -167,23 +167,40 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("last_seen_utc", "last_seen_ms")
             );
             case "channel-neighbors" -> List.of(
-                text("protocol", "protocol"), text("system_name", "system_name"),
-                text("radio_system_key", "radio_system_key"), text("configuration_id", "configuration_id"),
-                text("channel_name", "name"), text("entry_type", "entry_type"),
+                text("source_protocol", "source_protocol"), text("source_system_name", "source_system_name"),
+                text("source_radio_system_key", "source_radio_system_key"),
+                text("source_configuration_id", "source_configuration_id"),
+                text("source_site_name", "source_site_name"), text("source_channel_name", "source_name"),
+                text("source_wacn_hex", row -> p25Hex(row, "source_protocol", "source_wacn", 5)),
+                number("source_wacn", "source_wacn"),
+                text("source_system_id_hex", row -> p25Hex(row, "source_protocol", "source_system_id", 3)),
+                number("source_system_id", "source_system_id"),
+                number("source_network_id", "source_network_id"),
+                text("source_rfss_hex", row -> p25Hex(row, "source_protocol", "source_rfss", 2)),
+                number("source_rfss", "source_rfss"),
+                text("source_site_id_hex", row -> p25Hex(row, "source_protocol", "source_site_id", 2)),
+                number("source_site_id", "source_site_id"),
+                text("source_nac_hex", row -> p25Hex(row, "source_protocol", "source_nac", 3)),
+                number("source_nac", "source_nac"), number("source_ran", "source_ran"),
+                text("entry_type", "entry_type"),
                 text("neighbor_name", "neighbor_name"),
-                text("wacn_hex", row -> p25Hex(row, "wacn", 5)), number("wacn", "wacn"),
-                text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
+                text("wacn_hex", row -> p25Hex(row, "source_protocol", "wacn", 5)),
+                number("wacn", "wacn"),
+                text("system_id_hex", row -> p25Hex(row, "source_protocol", "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
-                text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
-                text("site_id_hex", row -> p25Hex(row, "site_id", 2)), number("site_id", "site_id"),
-                text("lra_hex", row -> p25Hex(row, "lra", 2)), number("lra", "lra"),
+                text("rfss_hex", row -> p25Hex(row, "source_protocol", "rfss", 2)),
+                number("rfss", "rfss"),
+                text("site_id_hex", row -> p25Hex(row, "source_protocol", "site_id", 2)),
+                number("site_id", "site_id"),
+                text("lra_hex", row -> p25Hex(row, "source_protocol", "lra", 2)), number("lra", "lra"),
                 text("channel", row -> firstValue(row, "channel_descriptor", "channel_number")),
                 number("control_frequency_hz", row -> firstValue(row, "downlink_hz", "frequency_hz")),
                 text("control_frequency_mhz", row -> megahertz(firstValue(row, "downlink_hz", "frequency_hz"))),
                 number("uplink_hz", "uplink_hz"),
                 text("uplink_mhz", row -> megahertz(row.get("uplink_hz"))),
                 text("variant", StatsCsvExport::variant),
-                text("site_classification", StatsCsvExport::siteClassification),
+                text("model", StatsCsvExport::dmrRadioSystemModel),
+                text("location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
                 number("band_count", "band_count"),
                 number("has_fdma", "has_fdma"), number("has_tdma", "has_tdma"),
                 number("has_unknown_mode", "has_unknown"),
@@ -398,7 +415,12 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
 
     private static String p25Hex(Map<String,Object> row, String key, int width)
     {
-        return "P25".equals(row.get("protocol")) ? hex(row.get(key), width) : "";
+        return p25Hex(row, "protocol", key, width);
+    }
+
+    private static String p25Hex(Map<String,Object> row, String protocolKey, String key, int width)
+    {
+        return "P25".equals(row.get(protocolKey)) ? hex(row.get(key), width) : "";
     }
 
     private static String nxdnDisplay(Map<String,Object> row, String key)
@@ -523,11 +545,6 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             case String value when "APCO25_PHASE2".equals(value) -> "phase_2";
             default -> "";
         };
-    }
-
-    private static String siteClassification(Map<String,Object> row)
-    {
-        return apiProtocol(row).siteClassification(numberValue(row.get("location_category_code")));
     }
 
     private static String lastEventType(Map<String,Object> row)

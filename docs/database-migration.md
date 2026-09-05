@@ -230,6 +230,22 @@ Live decoder observations rebuild them under the clean model. No administrator c
 derived rows. New collection boundaries are recorded, the old trunked-identity boundary is replaced by the
 radio-system boundary, and redundant subsystem schema-version metadata is removed.
 
+The rebuilt format-15 radio-system model shares only native identities that can be proven from decoded facts: P25 by
+WACN and System ID, standard DMR Tier III by model (`tiny`, `small`, `large`, or `huge`) and Network ID, and NXDN
+Type-C by location category (`global`, `regional`, or `local`) and System ID. Capacity Plus, Connect Plus, Capacity
+Max, Hytera Tier III, unknown DMR variants, incomplete DMR/NXDN observations, and NXDN Type-D remain scoped to one
+saved channel. Site, frequency, RAN, logical-channel, and timeslot facts are resource context and never system
+identity.
+
+Because this activity is derived and reset by the 14-to-15 step, old channel-scoped rows are not guessed into the new
+native groups. Live observations rebuild them. After migration, a DMR or NXDN channel can temporarily collect derived
+facts under a channel-scoped fallback while native identity is incomplete. If later observations establish a supported
+native identity, new activity moves to that native system. Already recorded fallback history stays under its exact
+saved-channel identity until ordinary retention or an explicit clear removes it; it is never relabeled as activity on
+a system that had not yet been proven. Current site and radio-presence state is cleared when the assignment changes so
+it cannot be presented as current on both systems. Native grouping joins observations inside the migrated receiver
+profile; it does not turn these values into a worldwide identifier for comparing separate installations.
+
 ## Schema-Change Rule
 
 Every change to persisted DDL or persisted meaning must land with all of the following:

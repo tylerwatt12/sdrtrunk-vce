@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 class ReceiverActivitySchemaIntegrityTest
 {
     private static final String CONFIGURATION_ID = "123e4567-e89b-42d3-a456-426614174000";
+    private static final String NATIVE_CONFIGURATION_ID = "223e4567-e89b-42d3-a456-426614174000";
 
     @Test
     void usesProtocolNeutralNamesStableCodesAndOnlyTheGlobalVersionMarker() throws Exception
@@ -134,6 +135,191 @@ class ReceiverActivitySchemaIntegrityTest
     }
 
     @Test
+    void channelClearRemovesItsFallbackSystemButPreservesNativeSystemHistory() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertDmrConfiguredChannel(connection, CONFIGURATION_ID, "Fallback");
+            insertDmrConfiguredChannel(connection, NATIVE_CONFIGURATION_ID, "Native");
+            execute(connection, """
+                INSERT INTO radio_system(
+                    id, system_key, configuration_id, protocol_code, address_domain_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES (1, 'dmr:channel:%s', '%s', 3, 0, 1000, 1000)
+                """.formatted(CONFIGURATION_ID, CONFIGURATION_ID));
+            execute(connection, """
+                INSERT INTO radio_system(
+                    id, system_key, protocol_code, address_domain_code, dmr_model_code,
+                    dmr_network_id, first_seen_ms, last_seen_ms)
+                VALUES (2, 'dmr:tier3:small:42', 3, 0, 2, 42, 1000, 1000)
+                """);
+            execute(connection, """
+                INSERT INTO receiver_channel(
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms)
+                VALUES
+                    (1, '%s', 1000, 1000, 1, 1000),
+                    (2, '%s', 1000, 1000, 2, 1000)
+                """.formatted(CONFIGURATION_ID, NATIVE_CONFIGURATION_ID));
+            execute(connection, """
+                INSERT INTO radio_system_identity_summary(
+                    id, radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms)
+                VALUES (1, 1, 1, 101, 1000, 1000), (2, 2, 1, 202, 1000, 1000)
+                """);
+            execute(connection, """
+                INSERT INTO trunked_logical_call_bucket(radio_system_id, bucket_start_ms, logical_call_count)
+                VALUES (1, 0, 1), (2, 0, 1)
+                """);
+
+            assertEquals(2, ReceiverActivitySchema.clearChannelStats(connection, CONFIGURATION_ID));
+            assertEquals(0, count(connection, "receiver_channel",
+                "configuration_id='" + CONFIGURATION_ID + "'"));
+            assertEquals(0, count(connection, "radio_system",
+                "system_key='dmr:channel:" + CONFIGURATION_ID + "'"));
+            assertEquals(0, count(connection, "radio_system_identity_summary", "radio_system_id=1"));
+            assertEquals(0, count(connection, "trunked_logical_call_bucket", "radio_system_id=1"));
+
+            assertEquals(1, count(connection, "receiver_channel",
+                "configuration_id='" + NATIVE_CONFIGURATION_ID + "' AND radio_system_id=2"));
+            assertEquals(1, count(connection, "radio_system", "system_key='dmr:tier3:small:42'"));
+            assertEquals(1, count(connection, "radio_system_identity_summary", "radio_system_id=2"));
+            assertEquals(1, count(connection, "trunked_logical_call_bucket", "radio_system_id=2"));
+        }
+    }
+
+    @Test
+    void identityRelationshipsEnforceKindsAndRolesAtTheDatabaseBoundary() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertConfiguredChannel(connection);
+            execute(connection, """
+                INSERT INTO radio_system(
+                    id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                    first_seen_ms, last_seen_ms)
+                VALUES (10, 'p25:abcde:123', 1, 0, 0xABCDE, 0x123, 1000, 1000)
+                """);
+            execute(connection, """
+                INSERT INTO receiver_channel(
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms)
+                VALUES (1, '%s', 1000, 1000, 10, 1000)
+                """.formatted(CONFIGURATION_ID));
+            execute(connection, """
+                INSERT INTO p25_learned_site(
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms)
+                VALUES (100, 10, 1, 1, 1000, 1000)
+                """);
+            execute(connection, """
+                INSERT INTO radio_system_identity_summary(
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, first_seen_ms, last_seen_ms)
+                VALUES (101, 10, 1, 0xABCDE, 0x123, 1001, 1000, 1000),
+                       (102, 10, 2, 0xABCDE, 0x123, 2002, 1000, 1000),
+                       (103, 10, 3, 0xABCDE, 0x123, 3003, 1000, 1000)
+                """);
+
+            execute(connection, """
+                INSERT INTO receiver_activity_event(
+                    id, channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id)
+                VALUES (1, 1, 10, 1000, 4, 2002, 1001, 1, 102, 2, 101)
+                """);
+            execute(connection, """
+                INSERT INTO activity_event_identity_member(
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
+                VALUES (1, 10, 101, 1, 1001)
+                """);
+            execute(connection, """
+                INSERT INTO trunked_logical_call_identity_bucket(
+                    radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_summary_id)
+                VALUES (10, 0, 1, 1, 101),
+                       (10, 0, 1, 2, 102),
+                       (10, 0, 1, 3, 103),
+                       (10, 0, 2, 2, 102)
+                """);
+            execute(connection, """
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms,
+                    identity_role_code, identity_kind_code, identity_summary_id,
+                    observed_local_id, last_observed_at_ms)
+                VALUES (10, 100, 1, 0, 1, 1, 101, 1001, 1000),
+                       (10, 100, 1, 0, 1, 2, 102, 2002, 1000),
+                       (10, 100, 1, 0, 1, 3, 103, 3003, 1000),
+                       (10, 100, 1, 0, 2, 2, 102, 2002, 1000)
+                """);
+
+            assertEquals(4, scalar(connection,
+                "SELECT COUNT(*) FROM trunked_logical_call_identity_bucket"));
+            assertEquals(4, scalar(connection,
+                "SELECT COUNT(*) FROM p25_site_call_identity_bucket"));
+
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_identity_kind_code)
+                VALUES (1, 10, 1001, 4, 101, 2)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_identity_summary_id, source_identity_kind_code)
+                VALUES (1, 10, 1001, 4, 101, 1)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    target_observed_local_id, target_kind_code, target_identity_summary_id)
+                VALUES (1, 10, 1001, 4, 1001, 2, 101)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    target_identity_summary_id)
+                VALUES (1, 10, 1001, 4, 101)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO activity_event_identity_member(
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code)
+                VALUES (1, 10, 102, 1)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO activity_event_identity_member(
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code)
+                VALUES (1, 10, 102, 2)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_logical_call_identity_bucket(
+                    radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_summary_id)
+                VALUES (10, 3600000, 2, 1, 101)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_logical_call_identity_bucket(
+                    radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_summary_id)
+                VALUES (10, 3600000, 2, 2, 101)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms,
+                    identity_role_code, identity_kind_code, identity_summary_id,
+                    last_observed_at_ms)
+                VALUES (10, 100, 1, 3600000, 2, 1, 101, 1001)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms,
+                    identity_role_code, identity_kind_code, identity_summary_id,
+                    last_observed_at_ms)
+                VALUES (10, 100, 1, 3600000, 2, 2, 101, 1001)
+                """));
+        }
+    }
+
+    @Test
     void rejectsInvalidTimesBooleansHashesSlotsFrequenciesAndCounters() throws Exception
     {
         try(Connection connection = open())
@@ -213,12 +399,18 @@ class ReceiverActivitySchemaIntegrityTest
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO p25_site_patch_group(
-                    channel_id, patch_group, version, confirmed_at_ms)
+                    channel_id, local_patch_group_id, version, confirmed_at_ms)
                 VALUES (1, 91, 32, 1000)
                 """));
+            execute(connection, """
+                INSERT INTO p25_site_patch_group(
+                    channel_id, local_patch_group_id, version, confirmed_at_ms)
+                VALUES (1, 91, 31, 1000)
+                """);
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_site_patch_group"));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO p25_site_patch_group(
-                    channel_id, patch_group, version, confirmed_at_ms)
+                    channel_id, local_patch_group_id, version, confirmed_at_ms)
                 VALUES (1, 65535, 1, 1000)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
@@ -248,6 +440,19 @@ class ReceiverActivitySchemaIntegrityTest
             VALUES ('%s', 'TRUNKED', 0, 'System', 'Site', 'Control',
                 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 'P25_PHASE1', 851000000, '{}')
             """.formatted(CONFIGURATION_ID));
+    }
+
+    private static void insertDmrConfiguredChannel(Connection connection, String configurationId, String name)
+        throws SQLException
+    {
+        execute(connection, """
+            INSERT INTO configuration_channel(
+                configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
+            VALUES ('%s', 'TRUNKED', 0, 'DMR System', 'DMR Site', '%s',
+                NULL, 0, 'DMR', 451000000,
+                '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
+            """.formatted(configurationId, name));
     }
 
     private static Connection open() throws Exception

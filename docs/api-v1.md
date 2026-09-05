@@ -38,7 +38,8 @@ sort fields, ambiguous identifiers, and invalid booleans are rejected. Path segm
 The API has two top-level radio resources:
 
 - A **radio system** groups trunked P25, DMR, or NXDN activity. Its public identifier is the opaque
-  `radio_system_key`. Clients must not parse it or build one from labels.
+  `radio_system_key`. It is stable within this receiver profile, not a worldwide identifier. Clients must not parse
+  it, build one from labels, or compare keys from separate installations as if they shared a global namespace.
 - A **channel** is one saved receiver configuration, whether trunked or conventional. Its public identifier is the
   saved channel's canonical lowercase UUID in `configuration_id`.
 
@@ -48,6 +49,13 @@ selectors. Conventional group and radio observations belong to one saved channel
 only under `/channels/{configuration_id}`. The same number on another system or channel is a different identity. A
 channel's user-facing name, configured site label, Alias List, and frequency are properties of that channel; they are
 not radio-system identity.
+
+Cross-channel grouping is deliberately limited to identities the decoder can prove: P25 uses WACN plus System ID;
+standard DMR Tier III uses model (`tiny`, `small`, `large`, or `huge`) plus Network ID; and NXDN Type-C uses location
+category (`global`, `regional`, or `local`) plus System ID. Capacity Plus, Connect Plus, Capacity Max, Hytera Tier III,
+unknown DMR variants, incomplete DMR/NXDN observations, and NXDN Type-D remain scoped to one saved channel. A timeslot
+is channel/resource context, never radio-system identity. Clients must continue treating every `radio_system_key` as
+opaque even when these native facts are also displayed.
 
 Resources can include an explicit `entity_ref` for browser navigation:
 
@@ -88,8 +96,8 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/channels` | Paged saved trunked and conventional channels. |
 | `GET /api/v1/channels/{configuration_id}` | One saved channel and its summary. |
 | `GET /api/v1/channels/{configuration_id}/frequencies` | Paged learned or configured frequencies for a trunked channel. |
-| `GET /api/v1/channels/{configuration_id}/group-identities` | Paged group identities observed on the channel. Trunked channels also accept a time range. |
-| `GET /api/v1/channels/{configuration_id}/radios` | Paged radio identities observed on the channel. |
+| `GET /api/v1/channels/{configuration_id}/group-identities` | Paged group identities from channel-owned observations. Trunked channels also accept a time range. Shared native DMR/NXDN systems return an empty channel collection; use the radio-system resource for their system-wide identities. |
+| `GET /api/v1/channels/{configuration_id}/radios` | Paged radio identities from channel-owned observations. Shared native DMR/NXDN systems return an empty channel collection; use the radio-system resource for their system-wide identities. |
 | `GET /api/v1/channels/{configuration_id}/quality` | Current and bounded historical control-channel quality. |
 | `GET /api/v1/channels/{configuration_id}/frequency-bands` | Effective P25 home bandplan and ISSI-advertised foreign bands. |
 | `GET /api/v1/channels/{configuration_id}/neighbors` | Paged RF-site neighbors learned by that channel. |
@@ -133,15 +141,23 @@ also preserve timeslot context.
 Channel group and radio collections accept `q`, `sort`, `direction`, `limit`, and `offset`; search includes the
 numeric ID and the Alias assigned by that exact channel's Alias List. Trunked group collections additionally accept
 `range=1h|6h|24h|7d|30d`. Conventional group collections use their stored summaries and reject `range` instead of
-silently ignoring it.
+silently ignoring it. P25 has channel-owned site call buckets. Incomplete DMR/NXDN systems that remain scoped to one
+saved channel also have channel-owned totals because their fallback radio-system key belongs only to that channel.
+Once DMR or NXDN has a native identity shared by multiple saved channels, its compact identity buckets are
+system-wide: channel group/radio collections are empty and `capabilities.group_identities` is false rather than
+relabeling those system totals as observations from one channel.
 
 P25 channel details can include `p25_decoder_mode` (`C4FM` or `CQPSK`), NAC, RFSS, and RF site facts when known.
 DMR channel details can include tier/model, color code, LCN, and timeslot facts. NXDN channel details can include
 Type-C/Type-D address-domain, RAN, channel number, and location-category facts. These are facts about observations on
-the saved channel, not alternate channel identifiers.
+the saved channel, not alternate channel identifiers. Canonical DMR model/Network ID and NXDN location category/System
+ID come from the assigned `radio_system`, so those stable system fields remain present even when no optional site
+snapshot exists.
 
-P25 uses its native WACN and System ID to join the same radio system across saved channels. Trunked DMR and NXDN are
-intentionally scoped to one saved channel until a safe native cross-channel identity can be proven.
+P25 uses its native WACN and System ID to join the same radio system across saved channels. Standard DMR Tier III joins
+channels only after both its model and Network ID are known. NXDN Type-C joins channels only after both its location
+category and System ID are known. The unsupported and incomplete cases listed in the identity model remain
+saved-channel-scoped.
 
 Quality history accepts `range`, `points`, and `include_history`. `points` must be between 60 and 360. Historical
 points require a channel-specific request.
@@ -171,7 +187,9 @@ Persisted resource protocols are lowercase: `am`, `p25`, `dmr`, `nxdn`, or `nbfm
 decoder-specific protocol labels. Database integer codes and internal surrogate row IDs are not part of the API.
 
 - Radio-system summary counts distinguish group identities, ordinary talkgroups, and patch groups.
-- DMR and NXDN variants use names such as `tier_iii`, `capacity_plus`, `type_c`, and `type_d`.
+- DMR and NXDN variants use names such as `tier_iii`, `capacity_plus`, `type_c`, and `type_d`. DMR model and Network
+  ID, or NXDN location category and System ID, can describe a proven native radio system without becoming a key that
+  clients construct.
 - NXDN Type-D identities keep their decimal value and can add a formatted display value.
 - `capabilities` is the authoritative feature list. Do not infer support from protocol alone.
 
@@ -234,6 +252,8 @@ display context, protocol facts, encryption state, `scan_list_ids`, `playback_ta
 
 Channel and channel-timeslot targets use the saved channel label. This keeps action wording independent from a
 configured analog routing number while preserving that number elsewhere in the call metadata.
+For trunked DMR, a timeslot identifies the resource carrying the call; it does not split the radio system or its
+talkgroup Hold/Avoid target.
 
 Audio is fetched from `/api/v1/calls/{id}/audio`. While a feed is active, one shared ring holds at most 512 calls or
 128 MiB. Entries expire after 30 minutes and one WAV cannot exceed 16 MiB. At most 16 feed requests and 16 audio

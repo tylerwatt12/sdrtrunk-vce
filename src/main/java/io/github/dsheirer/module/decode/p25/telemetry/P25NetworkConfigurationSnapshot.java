@@ -35,6 +35,16 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                               List<ForeignSystemBand> foreignSystemBands)
     implements SiteMetadataSnapshot
 {
+    public P25NetworkConfigurationSnapshot
+    {
+        channels = channels == null ? List.of() : List.copyOf(channels);
+        neighborSites = neighborSites == null ? List.of() : List.copyOf(neighborSites);
+        frequencyBands = frequencyBands == null ? List.of() : List.copyOf(frequencyBands);
+        patchGroups = patchGroups == null ? List.of() : List.copyOf(patchGroups);
+        talkerAliases = talkerAliases == null ? List.of() : List.copyOf(talkerAliases);
+        foreignSystemBands = foreignSystemBands == null ? List.of() : List.copyOf(foreignSystemBands);
+    }
+
     @Override
     public Protocol protocol()
     {
@@ -159,6 +169,11 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     public record PatchGroup(Integer localPatchGroupId, Integer version, List<Integer> localTalkgroupIds,
                              List<Integer> localRadioIds)
     {
+        public PatchGroup
+        {
+            localTalkgroupIds = localTalkgroupIds == null ? List.of() : List.copyOf(localTalkgroupIds);
+            localRadioIds = localRadioIds == null ? List.of() : List.copyOf(localRadioIds);
+        }
     }
 
     public record TalkerAlias(Integer radio, String alias)

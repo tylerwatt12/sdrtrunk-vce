@@ -96,7 +96,7 @@ class LogicalCallStatisticsSchemaTest
                 List.of(), 0xFFFD26, false, null, null, ReceiverActivityRecords.P25Identity.ORDINARY,
                 radio, List.of(), List.of(new ReceiverActivityRecords.P25SiteCallObservation(CHANNEL_A,
                     servingSite, 0xFFFD26, 1201, Form.TALKGROUP.name(),
-                    ReceiverActivityRecords.P25Identity.ORDINARY, radio, List.of(), List.of())));
+                    ReceiverActivityRecords.P25Identity.ORDINARY, radio, List.of(), List.of())), null);
 
             assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, call));
             assertEquals(1, scalar(connection, """
@@ -169,6 +169,70 @@ class LogicalCallStatisticsSchemaTest
     }
 
     @Test
+    void p25SiteIdentityLookupsStayIndexedAtRepresentativeVolume() throws Exception
+    {
+        try(Connection connection = open("site-identity-plans.sqlite"))
+        {
+            insertChannel(connection, CHANNEL_A);
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                call(CHANNEL_A, 1, 0x924, 0x649, List.of(site(1, 1)))));
+            long radioSystemId = scalar(connection, "SELECT id FROM radio_system");
+            long receiverChannelId = scalar(connection, "SELECT id FROM receiver_channel");
+            long learnedSiteId = scalar(connection, "SELECT learned_site_id FROM p25_learned_site");
+            long firstBucket = Math.floorDiv(CALL_START, 3_600_000L) * 3_600_000L;
+
+            execute(connection, """
+                WITH RECURSIVE identity_number(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM identity_number WHERE value < 1000
+                )
+                INSERT INTO radio_system_identity_summary(
+                    radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms)
+                SELECT %d, 1, 0x924, 0x649, 100000 + value, %d, %d
+                FROM identity_number
+                """.formatted(radioSystemId, firstBucket, firstBucket));
+            execute(connection, """
+                WITH RECURSIVE hour_number(value) AS (
+                    SELECT 0 UNION ALL SELECT value + 1 FROM hour_number WHERE value < 99
+                )
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms,
+                    identity_role_code, identity_kind_code, identity_summary_id, observed_local_id,
+                    last_observed_at_ms, observed_call_count)
+                SELECT %d, %d, %d, %d + hour_number.value * 3600000,
+                    1, 1, identity.id, identity.identity_id,
+                    %d + hour_number.value * 3600000 + 1000, 1
+                FROM radio_system_identity_summary identity CROSS JOIN hour_number
+                WHERE identity.radio_system_id=%d AND identity.identity_id BETWEEN 100001 AND 101000
+                """.formatted(radioSystemId, learnedSiteId, receiverChannelId, firstBucket, firstBucket,
+                radioSystemId));
+            execute(connection, "ANALYZE");
+            long identitySummaryId = scalar(connection, """
+                SELECT id FROM radio_system_identity_summary WHERE identity_id=100500
+                """);
+
+            String identityPlan = queryPlan(connection, """
+                SELECT channel_id, observed_local_id
+                FROM p25_site_call_identity_bucket
+                WHERE identity_summary_id=?
+                """, identitySummaryId);
+            assertTrue(identityPlan.contains("idx_p25_site_call_identity_identity"), identityPlan);
+            assertFalse(identityPlan.contains("SCAN p25_site_call_identity_bucket"), identityPlan);
+
+            String channelPlan = queryPlan(connection, """
+                SELECT identity_summary_id, bucket_start_ms
+                FROM p25_site_call_identity_bucket
+                WHERE channel_id=? AND bucket_start_ms>=? AND bucket_start_ms<?
+                ORDER BY bucket_start_ms, radio_system_id, identity_role_code, identity_summary_id
+                LIMIT 200
+                """, receiverChannelId, firstBucket, firstBucket + 100L * 3_600_000L);
+            assertTrue(channelPlan.contains("idx_p25_site_call_identity_channel_time"), channelPlan);
+            assertFalse(channelPlan.contains("SCAN p25_site_call_identity_bucket"), channelPlan);
+            assertFalse(channelPlan.contains("USE TEMP B-TREE"), channelPlan);
+        }
+    }
+
+    @Test
     void cleanSchemaExposesNoRetiredCallIdentityObjects() throws Exception
     {
         try(Connection connection = open("clean-shape.sqlite"))
@@ -230,7 +294,7 @@ class LogicalCallStatisticsSchemaTest
                 .map(site -> new ReceiverActivityRecords.P25SiteCallObservation(configurationId, site,
                     700001, 1201, Form.TALKGROUP.name(), ReceiverActivityRecords.P25Identity.ORDINARY,
                     ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), List.of()))
-                .toList());
+                .toList(), null);
     }
 
     private static P25SiteIdentity site(int rfss, int site)
@@ -280,13 +344,15 @@ class LogicalCallStatisticsSchemaTest
         }
     }
 
-    private static String queryPlan(Connection connection, String sql, long start, long end) throws Exception
+    private static String queryPlan(Connection connection, String sql, Object... parameters) throws Exception
     {
         StringBuilder plan = new StringBuilder();
         try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
         {
-            statement.setLong(1, start);
-            statement.setLong(2, end);
+            for(int index = 0; index < parameters.length; index++)
+            {
+                statement.setObject(index + 1, parameters[index]);
+            }
             try(ResultSet resultSet = statement.executeQuery())
             {
                 while(resultSet.next())

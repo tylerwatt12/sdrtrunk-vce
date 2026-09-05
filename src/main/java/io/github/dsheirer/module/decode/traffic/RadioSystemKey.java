@@ -68,8 +68,8 @@ public final class RadioSystemKey
     }
 
     /**
-     * Isolates a DMR or NXDN system to one saved channel until capture-backed native grouping rules are available.
-     * P25 requires its native WACN and System ID and is never represented by a synthetic channel-scoped system.
+     * Isolates DMR/NXDN variants without a proven native grouping rule to one saved channel. P25 requires its native
+     * WACN and System ID and is never represented by a synthetic channel-scoped system.
      */
     public static String channelScoped(Protocol protocol, TrunkedIdentityDomain identityDomain,
                                        String configurationId)
@@ -88,6 +88,72 @@ public final class RadioSystemKey
     public static boolean isP25Native(String key)
     {
         return key != null && P25_KEY.matcher(key).matches();
+    }
+
+    /**
+     * Validates native identity evidence against the decoder protocol and configured identity domain. Channel-scoped
+     * fallback keys are deliberately rejected: they are configuration ownership, not learned native identity.
+     */
+    public static String nativeFor(Protocol protocol, TrunkedIdentityDomain identityDomain, String key)
+    {
+        if(key == null)
+        {
+            return null;
+        }
+
+        String canonical = parse(key);
+        boolean compatible = switch(protocol != null ? protocol : Protocol.UNKNOWN)
+        {
+            case DMR -> identityDomain == TrunkedIdentityDomain.STANDARD &&
+                DMR_TIER_3_KEY.matcher(canonical).matches();
+            case NXDN -> identityDomain == TrunkedIdentityDomain.NXDN_TYPE_C &&
+                NXDN_TYPE_C_KEY.matcher(canonical).matches();
+            case APCO25, APCO25_PHASE2 -> identityDomain == TrunkedIdentityDomain.STANDARD &&
+                P25_KEY.matcher(canonical).matches();
+            default -> false;
+        };
+
+        if(!compatible)
+        {
+            throw new IllegalArgumentException("Native radio-system key does not match the decoder protocol");
+        }
+
+        return canonical;
+    }
+
+    /** Returns the exact native key when known, otherwise the deterministic saved-channel fallback. */
+    public static String effectiveForReceiver(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                              String configurationId, String nativeKey)
+    {
+        return nativeKey != null ? nativeFor(protocol, identityDomain, nativeKey) :
+            channelScoped(protocol, identityDomain, configurationId);
+    }
+
+    /**
+     * Validates event-time system evidence. It must be either a compatible native key or this receiver's exact
+     * deterministic channel fallback.
+     */
+    public static String validateForReceiver(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                             String configurationId, String key)
+    {
+        if(key == null)
+        {
+            return null;
+        }
+
+        String canonical = parse(key);
+        String fallback = channelScoped(protocol, identityDomain, configurationId);
+        if(canonical.equals(fallback))
+        {
+            return canonical;
+        }
+
+        return nativeFor(protocol, identityDomain, canonical);
+    }
+
+    public static boolean isChannelScoped(String key)
+    {
+        return key != null && CHANNEL_KEY.matcher(key).matches();
     }
 
     /**
@@ -205,9 +271,9 @@ public final class RadioSystemKey
     {
         return switch(locationCategory != null ? locationCategory : "")
         {
-            case "global" -> 0x3FF;
-            case "regional" -> 0x3FFF;
-            case "local" -> 0x1FFFF;
+            case "global" -> 0x3FE;
+            case "regional" -> 0x3FFE;
+            case "local" -> 0x1FFFE;
             default -> -1;
         };
     }

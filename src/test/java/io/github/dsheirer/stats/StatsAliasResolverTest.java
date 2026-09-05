@@ -401,6 +401,137 @@ class StatsAliasResolverTest
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void historicalChannelFallbackKeepsItsAliasOwnerAfterNativePromotion() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("historical-fallback-alias.sqlite");
+        createDatabase(database);
+        String configurationId = "30000000-0000-4000-8000-000000000011";
+        String fallbackKey = "dmr:channel:" + configurationId;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'County', 'DMR')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'Dispatch', 'TALKGROUP', 'DMR', 91)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
+                ) VALUES (
+                    '%s', 'TRUNKED', 1, 'County DMR', 'North', 'North Control', 1,
+                    0, 'DMR', 0, 451000000, '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'
+                )
+                """.formatted(configurationId));
+            statement.executeUpdate("""
+                INSERT INTO radio_system(
+                    id, system_key, configuration_id, protocol_code, address_domain_code,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (81, '%s', '%s', 3, 0, 1, 2)
+                """.formatted(fallbackKey, configurationId));
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(
+                    id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms
+                ) VALUES (81, '%s', 1, 4, 81, 1)
+                """.formatted(configurationId));
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    id, radio_system_id, identity_kind_code, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (8101, 81, 1, 91, 1, 2, 4)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system(
+                    id, system_key, protocol_code, address_domain_code,
+                    dmr_model_code, dmr_network_id, first_seen_ms, last_seen_ms
+                ) VALUES (82, 'dmr:tier3:small:42', 3, 0, 2, 42, 3, 4)
+                """);
+            statement.executeUpdate("""
+                UPDATE receiver_channel
+                SET radio_system_id=82, radio_system_assigned_at_ms=3
+                WHERE id=81
+                """);
+
+            Map<String,Object> historical = canonicalNativeRow(fallbackKey, 3, 91);
+            new StatsAliasResolver().enrichCanonicalSystemTalkgroups(connection, rows(historical),
+                "identity_summary_id", "identity_id", "alias_");
+            assertEquals("Dispatch", historical.get("alias_name"),
+                "detaching a fallback must not detach its exact saved-channel Alias List");
+
+            Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
+            Map<String,Object> alias = (Map<String,Object>)response.get("alias");
+            List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
+            Map<String,Object> fallback = breakdown.stream()
+                .filter(row -> fallbackKey.equals(row.get("radio_system_key")))
+                .findFirst().orElseThrow();
+
+            assertEquals(2L, ((Number)alias.get("coverage_source_count")).longValue(),
+                "the selected list covers both the historical fallback and the current native system");
+            assertEquals(1L, ((Number)alias.get("observed_source_count")).longValue());
+            assertEquals(4L, ((Number)fallback.get("logical_call_count")).longValue());
+            assertEquals(configurationId, fallback.get("configuration_id"));
+            assertEquals(81L, ((Number)fallback.get("channel_id")).longValue());
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void conventionalAliasMetricsUseSharedBucketsForP25DmrAndNxdnWithoutCrossingChannels() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("conventional-alias-metrics.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'P25 Local', 'P25'), (2, 'DMR North', 'DMR'),
+                       (3, 'NXDN Local', 'NXDN'), (4, 'DMR South', 'DMR')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'P25 Dispatch', 'TALKGROUP', 'APCO25', 91),
+                       (2, 2, 'DMR North Dispatch', 'TALKGROUP', 'DMR', 91),
+                       (3, 3, 'NXDN Dispatch', 'TALKGROUP', 'NXDN', 91),
+                       (4, 4, 'DMR South Dispatch', 'TALKGROUP', 'DMR', 91),
+                       (5, 1, 'P25 Unit', 'RADIO_ID', 'APCO25', 501),
+                       (6, 2, 'DMR Unit', 'RADIO_ID', 'DMR', 501),
+                       (7, 3, 'NXDN Unit', 'RADIO_ID', 'NXDN', 501)
+                """);
+            insertConventionalChannel(statement, 101,
+                "50000000-0000-4000-8000-000000000001", 1, "P25_CONVENTIONAL", 0, "P25 Local");
+            insertConventionalChannel(statement, 102,
+                "50000000-0000-4000-8000-000000000002", 2, "DMR", 0, "DMR North");
+            insertConventionalChannel(statement, 103,
+                "50000000-0000-4000-8000-000000000003", 3, "NXDN", 1, "NXDN Local");
+            insertConventionalChannel(statement, 104,
+                "50000000-0000-4000-8000-000000000004", 4, "DMR", 0, "DMR South");
+            insertConventionalIdentityBucket(statement, 101, 91, 2, 1, 1, 0);
+            insertConventionalIdentityBucket(statement, 102, 91, 3, 1, 0, 1);
+            insertConventionalIdentityBucket(statement, 103, 91, 4, 0, 1, 1);
+            insertConventionalIdentityBucket(statement, 104, 91, 7, 2, 0, 0);
+            insertConventionalRadioBucket(statement, 101, 501, 5);
+            insertConventionalRadioBucket(statement, 102, 501, 6);
+            insertConventionalRadioBucket(statement, 103, 501, 7);
+
+            assertConventionalAliasMetrics(connection, 1, 101, "P25", 2, 1, 1, 0);
+            assertConventionalAliasMetrics(connection, 2, 102, "DMR", 3, 1, 0, 1);
+            assertConventionalAliasMetrics(connection, 3, 103, "NXDN", 4, 0, 1, 1);
+            assertConventionalAliasMetrics(connection, 4, 104, "DMR", 7, 2, 0, 0);
+            assertConventionalAliasMetrics(connection, 5, 101, "P25", 5, 0, 0, 0);
+            assertConventionalAliasMetrics(connection, 6, 102, "DMR", 6, 0, 0, 0);
+            assertConventionalAliasMetrics(connection, 7, 103, "NXDN", 7, 0, 0, 0);
+        }
+    }
+
+    @Test
     void p25AliasesUseEachChannelsObservedLocalAddressAndWithholdAmbiguousSystemMetrics() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-local-alias-evidence.sqlite");
@@ -438,12 +569,12 @@ class StatsAliasResolverTest
             statement.executeUpdate("""
                 INSERT INTO p25_site_call_identity_bucket(
                     radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
-                    identity_summary_id, observed_local_id, last_observed_at_ms,
+                    identity_kind_code, identity_summary_id, observed_local_id, last_observed_at_ms,
                     observed_call_count, encrypted_observed_call_count
-                ) VALUES (77, 701, 77, 0, 2, 7001, 100, 1, 1, 0),
-                         (77, 702, 78, 0, 2, 7001, 200, 1, 1, 0),
-                         (77, 701, 77, 0, 1, 7002, 300, 1, 1, 0),
-                         (77, 702, 78, 0, 1, 7002, 300, 1, 1, 0)
+                ) VALUES (77, 701, 77, 0, 2, 2, 7001, 100, 1, 1, 0),
+                         (77, 702, 78, 0, 2, 2, 7001, 200, 1, 1, 0),
+                         (77, 701, 77, 0, 1, 1, 7002, 300, 1, 1, 0),
+                         (77, 702, 78, 0, 1, 1, 7002, 300, 1, 1, 0)
                 """);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
@@ -742,5 +873,81 @@ class StatsAliasResolverTest
                 radio_system_assigned_at_ms
             ) VALUES (%d, '%s', 1, 2, 77, 1)
             """.formatted(receiverChannelId, configurationId));
+    }
+
+    private static void insertConventionalChannel(Statement statement, long receiverChannelId,
+                                                   String configurationId, long aliasListId,
+                                                   String decoderType, int addressDomain, String name)
+        throws Exception
+    {
+        String configJson = "DMR".equals(decoderType) || "NXDN".equals(decoderType) ?
+            "{\"decodeConfiguration\":{\"channelMode\":\"CONVENTIONAL\"}}" : "{}";
+        try(PreparedStatement configuration = statement.getConnection().prepareStatement("""
+            INSERT INTO configuration_channel(
+                configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
+            ) VALUES (?, 'CONVENTIONAL', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+            """);
+            PreparedStatement receiver = statement.getConnection().prepareStatement("""
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)
+                VALUES (?, ?, 1, 2)
+                """))
+        {
+            configuration.setString(1, configurationId);
+            configuration.setLong(2, receiverChannelId);
+            configuration.setString(3, name);
+            configuration.setString(4, name);
+            configuration.setString(5, name);
+            configuration.setLong(6, aliasListId);
+            configuration.setString(7, decoderType);
+            configuration.setInt(8, addressDomain);
+            configuration.setLong(9, 450_000_000L + receiverChannelId);
+            configuration.setString(10, configJson);
+            configuration.executeUpdate();
+            receiver.setLong(1, receiverChannelId);
+            receiver.setString(2, configurationId);
+            receiver.executeUpdate();
+        }
+    }
+
+    private static void insertConventionalIdentityBucket(Statement statement, long channelId, int identityId,
+                                                         int calls, int encrypted, int recorded, int streamed)
+        throws Exception
+    {
+        statement.executeUpdate("""
+            INSERT INTO conventional_call_identity_bucket(
+                channel_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                call_count, encrypted_count, recorded_count, streamed_count
+            ) VALUES (%d, 3600000, 1, 1, %d, %d, %d, %d, %d)
+            """.formatted(channelId, identityId, calls, encrypted, recorded, streamed));
+    }
+
+    private static void insertConventionalRadioBucket(Statement statement, long channelId, int identityId,
+                                                      int calls) throws Exception
+    {
+        statement.executeUpdate("""
+            INSERT INTO conventional_call_identity_bucket(
+                channel_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
+            ) VALUES (%d, 3600000, 2, 2, %d, %d)
+            """.formatted(channelId, identityId, calls));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertConventionalAliasMetrics(Connection connection, long aliasId, long channelId,
+                                                       String protocol, long calls, long encrypted,
+                                                       long recorded, long streamed) throws Exception
+    {
+        Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, aliasId);
+        Map<String,Object> alias = (Map<String,Object>)response.get("alias");
+        List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
+        assertEquals(1L, ((Number)alias.get("coverage_source_count")).longValue());
+        assertEquals(1L, ((Number)alias.get("observed_source_count")).longValue());
+        assertEquals(calls, ((Number)alias.get("logical_call_count")).longValue());
+        assertEquals(encrypted, ((Number)alias.get("encrypted_logical_call_count")).longValue());
+        assertEquals(recorded, ((Number)alias.get("recorded_logical_call_count")).longValue());
+        assertEquals(streamed, ((Number)alias.get("stream_submitted_logical_call_count")).longValue());
+        assertEquals(1, breakdown.size());
+        assertEquals(channelId, ((Number)breakdown.getFirst().get("channel_id")).longValue());
+        assertEquals(protocol, breakdown.getFirst().get("protocol"));
     }
 }

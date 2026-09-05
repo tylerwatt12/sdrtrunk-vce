@@ -359,7 +359,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful())
+        if(event == null || !event.isUseful() || !event.matchesCurrentChannel())
         {
             return;
         }

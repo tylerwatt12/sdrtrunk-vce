@@ -710,7 +710,8 @@ export class WebCallPlayer {
     this.avoids.delete(target);
     this.avoids.set(target, {
       key: target,
-      label: this.targetLabel(this.current)
+      label: this.targetLabel(this.current),
+      system_scope: this.avoidSystemScope(this.current)
     });
     while (this.avoids.size > WebCallPlayer.MAXIMUM_AVOIDS) {
       this.avoids.delete(this.avoids.keys().next().value);
@@ -1045,7 +1046,7 @@ export class WebCallPlayer {
       String(call.target_id);
     const sourceId = call.source_id === null || call.source_id === undefined || call.source_id === '' ? '' :
       String(call.source_id);
-    const targetType = this.identifierType(call.target_form, 'TGID');
+    const targetType = this.identifierType(call.target_form, 'ID');
     const sourceType = this.identifierType(call.source_form, 'Radio');
     const playbackLabel = typeof call.playback_target?.label === 'string' ?
       call.playback_target.label.trim() : '';
@@ -1070,8 +1071,16 @@ export class WebCallPlayer {
     if (alias) return alias;
     const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
       String(call.target_id);
-    if (targetId) return `${this.identifierType(call.target_form, 'TGID')} ${targetId}`;
-    return String(call.channel || '').trim() || 'Unknown target';
+    if (targetId) return `${this.identifierType(call.target_form, 'ID')} ${targetId}`;
+    return String(call.channel || '').trim() || 'Unknown identity';
+  }
+
+  avoidSystemScope(call) {
+    const kind = String(call?.playback_target?.kind || '').trim().toLowerCase();
+    if (!['talkgroup', 'patch_group', 'radio'].includes(kind)) return '';
+    const label = String(call?.system || '').trim();
+    const key = String(call?.playback_target?.radio_system_key || call?.radio_system_key || '').trim();
+    return label && key && label !== key ? `${label} · ${key}` : label || key;
   }
 
   currentTargetLabel() {

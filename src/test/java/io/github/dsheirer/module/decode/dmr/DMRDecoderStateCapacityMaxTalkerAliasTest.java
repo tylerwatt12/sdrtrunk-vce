@@ -116,7 +116,8 @@ class DMRDecoderStateCapacityMaxTalkerAliasTest
         }
 
         @Override
-        public void processTalkerAlias(TalkerAliasIdentifier alias, RadioIdentifier radio,
+        public void processTalkerAlias(io.github.dsheirer.channel.IChannelDescriptor channel,
+                                       TalkerAliasIdentifier alias, RadioIdentifier radio,
                                        IdentifierCollection identifiers, long timestamp)
         {
             mAliases.add(alias.getValue().toString());

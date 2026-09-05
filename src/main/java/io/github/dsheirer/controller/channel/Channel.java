@@ -90,6 +90,9 @@ public class Channel extends Configuration
     private ObservableList<Long> mFrequencyList;
 
     private BooleanProperty mProcessing = new SimpleBooleanProperty();
+    /** Manager-owned transient identity for the currently mapped processing-chain run. */
+    private transient volatile long mProcessingIncarnation;
+    private transient volatile boolean mProcessingIncarnationActive;
     private BooleanProperty mAutoStart = new SimpleBooleanProperty();
     private IntegerProperty mAutoStartOrder = new SimpleIntegerProperty();
     private boolean mSelected;
@@ -632,6 +635,61 @@ public class Channel extends Configuration
     public boolean isProcessing()
     {
         return mProcessing.get();
+    }
+
+    /**
+     * Transient processing-chain incarnation. Zero means this channel has not been activated by a processing manager.
+     */
+    @JsonIgnore
+    public long getProcessingIncarnation()
+    {
+        return mProcessingIncarnation;
+    }
+
+    /** True while the current transient processing incarnation owns an authoritative manager mapping. */
+    @JsonIgnore
+    public boolean isProcessingIncarnationActive()
+    {
+        return mProcessingIncarnationActive;
+    }
+
+    /**
+     * Tests one captured processing incarnation without consulting the asynchronously updated UI processing flag.
+     * An inactive match is useful for the terminal quality snapshot produced while a chain is being stopped.
+     */
+    @JsonIgnore
+    public boolean matchesProcessingIncarnation(long incarnation, boolean requireActive)
+    {
+        if(incarnation == 0)
+        {
+            return true;
+        }
+
+        long current = mProcessingIncarnation;
+        boolean active = mProcessingIncarnationActive;
+        return current == incarnation && (!requireActive || active) && mProcessingIncarnation == incarnation;
+    }
+
+    /** Manager-only synchronous activation performed when a processing-chain map entry becomes authoritative. */
+    void activateProcessingIncarnation(long incarnation)
+    {
+        if(incarnation == 0)
+        {
+            throw new IllegalArgumentException("processing incarnation must be non-zero");
+        }
+
+        mProcessingIncarnationActive = false;
+        mProcessingIncarnation = incarnation;
+        mProcessingIncarnationActive = true;
+    }
+
+    /** Manager-only synchronous closure performed before a processing-chain map entry loses authority. */
+    void deactivateProcessingIncarnation(long incarnation)
+    {
+        if(mProcessingIncarnation == incarnation)
+        {
+            mProcessingIncarnationActive = false;
+        }
     }
 
     /**

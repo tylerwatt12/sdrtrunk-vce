@@ -64,6 +64,8 @@ class Format14To15DatabaseMigrationTest
                 "signal-quality observations").affectedRows());
             assertEquals(4, effect(preflight, DatabaseMigrationEffect.Kind.RESET,
                 "radio-system and receiver-channel identity cache").affectedRows());
+            assertEquals(3, effect(preflight, DatabaseMigrationEffect.Kind.RESET,
+                "activity metric boundaries").affectedRows());
             assertEquals(1, effect(preflight, DatabaseMigrationEffect.Kind.DROP,
                 "retired named Channel Maps").affectedRows());
             assertEquals(3, effect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM,
@@ -217,6 +219,22 @@ class Format14To15DatabaseMigrationTest
                 assertEquals(0, number(connection, "SELECT COUNT(*) FROM " + table), table);
             }
             assertTrue(columns(connection, "radio_system").contains("system_key"));
+            assertTrue(columns(connection, "radio_system").containsAll(Set.of(
+                "dmr_model_code", "dmr_network_id", "nxdn_location_category_code", "nxdn_system_id")));
+            Set<String> observedSiteColumns = columns(connection, "trunked_site_snapshot");
+            assertTrue(observedSiteColumns.containsAll(Set.of("observed_location_category_code",
+                "observed_network_id", "observed_system_id", "observed_site_id", "observed_ran",
+                "observed_model_code")));
+            assertFalse(observedSiteColumns.contains("identity_domain_code"));
+            assertFalse(observedSiteColumns.contains("network_id"));
+            assertFalse(observedSiteColumns.contains("system_id"));
+            assertFalse(observedSiteColumns.contains("site_id"));
+            assertFalse(observedSiteColumns.contains("ran"));
+            assertFalse(observedSiteColumns.contains("model_code"));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                UPDATE configuration_channel SET decoder_type=NULL
+                WHERE configuration_id='%s'
+                """.formatted(CONVENTIONAL_CHANNEL)));
             assertTrue(columns(connection, "trunked_radio_channel_presence_clear").contains("observed_local_id"));
             assertFalse(columns(connection, "trunked_radio_channel_presence_clear").contains(
                 "last_observed_local_id"));
@@ -359,6 +377,93 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
+    void convertsTheFormat14DefaultZeroTunerFrequencyToNull() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("format14-zero-frequency.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET primary_frequency_hz=0,
+                    config_json=json_set(config_json, '$.sourceConfiguration.frequency', 0)
+                WHERE configuration_id='%s'
+                """.formatted(CONVENTIONAL_CHANNEL));
+
+            new Format14To15DatabaseMigration().validateSource(connection);
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertNull(nullableScalar(connection, """
+                SELECT primary_frequency_hz FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(CONVENTIONAL_CHANNEL)));
+            assertEquals(0, number(connection, """
+                SELECT json_extract(config_json, '$.sourceConfiguration.frequency')
+                FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(CONVENTIONAL_CHANNEL)));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void refusesZeroProjectionForFormat14MultipleFrequencySource() throws Exception
+    {
+        assertRefused("format14-zero-multiple-frequency.sqlite", """
+            UPDATE configuration_channel
+            SET source_type='TUNER_MULTIPLE_FREQUENCIES',
+                primary_frequency_hz=0,
+                frequency_count=0,
+                config_json=json_set(
+                    json_remove(config_json, '$.sourceConfiguration.frequency'),
+                    '$.sourceConfiguration.type', 'sourceConfigTunerMultipleFrequency',
+                    '$.sourceConfiguration.sourceType', 'TUNER_MULTIPLE_FREQUENCIES',
+                    '$.sourceConfiguration.frequencies', json('[]'))
+            WHERE configuration_id='%s'
+            """.formatted(CONVENTIONAL_CHANNEL), "query projection does not match config_json");
+    }
+
+    @Test
+    void countsAndResetsLegacyDmrAndNxdnDerivedRows() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("format14-dmr-nxdn-history.sqlite"));
+        try(Connection connection = open(database))
+        {
+            populateLegacyDmrAndNxdnDerivedHistory(connection);
+
+            List<DatabaseMigrationEffect> preflight = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(10, effect(preflight, DatabaseMigrationEffect.Kind.RESET,
+                "receiver activity and call history").affectedRows());
+            assertEquals(5, effect(preflight, DatabaseMigrationEffect.Kind.RESET,
+                "learned site observations").affectedRows());
+            assertEquals(13, effect(preflight, DatabaseMigrationEffect.Kind.RESET,
+                "radio-system and receiver-channel identity cache").affectedRows());
+
+            connection.setAutoCommit(false);
+            try
+            {
+                new Format14To15DatabaseMigration().migrate(connection);
+                assertEquals(0, number(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
+                assertEquals(0, number(connection, "SELECT COUNT(*) FROM trunked_site_channel_summary"));
+                assertEquals(0, number(connection, "SELECT COUNT(*) FROM trunked_site_neighbor_summary"));
+                assertEquals(0, number(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
+                assertEquals(0, number(connection, "SELECT COUNT(*) FROM dmr_conventional_radio_summary"));
+                assertEquals(0, number(connection, "SELECT COUNT(*) FROM trunked_radio_group_summary"));
+                assertEquals(0, number(connection, """
+                    SELECT COUNT(*) FROM sqlite_master
+                    WHERE type='table' AND name IN (
+                        'receiver_context', 'trunked_identity_scope', 'trunked_identity_scope_context',
+                        'trunked_identity_summary', 'trunked_radio_talkgroup_summary'
+                    )
+                    """));
+                connection.rollback();
+            }
+            finally
+            {
+                connection.setAutoCommit(true);
+            }
+        }
+    }
+
+    @Test
     void preflightIsReadOnlyAndRollbackRestoresExactFormat14() throws Exception
     {
         Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("rollback.sqlite"));
@@ -481,6 +586,9 @@ class Format14To15DatabaseMigrationTest
         assertRefused("negative-channel-order.sqlite", """
             UPDATE configuration_channel SET sort_order=-1 WHERE configuration_id='%s'
             """.formatted(MIXED_CASE_CHANNEL), "negative sort order");
+        assertRefused("missing-decoder-type.sqlite", """
+            UPDATE configuration_channel SET decoder_type=NULL WHERE configuration_id='%s'
+            """.formatted(MIXED_CASE_CHANNEL), "has no decoder type");
         assertRefused("text-password-salt.sqlite", """
             UPDATE web_user SET password_salt=CAST('0123456789abcdef' AS TEXT) WHERE primary_admin=1
             """, "password salt must use SQLite blob storage");
@@ -790,6 +898,91 @@ class Format14To15DatabaseMigrationTest
             statement.setString(9, MAPPER.writeValueAsString(payload));
             statement.setString(10, CONVENTIONAL_CHANNEL);
             assertEquals(1, statement.executeUpdate());
+        }
+    }
+
+    private static void populateLegacyDmrAndNxdnDerivedHistory(Connection connection) throws Exception
+    {
+        try(var statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context(
+                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms, primary_frequency_hz, current_control_hz
+                ) VALUES
+                    (702, 'legacy-dmr-tier3', 'legacy-dmr-site', 1, 3, 'Legacy DMR Tier III', 'DMR',
+                     1700000000000, 1700000005000, 451012500, 451012500),
+                    (703, 'legacy-nxdn-type-c', 'legacy-nxdn-site', 1, 4, 'Legacy NXDN Type-C', 'NXDN',
+                     1700000000000, 1700000005000, 452012500, 452012500),
+                    (704, 'legacy-dmr-conventional', NULL, 3, 3, 'Legacy DMR Conventional', 'DMR',
+                     1700000000000, 1700000005000, 453012500, NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope(
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    first_seen_ms, last_seen_ms
+                ) VALUES
+                    (702, 'legacy-dmr-scope', 3, 2, 0, 1700000000000, 1700000005000),
+                    (703, 'legacy-nxdn-scope', 4, 2, 1, 1700000000000, 1700000005000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context(context_id, scope_id, first_seen_ms, last_seen_ms)
+                VALUES
+                    (702, 702, 1700000000000, 1700000005000),
+                    (703, 703, 1700000000000, 1700000005000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary(
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    logical_call_count
+                ) VALUES
+                    (702, 1, 1201, 1700000000000, 1700000005000, 2),
+                    (703, 1, 1301, 1700000000000, 1700000005000, 3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_talkgroup_summary(
+                    scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
+                    logical_call_count
+                ) VALUES
+                    (702, 2201, 1201, 1, 1700000000000, 1700000005000, 2),
+                    (703, 2301, 1301, 1, 1700000000000, 1700000005000, 3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_talkgroup_summary(
+                    context_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms, last_seen_ms,
+                    call_count, encrypted_count, last_source_radio_id
+                ) VALUES (704, 453012500, 1, 1401, 1700000000000, 1700000005000, 2, 1, 2401)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_radio_summary(
+                    context_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms,
+                    call_count, source_call_count, group_call_count, encrypted_count, last_talkgroup_id
+                ) VALUES (704, 453012500, 1, 2401, 1700000000000, 1700000005000, 2, 2, 2, 1, 1401)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_snapshot(
+                    guid, snapshot_hash, protocol_code, variant_code, identity_domain_code,
+                    network_id, system_id, site_id, ran, model_code,
+                    primary_frequency_hz, current_control_hz, first_seen_ms, last_seen_ms
+                ) VALUES
+                    ('legacy-dmr-site', '%s', 3, 1, 0, 0, NULL, 1, NULL, 2,
+                     451012500, 451012500, 1700000000000, 1700000005000),
+                    ('legacy-nxdn-site', '%s', 4, 1, 1, 4, 303, 1, 1, NULL,
+                     452012500, 452012500, 1700000000000, 1700000005000)
+                """.formatted("d".repeat(64), "e".repeat(64)));
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_channel_summary(
+                    guid, channel_number, inbound_channel_number, timeslot, frequency_hz, role_flags,
+                    first_seen_ms, last_seen_ms
+                ) VALUES ('legacy-dmr-site', 1, 1, 1, 451012500, 1, 1700000000000, 1700000005000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_neighbor_summary(
+                    guid, variant_code, identity_domain_code, network_id, system_id, site_id,
+                    channel_number, frequency_hz, status_flags, first_seen_ms, last_seen_ms
+                ) VALUES ('legacy-nxdn-site', 1, 1, 4, 303, 2, 2, 452025000, 1,
+                          1700000000000, 1700000005000)
+                """);
         }
     }
 

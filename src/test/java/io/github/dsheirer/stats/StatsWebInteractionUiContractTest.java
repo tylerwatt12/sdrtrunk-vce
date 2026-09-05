@@ -771,6 +771,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
         assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer || this.replayingLast) return;"));
         assertTrue(avoidCurrent.contains("label: this.targetLabel(this.current)"));
+        assertTrue(avoidCurrent.contains("system_scope: this.avoidSystemScope(this.current)"));
+        assertTrue(avoidList.contains("avoid.system_scope"));
         assertFalse(avoidCurrent.contains("details:"));
         assertFalse(avoidCurrent.contains("addedAtMs:"));
         assertFalse(avoidList.contains("avoid.details"));

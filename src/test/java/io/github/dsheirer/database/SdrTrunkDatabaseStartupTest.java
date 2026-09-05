@@ -29,11 +29,31 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteConfig;
+import org.sqlite.SQLiteConnection;
 
 class SdrTrunkDatabaseStartupTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void writeTransactionIsImmediateAndPreservesConnectionSafetySettings() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("immediate-write.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = SdrTrunkDatabase.openWriteTransaction(database);
+            Statement statement = connection.createStatement())
+        {
+            SQLiteConnection sqlite = (SQLiteConnection)connection;
+            assertFalse(connection.getAutoCommit());
+            assertEquals(SQLiteConfig.TransactionMode.IMMEDIATE, sqlite.getCurrentTransactionMode());
+            assertEquals(Integer.toString(SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS),
+                scalar(statement, "PRAGMA busy_timeout"));
+            assertEquals("1", scalar(statement, "PRAGMA foreign_keys"));
+            connection.rollback();
+        }
+    }
 
     @Test
     void freshSchemaOmitsRetiredNamedChannelMaps() throws Exception
@@ -187,8 +207,8 @@ class SdrTrunkDatabaseStartupTest
             SdrTrunkDatabaseSchema.create(connection);
             String base = """
                 INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, config_json, radioresolve_id
-                ) VALUES ('11111111-1111-4111-8111-111111111111', 'TRUNKED', 0, %s, %s)
+                    configuration_id, channel_kind, sort_order, decoder_type, config_json, radioresolve_id
+                ) VALUES ('11111111-1111-4111-8111-111111111111', 'TRUNKED', 0, 'P25_PHASE1', %s, %s)
                 """;
             assertThrows(java.sql.SQLException.class,
                 () -> statement.executeUpdate(base.formatted("'{\"name\":\"duplicate\"}'", "NULL")));

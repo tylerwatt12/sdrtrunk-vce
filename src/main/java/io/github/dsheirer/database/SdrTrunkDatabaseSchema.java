@@ -247,10 +247,10 @@ public final class SdrTrunkDatabaseSchema
                     AND auto_start_order BETWEEN -2147483648 AND 2147483647
                 )
             ),
-            decoder_type TEXT CHECK(decoder_type IS NULL OR
-                (typeof(decoder_type) = 'text' AND decoder_type IN (
+            decoder_type TEXT NOT NULL CHECK(
+                typeof(decoder_type) = 'text' AND decoder_type IN (
                     'AM', 'DMR', 'NBFM', 'NXDN', 'P25_CONVENTIONAL', 'P25_PHASE1', 'P25_PHASE2'
-                ))),
+                )),
             address_domain_code INTEGER NOT NULL DEFAULT 0 CHECK(
                 typeof(address_domain_code) = 'integer' AND address_domain_code IN (0, 1, 2)
             ),
@@ -290,7 +290,7 @@ public final class SdrTrunkDatabaseSchema
             ),
             CHECK(
                 (decoder_type = 'NXDN' AND address_domain_code IN (1, 2))
-                OR ((decoder_type IS NULL OR decoder_type <> 'NXDN') AND address_domain_code = 0)
+                OR (decoder_type <> 'NXDN' AND address_domain_code = 0)
             )
         )
         """;

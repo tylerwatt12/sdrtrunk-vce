@@ -10,24 +10,12 @@
  */
 package io.github.dsheirer.stats.activity;
 
-import io.github.dsheirer.channel.IChannelDescriptor;
-import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
-import io.github.dsheirer.identifier.Form;
-import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.encryption.EncryptionKey;
-import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
-import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
-import io.github.dsheirer.module.decode.event.IDecodeEvent;
-import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
-import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedChannelDescriptorSnapshot;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
-import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 
@@ -39,24 +27,22 @@ class TrunkedCallActivityMapper
 {
     ReceiverActivityRecords.ActivityEvent map(TrunkedCallStartEvent callStart)
     {
-        if(callStart == null || callStart.channel() == null || callStart.event() == null)
+        if(callStart == null || callStart.configurationId() == null || callStart.decoderType() == null ||
+            callStart.protocol() == null)
         {
             return null;
         }
 
-        Channel channel = callStart.channel();
-        IDecodeEvent event = callStart.event();
-        Protocol protocol = event.getProtocol();
-        DecodeEventType eventType = event.getEventType();
+        Protocol protocol = callStart.protocol();
+        DecodeEventType eventType = callStart.eventType();
 
         if((protocol != Protocol.DMR && protocol != Protocol.NXDN) || eventType == null ||
-            !eventType.isVoiceCallEvent() || event.getTimeStart() <= 0)
+            !eventType.isVoiceCallEvent() || callStart.callStartEpochMilliseconds() <= 0)
         {
             return null;
         }
 
-        DecoderType decoderType = channel.getDecodeConfiguration() != null ?
-            channel.getDecodeConfiguration().getDecoderType() : null;
+        DecoderType decoderType = callStart.decoderType();
 
         if(protocol == Protocol.DMR && decoderType != DecoderType.DMR ||
             protocol == Protocol.NXDN && decoderType != DecoderType.NXDN)
@@ -64,81 +50,32 @@ class TrunkedCallActivityMapper
             return null;
         }
 
-        IdentifierCollection identifiers = event.getIdentifierCollection();
-        TrunkedIdentityDomain identityDomain = identityDomain(channel);
-        if(protocol == Protocol.NXDN && !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers,
-            identityDomain))
-        {
-            return null;
-        }
-        Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
-        Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
-        IChannelDescriptor descriptor = event.getChannelDescriptor();
-        Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
-            descriptor.getDownlinkFrequency() : null;
-        Integer timeslot = event.hasTimeslot() ? event.getTimeslot() : null;
-        String configurationId = ChannelConfigurationKey.configured(channel);
-
-        if(configurationId == null)
-        {
-            return null;
-        }
-        EncryptionKeyIdentifier encryptionIdentifier = encryptionIdentifier(identifiers);
-        EncryptionKey encryptionKey = encryptionIdentifier != null ? encryptionIdentifier.getValue() : null;
-        boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType) ||
-            encryptionIdentifier != null && encryptionIdentifier.isEncrypted();
-        String sourceId = source != null && source.getForm() == Form.RADIO ? value(source) : null;
-        String targetId = value(target);
-        String targetKind = target != null && target.getForm() != null ? target.getForm().name() : null;
-
-        return new ReceiverActivityRecords.ActivityEvent(event.getTimeStart(), configurationId,
-            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, configuredProtocolName(channel, protocol),
+        return new ReceiverActivityRecords.ActivityEvent(callStart.callStartEpochMilliseconds(),
+            callStart.configurationId(), ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            configuredProtocolName(decoderType, protocol),
             ReceiverActivityRecords.Action.CALL,
-            eventType.name(), sourceId, targetId, targetKind, List.of(), frequency,
-            descriptor != null ? descriptor.toString() : null, timeslot, encrypted,
-            encrypted && encryptionKey != null ? encryptionKey.getAlgorithm() : null,
-            encrypted && encryptionKey != null ? encryptionKey.getKey() : null,
-            null, intValue(identifiers, Form.SYSTEM), null, null, intValue(identifiers, Form.SITE),
-            value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
-            identityDomain, ReceiverActivityRecords.P25Identity.UNKNOWN,
-            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of());
+            eventType.name(), text(callStart.sourceRadioId()), text(callStart.targetId()),
+            callStart.targetForm() != null ? callStart.targetForm().name() : null, List.of(),
+            callStart.frequencyHertz(), channelDescriptor(callStart.channelDescriptorSnapshot()),
+            callStart.timeslot(), callStart.encrypted(),
+            callStart.encryptionAlgorithmId(), callStart.encryptionKeyId(), null, callStart.systemId(), null, null,
+            callStart.siteId(), callStart.talkerAlias(), true, null, null, callStart.identityDomain(),
+            ReceiverActivityRecords.P25Identity.UNKNOWN,
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), callStart.radioSystemKey());
     }
 
     ReceiverActivityRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
     {
-        if(attribution == null || attribution.channel() == null || attribution.protocol() == null ||
-            attribution.callStartEpochMilliseconds() <= 0)
+        if(attribution == null || attribution.configurationId() == null || attribution.decoderType() == null ||
+            attribution.protocol() == null || attribution.callStartEpochMilliseconds() <= 0)
         {
             return null;
         }
 
-        Channel channel = attribution.channel();
         Protocol protocol = attribution.protocol();
-        DecodeTypeMatch typeMatch = DecodeTypeMatch.from(channel, protocol);
+        DecodeTypeMatch typeMatch = new DecodeTypeMatch(attribution.decoderType(), protocol);
 
         if(!typeMatch.matches())
-        {
-            return null;
-        }
-
-        IdentifierCollection identifiers = attribution.identifiers();
-        TrunkedIdentityDomain identityDomain = identityDomain(channel);
-        if(protocol == Protocol.NXDN && !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers,
-            identityDomain))
-        {
-            return null;
-        }
-        Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
-        Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
-        Integer destinationId = identityId(target);
-        String destinationKind = target != null && target.getForm() != null ? target.getForm().name() : null;
-        Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
-        String configurationId = ChannelConfigurationKey.configured(channel);
-        IChannelDescriptor descriptor = attribution.channelDescriptor();
-        Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
-            descriptor.getDownlinkFrequency() : null;
-
-        if(configurationId == null)
         {
             return null;
         }
@@ -151,124 +88,76 @@ class TrunkedCallActivityMapper
         }
 
         return new ReceiverActivityRecords.TrunkedCallAttribution(
-            attribution.callStartEpochMilliseconds(), configurationId, configuredProtocolName(channel, protocol),
-            frequency, attribution.timeslot(),
-            destinationId != null ? destinationId : 0, destinationKind, patchMemberTalkgroups(target),
-            sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
+            attribution.callStartEpochMilliseconds(), attribution.configurationId(),
+            configuredProtocolName(attribution.decoderType(), protocol), attribution.frequencyHertz(),
+            attribution.timeslot(), attribution.destinationId() != null ? attribution.destinationId() : 0,
+            attribution.destinationForm() != null ? attribution.destinationForm().name() : null,
+            attribution.patchMemberTalkgroupIds(), attribution.sourceRadioId(),
+            attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
             attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
-            identityDomain);
+            attribution.identityDomain(), attribution.radioSystemKey());
     }
 
-    private static Integer identityId(Identifier identifier)
+    private static String configuredProtocolName(DecoderType decoderType, Protocol fallback)
     {
-        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
-            patch.getValue().getPatchGroup() != null)
-        {
-            Identifier primary = patch.getValue().getPatchGroup();
-            int value = primary.getValue() instanceof Number number ? number.intValue() : -1;
-            return value > 0 ? value : null;
-        }
-
-        Integer value = intValue(identifier);
-        return value != null && value > 0 ? value : null;
-    }
-
-    private static List<Integer> patchMemberTalkgroups(Identifier identifier)
-    {
-        if(!(identifier instanceof PatchGroupIdentifier patch) || patch.getValue() == null)
-        {
-            return List.of();
-        }
-
-        Integer canonical = identityId(identifier);
-        return patch.getValue().getPatchedTalkgroupIdentifiers().stream()
-            .filter(member -> member != null && member.getValue() != null && member.getValue() > 0)
-            .map(TalkgroupIdentifier::getValue)
-            .filter(member -> !member.equals(canonical))
-            .distinct()
-            .sorted()
-            .toList();
-    }
-
-    private static EncryptionKeyIdentifier encryptionIdentifier(IdentifierCollection identifiers)
-    {
-        Identifier identifier = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
-        return identifier instanceof EncryptionKeyIdentifier encryption ? encryption : null;
-    }
-
-    private static Integer intValue(IdentifierCollection identifiers, Form form)
-    {
-        return intValue(first(identifiers, form));
-    }
-
-    private static Integer intValue(Identifier identifier)
-    {
-        if(identifier == null || identifier.getValue() == null)
-        {
-            return null;
-        }
-
-        if(identifier.getValue() instanceof Number number)
-        {
-            return number.intValue();
-        }
-
-        try
-        {
-            return Integer.parseInt(identifier.getValue().toString());
-        }
-        catch(NumberFormatException e)
-        {
-            return null;
-        }
-    }
-
-    private static TrunkedIdentityDomain identityDomain(Channel channel)
-    {
-        if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
-        {
-            return config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD() ?
-                TrunkedIdentityDomain.NXDN_TYPE_D :
-                TrunkedIdentityDomain.NXDN_TYPE_C;
-        }
-
-        return TrunkedIdentityDomain.STANDARD;
-    }
-
-    private static String configuredProtocolName(Channel channel, Protocol fallback)
-    {
-        DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
-            channel.getDecodeConfiguration().getDecoderType() : null;
         return decoderType == DecoderType.DMR ? Protocol.DMR.name() :
             decoderType == DecoderType.NXDN ? Protocol.NXDN.name() :
             fallback != null ? fallback.name() : Protocol.UNKNOWN.name();
     }
 
-    private static Identifier first(IdentifierCollection identifiers, Form form)
+    private static String text(Integer value)
     {
-        if(identifiers == null)
+        return value != null ? Integer.toString(value) : null;
+    }
+
+    /** Runs on the statistics projection worker, never on a decoder or audio callback. */
+    private static String channelDescriptor(TrunkedChannelDescriptorSnapshot snapshot)
+    {
+        if(snapshot == null)
         {
             return null;
         }
 
-        List<Identifier> matches = identifiers.getIdentifiers(form);
-        return matches.isEmpty() ? null : matches.get(0);
+        Integer primary = snapshot.primaryChannelNumber();
+        Integer secondary = snapshot.secondaryChannelNumber();
+        Integer timeslot = snapshot.timeslot();
+
+        return switch(snapshot.kind())
+        {
+            case DMR_TIER_III -> primary != null ? " LCN:" + primary + " CHANID:" +
+                (primary * 2 + (timeslot != null ? timeslot : 0)) : null;
+            case DMR_REST_LSN -> primary != null ? "REST:" + primary : null;
+            case DMR_LSN -> primary != null ? "LSN:" + primary +
+                (secondary != null ? " LCN:" + secondary : "") : null;
+            case DMR_ABSOLUTE -> primary != null ? primary + " " +
+                (snapshot.downlinkFrequencyHertz() != null ?
+                    snapshot.downlinkFrequencyHertz() / 1E6D : 0.0D) : null;
+            case DMR_CHANNEL -> primary != null ? "CHAN:" + primary + ":" +
+                (timeslot != null ? timeslot : 0) : null;
+            case NXDN_LOOKUP -> snapshot.downlinkFrequencyHertz() != null ? nxdnFrequency(snapshot) :
+                primary != null ? "CHANNEL-MODE [" + primary + "] IS MISSING CHANNEL:FREQUENCY MAPPING" : null;
+            case NXDN_DFA, NXDN_CHANNEL -> nxdnFrequency(snapshot);
+            case NXDN_FAKE -> "UNKNOWN";
+            case UNKNOWN -> snapshot.downlinkFrequencyHertz() != null ? nxdnFrequency(snapshot) : null;
+        };
     }
 
-    private static String value(Identifier identifier)
+    private static String nxdnFrequency(TrunkedChannelDescriptorSnapshot snapshot)
     {
-        return identifier != null && identifier.getValue() != null ? identifier.getValue().toString() : null;
+        long downlink = snapshot.downlinkFrequencyHertz() != null ? snapshot.downlinkFrequencyHertz() : 0L;
+        StringBuilder value = new StringBuilder("DN:").append(downlink / 1E6D);
+
+        if(snapshot.uplinkFrequencyHertz() != null)
+        {
+            value.append(" UP:").append(snapshot.uplinkFrequencyHertz() / 1E6D);
+        }
+
+        return value.append(" MHZ").toString();
     }
 
     private record DecodeTypeMatch(DecoderType decoderType, Protocol protocol)
     {
-        private static DecodeTypeMatch from(Channel channel, Protocol protocol)
-        {
-            return new DecodeTypeMatch(channel.getDecodeConfiguration() != null ?
-                channel.getDecodeConfiguration().getDecoderType() : null, protocol);
-        }
-
         private boolean matches()
         {
             return protocol == Protocol.DMR && decoderType == DecoderType.DMR ||

@@ -131,6 +131,25 @@ async function main() {
       protocol: 'P25', target_id: 1201,
       playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
     }), 'P25 Conventional', 'Hold and Avoid must remain channel-scoped for conventional P25');
+    assert.equal(labels.callLabel({ target_id: 77, source_id: '' }), 'ID 77');
+    assert.equal(labels.callLabel({ target_form: 'UNKNOWN', target_id: 78, source_id: '' }), 'ID 78');
+    assert.equal(labels.callLabel({ target_form: 'TELEPHONE_NUMBER', target_id: 5551212, source_id: '' }),
+      'ID 5551212');
+    assert.equal(labels.targetLabel({ target_id: 77 }), 'ID 77');
+    assert.equal(labels.targetLabel({ target_form: 'TELEPHONE_NUMBER', target_id: 5551212 }), 'ID 5551212');
+    assert.equal(labels.targetLabel({}), 'Unknown identity');
+    const firstSystemScope = labels.avoidSystemScope(trunked);
+    const secondSystemScope = labels.avoidSystemScope({
+      ...trunked, system: 'Display name can change', radio_system_key: 'p25:bee00:4a0',
+      playback_target: { ...trunked.playback_target, radio_system_key: 'p25:bee00:4a0' }
+    });
+    assert.equal(firstSystemScope, 'Display name can change · p25:bee00:49f');
+    assert.equal(secondSystemScope, 'Display name can change · p25:bee00:4a0');
+    assert.notEqual(firstSystemScope, secondSystemScope,
+      'Avoid List scope must disambiguate colliding labels and numeric IDs on different systems');
+    assert.equal(labels.avoidSystemScope({
+      system: 'Conventional', playback_target: { kind: 'channel', radio_system_key: 'ignored' }
+    }), '', 'Channel-scoped avoids must not invent a radio-system scope');
 
     const normalized = Object.assign(Object.create(WebCallPlayer.prototype), { arrivalSequence: 0 });
     const normalizedCall = normalized.normalizeCall({
@@ -486,6 +505,8 @@ async function main() {
     assert.equal(selectionWhilePaused.current, null);
     assert.equal(selectionWhilePaused.paused, true);
     assert.equal(selectionWhilePaused.avoids.size, 1);
+    assert.equal([...selectionWhilePaused.avoids.values()][0].system_scope,
+      'Display name can change · p25:bee00:49f');
     selectionWhilePaused.setScanListSelected('1', false);
     assert.equal(selectionWhilePaused.stopped, true, 'Removing the last list also stops a paused feed');
     assert.equal(selectionWhilePaused.paused, false);

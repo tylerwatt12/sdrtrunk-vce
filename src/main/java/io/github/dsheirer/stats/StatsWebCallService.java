@@ -25,6 +25,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import java.nio.ByteBuffer;
@@ -609,8 +610,9 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "configuration_id", configurationId);
         putText(value, "alias_list", recordingMetadata != null ? recordingMetadata.aliasListName() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY));
-        putText(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE,
-            Role.ANY));
+        putText(value, "decoder", callLegSource != null && callLegSource.decoderType() != null ?
+            callLegSource.decoderType().name() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
         putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
         putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
         putText(value, "source_description", recordingMetadata != null ? recordingMetadata.sourceDescription() : null,
@@ -628,8 +630,13 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "target_group", recordingMetadata != null ? recordingMetadata.destinationGroup() : null,
             MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
         putText(value, "target_form", form(target));
-        putText(value, "protocol", target != null && target.getProtocol() != null ? target.getProtocol().name() :
-            recordingMetadata != null ? recordingMetadata.destinationProtocol() : null);
+        Protocol sourceProtocol = callLegSource != null && callLegSource.decoderType() != null ?
+            canonicalProtocol(callLegSource.decoderType().getProtocol()) : null;
+        putText(value, "protocol", sourceProtocol != null ? sourceProtocol.name() :
+            recordingMetadata != null && recordingMetadata.destinationProtocol() != null ?
+                recordingMetadata.destinationProtocol() :
+                target != null && target.getProtocol() != null ? canonicalProtocol(target.getProtocol()).name() :
+                    null);
         if(playbackTarget != null)
         {
             value.put("playback_target", playbackTarget.toMap(playbackTargetLabel(playbackTarget,
@@ -668,21 +675,24 @@ final class StatsWebCallService implements AutoCloseable
         {
             WebEntityRef.put(value, channel.entityRef());
 
-            if(channel.radioSystemRef() != null)
+            String eventRadioSystemKey = playbackTarget != null ? playbackTarget.radioSystemKey() : null;
+            boolean catalogMatchesEvent = eventRadioSystemKey != null && channel.radioSystemRef() != null &&
+                eventRadioSystemKey.equals(channel.radioSystemRef().key());
+
+            if(catalogMatchesEvent)
             {
                 value.put("radio_system_entity_ref", channel.radioSystemRef().toMap());
-            }
+                WebEntityRef sourceReference = navigationReference(channel, source);
+                WebEntityRef targetReference = navigationReference(channel, target);
 
-            WebEntityRef sourceReference = navigationReference(channel, source);
-            WebEntityRef targetReference = navigationReference(channel, target);
-
-            if(sourceReference != null)
-            {
-                value.put("source_entity_ref", sourceReference.toMap());
-            }
-            if(targetReference != null)
-            {
-                value.put("target_entity_ref", targetReference.toMap());
+                if(sourceReference != null)
+                {
+                    value.put("source_entity_ref", sourceReference.toMap());
+                }
+                if(targetReference != null)
+                {
+                    value.put("target_entity_ref", targetReference.toMap());
+                }
             }
         }
 
@@ -991,6 +1001,11 @@ final class StatsWebCallService implements AutoCloseable
         {
             return -1;
         }
+    }
+
+    private static Protocol canonicalProtocol(Protocol protocol)
+    {
+        return protocol == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : protocol;
     }
 
     @Override

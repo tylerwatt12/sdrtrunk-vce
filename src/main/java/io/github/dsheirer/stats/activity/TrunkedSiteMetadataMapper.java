@@ -11,17 +11,13 @@
 
 package io.github.dsheirer.stats.activity;
 
-import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.metadata.site.TrunkedSiteMetadataClassifier;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
-import io.github.dsheirer.source.config.SourceConfigRecording;
-import io.github.dsheirer.source.config.SourceConfigTuner;
-import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -41,14 +37,14 @@ final class TrunkedSiteMetadataMapper
 
     static TrunkedSiteSchema.Snapshot map(ProtocolSiteMetadataEvent event)
     {
-        if(!TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event) || event.channel() == null ||
-            event.snapshot() == null || event.snapshot().protocol() == null)
+        if(!TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event) || event.receiverContext() == null ||
+            event.snapshot() == null || event.snapshot().protocol() == null || !event.matchesCurrentChannel())
         {
             return null;
         }
 
-        Channel channel = event.channel();
-        String configurationId = ChannelConfigurationKey.configured(channel);
+        SiteReceiverContext receiverContext = event.receiverContext();
+        String configurationId = receiverContext.configurationId();
 
         if(configurationId == null)
         {
@@ -57,9 +53,9 @@ final class TrunkedSiteMetadataMapper
 
         long observedAt = event.observedAtEpochMilliseconds() > 0 ?
             event.observedAtEpochMilliseconds() : System.currentTimeMillis();
-        Long primaryFrequency = primaryFrequency(channel);
-        Long configuredCurrentControl = channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency ?
-            null : primaryFrequency;
+        Long primaryFrequency = receiverContext.effectivePrimaryFrequency();
+        Long configuredCurrentControl = receiverContext.sourceFrequency() != null ?
+            receiverContext.sourceFrequency() : receiverContext.isRotatingSource() ? null : primaryFrequency;
         Object structuralSnapshot = event.snapshot() instanceof DMRNetworkConfigurationSnapshot dmr ?
             dmr.withoutFreshness() : event.snapshot() instanceof NXDNNetworkConfigurationSnapshot nxdn ?
                 nxdn.withoutFreshness() : event.snapshot();
@@ -130,8 +126,9 @@ final class TrunkedSiteMetadataMapper
             {
                 int status = Boolean.TRUE.equals(neighbor.networkConnectionActive()) ?
                     TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE : 0;
+                Integer neighborModelCode = dmrModel(neighbor.model());
                 neighbors.add(new TrunkedSiteSchema.Neighbor(dmrVariant(neighbor.variant()),
-                    0, neighbor.network(), null, neighbor.site(),
+                    neighborModelCode != null ? neighborModelCode : 0, 0, neighbor.network(), null, neighbor.site(),
                     neighbor.logicalChannelNumber(), neighbor.downlink(), status,
                     observedAt(neighbor.observedAtEpochMilliseconds(), observedAt)));
             }
@@ -213,7 +210,7 @@ final class TrunkedSiteMetadataMapper
                 neighbor.observedAtEpochMilliseconds() :
                 neighborChannel != null ? neighborChannel.observedAtEpochMilliseconds() : 0;
             neighbors.add(new TrunkedSiteSchema.Neighbor(nxdnVariant(neighbor.variant()),
-                nxdnLocationCategory(neighborLocation != null ? neighborLocation.category() : neighbor.variant()),
+                0, nxdnLocationCategory(neighborLocation != null ? neighborLocation.category() : neighbor.variant()),
                 neighborLocation != null ? neighborLocation.integrator() : null,
                 neighborLocation != null ? neighborLocation.system() : null, neighborSite,
                 neighborChannelNumber, neighborFrequency, status,
@@ -258,25 +255,6 @@ final class TrunkedSiteMetadataMapper
         return childObservedAt > 0 ? childObservedAt : fallbackObservedAt;
     }
 
-    private static Long primaryFrequency(Channel channel)
-    {
-        long frequency = 0;
-
-        if(channel.getSourceConfiguration() instanceof SourceConfigTuner tuner)
-        {
-            frequency = tuner.getFrequency();
-        }
-        else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency multiple)
-        {
-            frequency = multiple.getPreferredFrequency();
-        }
-        else if(channel.getSourceConfiguration() instanceof SourceConfigRecording recording)
-        {
-            frequency = recording.getFrequency();
-        }
-
-        return frequency > 0 ? frequency : null;
-    }
 
     private static int dmrVariant(String value)
     {
@@ -370,19 +348,15 @@ final class TrunkedSiteMetadataMapper
         };
     }
 
-    private static int nxdnServiceFlags(List<String> values)
+    private static int nxdnServiceFlags(List<Service> values)
     {
         int flags = 0;
 
-        for(String value: values != null ? values : List.<String>of())
+        for(Service service: values != null ? values : List.<Service>of())
         {
-            for(Service service: Service.values())
+            if(service != null)
             {
-                if(service.toString().equals(value))
-                {
-                    flags |= service.getValue();
-                    break;
-                }
+                flags |= service.getValue();
             }
         }
 
@@ -396,23 +370,7 @@ final class TrunkedSiteMetadataMapper
             return null;
         }
 
-        String timer = failure.callTimer();
-
-        if("UNSPECIFIED".equals(timer))
-        {
-            return 0;
-        }
-
-        int separator = timer.indexOf(' ');
-
-        try
-        {
-            return Integer.parseInt(separator > 0 ? timer.substring(0, separator) : timer);
-        }
-        catch(NumberFormatException e)
-        {
-            return null;
-        }
+        return failure.callTimer().getSeconds();
     }
 
     private static String sha256(Object... values)
@@ -451,22 +409,4 @@ final class TrunkedSiteMetadataMapper
         return value != null ? value.toString() : "";
     }
 
-    /**
-     * Uses the configured site as the display name for a trunked site, falling back to the channel name.
-     */
-    static String configuredSiteName(Channel channel)
-    {
-        if(channel == null)
-        {
-            return null;
-        }
-
-        String configuredSite = blankToNull(channel.getSite());
-        return configuredSite != null ? configuredSite : blankToNull(channel.getName());
-    }
-
-    private static String blankToNull(String value)
-    {
-        return value != null && !value.isBlank() ? value.trim() : null;
-    }
 }

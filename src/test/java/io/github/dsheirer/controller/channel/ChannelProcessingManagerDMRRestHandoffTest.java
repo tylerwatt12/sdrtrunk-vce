@@ -9,6 +9,7 @@ package io.github.dsheirer.controller.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -942,6 +943,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
         {
             manager.start(parent);
             ProcessingChain original = manager.getProcessingChain(parent);
+            long parentIncarnation = parent.getProcessingIncarnation();
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
                 restChannel(3, FIRST_REST_FREQUENCY));
@@ -950,7 +952,12 @@ class ChannelProcessingManagerDMRRestHandoffTest
             Channel converted = manager.getChannel(original);
             assertNotNull(converted);
             assertTrue(converted.isTrafficChannel());
+            long convertedIncarnation = converted.getProcessingIncarnation();
+            assertFalse(parent.matchesProcessingIncarnation(parentIncarnation, true));
+            assertTrue(converted.matchesProcessingIncarnation(convertedIncarnation, true));
             manager.stop(converted);
+            assertFalse(converted.matchesProcessingIncarnation(convertedIncarnation, true));
+            assertTrue(converted.matchesProcessingIncarnation(convertedIncarnation, false));
 
             //Reuse the same pooled Channel object with a different ProcessingChain incarnation while the replacement
             //attempt is still waiting.  Aborting the old attempt must key cleanup to the old chain, not the object.
@@ -958,6 +965,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
             ProcessingChain reused = manager.getProcessingChain(converted);
             assertNotNull(reused);
             assertNotSame(original, reused);
+            assertNotEquals(convertedIncarnation, converted.getProcessingIncarnation());
+            assertTrue(converted.matchesProcessingIncarnation(converted.getProcessingIncarnation(), true));
 
             manager.stop(parent);
 
@@ -1068,6 +1077,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             manager.start(parent);
             original = manager.getProcessingChain(parent);
             assertNotNull(original);
+            long parentIncarnation = parent.getProcessingIncarnation();
             ProcessingChain expectedOriginal = original;
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             DMRDecoderState decoderState = firstDecoderState(original);
@@ -1108,6 +1118,9 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertNull(observer.mRestAllocationAtRollback,
                 "the target-frequency reservation remained visible when authority reopened");
             assertSame(original, manager.getProcessingChain(parent));
+            assertEquals(parentIncarnation, parent.getProcessingIncarnation(),
+                "a rolled-back map transition should restore the unchanged chain incarnation");
+            assertTrue(parent.matchesProcessingIncarnation(parentIncarnation, true));
             assertEquals(1, tunerManager.getSourceRequests());
 
             releaseGrant.countDown();
@@ -1167,6 +1180,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             manager.start(parent);
             original = manager.getProcessingChain(parent);
             assertNotNull(original);
+            long parentIncarnation = parent.getProcessingIncarnation();
             ProcessingChain expectedOriginal = original;
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             DMRDecoderState decoderState = firstDecoderState(original);
@@ -1211,6 +1225,9 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 sourceConfig.mPreferredFrequencies.get(sourceConfig.mPreferredFrequencies.size() - 2),
                 "the forced failure did not occur after manager commit");
             assertEquals(CURRENT_FREQUENCY, sourceConfig.mPreferredFrequencies.getLast());
+            assertEquals(parentIncarnation, parent.getProcessingIncarnation(),
+                "post-commit rollback should restore the unchanged parent-chain incarnation");
+            assertTrue(parent.matchesProcessingIncarnation(parentIncarnation, true));
 
             original.rollbackChannelConfigurationTransition(blocker);
             blocker = null;
@@ -1319,6 +1336,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
         {
             manager.start(parent);
             ProcessingChain original = manager.getProcessingChain(parent);
+            long parentIncarnation = parent.getProcessingIncarnation();
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             HandoffSubscriber subscriber = new HandoffSubscriber();
             original.getEventBus().register(subscriber);
@@ -1332,6 +1350,10 @@ class ChannelProcessingManagerDMRRestHandoffTest
             Channel converted = manager.getChannel(original);
             assertNotNull(converted);
             assertTrue(converted.isTrafficChannel());
+            assertFalse(parent.matchesProcessingIncarnation(parentIncarnation, true));
+            assertFalse(parent.isProcessingIncarnationActive(),
+                "failed replacement construction must not leave the parent incarnation active");
+            assertTrue(converted.matchesProcessingIncarnation(converted.getProcessingIncarnation(), true));
             assertTrue(original.isProcessing(), "replacement construction failure stopped the former REST call");
             assertEquals(1, manager.getPendingDmrRestChannelAttemptCount());
             assertTrue(trafficManager.isPendingRestHandoff(request));
@@ -1345,6 +1367,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 manager.getPendingDmrRestChannelAttemptCount() == 0, 5));
 
             assertEquals(3, tunerManager.getSourceRequests());
+            assertNotEquals(parentIncarnation, parent.getProcessingIncarnation());
+            assertTrue(parent.matchesProcessingIncarnation(parent.getProcessingIncarnation(), true));
             assertEquals(1, successfulReplacementSource.getStartCount());
             assertTrue(original.isProcessing());
             assertTrue(manager.isProcessing());
@@ -1417,11 +1441,13 @@ class ChannelProcessingManagerDMRRestHandoffTest
             eventLogManager, tunerManager, aliasModel, preferences, 10);
         Channel parent = channel(1);
         AtomicInteger rejectedStarts = new AtomicInteger();
+        AtomicReference<Channel> rejectedChannel = new AtomicReference<>();
         manager.addChannelEventListener(event ->
         {
             if(event.getEvent() == Event.NOTIFICATION_PROCESSING_START_REJECTED)
             {
                 rejectedStarts.incrementAndGet();
+                rejectedChannel.set(event.getChannel());
             }
         });
 
@@ -1432,8 +1458,21 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
             trafficManager.processChannelGrant(restChannel(3, FIRST_REST_FREQUENCY), identifiers(101, 91),
                 Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+            Channel failedChannel = rejectedChannel.get();
+            assertNotNull(failedChannel);
+            long failedIncarnation = failedChannel.getProcessingIncarnation();
+            assertNotEquals(0, failedIncarnation);
+            assertFalse(failedChannel.matchesProcessingIncarnation(failedIncarnation, true),
+                "failed startup left its processing incarnation active");
+            assertTrue(failedChannel.matchesProcessingIncarnation(failedIncarnation, false));
+
             trafficManager.processChannelGrant(restChannel(5, SECOND_REST_FREQUENCY), identifiers(102, 92),
                 Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 2_000L, false);
+
+            assertNotNull(manager.getProcessingChain(failedChannel));
+            assertNotEquals(failedIncarnation, failedChannel.getProcessingIncarnation());
+            assertTrue(failedChannel.matchesProcessingIncarnation(failedChannel.getProcessingIncarnation(), true),
+                "reused pooled channel did not receive a fresh active incarnation");
 
             assertEquals(3, tunerManager.getSourceRequests(),
                 "the required source-start failure did not release the pooled traffic channel");

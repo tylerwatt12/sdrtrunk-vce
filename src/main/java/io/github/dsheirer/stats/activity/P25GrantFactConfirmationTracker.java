@@ -12,7 +12,6 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
-import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
 import io.github.dsheirer.metadata.site.StableFactTracker;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -40,7 +39,12 @@ class P25GrantFactConfirmationTracker
     synchronized ReceiverActivityRecords.ChannelFact observe(P25GrantObservationEvent event,
                                                            ReceiverActivityRecords.ActivityEvent activity)
     {
-        Candidate candidate = candidate(event, activity);
+        if(event == null)
+        {
+            return null;
+        }
+
+        Candidate candidate = candidate(activity);
 
         if(candidate == null || !event.confirmedBand())
         {
@@ -69,13 +73,13 @@ class P25GrantFactConfirmationTracker
     {
         List<ReceiverActivityRecords.ChannelFact> confirmed = new ArrayList<>();
 
-        if(event == null || event.channel() == null || event.frequencyHertz() <= 0)
+        if(event == null || event.configurationId() == null || event.frequencyHertz() <= 0)
         {
             return confirmed;
         }
 
         prune(event.timestamp());
-        String configurationId = ChannelConfigurationKey.configured(event.channel());
+        String configurationId = event.configurationId();
 
         for(StableFactTracker<Candidate,FactValue> tracker: mTrackers.values())
         {
@@ -117,12 +121,11 @@ class P25GrantFactConfirmationTracker
         }
     }
 
-    private static Candidate candidate(P25GrantObservationEvent event,
-                                       ReceiverActivityRecords.ActivityEvent activity)
+    private static Candidate candidate(ReceiverActivityRecords.ActivityEvent activity)
     {
         ChannelTag serviceTag = serviceTag(activity);
 
-        if(event == null || activity == null || activity.configurationId() == null ||
+        if(activity == null || activity.configurationId() == null ||
             activity.configurationId().isBlank() ||
             activity.lcn() == null || activity.lcn().isBlank() || activity.frequencyHertz() == null ||
             activity.frequencyHertz() <= 0 || serviceTag == null)

@@ -13,6 +13,7 @@ package io.github.dsheirer.audio.call;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 /**
@@ -27,10 +28,11 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 public record CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
                             String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
                             TrunkedIdentityDomain identityDomain,
-                            ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
+                            ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
+                            String radioSystemKey)
 {
     public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null,
-        TrunkedIdentityDomain.STANDARD, null, false);
+        TrunkedIdentityDomain.STANDARD, null, false, null);
 
     public CallLegSource
     {
@@ -40,6 +42,22 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
         identityDomain = identityDomain != null ? identityDomain :
             decoderType == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C :
                 TrunkedIdentityDomain.STANDARD;
+        radioSystemKey = normalize(radioSystemKey);
+        if(radioSystemKey != null)
+        {
+            radioSystemKey = RadioSystemKey.validateForReceiver(
+                decoderType != null ? decoderType.getProtocol() : null, identityDomain,
+                channelConfigurationId, radioSystemKey);
+        }
+    }
+
+    public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
+                         String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                         TrunkedIdentityDomain identityDomain,
+                         ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
+    {
+        this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
+            identityDomain, channelKind, trafficChannel, null);
     }
 
     public boolean hasDurableAliasListId()
@@ -70,7 +88,15 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     public CallLegSource asTrafficChannel()
     {
         return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
-            radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true);
+            radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true,
+            radioSystemKey);
+    }
+
+    /** Returns a new source template for calls created after a processing-chain-local system identity change. */
+    public CallLegSource withRadioSystemKey(String radioSystemKey)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey);
     }
 
     private static String normalize(String value)

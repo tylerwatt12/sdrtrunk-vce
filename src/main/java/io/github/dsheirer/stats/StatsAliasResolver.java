@@ -685,10 +685,22 @@ class StatsAliasResolver
             else
             {
                 Integer identifier = integer(row.get("identity_id"));
-                String systemKey = string(row.get("radio_system_key"));
-                if(identifier != null && systemKey != null)
+                if(identifier == null)
                 {
-                    targets.add(systemAliasLists.getOrDefault(systemKey, Set.of()), identifier);
+                    continue;
+                }
+
+                if("TRUNKED".equals(row.get("topology")))
+                {
+                    String systemKey = string(row.get("radio_system_key"));
+                    if(systemKey != null)
+                    {
+                        targets.add(systemAliasLists.getOrDefault(systemKey, Set.of()), identifier);
+                    }
+                }
+                else
+                {
+                    targets.add(assignedAliasList(row), identifier);
                 }
             }
         }
@@ -852,14 +864,26 @@ class StatsAliasResolver
         {
             List<String> chunk = keys.subList(offset, Math.min(keys.size(), offset + QUERY_VALUE_CHUNK));
             String sql = """
-                WITH requested(system_key) AS (VALUES %s)
-                SELECT DISTINCT system.system_key, configuration.alias_list_id
-                FROM requested
-                JOIN radio_system system ON system.system_key = requested.system_key
-                JOIN receiver_channel channel ON channel.radio_system_id = system.id
-                JOIN configuration_channel configuration
-                  ON configuration.configuration_id = channel.configuration_id
-                WHERE configuration.alias_list_id IS NOT NULL
+                WITH requested(system_key) AS (VALUES %s),
+                assigned_alias_list(system_key, alias_list_id) AS (
+                    SELECT system.system_key, configuration.alias_list_id
+                    FROM requested
+                    JOIN radio_system system ON system.system_key = requested.system_key
+                    JOIN receiver_channel channel ON channel.radio_system_id = system.id
+                    JOIN configuration_channel configuration
+                      ON configuration.configuration_id = channel.configuration_id
+                    WHERE configuration.alias_list_id IS NOT NULL
+                    UNION
+                    SELECT system.system_key, configuration.alias_list_id
+                    FROM requested
+                    JOIN radio_system system ON system.system_key = requested.system_key
+                    JOIN configuration_channel configuration
+                      ON configuration.configuration_id = system.configuration_id
+                    WHERE configuration.alias_list_id IS NOT NULL
+                )
+                SELECT system_key, alias_list_id
+                FROM assigned_alias_list
+                ORDER BY system_key, alias_list_id
                 LIMIT ?
                 """.formatted(valuesPlaceholders(chunk.size()));
 

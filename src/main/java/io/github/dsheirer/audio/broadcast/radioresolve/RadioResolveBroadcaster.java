@@ -194,12 +194,13 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(!getBroadcastConfiguration().isSiteMetadataEnabled() || event == null || !event.isUseful())
+        if(!getBroadcastConfiguration().isSiteMetadataEnabled() || event == null || !event.isUseful() ||
+            !event.matchesCurrentChannel())
         {
             return;
         }
 
-        String radioResolveId = event.channel().getRadioResolveId();
+        String radioResolveId = event.receiverContext().radioResolveId();
 
         if(radioResolveId == null || radioResolveId.isBlank())
         {
@@ -267,7 +268,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             if(response.statusCode() >= 200 && response.statusCode() < 300)
             {
-                markMetadataSent(event.channel().getRadioResolveId(), hash, observedAt);
+                markMetadataSent(event.receiverContext().radioResolveId(), hash, observedAt);
                 setBroadcastState(BroadcastState.CONNECTED);
             }
             else if(response.statusCode() == 401 || response.statusCode() == 403)
@@ -632,13 +633,13 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         root.addProperty("observedAtEpochMilliseconds", observedAt);
         root.addProperty("nodeName", getNodeName(configuration));
         root.addProperty("timezone", getNodeTimezone(configuration));
-        root.addProperty("radresGuid", event.channel().getRadioResolveId());
+        root.addProperty("radresGuid", event.receiverContext().radioResolveId());
         root.addProperty("decoder", event.snapshot().decoder());
         root.addProperty("summaryHash", hash);
 
         JsonObject channelObject = new JsonObject();
-        channelObject.addProperty("name", event.channel().getName());
-        channelObject.addProperty("aliasList", event.channel().getAliasListName());
+        channelObject.addProperty("name", event.receiverContext().channelName());
+        channelObject.addProperty("aliasList", event.receiverContext().aliasListName());
         root.add("channel", channelObject);
         root.add("network", GSON.toJsonTree(event.snapshot().network()));
         root.add("currentSite", GSON.toJsonTree(event.snapshot().currentSite()));

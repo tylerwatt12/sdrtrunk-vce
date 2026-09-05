@@ -21,6 +21,8 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -149,9 +151,24 @@ public class ConfigurationDatabaseStore
             SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
                    channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radioresolve_id,
                    channel.auto_start, channel.auto_start_order, channel.decoder_type,
-                   channel.address_domain_code, channel.primary_frequency_hz, channel.config_json
+                   channel.address_domain_code, channel.primary_frequency_hz, channel.config_json,
+                   current_system.system_key AS current_system_key,
+                   current_system.protocol_code AS current_protocol_code,
+                   current_system.address_domain_code AS current_address_domain_code,
+                   current_system.configuration_id AS current_system_configuration_id,
+                   current_system.p25_wacn AS current_p25_wacn,
+                   current_system.p25_system_id AS current_p25_system_id,
+                   current_p25_site.protocol AS current_p25_protocol,
+                   current_p25_site.rfss AS current_p25_rfss,
+                   current_p25_site.site AS current_p25_site
             FROM configuration_channel channel
             LEFT JOIN alias_list list ON list.id = channel.alias_list_id
+            LEFT JOIN receiver_channel receiver
+              ON receiver.configuration_id = channel.configuration_id
+            LEFT JOIN radio_system current_system
+              ON current_system.id = receiver.radio_system_id
+            LEFT JOIN p25_site_snapshot current_p25_site
+              ON current_p25_site.channel_id = receiver.id
             ORDER BY channel.sort_order, channel.id
             """);
             ResultSet resultSet = statement.executeQuery())
@@ -172,6 +189,7 @@ public class ConfigurationDatabaseStore
 
                 ConfigurationChannelProjection.from(channel).requireMatches(
                     ConfigurationChannelProjection.read(resultSet), "Channel " + configurationId);
+                restoreInterruptedP25Binding(channel, resultSet);
                 channel.setSystem(resultSet.getString("system_name"));
                 channel.setSite(resultSet.getString("site_name"));
                 channel.setName(resultSet.getString("name"));
@@ -187,6 +205,65 @@ public class ConfigurationDatabaseStore
         }
 
         return channels;
+    }
+
+    /**
+     * Restores the first verified P25 site into the runtime channel when an interrupted delayed save left the JSON
+     * binding empty. The receiver row is joined by this channel's exact configuration UUID, and only a complete,
+     * canonical native P25 system/site projection is eligible. A saved JSON binding always remains authoritative.
+     */
+    private static void restoreInterruptedP25Binding(Channel channel, ResultSet resultSet) throws SQLException
+    {
+        Integer currentProtocol = readCurrentInteger(resultSet, "current_protocol_code");
+        Integer currentAddressDomain = readCurrentInteger(resultSet, "current_address_domain_code");
+        if(channel.getP25SiteIdentity() != null || !"TRUNKED".equals(resultSet.getString("channel_kind")) ||
+            !("P25_PHASE1".equals(resultSet.getString("decoder_type")) ||
+                "P25_PHASE2".equals(resultSet.getString("decoder_type"))) ||
+            currentProtocol == null || currentProtocol != 1 ||
+            currentAddressDomain == null || currentAddressDomain != 0 ||
+            resultSet.getString("current_system_configuration_id") != null ||
+            !"APCO25".equals(resultSet.getString("current_p25_protocol")))
+        {
+            return;
+        }
+
+        Integer wacn = readCurrentInteger(resultSet, "current_p25_wacn");
+        Integer system = readCurrentInteger(resultSet, "current_p25_system_id");
+        Integer rfss = readCurrentInteger(resultSet, "current_p25_rfss");
+        Integer site = readCurrentInteger(resultSet, "current_p25_site");
+
+        if(wacn == null || system == null || rfss == null || site == null)
+        {
+            return;
+        }
+
+        try
+        {
+            P25SiteIdentity identity = new P25SiteIdentity(wacn, system, rfss, site);
+            if(RadioSystemKey.p25(identity).equals(resultSet.getString("current_system_key")))
+            {
+                channel.setP25SiteIdentity(identity);
+            }
+        }
+        catch(IllegalArgumentException ignored)
+        {
+            //Startup schema validation reports malformed current state. Never infer a binding from it here.
+        }
+    }
+
+    /** Returns an exact SQLite integer for optional derived state, or null for absent/malformed input. */
+    private static Integer readCurrentInteger(ResultSet resultSet, String column) throws SQLException
+    {
+        Object value = resultSet.getObject(column);
+        if(value instanceof Byte || value instanceof Short || value instanceof Integer)
+        {
+            return ((Number)value).intValue();
+        }
+        if(value instanceof Long number && number >= Integer.MIN_VALUE && number <= Integer.MAX_VALUE)
+        {
+            return number.intValue();
+        }
+        return null;
     }
 
     private List<BroadcastConfiguration> loadBroadcastConfigurations(Connection connection)

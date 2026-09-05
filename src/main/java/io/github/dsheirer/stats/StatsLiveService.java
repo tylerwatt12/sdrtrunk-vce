@@ -42,23 +42,19 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_TAGS = 16;
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
     private static final int MAXIMUM_LIVE_ALIAS_REFERENCES = 8;
+    private static final int MAXIMUM_ROW_SYSTEM_SCOPES = MAXIMUM_TOTAL_LIVE_ROWS * 2;
     private final ActivitySource mActivitySource;
     private final WebEntityNavigationCatalog mNavigationCatalog;
     private final StatsLiveEventHub mChannelActivityHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
-    private final AtomicBoolean mRunning = new AtomicBoolean();
-    /** Single latest-value handoff. Saturation coalesces stale web updates instead of delaying channel activity. */
-    private final AtomicReference<ChannelActivityEvent> mPendingActivity = new AtomicReference<>();
     private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
-    private final AtomicBoolean mProjectionResyncRequired = new AtomicBoolean();
+    private final AtomicLong mRunGeneration = new AtomicLong();
     private final Object mLifecycleLock = new Object();
     private final Object mEncodedSnapshotLock = new Object();
-    private final Listener<ChannelActivityEvent> mChannelActivityListener = this::receiveChannelActivity;
 
     private volatile EncodedSnapshot mEncodedChannelActivitySnapshot;
-    private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation =
-        WebEntityNavigationCatalog.Snapshot.empty();
-    private volatile Thread mProjectionWorker;
+    private volatile RowSystemScopeState mRowSystemScopeState = new RowSystemScopeState();
+    private volatile ProjectionRun mCurrentRun;
 
     StatsLiveService(ChannelProcessingManager channelProcessingManager)
     {
@@ -89,20 +85,25 @@ final class StatsLiveService implements AutoCloseable
     {
         synchronized(mLifecycleLock)
         {
-            if(mRunning.compareAndSet(false, true))
+            if(mCurrentRun == null)
             {
                 if(mNavigationCatalog != null)
                 {
                     mNavigationCatalog.start();
                 }
 
-                mPublishedNavigation = navigationSnapshot();
-
-                Thread worker = new ObserverThreadFactory("stats live projection").newThread(this::projectionLoop);
-                mProjectionWorker = worker;
+                RowSystemScopeState scopes = new RowSystemScopeState();
+                ProjectionRun run = new ProjectionRun(mRunGeneration.incrementAndGet(), scopes,
+                    navigationSnapshot());
+                Thread worker = new ObserverThreadFactory("stats live projection")
+                    .newThread(() -> projectionLoop(run));
+                run.mWorker = worker;
+                mRowSystemScopeState = scopes;
+                mEncodedChannelActivitySnapshot = null;
+                mCurrentRun = run;
                 worker.start();
 
-                mActivitySource.addListener(mChannelActivityListener);
+                mActivitySource.addListener(run.mListener);
             }
         }
     }
@@ -113,13 +114,16 @@ final class StatsLiveService implements AutoCloseable
 
         synchronized(mLifecycleLock)
         {
-            if(mRunning.compareAndSet(true, false))
-            {
-                mActivitySource.removeListener(mChannelActivityListener);
+            ProjectionRun run = mCurrentRun;
 
-                mPendingActivity.set(null);
-                worker = mProjectionWorker;
-                mProjectionWorker = null;
+            if(run != null)
+            {
+                mCurrentRun = null;
+                mRunGeneration.incrementAndGet();
+                mActivitySource.removeListener(run.mListener);
+
+                run.mPendingActivity.set(null);
+                worker = run.mWorker;
 
                 if(worker != null)
                 {
@@ -135,7 +139,7 @@ final class StatsLiveService implements AutoCloseable
 
             mChannelActivityHub.close();
             mEncodedChannelActivitySnapshot = null;
-            mPublishedNavigation = WebEntityNavigationCatalog.Snapshot.empty();
+            mRowSystemScopeState = new RowSystemScopeState();
         }
 
         if(worker != null && worker != Thread.currentThread())
@@ -155,59 +159,64 @@ final class StatsLiveService implements AutoCloseable
     {
         synchronized(mLifecycleLock)
         {
-            return mRunning.get() ? mChannelActivityHub.subscribe() : null;
+            return mCurrentRun != null ? mChannelActivityHub.subscribe() : null;
         }
     }
 
     void receiveChannelActivity(ChannelActivityEvent event)
     {
-        if(!mRunning.get() || event == null || event.snapshot() == null || event.operation() == null)
+        ProjectionRun run = mCurrentRun;
+
+        receiveChannelActivity(run, event);
+    }
+
+    private void receiveChannelActivity(ProjectionRun run, ChannelActivityEvent event)
+    {
+        if(!isCurrentRun(run) || event == null || event.snapshot() == null || event.operation() == null)
         {
             return;
         }
 
-        if(mPendingActivity.getAndSet(event) != null)
+        if(run.mPendingActivity.getAndSet(event) != null)
         {
             mDroppedProjectionEvents.incrementAndGet();
-            mProjectionResyncRequired.set(true);
+            run.mResyncRequired.set(true);
         }
 
-        LockSupport.unpark(mProjectionWorker);
+        LockSupport.unpark(run.mWorker);
     }
 
-    private void projectionLoop()
+    private void projectionLoop(ProjectionRun run)
     {
-        Thread current = Thread.currentThread();
-
-        while(mRunning.get() && mProjectionWorker == current)
+        while(isCurrentRun(run))
         {
-            ChannelActivityEvent event = mPendingActivity.getAndSet(null);
+            ChannelActivityEvent event = run.mPendingActivity.getAndSet(null);
 
             if(event == null)
             {
-                publishNavigationRefreshIfNeeded();
+                publishNavigationRefreshIfNeeded(run);
                 LockSupport.parkNanos(this, 100_000_000L);
             }
             else
             {
                 try
                 {
-                    projectAndPublish(event);
+                    projectAndPublish(run, event);
                 }
                 catch(RuntimeException exception)
                 {
                     //One malformed optional projection is discarded. The worker remains available for the next
                     //authoritative snapshot and never pushes the failure back onto a receiver callback.
-                    mProjectionResyncRequired.set(true);
+                    run.mResyncRequired.set(true);
                 }
             }
         }
     }
 
-    private void projectAndPublish(ChannelActivityEvent event)
+    private void projectAndPublish(ProjectionRun run, ChannelActivityEvent event)
     {
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
-        PreparedActivityEvent prepared = prepare(event, navigation);
+        PreparedActivityEvent prepared = prepare(event, navigation, run.mRowSystemScopes);
 
         if(prepared == null)
         {
@@ -226,23 +235,24 @@ final class StatsLiveService implements AutoCloseable
         update.put("revision", event.revision() > 0 ? event.revision() : currentSnapshotSet().revision());
         synchronized(mLifecycleLock)
         {
-            if(!mRunning.get())
+            if(!isCurrentRun(run))
             {
                 return;
             }
 
             mEncodedChannelActivitySnapshot = null;
-            mPublishedNavigation = navigation;
+            run.mPublishedNavigation = navigation;
             mChannelActivityHub.publish("activity_table", Map.copyOf(update));
         }
 
-        if(mProjectionResyncRequired.getAndSet(false))
+        if(run.mResyncRequired.getAndSet(false) && isCurrentRun(run))
         {
-            Map<String,Object> authoritative = snapshot();
+            Map<String,Object> authoritative = snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS,
+                navigationSnapshot(), run.mRowSystemScopes);
 
             synchronized(mLifecycleLock)
             {
-                if(mRunning.get())
+                if(isCurrentRun(run))
                 {
                     mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
                 }
@@ -250,27 +260,33 @@ final class StatsLiveService implements AutoCloseable
         }
     }
 
-    private void publishNavigationRefreshIfNeeded()
+    private void publishNavigationRefreshIfNeeded(ProjectionRun run)
     {
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
 
-        if(mPublishedNavigation == navigation)
+        if(run.mPublishedNavigation == navigation)
         {
             return;
         }
 
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
-        Map<String,Object> authoritative = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation);
+        Map<String,Object> authoritative = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation,
+            run.mRowSystemScopes);
 
         synchronized(mLifecycleLock)
         {
-            if(mRunning.get() && mPublishedNavigation != navigation)
+            if(isCurrentRun(run) && run.mPublishedNavigation != navigation)
             {
                 mEncodedChannelActivitySnapshot = null;
-                mPublishedNavigation = navigation;
+                run.mPublishedNavigation = navigation;
                 mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
             }
         }
+    }
+
+    private boolean isCurrentRun(ProjectionRun run)
+    {
+        return run != null && mCurrentRun == run && mRunGeneration.get() == run.mGeneration;
     }
 
     long droppedProjectionEvents()
@@ -280,11 +296,12 @@ final class StatsLiveService implements AutoCloseable
 
     Map<String,Object> snapshot()
     {
-        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot());
+        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot(), mRowSystemScopeState);
     }
 
     private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
-                                        WebEntityNavigationCatalog.Snapshot navigation)
+                                        WebEntityNavigationCatalog.Snapshot navigation,
+                                        RowSystemScopeState rowSystemScopes)
     {
         List<ChannelActivitySnapshot> snapshots = source.tables().stream()
             .filter(StatsLiveService::isVisibleLiveTable).sorted(Comparator
@@ -300,7 +317,7 @@ final class StatsLiveService implements AutoCloseable
             ChannelActivitySnapshot table = snapshots.get(index);
             int available = Math.max(0, maximumRows - rowsIncluded);
             int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, available);
-            Map<String,Object> projected = activityTable(table, rowLimit, navigation);
+            Map<String,Object> projected = activityTable(table, rowLimit, navigation, rowSystemScopes);
             tables.add(projected);
             int included = projected.get("rows") instanceof List<?> rows ? rows.size() : 0;
             rowsIncluded += included;
@@ -334,11 +351,14 @@ final class StatsLiveService implements AutoCloseable
 
     byte[] encodedSnapshot() throws IOException
     {
+        long generation = mRunGeneration.get();
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
+        RowSystemScopeState rowSystemScopes = mRowSystemScopeState;
         EncodedSnapshot cached = mEncodedChannelActivitySnapshot;
 
-        if(cached != null && cached.revision() == source.revision() && cached.navigation() == navigation)
+        if(cached != null && cached.generation() == generation && cached.revision() == source.revision() &&
+            cached.navigation() == navigation)
         {
             return cached.payload();
         }
@@ -347,7 +367,8 @@ final class StatsLiveService implements AutoCloseable
         {
             cached = mEncodedChannelActivitySnapshot;
 
-            if(cached != null && cached.revision() == source.revision() && cached.navigation() == navigation)
+            if(cached != null && cached.generation() == generation && cached.revision() == source.revision() &&
+                cached.navigation() == navigation)
             {
                 return cached.payload();
             }
@@ -360,7 +381,7 @@ final class StatsLiveService implements AutoCloseable
             {
                 int candidateLimit = low + (high - low) / 2;
                 byte[] candidate = ApiHttpResponse.encodePayload(
-                    StatsApiV1Payload.present(snapshot(source, candidateLimit, navigation)));
+                    StatsApiV1Payload.present(snapshot(source, candidateLimit, navigation, rowSystemScopes)));
 
                 if(candidate.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
                 {
@@ -378,8 +399,13 @@ final class StatsLiveService implements AutoCloseable
                 throw new IOException("Live channel-activity metadata exceeds the snapshot byte budget");
             }
 
-            EncodedSnapshot encoded = new EncodedSnapshot(source.revision(), navigation, best);
-            mEncodedChannelActivitySnapshot = encoded;
+            EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation, best);
+
+            if(mRunGeneration.get() == generation && mRowSystemScopeState == rowSystemScopes)
+            {
+                mEncodedChannelActivitySnapshot = encoded;
+            }
+
             return encoded.payload();
         }
     }
@@ -390,7 +416,8 @@ final class StatsLiveService implements AutoCloseable
     }
 
     private PreparedActivityEvent prepare(ChannelActivityEvent event,
-                                          WebEntityNavigationCatalog.Snapshot navigation)
+                                          WebEntityNavigationCatalog.Snapshot navigation,
+                                          RowSystemScopeState rowSystemScopes)
     {
         String tableId = boundedText(event.snapshot().tableId(), MAXIMUM_LIVE_TEXT_LENGTH);
 
@@ -399,8 +426,16 @@ final class StatsLiveService implements AutoCloseable
             return null;
         }
 
-        Map<String,Object> table = event.operation() == ChannelActivityEvent.Operation.REMOVE ? null :
-            activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE, navigation);
+        Map<String,Object> table;
+        if(event.operation() == ChannelActivityEvent.Operation.REMOVE)
+        {
+            clearRowSystemScopes(rowSystemScopes, tableId);
+            table = null;
+        }
+        else
+        {
+            table = activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE, navigation, rowSystemScopes);
+        }
         return new PreparedActivityEvent(event.operation(), tableId, table);
     }
 
@@ -410,8 +445,9 @@ final class StatsLiveService implements AutoCloseable
             WebEntityNavigationCatalog.Snapshot.empty();
     }
 
-    private static Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows,
-                                                    WebEntityNavigationCatalog.Snapshot navigation)
+    private Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows,
+                                             WebEntityNavigationCatalog.Snapshot navigation,
+                                             RowSystemScopeState rowSystemScopes)
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
         WebEntityNavigationCatalog.Channel tableChannel = navigation.channel(snapshot.configurationId());
@@ -429,7 +465,7 @@ final class StatsLiveService implements AutoCloseable
         int rowCount = snapshot.rows().size();
         int included = Math.min(rowCount, Math.max(0, maximumRows));
         table.put("rows", snapshot.rows().stream().limit(included)
-            .map(row -> activityRow(row, tableChannel, navigation)).toList());
+            .map(row -> activityRow(snapshot.tableId(), row, tableChannel, navigation, rowSystemScopes)).toList());
         table.put("rows_total", rowCount);
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
@@ -445,21 +481,33 @@ final class StatsLiveService implements AutoCloseable
         return Map.copyOf(value);
     }
 
-    private static Map<String,Object> activityRow(ChannelActivitySnapshot.Row snapshot,
-                                                  WebEntityNavigationCatalog.Channel tableChannel,
-                                                  WebEntityNavigationCatalog.Snapshot catalog)
+    private Map<String,Object> activityRow(String tableId, ChannelActivitySnapshot.Row snapshot,
+                                           WebEntityNavigationCatalog.Channel tableChannel,
+                                           WebEntityNavigationCatalog.Snapshot catalog,
+                                           RowSystemScopeState rowSystemScopes)
     {
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
-        WebEntityNavigationCatalog.Channel rowChannel = catalog.channel(snapshot.configurationId());
+        ChannelActivitySnapshot.Navigation navigation = snapshot.navigation();
+        String configurationId = navigation != null && navigation.channelConfigurationId() != null &&
+            !navigation.channelConfigurationId().isBlank() ? navigation.channelConfigurationId() :
+            snapshot.configurationId();
+        if((configurationId == null || configurationId.isBlank()) && tableChannel != null)
+        {
+            configurationId = tableChannel.configurationId();
+        }
+        WebEntityNavigationCatalog.Channel rowChannel = catalog.channel(configurationId);
 
-        if(rowChannel == null)
+        if(rowChannel == null && tableChannel != null &&
+            Objects.equals(configurationId, tableChannel.configurationId()))
         {
             rowChannel = tableChannel;
         }
+        boolean systemScopeMatches = rowSystemScopeMatches(rowSystemScopes, tableId, snapshot, configurationId,
+            rowChannel);
 
         row.put("key", boundedText(snapshot.key(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(row, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
+        putText(row, "configuration_id", configurationId, MAXIMUM_LIVE_TEXT_LENGTH);
         WebEntityRef.put(row, rowChannel != null ? rowChannel.entityRef() : null);
         row.put("status", boundedText(snapshot.status(), MAXIMUM_LIVE_TEXT_LENGTH));
         row.put("activation_order", snapshot.activationOrder());
@@ -520,11 +568,8 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "decoder", snapshot.decoder(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "encryption_details", snapshot.encryptionDetails(), MAXIMUM_LIVE_TEXT_LENGTH);
 
-        ChannelActivitySnapshot.Navigation navigation = snapshot.navigation();
-
         if(navigation != null)
         {
-            putText(row, "configuration_id", navigation.channelConfigurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
             put(row, "alias_list_id", navigation.aliasListId());
             putText(row, "alias_list_name", navigation.aliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "protocol", navigation.protocol(), MAXIMUM_LIVE_TEXT_LENGTH);
@@ -532,7 +577,7 @@ final class StatsLiveService implements AutoCloseable
                 .map(StatsLiveService::activityAliasReference).toList());
             row.put("target_aliases", navigation.targetAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
                 .map(StatsLiveService::activityAliasReference).toList());
-            if(rowChannel != null)
+            if(rowChannel != null && systemScopeMatches)
             {
                 WebEntityRef sourceReference = rowChannel.identity(navigation.sourceMatcher());
                 WebEntityRef targetReference = rowChannel.identity(navigation.targetMatcher());
@@ -549,6 +594,58 @@ final class StatsLiveService implements AutoCloseable
         }
 
         return Map.copyOf(row);
+    }
+
+    /**
+     * Freezes a live row's radio-system owner for one activation.  Catalog refreshes may enrich an unowned row, but
+     * cannot silently move an already-rendered call from system A to system B while the retained row is still active.
+     */
+    private boolean rowSystemScopeMatches(RowSystemScopeState rowSystemScopes, String tableId,
+                                          ChannelActivitySnapshot.Row row, String configurationId,
+                                          WebEntityNavigationCatalog.Channel channel)
+    {
+        RowScopeKey key = new RowScopeKey(boundedText(tableId, MAXIMUM_LIVE_TEXT_LENGTH),
+            boundedText(row.key(), MAXIMUM_LIVE_TEXT_LENGTH),
+            boundedText(configurationId, MAXIMUM_LIVE_TEXT_LENGTH));
+        String currentRadioSystemKey = channel != null && channel.radioSystemRef() != null ?
+            channel.radioSystemRef().key() : null;
+
+        synchronized(rowSystemScopes.mLock)
+        {
+            LinkedHashMap<RowScopeKey,RowSystemScope> scopes = rowSystemScopes.mScopes;
+            RowSystemScope scope = scopes.get(key);
+            if(scope != null && row.activationOrder() > 0 && scope.activationOrder() > 0 &&
+                row.activationOrder() < scope.activationOrder())
+            {
+                //A concurrent caller projected an older immutable snapshot after a newer activation.  Never let it
+                //move ownership backward or borrow the current catalog's system identity.
+                return false;
+            }
+            if(scope == null || row.activationOrder() > 0 && row.activationOrder() != scope.activationOrder())
+            {
+                scope = new RowSystemScope(row.activationOrder(), currentRadioSystemKey);
+                scopes.put(key, scope);
+            }
+            else if(scope.radioSystemKey() == null && currentRadioSystemKey != null)
+            {
+                scope = new RowSystemScope(scope.activationOrder(), currentRadioSystemKey);
+                scopes.put(key, scope);
+            }
+
+            while(scopes.size() > MAXIMUM_ROW_SYSTEM_SCOPES)
+            {
+                scopes.remove(scopes.keySet().iterator().next());
+            }
+            return Objects.equals(scope.radioSystemKey(), currentRadioSystemKey);
+        }
+    }
+
+    private void clearRowSystemScopes(RowSystemScopeState rowSystemScopes, String tableId)
+    {
+        synchronized(rowSystemScopes.mLock)
+        {
+            rowSystemScopes.mScopes.keySet().removeIf(key -> key.tableId().equals(tableId));
+        }
     }
 
     private static Map<String,Object> activityAliasReference(ChannelActivitySnapshot.AliasReference reference)
@@ -593,8 +690,48 @@ final class StatsLiveService implements AutoCloseable
     {
     }
 
-    private record EncodedSnapshot(long revision, WebEntityNavigationCatalog.Snapshot navigation, byte[] payload)
+    private record EncodedSnapshot(long generation, long revision,
+                                   WebEntityNavigationCatalog.Snapshot navigation, byte[] payload)
     {
+    }
+
+    private record RowScopeKey(String tableId, String rowKey, String configurationId)
+    {
+    }
+
+    private record RowSystemScope(long activationOrder, String radioSystemKey)
+    {
+    }
+
+    /**
+     * All mutable projection state belongs to one start/stop generation.  A worker that outlives stop's bounded join
+     * can finish only against this retired object and cannot consume work or alter row ownership for a later run.
+     */
+    private final class ProjectionRun
+    {
+        private final long mGeneration;
+        private final RowSystemScopeState mRowSystemScopes;
+        private final AtomicReference<ChannelActivityEvent> mPendingActivity = new AtomicReference<>();
+        private final AtomicBoolean mResyncRequired = new AtomicBoolean();
+        private final Listener<ChannelActivityEvent> mListener = event -> receiveChannelActivity(this, event);
+        private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation;
+        private volatile Thread mWorker;
+
+        private ProjectionRun(long generation, RowSystemScopeState rowSystemScopes,
+                              WebEntityNavigationCatalog.Snapshot publishedNavigation)
+        {
+            mGeneration = generation;
+            mRowSystemScopes = rowSystemScopes;
+            mPublishedNavigation = publishedNavigation;
+        }
+    }
+
+    /** Mutable row ownership cache that is replaced, rather than reused, at each service generation boundary. */
+    private static final class RowSystemScopeState
+    {
+        private final Object mLock = new Object();
+        private final LinkedHashMap<RowScopeKey,RowSystemScope> mScopes =
+            new LinkedHashMap<>(MAXIMUM_ROW_SYSTEM_SCOPES, 0.75f, true);
     }
 
     interface ActivitySource

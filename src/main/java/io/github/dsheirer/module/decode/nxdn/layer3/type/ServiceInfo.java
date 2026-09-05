@@ -20,7 +20,6 @@
 package io.github.dsheirer.module.decode.nxdn.layer3.type;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -63,7 +62,6 @@ public class ServiceInfo extends Option
             }
         }
 
-        services.sort(Comparator.comparing(Service::toString));
         return services;
     }
 }

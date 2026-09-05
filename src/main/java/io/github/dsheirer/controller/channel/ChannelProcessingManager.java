@@ -19,7 +19,6 @@
 package io.github.dsheirer.controller.channel;
 
 import com.google.common.eventbus.Subscribe;
-import com.google.common.util.concurrent.MoreExecutors;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
@@ -66,6 +65,7 @@ import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPa
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -76,12 +76,10 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
@@ -105,6 +103,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final String CONFIGURATION_UNAVAILABLE_DESCRIPTION = "CHANNEL CONFIGURATION UNAVAILABLE";
     private static final long DMR_REST_CHANNEL_RETRY_DELAY_MILLISECONDS = 500;
     private static final long SITE_METADATA_DRAIN_RETRY_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
+    private static final long SITE_METADATA_IDLE_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
+    private static final int SITE_METADATA_INGRESS_CAPACITY = 256;
+    private static final int SITE_METADATA_P25 = 1;
+    private static final int SITE_METADATA_PROTOCOL = 2;
+    private static final AtomicLong PROCESSING_INCARNATION_SEQUENCE = new AtomicLong();
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
 
@@ -123,14 +126,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private AliasModel mAliasModel;
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
-    private final Executor mSiteMetadataExecutor = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
+    private final SiteMetadataIngressQueue mSiteMetadataIngress;
     private final AtomicInteger mSiteMetadataSubmissions = new AtomicInteger();
+    private final AtomicLong mAcceptedSiteMetadata = new AtomicLong();
+    private final AtomicLong mProcessedSiteMetadata = new AtomicLong();
+    private final AtomicLong mDroppedSiteMetadata = new AtomicLong();
     private final Map<Channel,DMRRestChannelAttempt> mDmrRestChannelAttempts = new HashMap<>();
     private final DMRRestChannelHandoffCoordinator mDmrRestChannelHandoffCoordinator;
     private final long mDmrRestChannelRetryDelayMilliseconds;
     private final Object mShutdownLock = new Object();
     private volatile boolean mShuttingDown;
     private volatile boolean mClosed;
+    private volatile boolean mSiteMetadataWorkerRunning = true;
+    private volatile Thread mSiteMetadataWorker;
 
     /**
      * Constructs the channel processing manager
@@ -153,6 +161,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
                              UserPreferences userPreferences, long dmrRestChannelRetryDelayMilliseconds)
     {
+        this(eventLogManager, tunerManager, aliasModel, userPreferences, dmrRestChannelRetryDelayMilliseconds,
+            SITE_METADATA_INGRESS_CAPACITY);
+    }
+
+    /** Test seam for deterministic bounded site-metadata saturation. */
+    ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                             UserPreferences userPreferences, long dmrRestChannelRetryDelayMilliseconds,
+                             int siteMetadataIngressCapacity)
+    {
         if(dmrRestChannelRetryDelayMilliseconds <= 0)
         {
             throw new IllegalArgumentException("DMR rest-channel retry delay must be positive");
@@ -164,9 +181,13 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mUserPreferences = userPreferences;
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
         mChannelActivityModel.setActiveChannelSupplier(this::getActiveChannelActivitySnapshot);
+        mSiteMetadataIngress = new SiteMetadataIngressQueue(siteMetadataIngressCapacity);
         mDmrRestChannelRetryDelayMilliseconds = dmrRestChannelRetryDelayMilliseconds;
         mDmrRestChannelHandoffCoordinator = new DMRRestChannelHandoffCoordinator(
             this::snapshotDmrRestChannelHandoffOwners, this::processDmrRestChannelHandoff);
+        mSiteMetadataWorker = new ObserverThreadFactory("site metadata observers")
+            .newThread(this::runSiteMetadataWorker);
+        mSiteMetadataWorker.start();
     }
 
     public ChannelActivityModel getChannelActivityModel()
@@ -576,9 +597,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         return source != null && source.getFrequency() == request.currentFrequency();
     }
 
-    private List<ProcessingChainIncarnation> snapshotDmrRestChannelSiblingTrafficChains(Channel parentChannel)
+    private List<ProcessingChainMapping> snapshotDmrRestChannelSiblingTrafficChains(Channel parentChannel)
     {
-        List<ProcessingChainIncarnation> siblings = new ArrayList<>();
+        List<ProcessingChainMapping> siblings = new ArrayList<>();
         String configurationId = parentChannel.getConfigurationId();
 
         for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
@@ -589,7 +610,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             if(channel != null && processingChain != null && channel.isTrafficChannel() &&
                 configurationId.equals(channel.getConfigurationId()))
             {
-                siblings.add(new ProcessingChainIncarnation(channel, processingChain));
+                siblings.add(new ProcessingChainMapping(channel, processingChain));
             }
         }
 
@@ -613,6 +634,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         boolean conversionCommitted = false;
         boolean parentMappingRemoved = false;
         boolean trafficMappingInstalled = false;
+        long parentProcessingIncarnation = 0;
         boolean dmrConversionNotificationPosted = false;
         DMRChannelConfigurationTransitionNotification.Suspend dmrSuspension = null;
         AbstractChannelState.ChannelConfigurationTransition channelStateTransition = null;
@@ -651,16 +673,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             //an overlapping teardown until the traffic key exists; they never wait for this lifecycle worker.
             channelStateTransition = processingChain.beginChannelConfigurationTransition(trafficChannel);
 
-            if(!mProcessingChainsMap.remove(parentChannel, processingChain))
+            RemovedProcessingMapping parentMapping = removeProcessingChainMapping(parentChannel, processingChain);
+
+            if(parentMapping == null)
             {
                 return false;
             }
 
             parentMappingRemoved = true;
+            parentProcessingIncarnation = parentMapping.processingIncarnation();
             attachDetachedOwnerChannelEventRoute(attempt);
             processingChain.removeTrafficChannelManager();
 
-            if(mProcessingChainsMap.putIfAbsent(trafficChannel, processingChain) != null)
+            if(installProcessingChainMapping(trafficChannel, processingChain) == 0)
             {
                 return false;
             }
@@ -702,7 +727,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             if(!conversionCommitted)
             {
                 rollbackPausedDmrRestChannelConversion(attempt, parentMappingRemoved, trafficMappingInstalled,
-                    channelStateTransition, dmrSuspension);
+                    parentProcessingIncarnation, channelStateTransition, dmrSuspension);
             }
             else
             {
@@ -743,6 +768,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private void rollbackPausedDmrRestChannelConversion(DMRRestChannelAttempt attempt, boolean parentMappingRemoved,
                                                         boolean trafficMappingInstalled,
+                                                        long parentProcessingIncarnation,
                                                         AbstractChannelState.ChannelConfigurationTransition transition,
                                                         DMRChannelConfigurationTransitionNotification.Suspend dmrSuspension)
     {
@@ -754,7 +780,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             if(trafficMappingInstalled)
             {
-                mProcessingChainsMap.remove(prepared.trafficChannel(), processingChain);
+                removeProcessingChainMapping(prepared.trafficChannel(), processingChain);
             }
         }
         catch(RuntimeException exception)
@@ -776,8 +802,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         try
         {
-            if(parentMappingRemoved &&
-                mProcessingChainsMap.putIfAbsent(handoff.parentChannel(), processingChain) != null)
+            if(parentMappingRemoved && !restoreProcessingChainMapping(handoff.parentChannel(), processingChain,
+                parentProcessingIncarnation))
             {
                 mLog.error("Unable to restore DMR parent-channel mapping after handoff rollback");
             }
@@ -1015,7 +1041,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private void stopDmrRestChannelSiblingTrafficChains(DMRRestChannelAttempt attempt)
     {
-        for(ProcessingChainIncarnation sibling: attempt.getSiblingTrafficChains())
+        for(ProcessingChainMapping sibling: attempt.getSiblingTrafficChains())
         {
             if(mProcessingChainsMap.get(sibling.channel()) == sibling.processingChain())
             {
@@ -1351,7 +1377,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             return;
         }
 
-        if(mProcessingChainsMap.remove(channel, processingChain))
+        if(removeProcessingChainMapping(channel, processingChain) != null)
         {
             mChannelActivityModel.channelStopped(channel);
 
@@ -1462,18 +1488,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     private boolean addProcessingChain(Channel channel, ProcessingChain processingChain)
     {
-        boolean[] added = new boolean[1];
+        boolean added = false;
 
         mLock.lock();
 
         try
         {
-            mProcessingChainsMap.computeIfAbsent(channel, key -> {
-                added[0] = true;
-                return processingChain;
-            });
+            added = installProcessingChainMapping(channel, processingChain) != 0;
 
-            if(added[0])
+            if(added)
             {
                 //Publish the chain before offering its observer lifecycle event.  If the bounded activity ingress is
                 //full, its worker can now reconcile the dropped start from the authoritative map.
@@ -1491,7 +1514,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mLock.unlock();
         }
 
-        return added[0];
+        return added;
     }
 
     /**
@@ -1507,7 +1530,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         try
         {
-            removed = mProcessingChainsMap.remove(channel);
+            RemovedProcessingMapping mapping = removeProcessingChainMapping(channel, null);
+            removed = mapping != null ? mapping.processingChain() : null;
 
             if(removed != null)
             {
@@ -1525,6 +1549,67 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
 
         return removed;
+    }
+
+    /**
+     * Installs one authoritative channel-to-chain mapping and activates a fresh transient incarnation before the
+     * mapping can be observed. Zero means another chain already owns the channel.
+     */
+    private long installProcessingChainMapping(Channel channel, ProcessingChain processingChain)
+    {
+        return installProcessingChainMapping(channel, processingChain, nextProcessingIncarnation()) ?
+            channel.getProcessingIncarnation() : 0;
+    }
+
+    /** Restores an interrupted map transition without making the unchanged processing chain look like a restart. */
+    private boolean restoreProcessingChainMapping(Channel channel, ProcessingChain processingChain,
+                                                   long processingIncarnation)
+    {
+        return processingIncarnation != 0 &&
+            installProcessingChainMapping(channel, processingChain, processingIncarnation);
+    }
+
+    private boolean installProcessingChainMapping(Channel channel, ProcessingChain processingChain,
+                                                   long processingIncarnation)
+    {
+        boolean[] installed = new boolean[1];
+        mProcessingChainsMap.compute(channel, (_, existing) ->
+        {
+            if(existing == null)
+            {
+                channel.activateProcessingIncarnation(processingIncarnation);
+                installed[0] = true;
+                return processingChain;
+            }
+
+            return existing;
+        });
+        return installed[0];
+    }
+
+    /** Closes the incarnation before atomically removing its authoritative map entry. */
+    private RemovedProcessingMapping removeProcessingChainMapping(Channel channel, ProcessingChain expected)
+    {
+        RemovedProcessingMapping[] removed = new RemovedProcessingMapping[1];
+        mProcessingChainsMap.computeIfPresent(channel, (_, existing) ->
+        {
+            if(expected == null || existing == expected)
+            {
+                long processingIncarnation = channel.getProcessingIncarnation();
+                channel.deactivateProcessingIncarnation(processingIncarnation);
+                removed[0] = new RemovedProcessingMapping(existing, processingIncarnation);
+                return null;
+            }
+
+            return existing;
+        });
+        return removed[0];
+    }
+
+    private static long nextProcessingIncarnation()
+    {
+        return PROCESSING_INCARNATION_SEQUENCE.updateAndGet(current ->
+            current == Long.MAX_VALUE ? 1 : current + 1);
     }
 
     /**
@@ -1778,6 +1863,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         shutdown();
         mDmrRestChannelHandoffCoordinator.close();
         mChannelActivityModel.close();
+        mSiteMetadataWorkerRunning = false;
+        signalSiteMetadataWorker();
     }
 
     @Subscribe
@@ -1802,11 +1889,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(SiteMetadataEvent event)
     {
-        submitSiteMetadata(() -> dispatchSiteMetadata(event));
+        submitSiteMetadata(SITE_METADATA_P25, event);
     }
 
     private void dispatchSiteMetadata(SiteMetadataEvent event)
     {
+        if(event != null && !event.matchesCurrentChannel())
+        {
+            return;
+        }
+
         mChannelActivityModel.receiveSiteMetadata(event);
 
         if(event != null)
@@ -1826,16 +1918,17 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(ProtocolSiteMetadataEvent event)
     {
-        submitSiteMetadata(() -> dispatchProtocolSiteMetadata(event));
+        submitSiteMetadata(SITE_METADATA_PROTOCOL, event);
     }
 
     /**
-     * Performs a fixed-attempt handoff to the shared sequential site-metadata observer. The in-flight counter lets a
-     * lifecycle thread fence submissions without making decoder callbacks acquire a contended lock.
+     * Performs a fixed-attempt handoff to the bounded sequential site-metadata observer. The in-flight counter lets a
+     * lifecycle thread fence submissions without making decoder callbacks acquire a contended lock. Saturation drops
+     * observer metadata; it never makes a decoder thread wait or perform listener work.
      */
-    private void submitSiteMetadata(Runnable task)
+    private void submitSiteMetadata(int type, Object event)
     {
-        if(task == null || mClosed)
+        if(mClosed)
         {
             return;
         }
@@ -1846,12 +1939,66 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             if(!mClosed)
             {
-                mSiteMetadataExecutor.execute(task);
+                if(mSiteMetadataIngress.offer(type, event))
+                {
+                    mAcceptedSiteMetadata.incrementAndGet();
+                    signalSiteMetadataWorker();
+                }
+                else
+                {
+                    mDroppedSiteMetadata.incrementAndGet();
+                }
             }
         }
         finally
         {
             mSiteMetadataSubmissions.decrementAndGet();
+            signalSiteMetadataWorker();
+        }
+    }
+
+    private void runSiteMetadataWorker()
+    {
+        while(mSiteMetadataWorkerRunning || mSiteMetadataSubmissions.get() != 0 ||
+            mSiteMetadataIngress.size() != 0)
+        {
+            SiteMetadataIngressQueue.Entry entry = mSiteMetadataIngress.poll();
+
+            if(entry == null)
+            {
+                LockSupport.parkNanos(this, SITE_METADATA_IDLE_NANOS);
+                continue;
+            }
+
+            try
+            {
+                if(entry.type() == SITE_METADATA_P25)
+                {
+                    dispatchSiteMetadata((SiteMetadataEvent)entry.event());
+                }
+                else if(entry.type() == SITE_METADATA_PROTOCOL)
+                {
+                    dispatchProtocolSiteMetadata((ProtocolSiteMetadataEvent)entry.event());
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.error("Error dispatching site metadata to observers", exception);
+            }
+            finally
+            {
+                mProcessedSiteMetadata.incrementAndGet();
+            }
+        }
+    }
+
+    private void signalSiteMetadataWorker()
+    {
+        Thread worker = mSiteMetadataWorker;
+
+        if(worker != null)
+        {
+            LockSupport.unpark(worker);
         }
     }
 
@@ -1883,33 +2030,47 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             LockSupport.parkNanos(this, Math.min(SITE_METADATA_DRAIN_RETRY_NANOS, remainingNanos));
         }
 
-        CountDownLatch barrier = new CountDownLatch(1);
+        long accepted = mAcceptedSiteMetadata.get();
 
-        try
+        while(mProcessedSiteMetadata.get() < accepted || mSiteMetadataIngress.size() != 0)
         {
-            mSiteMetadataExecutor.execute(barrier::countDown);
-        }
-        catch(RejectedExecutionException exception)
-        {
-            mLog.warn("Unable to enqueue the site-metadata shutdown barrier", exception);
-            return false;
+            long remainingNanos = timeoutNanos - (System.nanoTime() - startedNanos);
+
+            if(remainingNanos <= 0 || Thread.currentThread().isInterrupted())
+            {
+                return false;
+            }
+
+            signalSiteMetadataWorker();
+            LockSupport.parkNanos(this, Math.min(SITE_METADATA_DRAIN_RETRY_NANOS, remainingNanos));
         }
 
-        long remainingNanos = Math.max(0L, timeoutNanos - (System.nanoTime() - startedNanos));
+        signalSiteMetadataWorker();
+        return true;
+    }
 
-        try
-        {
-            return barrier.await(remainingNanos, TimeUnit.NANOSECONDS);
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+    int getSiteMetadataIngressCapacity()
+    {
+        return mSiteMetadataIngress.capacity();
+    }
+
+    int getSiteMetadataIngressSize()
+    {
+        return mSiteMetadataIngress.size();
+    }
+
+    long getDroppedSiteMetadataCount()
+    {
+        return mDroppedSiteMetadata.get();
     }
 
     private void dispatchProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
+        if(event != null && !event.matchesCurrentChannel())
+        {
+            return;
+        }
+
         mChannelActivityModel.receiveProtocolSiteMetadata(event);
 
         for(ProtocolSiteMetadataListener listener: mProtocolSiteMetadataListeners)
@@ -1973,6 +2134,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
+        if(snapshot == null || !snapshot.matchesCurrentChannel())
+        {
+            return;
+        }
+
         mChannelActivityModel.receiveControlChannelQuality(snapshot);
 
         for(Listener<ControlChannelQualitySnapshot> listener: mControlChannelQualityListeners)
@@ -2058,7 +2224,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     {
         private final PreparedRestChannelHandoff mPrepared;
         private final ProcessingChain mExpectedChain;
-        private final List<ProcessingChainIncarnation> mSiblingTrafficChains;
+        private final List<ProcessingChainMapping> mSiblingTrafficChains;
         private final Listener<ChannelEvent> mDetachedOwnerChannelEventRoute;
         private ScheduledFuture<?> mScheduledFuture;
         private boolean mActive = true;
@@ -2067,7 +2233,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         private boolean mDetachedOwnerChannelEventRouteAttached;
 
         private DMRRestChannelAttempt(PreparedRestChannelHandoff prepared, ProcessingChain expectedChain,
-                                      List<ProcessingChainIncarnation> siblingTrafficChains)
+                                      List<ProcessingChainMapping> siblingTrafficChains)
         {
             mPrepared = prepared;
             mExpectedChain = expectedChain;
@@ -2086,7 +2252,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             return mExpectedChain;
         }
 
-        private List<ProcessingChainIncarnation> getSiblingTrafficChains()
+        private List<ProcessingChainMapping> getSiblingTrafficChains()
         {
             return mSiblingTrafficChains;
         }
@@ -2191,7 +2357,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
     }
 
-    private record ProcessingChainIncarnation(Channel channel, ProcessingChain processingChain)
+    private record ProcessingChainMapping(Channel channel, ProcessingChain processingChain)
+    {
+    }
+
+    private record RemovedProcessingMapping(ProcessingChain processingChain, long processingIncarnation)
     {
     }
 

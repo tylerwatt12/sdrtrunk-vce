@@ -75,9 +75,10 @@ class WebConfiguredEntityRepositoryTest
         {
             insertConfiguration(connection, 2, CONVENTIONAL_ID, "CONVENTIONAL", "DMR");
             statement.executeUpdate("""
-                INSERT INTO radio_system(id, system_key, protocol_code, address_domain_code,
-                    first_seen_ms, last_seen_ms)
-                VALUES (7, 'dmr:channel:728d2d66-de4e-476b-a696-919f32dd4d12', 3, 0, 1000, 2000)
+                INSERT INTO radio_system(id, system_key, configuration_id, protocol_code,
+                    address_domain_code, first_seen_ms, last_seen_ms)
+                VALUES (7, 'dmr:channel:728d2d66-de4e-476b-a696-919f32dd4d12',
+                    '728d2d66-de4e-476b-a696-919f32dd4d12', 3, 0, 1000, 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id)
@@ -118,10 +119,15 @@ class WebConfiguredEntityRepositoryTest
                 CREATE TABLE radio_system (
                     id INTEGER PRIMARY KEY,
                     system_key TEXT NOT NULL UNIQUE,
+                    configuration_id TEXT,
                     protocol_code INTEGER NOT NULL,
                     address_domain_code INTEGER NOT NULL,
                     p25_wacn INTEGER,
                     p25_system_id INTEGER,
+                    dmr_model_code INTEGER,
+                    dmr_network_id INTEGER,
+                    nxdn_location_category_code INTEGER,
+                    nxdn_system_id INTEGER,
                     first_seen_ms INTEGER,
                     last_seen_ms INTEGER
                 )

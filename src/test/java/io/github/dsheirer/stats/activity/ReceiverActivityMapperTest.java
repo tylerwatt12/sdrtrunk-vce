@@ -12,14 +12,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -113,5 +116,69 @@ class ReceiverActivityMapperTest
             record.p25SourceIdentity().state());
         assertEquals(0xFFFD26, record.radioPresenceUpdate().radioId());
         assertNull(record.radioPresenceUpdate().talkgroupId());
+    }
+
+    @Test
+    void rejectsExplicitP25SystemAndNacDisagreementEvenWhenTheSiteIsIncomplete()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        P25NetworkConfigurationSnapshot mixedSystem = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x293, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x3AA, 0x293, null, null, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of());
+        P25NetworkConfigurationSnapshot mixedNac = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x293, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x294, null, null, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of());
+
+        assertNull(new ReceiverActivityMapper().map(new SiteMetadataEvent(channel, mixedSystem, 1_000L)));
+        assertNull(new ReceiverActivityMapper().map(new SiteMetadataEvent(channel, mixedNac, 1_000L)));
+    }
+
+    @Test
+    void completeP25IdentityRequiresItsDecodedSourceToBeAnAdvertisedControl()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        long advertised = 851_012_500L;
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x293, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x293, 1, 1, null, true),
+            List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", null, advertised, null,
+                false, 1)), List.of(), List.of(), List.of(), List.of());
+
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        assertNull(mapper.map(new SiteMetadataEvent(channel, snapshot, 1_000L, 852_012_500L)));
+        assertEquals(advertised,
+            mapper.map(new SiteMetadataEvent(channel, snapshot, 2_000L, advertised)).sourceFrequencyHertz());
+    }
+
+    @Test
+    void p25SiteMappingRejectsAProducerSnapshotAfterTheLiveReceiverIsEdited()
+    {
+        Channel channel = new Channel("Original", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(851_012_500L);
+        channel.setSourceConfiguration(source);
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x293, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x293, 1, 1, null, true),
+            List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", null, 851_012_500L,
+                null, false, 1)), List.of(), List.of(), List.of(), List.of());
+        SiteMetadataEvent event = new SiteMetadataEvent(channel, snapshot, 1_000L, 851_012_500L);
+
+        channel.setConfigurationId("00000000-0000-0000-0000-000000000999");
+        SourceConfigTuner replacement = new SourceConfigTuner();
+        replacement.setFrequency(852_012_500L);
+        channel.setSourceConfiguration(replacement);
+
+        assertEquals(CONFIGURATION_ID, event.receiverContext().configurationId());
+        assertEquals(851_012_500L, event.sourceFrequency());
+        assertNull(new ReceiverActivityMapper().map(event));
     }
 }

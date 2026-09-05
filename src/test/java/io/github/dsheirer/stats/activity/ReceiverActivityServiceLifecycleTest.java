@@ -40,27 +40,54 @@ import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdent
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.RadioResolveConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
+import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
+import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.channel.P25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
+import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -68,6 +95,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -195,6 +223,438 @@ class ReceiverActivityServiceLifecycleTest
             assertTrue(elapsedMs < 500, "bounded offers took " + elapsedMs + " ms");
             assertTrue(service.getObservationDropCount() > 0);
             assertFalse(decoderThread == projectionThread.get());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void queuedP25CallStartKeepsItsOriginalFactsWhenTheLiveTrackerChanges() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000311");
+        Channel p25Channel = p25TrunkedChannel("00000000-0000-0000-0000-000000000312");
+        p25Channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1));
+        persistChannels(database, blockerChannel, p25Channel);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        long start = System.currentTimeMillis();
+        DecodeEvent blocked = blockingDecodeEvent(start - 100L, projectionEntered, releaseProjection);
+        MutableIdentifierCollection originalIdentifiers = new MutableIdentifierCollection();
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(1_201));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(1_202));
+        originalIdentifiers.update(APCO25PatchGroup.create(patchGroup));
+        originalIdentifiers.update(APCO25RadioIdentifier.createFrom(1_234_567));
+        APCO25Channel callDescriptor = descriptorThatRejectsProducerStringProjection(0, 1);
+        callDescriptor.setFrequencyBand(new P25FrequencyBand(0, 851_000_000L, -45_000_000L, 12_500L,
+            12_500, 1));
+        originalIdentifiers.update(callDescriptor);
+        P25ChannelGrantEvent liveEvent = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, start,
+                VoiceServiceOptions.createUnencrypted())
+            .channelDescriptor(callDescriptor)
+            .identifiers(originalIdentifiers)
+            .build();
+        P25CallStartEvent callStart = new P25CallStartEvent(p25Channel, liveEvent);
+        APCO25PatchGroup exposedListPatch = (APCO25PatchGroup)callStart.identifiers().stream()
+            .filter(APCO25PatchGroup.class::isInstance)
+            .findFirst()
+            .orElseThrow();
+        exposedListPatch.getValue().addPatchedTalkgroup(APCO25Talkgroup.create(1_204));
+        APCO25PatchGroup exposedCollectionPatch = (APCO25PatchGroup)callStart.identifierCollection().getIdentifiers()
+            .stream()
+            .filter(APCO25PatchGroup.class::isInstance)
+            .findFirst()
+            .orElseThrow();
+        exposedCollectionPatch.getValue().addPatchedTalkgroup(APCO25Talkgroup.create(1_205));
+
+        try
+        {
+            service.getDecodeEventListener().accept(blockerChannel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            service.receiveCallStart(callStart);
+
+            patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(1_203));
+            callDescriptor.clearFrequencyBands();
+            MutableIdentifierCollection laterIdentifiers = new MutableIdentifierCollection();
+            laterIdentifiers.update(APCO25Talkgroup.create(9_999));
+            laterIdentifiers.update(APCO25RadioIdentifier.createFrom(7_654_321));
+            liveEvent.setIdentifierCollection(laterIdentifiers);
+            liveEvent.setChannelDescriptor(new StandardChannel(859_987_500L));
+            liveEvent.end(start + 5_000L);
+
+            releaseProjection.countDown();
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, """
+                SELECT COUNT(*) FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000312'
+                """, 1);
+            assertEquals(start, scalar(database, """
+                SELECT event.observed_at_ms FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000312'
+                """));
+            assertEquals(1_201, scalar(database, """
+                SELECT event.target_observed_local_id FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000312'
+                """));
+            assertEquals(1_234_567, scalar(database, """
+                SELECT event.source_observed_local_id FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000312'
+                """));
+            assertEquals(851_012_500L, scalar(database, """
+                SELECT event.frequency_hz FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000312'
+                """));
+            assertEquals(1, scalar(database, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=1202
+                """));
+            assertEquals(0, scalar(database, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=1 AND identity_id IN (1203, 1204, 1205)
+                """));
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void queuedSiteMetadataCannotReassignAReceiverAfterItsSavedSourceChanges() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String p25ConfigurationId = "00000000-0000-0000-0000-000000000321";
+        String dmrConfigurationId = "00000000-0000-0000-0000-000000000322";
+        Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000323");
+        Channel p25Channel = p25TrunkedChannel(p25ConfigurationId);
+        Channel dmrChannel = dmrTrunkedChannel(dmrConfigurationId);
+        SourceConfigTuner p25Source = tuner(851_012_500L);
+        SourceConfigTuner dmrSource = tuner(451_012_500L);
+        p25Channel.setSourceConfiguration(p25Source);
+        dmrChannel.setSourceConfiguration(dmrSource);
+        persistChannels(database, blockerChannel, p25Channel, dmrChannel);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        long now = System.currentTimeMillis();
+        DecodeEvent blocked = blockingDecodeEvent(now - 100L, projectionEntered, releaseProjection);
+        P25NetworkConfigurationSnapshot oldP25 = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x293, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x293, 1, 1, null, true),
+            List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", null, 851_012_500L,
+                null, false, 1)), List.of(), List.of(), List.of(), List.of());
+        SiteMetadataEvent staleP25 = new SiteMetadataEvent(p25Channel, oldP25, now, 851_012_500L);
+        ProtocolSiteMetadataEvent staleDmr = new ProtocolSiteMetadataEvent(dmrChannel,
+            new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
+                "SMALL", null, "Control", 1, 2, List.of(), List.of()), now, 451_012_500L);
+
+        try
+        {
+            service.getDecodeEventListener().accept(blockerChannel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            service.receiveSiteMetadata(staleP25);
+            service.receiveProtocolSiteMetadata(staleDmr);
+
+            p25Source.setFrequency(852_012_500L);
+            dmrSource.setFrequency(452_012_500L);
+            persistChannels(database, blockerChannel, p25Channel, dmrChannel);
+            releaseProjection.countDown();
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            StatsDatabaseMaintenanceRequest staleBarrier =
+                StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.CHECK);
+            service.receiveMaintenanceRequest(staleBarrier);
+            assertTrue(staleBarrier.result().get(5, TimeUnit.SECONDS).checkOk());
+
+            assertEquals(0, count(database, "p25_site_snapshot"));
+            assertEquals(0, count(database, "trunked_site_snapshot"));
+            assertEquals(0, scalar(database, """
+                SELECT COUNT(*) FROM receiver_channel
+                WHERE configuration_id IN (
+                    '00000000-0000-0000-0000-000000000321',
+                    '00000000-0000-0000-0000-000000000322')
+                  AND radio_system_id IS NOT NULL
+                """));
+
+            P25NetworkConfigurationSnapshot currentP25 = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+                new P25NetworkConfigurationSnapshot.Network(0xABCDE, 0x123, 0x124, null),
+                new P25NetworkConfigurationSnapshot.CurrentSite(0x123, 0x124, 2, 3, null, true),
+                List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", null, 852_012_500L,
+                    null, false, 1)), List.of(), List.of(), List.of(), List.of());
+            service.receiveSiteMetadata(new SiteMetadataEvent(p25Channel, currentP25, now + 1_000L,
+                852_012_500L));
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(dmrChannel,
+                new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 30, 40, "Tier III Trunking",
+                    "SMALL", null, "Control", 1, 2, List.of(), List.of()), now + 1_000L,
+                452_012_500L));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            StatsDatabaseMaintenanceRequest currentBarrier =
+                StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.CHECK);
+            service.receiveMaintenanceRequest(currentBarrier);
+            assertTrue(currentBarrier.result().get(5, TimeUnit.SECONDS).checkOk());
+
+            assertEquals(1, count(database, "p25_site_snapshot"));
+            assertEquals(1, count(database, "trunked_site_snapshot"));
+            assertEquals("p25:abcde:123", scalarText(database, """
+                SELECT system.system_key
+                FROM receiver_channel channel
+                JOIN radio_system system ON system.id=channel.radio_system_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000321'
+                """));
+            assertEquals(30, scalar(database, """
+                SELECT site.observed_network_id
+                FROM trunked_site_snapshot site
+                JOIN receiver_channel channel ON channel.id=site.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000322'
+                """));
+            assertEquals(40, scalar(database, """
+                SELECT site.observed_site_id
+                FROM trunked_site_snapshot site
+                JOIN receiver_channel channel ON channel.id=site.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000322'
+                """));
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void queuedP25GrantAndTrafficConfirmationKeepProducerTimeFactsWhenEverySourceChanges() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String p25ConfigurationId = "00000000-0000-0000-0000-000000000318";
+        Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000319");
+        Channel p25Channel = p25TrunkedChannel(p25ConfigurationId);
+        P25SiteIdentity originalSite = new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1);
+        p25Channel.setP25SiteIdentity(originalSite);
+        persistChannels(database, blockerChannel, p25Channel);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        long start = System.currentTimeMillis();
+        long controlFrequency = 851_006_250L;
+        DecodeEvent blocked = blockingDecodeEvent(start - 100L, projectionEntered, releaseProjection);
+        P25NetworkConfigurationSnapshot siteSnapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(originalSite.wacn(), originalSite.system(), 0x293, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(originalSite.system(), 0x293, originalSite.rfss(),
+                originalSite.site(), null, true),
+            List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", null, controlFrequency, null,
+                false, 1)), List.of(), List.of(), List.of(), List.of());
+
+        APCO25Channel descriptor = descriptorThatRejectsProducerStringProjection(0, 509);
+        descriptor.setFrequencyBand(new P25FrequencyBand(0, controlFrequency, -45_000_000L, 12_500L, 12_500, 2));
+        long grantFrequency = descriptor.getDownlinkFrequency();
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(56_138));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(56_139));
+        APCO25PatchGroup patchIdentifier = APCO25PatchGroup.create(patchGroup);
+        identifiers.update(patchIdentifier);
+        identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
+        identifiers.update(APCO25Wacn.create(originalSite.wacn()));
+        identifiers.update(APCO25System.create(originalSite.system()));
+        identifiers.update(APCO25Nac.create(0x293));
+        identifiers.update(APCO25Rfss.create(originalSite.rfss()));
+        identifiers.update(APCO25Site.create(originalSite.site()));
+        identifiers.update(descriptor);
+        identifiers.setTimeslot(2);
+        P25GrantObservationEvent grant = new P25GrantObservationEvent(p25Channel, descriptor, identifiers,
+            DecodeEventType.CALL_GROUP, start, false, true);
+        P25TrafficChannelConfirmationEvent confirmation = new P25TrafficChannelConfirmationEvent(p25Channel,
+            grantFrequency, 2, start + 1L);
+
+        try
+        {
+            service.receiveSiteMetadata(new SiteMetadataEvent(p25Channel, siteSnapshot, start - 200L,
+                controlFrequency));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, "SELECT COUNT(*) FROM p25_site_snapshot", 1);
+
+            service.getDecodeEventListener().accept(blockerChannel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            service.receiveGrantObservation(grant);
+            service.receiveTrafficChannelConfirmation(confirmation);
+
+            p25Channel.setConfigurationId("00000000-0000-0000-0000-000000000320");
+            p25Channel.setDecodeConfiguration(new DecodeConfigNBFM());
+            p25Channel.setP25SiteIdentity(new P25SiteIdentity(0xABCDE, 0x123, 9, 9));
+            descriptor.clearFrequencyBands();
+            patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(56_140));
+            identifiers.remove(patchIdentifier);
+            identifiers.update(APCO25Talkgroup.create(9_999));
+            identifiers.update(APCO25RadioIdentifier.createFrom(7_654_321));
+            identifiers.update(APCO25Wacn.create(0xABCDE));
+            identifiers.update(APCO25System.create(0x123));
+            identifiers.update(APCO25Nac.create(0x123));
+            identifiers.update(APCO25Rfss.create(9));
+            identifiers.update(APCO25Site.create(9));
+            identifiers.setTimeslot(2);
+
+            releaseProjection.countDown();
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, """
+                SELECT COUNT(*) FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000318'
+                """, 1);
+            awaitScalar(database, "SELECT COUNT(*) FROM p25_site_channel_summary WHERE channel_key='0-508'", 1);
+
+            String grantRow = " FROM receiver_activity_event event JOIN receiver_channel channel " +
+                "ON channel.id=event.channel_id WHERE " +
+                "channel.configuration_id='00000000-0000-0000-0000-000000000318'";
+            assertEquals(start, scalar(database, "SELECT event.observed_at_ms" + grantRow));
+            assertEquals(56_138, scalar(database, "SELECT event.target_observed_local_id" + grantRow));
+            assertEquals(1_811_524, scalar(database, "SELECT event.source_observed_local_id" + grantRow));
+            assertEquals(grantFrequency, scalar(database, "SELECT event.frequency_hz" + grantRow));
+            assertEquals(0, scalar(database, "SELECT event.lcn_band" + grantRow));
+            assertEquals(508, scalar(database, "SELECT event.lcn_number" + grantRow));
+            assertEquals(2, scalar(database, "SELECT event.timeslot" + grantRow));
+            assertEquals("p25:bee00:3a9", scalarText(database, "SELECT system_key FROM radio_system"));
+            assertEquals(grantFrequency, scalar(database, "SELECT downlink_hz FROM p25_site_channel_summary " +
+                "WHERE channel_key='0-508'"));
+            assertEquals(1, scalar(database, "SELECT COUNT(*) FROM radio_system_identity_summary " +
+                "WHERE identity_kind_code=1 AND identity_id=56139"));
+            assertEquals(0, scalar(database, "SELECT COUNT(*) FROM radio_system_identity_summary " +
+                "WHERE identity_kind_code=1 AND identity_id=56140"));
+            assertEquals(0, scalar(database, "SELECT COUNT(*) FROM receiver_channel channel " +
+                "WHERE channel.configuration_id='00000000-0000-0000-0000-000000000320'"));
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void queuedDmrAndNxdnCallFactsDoNotFollowMutableDecoderObjects() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String dmrConfigurationId = "00000000-0000-0000-0000-000000000313";
+        String nxdnConfigurationId = "00000000-0000-0000-0000-000000000314";
+        Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000315");
+        Channel dmrChannel = dmrTrunkedChannel(dmrConfigurationId);
+        Channel nxdnChannel = nxdnTrunkedChannel(nxdnConfigurationId);
+        persistChannels(database, blockerChannel, dmrChannel, nxdnChannel);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        long start = System.currentTimeMillis();
+        DecodeEvent blocked = blockingDecodeEvent(start - 100L, projectionEntered, releaseProjection);
+
+        DMRTier3Channel dmrResource = new DMRTier3Channel(12, 2);
+        TimeslotFrequency dmrMapping = new TimeslotFrequency();
+        dmrMapping.setNumber(12);
+        dmrMapping.setDownlinkFrequency(451_012_500L);
+        dmrResource.setTimeslotFrequency(dmrMapping);
+        MutableIdentifierCollection dmrIdentifiers = new MutableIdentifierCollection();
+        dmrIdentifiers.update(DMRRadio.createFrom(101));
+        dmrIdentifiers.update(DMRTalkgroup.create(91));
+        TrunkedCallStartTracker dmrTracker = new TrunkedCallStartTracker(5_000L);
+        var dmrStart = dmrTracker.observe(dmrChannel, Protocol.DMR, dmrResource, 2, dmrIdentifiers,
+            DecodeEventType.CALL_GROUP, start);
+
+        NXDNChannelLookup nxdnResource = new NXDNChannelLookup(34);
+        nxdnResource.receive(null, Map.of(34, new ChannelFrequency(34, 452_012_500L, 0)));
+        TrunkedCallStartTracker nxdnTracker = new TrunkedCallStartTracker(5_000L);
+        var nxdnStart = nxdnTracker.observeWithAttribution(nxdnChannel, Protocol.NXDN, nxdnResource, null,
+            new MutableIdentifierCollection(), DecodeEventType.CALL_GROUP, start + 10L);
+        MutableIdentifierCollection nxdnIdentifiers = new MutableIdentifierCollection();
+        NXDNRadioIdentifier nxdnRadio = NXDNRadioIdentifier.createFrom(201);
+        NXDNTalkgroupIdentifier nxdnTalkgroup = NXDNTalkgroupIdentifier.createTo(191);
+        nxdnIdentifiers.update(nxdnRadio);
+        nxdnIdentifiers.update(nxdnTalkgroup);
+        var nxdnEnrichment = nxdnTracker.observeWithAttribution(nxdnChannel, Protocol.NXDN, nxdnResource, null,
+            nxdnIdentifiers, DecodeEventType.CALL_GROUP, start + 20L);
+
+        try
+        {
+            service.getDecodeEventListener().accept(blockerChannel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            service.receiveTrunkedCallStart(dmrStart);
+            service.receiveTrunkedCallStart(nxdnStart.callStart());
+            service.receiveTrunkedCallAttribution(nxdnEnrichment.attribution());
+
+            dmrIdentifiers.update(DMRRadio.createFrom(999));
+            dmrIdentifiers.update(DMRTalkgroup.create(998));
+            TimeslotFrequency changedDmrMapping = new TimeslotFrequency();
+            changedDmrMapping.setNumber(12);
+            changedDmrMapping.setDownlinkFrequency(459_987_500L);
+            dmrResource.setTimeslotFrequency(changedDmrMapping);
+            nxdnRadio.setTypeD(true);
+            nxdnTalkgroup.setTypeD(true);
+            nxdnResource.receive(null, Map.of(34, new ChannelFrequency(34, 460_987_500L, 0)));
+            dmrChannel.setConfigurationId("00000000-0000-0000-0000-000000000316");
+            dmrChannel.setDecodeConfiguration(new DecodeConfigNBFM());
+            nxdnChannel.setConfigurationId("00000000-0000-0000-0000-000000000317");
+            nxdnChannel.setDecodeConfiguration(new DecodeConfigNBFM());
+
+            releaseProjection.countDown();
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, """
+                SELECT COUNT(*) FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id IN (
+                    '00000000-0000-0000-0000-000000000313',
+                    '00000000-0000-0000-0000-000000000314')
+                """, 2);
+            assertEquals(101, scalar(database, """
+                SELECT event.source_observed_local_id FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000313'
+                """));
+            assertEquals(91, scalar(database, """
+                SELECT event.target_observed_local_id FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000313'
+                """));
+            assertEquals(451_012_500L, scalar(database, """
+                SELECT event.frequency_hz FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000313'
+                """));
+            assertEquals(201, scalar(database, """
+                SELECT event.source_observed_local_id FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000314'
+                """));
+            assertEquals(191, scalar(database, """
+                SELECT event.target_observed_local_id FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000314'
+                """));
+            assertEquals(452_012_500L, scalar(database, """
+                SELECT event.frequency_hz FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                WHERE channel.configuration_id='00000000-0000-0000-0000-000000000314'
+                """));
         }
         finally
         {
@@ -1587,7 +2047,7 @@ class ReceiverActivityServiceLifecycleTest
 
         try(var snapshot = connection.prepareStatement("""
                 INSERT INTO trunked_site_snapshot (
-                    channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
+                    channel_id, snapshot_hash, protocol_code, variant_code, observed_location_category_code,
                     first_seen_ms, last_seen_ms, observation_count
                 ) VALUES ((SELECT id FROM receiver_channel WHERE configuration_id = ?), ?, ?, 1, ?, ?, ?, 1)
                 """))
@@ -1609,7 +2069,7 @@ class ReceiverActivityServiceLifecycleTest
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
             false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
-            ReceiverActivityRecords.P25Identity.ORDINARY, List.of());
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }
 
     private static Channel nbfmChannel(String configurationId)
@@ -1636,6 +2096,25 @@ class ReceiverActivityServiceLifecycleTest
         return channel;
     }
 
+    private static SourceConfigTuner tuner(long frequency)
+    {
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(frequency);
+        return source;
+    }
+
+    private static APCO25Channel descriptorThatRejectsProducerStringProjection(int band, int channel)
+    {
+        return new APCO25Channel(new P25Channel(band, channel))
+        {
+            @Override
+            public String toString()
+            {
+                throw new AssertionError("P25 descriptor text must be formatted on the statistics worker");
+            }
+        };
+    }
+
     private static Channel nxdnTrunkedChannel(String configurationId)
     {
         Channel channel = new Channel("Trunked NXDN", Channel.ChannelType.STANDARD);
@@ -1646,11 +2125,20 @@ class ReceiverActivityServiceLifecycleTest
         return channel;
     }
 
+    private static Channel dmrTrunkedChannel(String configurationId)
+    {
+        Channel channel = new Channel("Trunked DMR", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        channel.setDecodeConfiguration(configuration);
+        return channel;
+    }
+
     private static void persistChannels(Path database, Channel... channels) throws Exception
     {
-        try(Connection connection = SdrTrunkDatabase.open(database))
+        try(Connection connection = SdrTrunkDatabase.openWriteTransaction(database))
         {
-            connection.setAutoCommit(false);
             new ConfigurationDatabaseStore(database).replace(connection,
                 new ChannelAndBroadcastConfiguration(List.of(channels), List.of()));
             connection.commit();

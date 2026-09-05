@@ -90,6 +90,76 @@ class RadioSystemSchemaTest
     }
 
     @Test
+    void nativeDmrAndNxdnSystemsRequireExactCanonicalDimensions() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    dmr_model_code, dmr_network_id, first_seen_ms, last_seen_ms)
+                VALUES ('dmr:tier3:small:127', 3, 0, 2, 127, 1000, 1000)
+                """);
+            execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms)
+                VALUES ('nxdn-c:global:1022', 4, 1, 1, 1022, 1000, 1000)
+                """);
+            ReceiverActivitySchema.validate(connection);
+
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    dmr_model_code, dmr_network_id, first_seen_ms, last_seen_ms)
+                VALUES ('dmr:tier3:small:128', 3, 0, 2, 128, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms)
+                VALUES ('nxdn-c:global:0', 4, 1, 1, 0, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms)
+                VALUES ('nxdn-c:global:1023', 4, 1, 1, 1023, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms)
+                VALUES ('nxdn-c:regional:1022', 4, 1, 1, 1022, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    dmr_model_code, first_seen_ms, last_seen_ms)
+                VALUES ('arbitrary-dmr-key', 3, 0, 2, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES ('arbitrary-dmr-key', 3, 0, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    dmr_network_id, first_seen_ms, last_seen_ms)
+                VALUES ('arbitrary-dmr-key', 3, 0, 42, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    nxdn_location_category_code, first_seen_ms, last_seen_ms)
+                VALUES ('arbitrary-nxdn-key', 4, 1, 3, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES ('arbitrary-nxdn-key', 4, 1, 1000, 1000)
+                """));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
+                    nxdn_system_id, first_seen_ms, last_seen_ms)
+                VALUES ('arbitrary-nxdn-key', 4, 1, 303, 1000, 1000)
+                """));
+        }
+    }
+
+    @Test
     void validationRejectsP25OnlyFactsAttachedToAnotherProtocol() throws Exception
     {
         try(Connection connection = open())
@@ -227,7 +297,8 @@ class RadioSystemSchemaTest
             assertTrue(RadioSystemSchema.updateTalkerAlias(connection,
                 (int)scalar(connection, "SELECT id FROM receiver_channel"), 101,
                 ReceiverActivityRecords.P25Identity.ORDINARY, "  " + overlong + "  ", 1_100,
-                TrunkedIdentityDomain.STANDARD, null, null));
+                1_000, TrunkedIdentityDomain.STANDARD, null, null,
+                "dmr:channel:" + CONFIGURATION_ID));
             assertEquals(RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS, scalar(connection,
                 "SELECT length(last_talker_alias) FROM radio_system_identity_summary WHERE identity_id=101"));
             assertThrows(SQLException.class, () -> execute(connection, """

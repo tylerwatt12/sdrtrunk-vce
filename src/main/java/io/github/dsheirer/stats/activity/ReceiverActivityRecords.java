@@ -16,7 +16,9 @@ import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.util.List;
 import java.util.TreeSet;
@@ -127,7 +129,8 @@ final class ReceiverActivityRecords
                                P25Identity p25TargetIdentity,
                                P25Identity p25SourceIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities,
-                               List<P25SiteCallObservation> p25SiteObservations)
+                               List<P25SiteCallObservation> p25SiteObservations,
+                               String radioSystemKey)
         implements ReceiverActivityRecord
     {
         ResolvedLogicalCall
@@ -144,6 +147,7 @@ final class ReceiverActivityRecords
             p25SourceIdentity = p25SourceIdentity != null ? p25SourceIdentity : P25Identity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
+            radioSystemKey = validateRadioSystemKey(protocol, identityDomain, configurationId, radioSystemKey);
             p25SiteObservations = p25SiteObservations == null ? List.of() : p25SiteObservations.stream()
                 .filter(java.util.Objects::nonNull).distinct().sorted(java.util.Comparator
                     .comparing(P25SiteCallObservation::configurationId)
@@ -357,7 +361,8 @@ final class ReceiverActivityRecords
                          RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
                          P25Identity p25TargetIdentity,
                          P25Identity p25SourceIdentity,
-                         List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+                         List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                         String radioSystemKey)
         implements ReceiverActivityRecord
     {
         ActivityEvent
@@ -373,6 +378,7 @@ final class ReceiverActivityRecords
             p25SourceIdentity = p25SourceIdentity != null ? p25SourceIdentity : P25Identity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
+            radioSystemKey = validateRadioSystemKey(protocol, identityDomain, configurationId, radioSystemKey);
         }
 
     }
@@ -387,7 +393,7 @@ final class ReceiverActivityRecords
                                   Integer encryptionAlgorithmId, Integer encryptionKeyId,
                                   boolean destinationBecameKnown, boolean sourceBecameKnown,
                                   boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
-                                  TrunkedIdentityDomain identityDomain)
+                                  TrunkedIdentityDomain identityDomain, String radioSystemKey)
         implements ReceiverActivityRecord
     {
         TrunkedCallAttribution
@@ -398,6 +404,7 @@ final class ReceiverActivityRecords
             }
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
             identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD;
+            radioSystemKey = validateRadioSystemKey(protocol, identityDomain, configurationId, radioSystemKey);
         }
 
         boolean hasEncryptionDetails()
@@ -425,23 +432,31 @@ final class ReceiverActivityRecords
     /**
      * Late over-the-air talker alias update for an already-counted call.
      */
-    record TalkerAliasUpdate(long observedAtEpochMilliseconds, String configurationId, String protocol, Integer wacn,
+    record TalkerAliasUpdate(long observedAtEpochMilliseconds, long callStartEpochMilliseconds,
+                             String configurationId, String protocol, Integer wacn,
                              Integer systemId, int radioId, P25Identity p25RadioIdentity, String talkerAlias,
-                             TrunkedIdentityDomain identityDomain)
+                             TrunkedIdentityDomain identityDomain, String radioSystemKey)
         implements ReceiverActivityRecord
     {
         TalkerAliasUpdate
         {
+            if(observedAtEpochMilliseconds <= 0 || callStartEpochMilliseconds <= 0)
+            {
+                throw new IllegalArgumentException("Talker alias requires positive observation and call timestamps");
+            }
+
             identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD;
             p25RadioIdentity = p25RadioIdentity != null ? p25RadioIdentity : P25Identity.UNKNOWN;
+            radioSystemKey = radioSystemKey != null ?
+                io.github.dsheirer.module.decode.traffic.RadioSystemKey.parse(radioSystemKey) : null;
         }
 
         TalkerAliasUpdate(long observedAtEpochMilliseconds, String configurationId, String protocol, Integer wacn,
                           Integer systemId, int radioId, String talkerAlias)
         {
-            this(observedAtEpochMilliseconds, configurationId, protocol, wacn, systemId, radioId, P25Identity.UNKNOWN,
-                talkerAlias,
-                TrunkedIdentityDomain.STANDARD);
+            this(observedAtEpochMilliseconds, observedAtEpochMilliseconds, configurationId, protocol, wacn,
+                systemId, radioId, P25Identity.UNKNOWN, talkerAlias,
+                TrunkedIdentityDomain.STANDARD, null);
         }
     }
 
@@ -595,12 +610,31 @@ final class ReceiverActivityRecords
         }
     }
 
+    private static String validateRadioSystemKey(String protocol, TrunkedIdentityDomain identityDomain,
+                                                 String configurationId, String radioSystemKey)
+    {
+        if(radioSystemKey == null)
+        {
+            return null;
+        }
+
+        Protocol protocolType = switch(protocol != null ? protocol.strip().toUpperCase(java.util.Locale.ROOT) : "")
+        {
+            case "DMR" -> Protocol.DMR;
+            case "NXDN" -> Protocol.NXDN;
+            case "APCO25", "APCO-25", "APCO25PHASE1" -> Protocol.APCO25;
+            case "APCO25_PHASE2", "APCO-25 P2", "APCO25PHASE2" -> Protocol.APCO25_PHASE2;
+            default -> Protocol.UNKNOWN;
+        };
+        return RadioSystemKey.validateForReceiver(protocolType, identityDomain, configurationId, radioSystemKey);
+    }
+
     record SiteSnapshot(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
                         String snapshotHash, String protocol,
                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
                         Integer lra, Boolean activeRfssNetworkConnection, Boolean tdma,
                         P25NetworkConfigurationSnapshot.SiteStatus siteStatus,
-                        Long primaryFrequencyHertz, Long currentControlHertz,
+                        long sourceFrequencyHertz, Long primaryFrequencyHertz, Long currentControlHertz,
                         List<P25NetworkConfigurationSnapshot.Channel> channels,
                         List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
                         List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,

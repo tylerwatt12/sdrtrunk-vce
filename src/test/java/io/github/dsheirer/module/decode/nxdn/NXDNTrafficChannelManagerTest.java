@@ -5,18 +5,29 @@
  */
 package io.github.dsheirer.module.decode.nxdn;
 
+import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.Subscribe;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.AbstractAudioModule;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
@@ -35,6 +46,8 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.ChannelAccessInformatio
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
@@ -47,6 +60,102 @@ import org.junit.jupiter.api.Test;
 
 class NXDNTrafficChannelManagerTest
 {
+    @Test
+    void trafficStartPreloadsNativeSystemBeforeChannelInformation()
+    {
+        Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        manager.updateNativeRadioSystemKey("nxdn-c:local:303");
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        EncryptionKeyIdentifier clear = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0, 0));
+
+        manager.processVoiceCall(identifiers(101, 91, clear), channel(452_012_500L),
+            CallType.GROUP_BROADCAST, clear, 1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+        assertEquals(1, subscriber.requests.size());
+        List<?> preloads = subscriber.requests.getFirst().getPreloadDataContents();
+        assertTrue(preloads.getFirst() instanceof RadioSystemKeyEvent);
+        assertEquals("nxdn-c:local:303", ((RadioSystemKeyEvent)preloads.getFirst()).radioSystemKey());
+        assertTrue(preloads.get(1) instanceof NXDNChannelInfoPreloadData);
+    }
+
+    @Test
+    void reusedTrafficChildCorrelatesAnInFlightCallKeyWithoutRelabellingAnOlderCall()
+    {
+        Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000063");
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        manager.updateNativeRadioSystemKey("nxdn-c:local:303");
+        StartRequestSubscriber starts = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(starts);
+        manager.setInterModuleEventBus(eventBus);
+        EncryptionKeyIdentifier clear = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0, 0));
+        NXDNChannel channel = channel(452_012_500L);
+        CallStartSubscriber callStarts = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(callStarts);
+
+        try
+        {
+            manager.processVoiceCall(identifiers(101, 91, clear), channel,
+                CallType.GROUP_BROADCAST, clear, 1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+            assertEquals(1, starts.requests.size());
+            RadioSystemKeyEvent initial = (RadioSystemKeyEvent)starts.requests.getFirst()
+                .getPreloadDataContents().getFirst();
+            assertEquals("nxdn-c:local:303", initial.radioSystemKey());
+            InterleavedAudioModule racingCall = new InterleavedAudioModule(parent.getConfigurationId(),
+                initial.radioSystemKey());
+            InterleavedAudioModule olderCall = new InterleavedAudioModule(parent.getConfigurationId(),
+                initial.radioSystemKey());
+            olderCall.beginAt(900L);
+            PostRequestSubscriber posts = new PostRequestSubscriber(racingCall, olderCall);
+            eventBus.register(posts);
+
+            manager.updateNativeRadioSystemKey(null);
+            manager.processVoiceCall(identifiers(102, 92, clear), channel,
+                CallType.GROUP_BROADCAST, clear, 1_100L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+            assertEquals(1, posts.requests.size());
+            PostChannelModuleEventRequest post = posts.requests.getFirst();
+            assertEquals(List.of(starts.requests.getFirst().getChannel()), post.getChannels());
+            RadioSystemKeyEvent activation = (RadioSystemKeyEvent)post.getEvent();
+            String expected = RadioSystemKey.channelScoped(Protocol.NXDN, TrunkedIdentityDomain.NXDN_TYPE_C,
+                parent.getConfigurationId());
+            assertEquals(expected, activation.radioSystemKey());
+            assertEquals(1_100L, activation.callStartEpochMilliseconds());
+            assertNull(activation.timeslot());
+
+            racingCall.closeAt(1_200L);
+            olderCall.closeAt(1_200L);
+            assertEquals(expected, racingCall.lastCompletedSystemKey(),
+                "audio beginning after the frozen activation but before event delivery must receive that call's key");
+            assertEquals("nxdn-c:local:303", olderCall.lastCompletedSystemKey(),
+                "a call from an older activation must retain its original key");
+            olderCall.beginAt(1_300L);
+            olderCall.closeAt(1_400L);
+            assertEquals(expected, olderCall.lastCompletedSystemKey(),
+                "the same update must become the template for the next call");
+            assertEquals(expected, callStarts.events.getLast().radioSystemKey());
+            assertEquals(racingCall.lastCompletedSystemKey(), callStarts.events.getLast().radioSystemKey());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(callStarts);
+        }
+    }
+
     @Test
     void displaysEncryptionKeyIdAsHexadecimalInEventDetails()
     {
@@ -130,12 +239,12 @@ class NXDNTrafficChannelManagerTest
         }
 
         assertEquals(3, subscriber.events.size());
-        assertEquals(91, subscriber.events.get(0).event().getIdentifierCollection().getToIdentifier().getValue());
-        assertEquals(92, subscriber.events.get(1).event().getIdentifierCollection().getToIdentifier().getValue());
-        assertEquals(92, subscriber.events.get(2).event().getIdentifierCollection().getToIdentifier().getValue());
-        assertEquals(1_000L, subscriber.events.get(0).event().getTimeStart());
-        assertEquals(1_200L, subscriber.events.get(1).event().getTimeStart());
-        assertEquals(1_400L, subscriber.events.get(2).event().getTimeStart());
+        assertEquals(91, subscriber.events.get(0).targetId());
+        assertEquals(92, subscriber.events.get(1).targetId());
+        assertEquals(92, subscriber.events.get(2).targetId());
+        assertEquals(1_000L, subscriber.events.get(0).callStartEpochMilliseconds());
+        assertEquals(1_200L, subscriber.events.get(1).callStartEpochMilliseconds());
+        assertEquals(1_400L, subscriber.events.get(2).callStartEpochMilliseconds());
     }
 
     @Test
@@ -184,9 +293,8 @@ class NXDNTrafficChannelManagerTest
         }
 
         assertEquals(1, subscriber.events.size());
-        assertEquals(0L, subscriber.events.get(0).event().getChannelDescriptor().getDownlinkFrequency());
-        assertEquals(12, ((NXDNChannelLookup)subscriber.events.get(0).event().getChannelDescriptor())
-            .getChannelNumber());
+        assertNull(subscriber.events.get(0).frequencyHertz());
+        assertEquals(12, subscriber.events.get(0).channelDescriptorSnapshot().primaryChannelNumber());
     }
 
     @Test
@@ -223,18 +331,25 @@ class NXDNTrafficChannelManagerTest
     void publishesTypeDTalkerAliasInTheTypeDIdentityDomain()
     {
         Channel parent = new Channel("NXDN Type-D", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000064");
         DecodeConfigNXDN config = new DecodeConfigNXDN();
         config.setTransmissionMode(TransmissionMode.TYPE_D);
+        config.setTrafficChannelPoolSize(0);
         parent.setDecodeConfiguration(config);
         NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        NXDNChannel callChannel = channel(452_012_500L);
+        NXDNRadioIdentifier radio = NXDNRadioIdentifier.createTypeDFrom(0x1234);
+        EncryptionKeyIdentifier clear = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0, 0));
+        List<Identifier> identifiers = List.of(radio, NXDNTalkgroupIdentifier.createTypeDTo(0x1001), clear);
+        manager.processVoiceCall(identifiers, callChannel, CallType.GROUP_BROADCAST, clear,
+            1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
         TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
         MyEventBus.getGlobalEventBus().register(subscriber);
 
         try
         {
-            manager.processTalkerAlias(channel(452_012_500L),
-                new NXDNTalkerAliasIdentifier("UNIT 12"),
-                NXDNRadioIdentifier.createTypeDFrom(0x1234), 2_000L);
+            manager.processTalkerAlias(callChannel, new NXDNTalkerAliasIdentifier("UNIT 12"), radio, 2_000L);
         }
         finally
         {
@@ -244,7 +359,46 @@ class NXDNTrafficChannelManagerTest
         assertEquals(1, subscriber.events.size());
         assertEquals(TrunkedIdentityDomain.NXDN_TYPE_D,
             subscriber.events.getFirst().identityDomain());
-        assertEquals("UNIT 12", subscriber.events.getFirst().alias().getValue());
+        assertEquals("UNIT 12", subscriber.events.getFirst().talkerAlias());
+        assertEquals(1_000L, subscriber.events.getFirst().callStartEpochMilliseconds());
+        assertEquals("nxdn-d:channel:" +
+                io.github.dsheirer.controller.channel.ChannelConfigurationKey.configured(parent),
+            subscriber.events.getFirst().radioSystemKey());
+    }
+
+    @Test
+    void talkerAliasKeepsTheTypeCSystemCapturedWhenItsCallStarted()
+    {
+        Channel parent = new Channel("NXDN Type-C", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000065");
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setTrafficChannelPoolSize(0);
+        parent.setDecodeConfiguration(config);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        manager.updateNativeRadioSystemKey("nxdn-c:local:303");
+        NXDNChannel callChannel = channel(452_012_500L);
+        EncryptionKeyIdentifier clear = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0, 0));
+        List<Identifier> identifiers = identifiers(101, 91, clear);
+        manager.processVoiceCall(identifiers, callChannel, CallType.GROUP_BROADCAST, clear,
+            1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+        manager.updateNativeRadioSystemKey("nxdn-c:local:304");
+        TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            manager.processTalkerAlias(callChannel, new NXDNTalkerAliasIdentifier("UNIT 101"),
+                NXDNRadioIdentifier.createFrom(101), 2_000L);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+
+        assertEquals(1, subscriber.events.size());
+        assertEquals(1_000L, subscriber.events.getFirst().callStartEpochMilliseconds());
+        assertEquals("nxdn-c:local:303", subscriber.events.getFirst().radioSystemKey());
     }
 
     @Test
@@ -333,6 +487,82 @@ class NXDNTrafficChannelManagerTest
         public void receive(TrunkedTalkerAliasEvent event)
         {
             events.add(event);
+        }
+    }
+
+    private static class StartRequestSubscriber
+    {
+        private final List<ChannelStartProcessingRequest> requests = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(ChannelStartProcessingRequest request)
+        {
+            requests.add(request);
+        }
+    }
+
+    private static class PostRequestSubscriber
+    {
+        private final List<PostChannelModuleEventRequest> requests = new CopyOnWriteArrayList<>();
+        private final InterleavedAudioModule mRacingCall;
+        private final InterleavedAudioModule mOlderCall;
+
+        private PostRequestSubscriber(InterleavedAudioModule racingCall, InterleavedAudioModule olderCall)
+        {
+            mRacingCall = racingCall;
+            mOlderCall = olderCall;
+        }
+
+        @Subscribe
+        public void receive(PostChannelModuleEventRequest request)
+        {
+            requests.add(request);
+            RadioSystemKeyEvent event = (RadioSystemKeyEvent)request.getEvent();
+            //This is the production race: traffic audio starts after the manager froze the activation, but before the
+            //processing-chain event reaches the audio module.
+            mRacingCall.beginAt(event.callStartEpochMilliseconds() + 1L);
+            mRacingCall.radioSystemKeyChanged(event);
+            mOlderCall.radioSystemKeyChanged(event);
+        }
+    }
+
+    private static class InterleavedAudioModule extends AbstractAudioModule
+    {
+        private final List<AudioCallEvent> mEvents = new CopyOnWriteArrayList<>();
+
+        private InterleavedAudioModule(String configurationId, String radioSystemKey)
+        {
+            super(AliasList.empty("Test"), 0, 60_000L,
+                new CallLegSource(DecoderType.NXDN, configurationId, "Traffic", null, 0L, null,
+                    TrunkedIdentityDomain.NXDN_TYPE_C, ChannelConfigurationPolicy.ChannelKind.TRUNKED, true,
+                    radioSystemKey));
+            setAudioCallEventListener(mEvents::add);
+        }
+
+        private void beginAt(long timestamp)
+        {
+            beginCurrentAudioSegment(timestamp);
+        }
+
+        private void closeAt(long timestamp)
+        {
+            closeAudioSegment(timestamp);
+        }
+
+        private String lastCompletedSystemKey()
+        {
+            return mEvents.stream().filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+                .toList().getLast().snapshot().callLegSource().radioSystemKey();
+        }
+
+        @Override
+        public void reset()
+        {
+        }
+
+        @Override
+        public void start()
+        {
         }
     }
 }

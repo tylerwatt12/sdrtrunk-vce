@@ -58,7 +58,7 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_13_FINGERPRINT = FORMAT_12_FINGERPRINT;
     private static final String FORMAT_14_FINGERPRINT = FORMAT_13_FINGERPRINT;
     private static final String FORMAT_15_FINGERPRINT =
-        "d4a92d68e9327ffff5889b3c4ced22ce0535af5a7c9792b68317b024ab002c98";
+        "ea94d75d85937561e38e1cc58560a37f46969cd6af1e9bc6a1efdff1dc9c3896";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -197,6 +197,8 @@ public final class DatabaseFormatCatalog
         "src/test/java/io/github/dsheirer/database/upgrade/Format15TestDatabase.java", List.of(
             "Preserve administrator-owned channels, aliases, stream providers, accounts, credentials, settings, icons, and decoder channel maps",
             "Replace name-based configuration relationships with stable database or UUID identities and store explicit DMR/NXDN channel types",
+            "Group P25 by WACN and System ID, standard DMR Tier III by model and Network ID, and NXDN Type-C by location category and System ID",
+            "Keep unsupported or incomplete DMR/NXDN native identity scoped to the exact saved channel until complete supported evidence is observed",
             "Rename stable-target browser playback preferences and simplify web access policies",
             "Reset derived receiver, system, site, activity, and quality observations whose old identity cannot be converted exactly",
             "Drop retired named Channel Maps while preserving decoder channel maps stored with saved channels",

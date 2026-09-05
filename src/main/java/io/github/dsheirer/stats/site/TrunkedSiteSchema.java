@@ -20,6 +20,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
@@ -45,24 +46,27 @@ public final class TrunkedSiteSchema
     public static final int CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR = 1 << 5;
     public static final int NEIGHBOR_STATUS_ACTIVE = 1;
     public static final int NEIGHBOR_STATUS_ISOLATED = 1 << 1;
+    private static final int DMR_VARIANT_TIER_III = 1;
+    private static final int NXDN_VARIANT_TYPE_C = 1;
     static final String SNAPSHOT_LAST_SEEN_INDEX = "idx_trunked_site_snapshot_last_seen";
     static final String CHANNEL_LAST_SEEN_INDEX = "idx_trunked_site_channel_last_seen";
     static final String NEIGHBOR_LAST_SEEN_INDEX = "idx_trunked_site_neighbor_last_seen";
 
     private static final List<SqliteSchemaValidator.Table> TABLES = List.of(
         new SqliteSchemaValidator.Table("trunked_site_snapshot",
-            "channel_id", "snapshot_hash", "protocol_code", "variant_code", "location_category_code",
-            "network_id", "system_id",
-            "site_id", "ran", "model_code", "brand_code", "mode_code", "channel_type_code", "color_code_ts1",
+            "channel_id", "snapshot_hash", "protocol_code", "variant_code", "observed_location_category_code",
+            "observed_network_id", "observed_system_id",
+            "observed_site_id", "observed_ran", "observed_model_code", "brand_code", "mode_code",
+            "channel_type_code", "color_code_ts1",
             "color_code_ts2", "current_repeater", "service_flags", "failure_code", "primary_frequency_hz",
             "current_control_hz", "first_seen_ms", "last_seen_ms", "observation_count"),
         new SqliteSchemaValidator.Table("trunked_site_channel_summary",
             "channel_id", "channel_number", "inbound_channel_number", "timeslot", "frequency_hz", "uplink_hz",
             "role_flags", "first_seen_ms", "last_seen_ms", "observation_count"),
         new SqliteSchemaValidator.Table("trunked_site_neighbor_summary",
-            "channel_id", "variant_code", "location_category_code", "network_id", "system_id", "site_id",
-            "channel_number", "frequency_hz", "status_flags", "first_seen_ms", "last_seen_ms",
-            "observation_count")
+            "channel_id", "protocol_code", "variant_code", "dmr_model_code",
+            "nxdn_location_category_code", "network_id", "system_id", "site_id", "channel_number",
+            "frequency_hz", "status_flags", "first_seen_ms", "last_seen_ms", "observation_count")
     );
     private static final List<String> INDEXES = List.of(
         SNAPSHOT_LAST_SEEN_INDEX, CHANNEL_LAST_SEEN_INDEX, NEIGHBOR_LAST_SEEN_INDEX);
@@ -94,8 +98,8 @@ public final class TrunkedSiteSchema
             statement.executeUpdate("""
                 CREATE INDEX IF NOT EXISTS idx_trunked_site_neighbor_last_seen
                 ON trunked_site_neighbor_summary(
-                    last_seen_ms, channel_id, variant_code, location_category_code, network_id, system_id, site_id,
-                    channel_number, frequency_hz)
+                    last_seen_ms, channel_id, protocol_code, variant_code, dmr_model_code,
+                    nxdn_location_category_code, network_id, system_id, site_id, channel_number, frequency_hz)
                 """);
         }
 
@@ -125,16 +129,18 @@ public final class TrunkedSiteSchema
                 ),
                 protocol_code INTEGER NOT NULL CHECK(typeof(protocol_code) = 'integer' AND protocol_code IN (3, 4)),
                 variant_code INTEGER NOT NULL DEFAULT 0 CHECK(typeof(variant_code) = 'integer'),
-                location_category_code INTEGER NOT NULL DEFAULT 0
-                    CHECK(typeof(location_category_code) = 'integer'),
-                network_id INTEGER CHECK(network_id IS NULL OR
-                    (typeof(network_id) = 'integer' AND network_id >= 0)),
-                system_id INTEGER CHECK(system_id IS NULL OR
-                    (typeof(system_id) = 'integer' AND system_id >= 0)),
-                site_id INTEGER CHECK(site_id IS NULL OR
-                    (typeof(site_id) = 'integer' AND site_id >= 0)),
-                ran INTEGER CHECK(ran IS NULL OR (typeof(ran) = 'integer' AND ran BETWEEN 0 AND 63)),
-                model_code INTEGER CHECK(model_code IS NULL OR typeof(model_code) = 'integer'),
+                observed_location_category_code INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(observed_location_category_code) = 'integer'),
+                observed_network_id INTEGER CHECK(observed_network_id IS NULL OR
+                    (typeof(observed_network_id) = 'integer' AND observed_network_id >= 0)),
+                observed_system_id INTEGER CHECK(observed_system_id IS NULL OR
+                    (typeof(observed_system_id) = 'integer' AND observed_system_id >= 0)),
+                observed_site_id INTEGER CHECK(observed_site_id IS NULL OR
+                    (typeof(observed_site_id) = 'integer' AND observed_site_id >= 0)),
+                observed_ran INTEGER CHECK(observed_ran IS NULL OR
+                    (typeof(observed_ran) = 'integer' AND observed_ran BETWEEN 0 AND 63)),
+                observed_model_code INTEGER CHECK(observed_model_code IS NULL OR
+                    typeof(observed_model_code) = 'integer'),
                 brand_code INTEGER CHECK(brand_code IS NULL OR typeof(brand_code) = 'integer'),
                 mode_code INTEGER CHECK(mode_code IS NULL OR typeof(mode_code) = 'integer'),
                 channel_type_code INTEGER CHECK(channel_type_code IS NULL OR typeof(channel_type_code) = 'integer'),
@@ -155,12 +161,16 @@ public final class TrunkedSiteSchema
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 observation_count INTEGER NOT NULL DEFAULT 1
                     CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
+                UNIQUE(channel_id, protocol_code),
                 CHECK(
                     (protocol_code = 3
                         AND variant_code BETWEEN 0 AND 5
-                        AND location_category_code = 0
-                        AND system_id IS NULL AND ran IS NULL
-                        AND (model_code IS NULL OR model_code BETWEEN 1 AND 4)
+                        AND observed_location_category_code = 0
+                        AND observed_system_id IS NULL AND observed_ran IS NULL
+                        AND (observed_model_code IS NULL OR observed_model_code BETWEEN 1 AND 4)
+                        AND (variant_code != 1 OR observed_model_code IS NULL OR observed_network_id IS NULL OR
+                            observed_network_id <= CASE observed_model_code
+                                WHEN 1 THEN 511 WHEN 2 THEN 127 WHEN 3 THEN 15 WHEN 4 THEN 3 END)
                         AND (brand_code IS NULL OR brand_code BETWEEN 1 AND 5)
                         AND (mode_code IS NULL OR mode_code BETWEEN 1 AND 2)
                         AND (channel_type_code IS NULL OR channel_type_code BETWEEN 1 AND 2)
@@ -168,11 +178,16 @@ public final class TrunkedSiteSchema
                     OR
                     (protocol_code = 4
                         AND variant_code BETWEEN 0 AND 2
-                        AND location_category_code BETWEEN 0 AND 5
-                        AND model_code IS NULL AND brand_code IS NULL AND channel_type_code IS NULL
+                        AND observed_location_category_code BETWEEN 0 AND 5
+                        AND observed_model_code IS NULL AND brand_code IS NULL AND channel_type_code IS NULL
                         AND color_code_ts1 IS NULL AND color_code_ts2 IS NULL
                         AND (mode_code IS NULL OR mode_code BETWEEN 1 AND 3)
-                        AND service_flags BETWEEN 0 AND 65520 AND (service_flags & 15) = 0)
+                        AND service_flags BETWEEN 0 AND 65520 AND (service_flags & 15) = 0
+                        AND (variant_code != 1 OR observed_location_category_code = 0 OR
+                            observed_system_id IS NULL OR
+                            (observed_location_category_code = 1 AND observed_system_id BETWEEN 1 AND 1022) OR
+                            (observed_location_category_code = 2 AND observed_system_id BETWEEN 1 AND 16382) OR
+                            (observed_location_category_code = 3 AND observed_system_id BETWEEN 1 AND 131070)))
                 )
             )
             """;
@@ -208,10 +223,15 @@ public final class TrunkedSiteSchema
         return """
             CREATE TABLE IF NOT EXISTS trunked_site_neighbor_summary (
                 channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                protocol_code INTEGER NOT NULL
+                    CHECK(typeof(protocol_code) = 'integer' AND protocol_code IN (3, 4)),
                 variant_code INTEGER NOT NULL
                     CHECK(typeof(variant_code) = 'integer' AND variant_code BETWEEN 0 AND 5),
-                location_category_code INTEGER NOT NULL
-                    CHECK(typeof(location_category_code) = 'integer' AND location_category_code BETWEEN 0 AND 5),
+                dmr_model_code INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(dmr_model_code) = 'integer' AND dmr_model_code BETWEEN 0 AND 4),
+                nxdn_location_category_code INTEGER NOT NULL DEFAULT 0
+                    CHECK(typeof(nxdn_location_category_code) = 'integer'
+                        AND nxdn_location_category_code BETWEEN 0 AND 5),
                 network_id INTEGER NOT NULL CHECK(typeof(network_id) = 'integer' AND network_id >= -1),
                 system_id INTEGER NOT NULL CHECK(typeof(system_id) = 'integer' AND system_id >= -1),
                 site_id INTEGER NOT NULL CHECK(typeof(site_id) = 'integer' AND site_id >= -1),
@@ -224,9 +244,25 @@ public final class TrunkedSiteSchema
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 observation_count INTEGER NOT NULL DEFAULT 1
                     CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
-                PRIMARY KEY(channel_id, variant_code, location_category_code, network_id, system_id, site_id,
-                    channel_number, frequency_hz),
-                FOREIGN KEY(channel_id) REFERENCES trunked_site_snapshot(channel_id) ON DELETE CASCADE
+                PRIMARY KEY(channel_id, protocol_code, variant_code, dmr_model_code,
+                    nxdn_location_category_code, network_id, system_id, site_id, channel_number, frequency_hz),
+                FOREIGN KEY(channel_id, protocol_code)
+                    REFERENCES trunked_site_snapshot(channel_id, protocol_code) ON DELETE CASCADE,
+                CHECK(
+                    (protocol_code = 3 AND variant_code BETWEEN 0 AND 5
+                        AND nxdn_location_category_code = 0 AND system_id = -1
+                        AND (variant_code = 1 OR dmr_model_code = 0)
+                        AND (variant_code != 1 OR dmr_model_code = 0 OR network_id = -1 OR
+                            network_id <= CASE dmr_model_code
+                                WHEN 1 THEN 511 WHEN 2 THEN 127 WHEN 3 THEN 15 WHEN 4 THEN 3 END))
+                    OR
+                    (protocol_code = 4 AND variant_code BETWEEN 0 AND 2
+                        AND dmr_model_code = 0
+                        AND (variant_code != 1 OR nxdn_location_category_code = 0 OR system_id = -1 OR
+                            (nxdn_location_category_code = 1 AND system_id BETWEEN 1 AND 1022) OR
+                            (nxdn_location_category_code = 2 AND system_id BETWEEN 1 AND 16382) OR
+                            (nxdn_location_category_code = 3 AND system_id BETWEEN 1 AND 131070)))
+                )
             ) WITHOUT ROWID
             """;
     }
@@ -239,8 +275,9 @@ public final class TrunkedSiteSchema
             List.of("last_seen_ms", "channel_id", "channel_number", "inbound_channel_number", "timeslot",
                 "frequency_hz"));
         validateIndex(connection, NEIGHBOR_LAST_SEEN_INDEX,
-            List.of("last_seen_ms", "channel_id", "variant_code", "location_category_code", "network_id", "system_id",
-                "site_id", "channel_number", "frequency_hz"));
+            List.of("last_seen_ms", "channel_id", "protocol_code", "variant_code", "dmr_model_code",
+                "nxdn_location_category_code", "network_id", "system_id", "site_id", "channel_number",
+                "frequency_hz"));
     }
 
     private static void validateKeysAndForeignKeys(Connection connection) throws SQLException
@@ -249,11 +286,12 @@ public final class TrunkedSiteSchema
         validatePrimaryKey(connection, "trunked_site_channel_summary",
             List.of("channel_id", "channel_number", "inbound_channel_number", "timeslot", "frequency_hz"));
         validatePrimaryKey(connection, "trunked_site_neighbor_summary",
-            List.of("channel_id", "variant_code", "location_category_code", "network_id", "system_id", "site_id",
-                "channel_number", "frequency_hz"));
+            List.of("channel_id", "protocol_code", "variant_code", "dmr_model_code",
+                "nxdn_location_category_code", "network_id", "system_id", "site_id", "channel_number",
+                "frequency_hz"));
         validateChannelForeignKey(connection, "trunked_site_snapshot", "receiver_channel");
         validateChannelForeignKey(connection, "trunked_site_channel_summary", "trunked_site_snapshot");
-        validateChannelForeignKey(connection, "trunked_site_neighbor_summary", "trunked_site_snapshot");
+        validateNeighborForeignKey(connection);
     }
 
     /**
@@ -280,18 +318,19 @@ public final class TrunkedSiteSchema
         int receiverChannelId = receiverChannelId(connection, snapshot.configurationId());
         SiteState previous = siteState(connection, receiverChannelId);
 
-        if(previous != null && snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds())
+        if(previous != null && (snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds() ||
+            snapshot.observedAtEpochMilliseconds() == previous.lastSeenEpochMilliseconds() &&
+                generationChanged(previous, snapshot)))
         {
             return false;
         }
 
         boolean classificationChanged = generationChanged(previous, snapshot);
-        upsertSite(connection, receiverChannelId, snapshot);
-
         if(classificationChanged)
         {
-            clearProtocolSpecificChildren(connection, receiverChannelId);
+            deleteSnapshot(connection, receiverChannelId);
         }
+        upsertSite(connection, receiverChannelId, snapshot);
 
         if(previous != null && !classificationChanged &&
             Objects.equals(previous.snapshotHash(), snapshot.snapshotHash()))
@@ -342,7 +381,8 @@ public final class TrunkedSiteSchema
                 if(childObservationTime >= childRetentionCutoffEpochMilliseconds &&
                     (neighborKeys.contains(key) || neighborKeys.size() < MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT))
                 {
-                    upsertNeighbor(connection, receiverChannelId, childObservationTime, neighbor);
+                    upsertNeighbor(connection, receiverChannelId, snapshot.protocolCode(), childObservationTime,
+                        neighbor);
                     neighborKeys.add(key);
                 }
             }
@@ -356,16 +396,13 @@ public final class TrunkedSiteSchema
      * saved channel can be reconfigured, so retained facts from an incompatible classification must not be merged
      * into the new evidence.
      */
-    private static void clearProtocolSpecificChildren(Connection connection, int channelId) throws SQLException
+    private static void deleteSnapshot(Connection connection, int channelId) throws SQLException
     {
-        for(String table: List.of("trunked_site_channel_summary", "trunked_site_neighbor_summary"))
+        try(PreparedStatement statement = connection.prepareStatement(
+            "DELETE FROM trunked_site_snapshot WHERE channel_id = ?"))
         {
-            try(PreparedStatement statement = connection.prepareStatement(
-                "DELETE FROM " + table + " WHERE channel_id = ?"))
-            {
-                statement.setInt(1, channelId);
-                statement.executeUpdate();
-            }
+            statement.setInt(1, channelId);
+            statement.executeUpdate();
         }
     }
 
@@ -585,6 +622,32 @@ public final class TrunkedSiteSchema
         }
     }
 
+    private static void validateNeighborForeignKey(Connection connection) throws SQLException
+    {
+        Map<Integer,Set<String>> cascadeColumns = new java.util.HashMap<>();
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "PRAGMA foreign_key_list(trunked_site_neighbor_summary)"))
+        {
+            while(resultSet.next())
+            {
+                if("trunked_site_snapshot".equals(resultSet.getString("table")) &&
+                    "CASCADE".equalsIgnoreCase(resultSet.getString("on_delete")))
+                {
+                    cascadeColumns.computeIfAbsent(resultSet.getInt("id"), ignored -> new HashSet<>())
+                        .add(resultSet.getString("from") + ":" + resultSet.getString("to"));
+                }
+            }
+        }
+
+        if(cascadeColumns.values().stream().noneMatch(columns -> columns.equals(
+            Set.of("channel_id:channel_id", "protocol_code:protocol_code"))))
+        {
+            throw new SQLException("SQLite schema is missing the protocol-safe neighbor cascade foreign key");
+        }
+    }
+
     private static void requireValid(Snapshot snapshot)
     {
         Objects.requireNonNull(snapshot, "snapshot cannot be null");
@@ -623,7 +686,9 @@ public final class TrunkedSiteSchema
                 outside(snapshot.modelCode(), 1, 4) || outside(snapshot.brandCode(), 1, 5) ||
                 outside(snapshot.modeCode(), 1, 2) || outside(snapshot.channelTypeCode(), 1, 2) ||
                 outside(snapshot.colorCodeTimeslot1(), 0, 15) || outside(snapshot.colorCodeTimeslot2(), 0, 15) ||
-                snapshot.currentRepeater() != null || snapshot.serviceFlags() != 0 || snapshot.failureCode() != null)
+                snapshot.currentRepeater() != null || snapshot.serviceFlags() != 0 || snapshot.failureCode() != null ||
+                snapshot.variantCode() == DMR_VARIANT_TIER_III && snapshot.modelCode() != null &&
+                    snapshot.networkId() != null && snapshot.networkId() > dmrNetworkMaximum(snapshot.modelCode()))
             {
                 throw new IllegalArgumentException("DMR site snapshot contains fields from another protocol");
             }
@@ -634,7 +699,10 @@ public final class TrunkedSiteSchema
             snapshot.colorCodeTimeslot1() != null || snapshot.colorCodeTimeslot2() != null ||
             outside(snapshot.modeCode(), 1, 3) || negative(snapshot.currentRepeater()) ||
             snapshot.serviceFlags() < 0 || snapshot.serviceFlags() > 65_520 ||
-            (snapshot.serviceFlags() & 0xF) != 0 || negative(snapshot.failureCode()))
+            (snapshot.serviceFlags() & 0xF) != 0 || negative(snapshot.failureCode()) ||
+            snapshot.variantCode() == NXDN_VARIANT_TYPE_C && snapshot.locationCategoryCode() != 0 &&
+                snapshot.systemId() != null &&
+                snapshot.systemId() > nxdnSystemMaximum(snapshot.locationCategoryCode()))
         {
             throw new IllegalArgumentException("NXDN site snapshot contains fields from another protocol");
         }
@@ -665,10 +733,26 @@ public final class TrunkedSiteSchema
                 continue;
             }
 
-            boolean wrongClassification = snapshot.protocolCode() == PROTOCOL_DMR ?
-                neighbor.variantCode() < 0 || neighbor.variantCode() > 5 || neighbor.locationCategoryCode() != 0 :
-                neighbor.variantCode() < 0 || neighbor.variantCode() > 2 ||
-                    neighbor.locationCategoryCode() < 0 || neighbor.locationCategoryCode() > 5;
+            boolean wrongClassification;
+            if(snapshot.protocolCode() == PROTOCOL_DMR)
+            {
+                wrongClassification = neighbor.variantCode() < 0 || neighbor.variantCode() > 5 ||
+                    neighbor.dmrModelCode() < 0 || neighbor.dmrModelCode() > 4 ||
+                    neighbor.nxdnLocationCategoryCode() != 0 || neighbor.systemId() != null ||
+                    neighbor.variantCode() != DMR_VARIANT_TIER_III && neighbor.dmrModelCode() != 0 ||
+                    neighbor.variantCode() == DMR_VARIANT_TIER_III && neighbor.dmrModelCode() != 0 &&
+                        neighbor.networkId() != null &&
+                        neighbor.networkId() > dmrNetworkMaximum(neighbor.dmrModelCode());
+            }
+            else
+            {
+                wrongClassification = neighbor.variantCode() < 0 || neighbor.variantCode() > 2 ||
+                    neighbor.dmrModelCode() != 0 || neighbor.nxdnLocationCategoryCode() < 0 ||
+                    neighbor.nxdnLocationCategoryCode() > 5 ||
+                    neighbor.variantCode() == NXDN_VARIANT_TYPE_C &&
+                        neighbor.nxdnLocationCategoryCode() != 0 && neighbor.systemId() != null &&
+                        neighbor.systemId() > nxdnSystemMaximum(neighbor.nxdnLocationCategoryCode());
+            }
             if(wrongClassification || negative(neighbor.networkId()) || negative(neighbor.systemId()) ||
                 negative(neighbor.siteId()) || negative(neighbor.channelNumber()) ||
                 positiveRequired(neighbor.frequencyHertz()) || neighbor.statusFlags() < 0 ||
@@ -720,8 +804,8 @@ public final class TrunkedSiteSchema
     {
         try(PreparedStatement statement = connection.prepareStatement(
             """
-            SELECT snapshot_hash, last_seen_ms, protocol_code, variant_code, location_category_code,
-                network_id, system_id, site_id, ran
+            SELECT snapshot_hash, last_seen_ms, protocol_code, variant_code, observed_location_category_code,
+                observed_network_id, observed_system_id, observed_site_id, observed_ran, observed_model_code
             FROM trunked_site_snapshot
             WHERE channel_id = ?
             """))
@@ -734,7 +818,7 @@ public final class TrunkedSiteSchema
                     new SiteState(resultSet.getString(1), resultSet.getLong(2), resultSet.getInt(3),
                         resultSet.getInt(4), resultSet.getInt(5), nullableInteger(resultSet, 6),
                         nullableInteger(resultSet, 7), nullableInteger(resultSet, 8),
-                        nullableInteger(resultSet, 9)) : null;
+                        nullableInteger(resultSet, 9), nullableInteger(resultSet, 10)) : null;
             }
         }
     }
@@ -756,7 +840,8 @@ public final class TrunkedSiteSchema
         return previous != null && snapshot != null &&
             (previous.protocolCode() != snapshot.protocolCode() ||
                 previous.variantCode() != snapshot.variantCode() ||
-                previous.locationCategoryCode() != snapshot.locationCategoryCode() ||
+                knownLocationCategoryChanged(previous.locationCategoryCode(), snapshot.locationCategoryCode()) ||
+                locationChanged(previous.modelCode(), snapshot.modelCode()) ||
                 locationChanged(previous.networkId(), snapshot.networkId()) ||
                 locationChanged(previous.systemId(), snapshot.systemId()) ||
                 locationChanged(previous.siteId(), snapshot.siteId()) ||
@@ -767,8 +852,8 @@ public final class TrunkedSiteSchema
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_site_snapshot (
-                channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
-                network_id, system_id, site_id, ran, model_code,
+                channel_id, snapshot_hash, protocol_code, variant_code, observed_location_category_code,
+                observed_network_id, observed_system_id, observed_site_id, observed_ran, observed_model_code,
                 brand_code, mode_code, channel_type_code, color_code_ts1, color_code_ts2, current_repeater,
                 service_flags, failure_code, primary_frequency_hz, current_control_hz, first_seen_ms, last_seen_ms,
                 observation_count
@@ -777,12 +862,20 @@ public final class TrunkedSiteSchema
                 snapshot_hash = excluded.snapshot_hash,
                 protocol_code = excluded.protocol_code,
                 variant_code = excluded.variant_code,
-                location_category_code = excluded.location_category_code,
-                network_id = excluded.network_id,
-                system_id = excluded.system_id,
-                site_id = excluded.site_id,
-                ran = excluded.ran,
-                model_code = excluded.model_code,
+                observed_location_category_code = CASE
+                    WHEN excluded.protocol_code=4 AND excluded.variant_code=1
+                    THEN coalesce(nullif(excluded.observed_location_category_code, 0),
+                        trunked_site_snapshot.observed_location_category_code)
+                    ELSE excluded.observed_location_category_code END,
+                observed_network_id = coalesce(excluded.observed_network_id,
+                    trunked_site_snapshot.observed_network_id),
+                observed_system_id = coalesce(excluded.observed_system_id,
+                    trunked_site_snapshot.observed_system_id),
+                observed_site_id = coalesce(excluded.observed_site_id,
+                    trunked_site_snapshot.observed_site_id),
+                observed_ran = coalesce(excluded.observed_ran, trunked_site_snapshot.observed_ran),
+                observed_model_code = coalesce(excluded.observed_model_code,
+                    trunked_site_snapshot.observed_model_code),
                 brand_code = excluded.brand_code,
                 mode_code = excluded.mode_code,
                 channel_type_code = excluded.channel_type_code,
@@ -796,15 +889,24 @@ public final class TrunkedSiteSchema
                 first_seen_ms = CASE
                     WHEN trunked_site_snapshot.protocol_code != excluded.protocol_code
                       OR trunked_site_snapshot.variant_code != excluded.variant_code
-                      OR trunked_site_snapshot.location_category_code != excluded.location_category_code
-                      OR (trunked_site_snapshot.network_id IS NOT NULL AND excluded.network_id IS NOT NULL
-                          AND trunked_site_snapshot.network_id != excluded.network_id)
-                      OR (trunked_site_snapshot.system_id IS NOT NULL AND excluded.system_id IS NOT NULL
-                          AND trunked_site_snapshot.system_id != excluded.system_id)
-                      OR (trunked_site_snapshot.site_id IS NOT NULL AND excluded.site_id IS NOT NULL
-                          AND trunked_site_snapshot.site_id != excluded.site_id)
-                      OR (trunked_site_snapshot.ran IS NOT NULL AND excluded.ran IS NOT NULL
-                          AND trunked_site_snapshot.ran != excluded.ran)
+                      OR (trunked_site_snapshot.observed_location_category_code != 0
+                          AND excluded.observed_location_category_code != 0
+                          AND trunked_site_snapshot.observed_location_category_code !=
+                              excluded.observed_location_category_code)
+                      OR (trunked_site_snapshot.observed_model_code IS NOT NULL
+                          AND excluded.observed_model_code IS NOT NULL
+                          AND trunked_site_snapshot.observed_model_code != excluded.observed_model_code)
+                      OR (trunked_site_snapshot.observed_network_id IS NOT NULL
+                          AND excluded.observed_network_id IS NOT NULL
+                          AND trunked_site_snapshot.observed_network_id != excluded.observed_network_id)
+                      OR (trunked_site_snapshot.observed_system_id IS NOT NULL
+                          AND excluded.observed_system_id IS NOT NULL
+                          AND trunked_site_snapshot.observed_system_id != excluded.observed_system_id)
+                      OR (trunked_site_snapshot.observed_site_id IS NOT NULL
+                          AND excluded.observed_site_id IS NOT NULL
+                          AND trunked_site_snapshot.observed_site_id != excluded.observed_site_id)
+                      OR (trunked_site_snapshot.observed_ran IS NOT NULL AND excluded.observed_ran IS NOT NULL
+                          AND trunked_site_snapshot.observed_ran != excluded.observed_ran)
                     THEN excluded.first_seen_ms
                     ELSE min(trunked_site_snapshot.first_seen_ms, excluded.first_seen_ms)
                 END,
@@ -812,15 +914,24 @@ public final class TrunkedSiteSchema
                 observation_count = CASE
                     WHEN trunked_site_snapshot.protocol_code != excluded.protocol_code
                       OR trunked_site_snapshot.variant_code != excluded.variant_code
-                      OR trunked_site_snapshot.location_category_code != excluded.location_category_code
-                      OR (trunked_site_snapshot.network_id IS NOT NULL AND excluded.network_id IS NOT NULL
-                          AND trunked_site_snapshot.network_id != excluded.network_id)
-                      OR (trunked_site_snapshot.system_id IS NOT NULL AND excluded.system_id IS NOT NULL
-                          AND trunked_site_snapshot.system_id != excluded.system_id)
-                      OR (trunked_site_snapshot.site_id IS NOT NULL AND excluded.site_id IS NOT NULL
-                          AND trunked_site_snapshot.site_id != excluded.site_id)
-                      OR (trunked_site_snapshot.ran IS NOT NULL AND excluded.ran IS NOT NULL
-                          AND trunked_site_snapshot.ran != excluded.ran)
+                      OR (trunked_site_snapshot.observed_location_category_code != 0
+                          AND excluded.observed_location_category_code != 0
+                          AND trunked_site_snapshot.observed_location_category_code !=
+                              excluded.observed_location_category_code)
+                      OR (trunked_site_snapshot.observed_model_code IS NOT NULL
+                          AND excluded.observed_model_code IS NOT NULL
+                          AND trunked_site_snapshot.observed_model_code != excluded.observed_model_code)
+                      OR (trunked_site_snapshot.observed_network_id IS NOT NULL
+                          AND excluded.observed_network_id IS NOT NULL
+                          AND trunked_site_snapshot.observed_network_id != excluded.observed_network_id)
+                      OR (trunked_site_snapshot.observed_system_id IS NOT NULL
+                          AND excluded.observed_system_id IS NOT NULL
+                          AND trunked_site_snapshot.observed_system_id != excluded.observed_system_id)
+                      OR (trunked_site_snapshot.observed_site_id IS NOT NULL
+                          AND excluded.observed_site_id IS NOT NULL
+                          AND trunked_site_snapshot.observed_site_id != excluded.observed_site_id)
+                      OR (trunked_site_snapshot.observed_ran IS NOT NULL AND excluded.observed_ran IS NOT NULL
+                          AND trunked_site_snapshot.observed_ran != excluded.observed_ran)
                     THEN 1
                     ELSE trunked_site_snapshot.observation_count + 1
                 END
@@ -914,16 +1025,17 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static void upsertNeighbor(Connection connection, int channelId, long observedAt, Neighbor neighbor)
-        throws SQLException
+    private static void upsertNeighbor(Connection connection, int channelId, int protocolCode, long observedAt,
+                                       Neighbor neighbor) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO trunked_site_neighbor_summary (
-                channel_id, variant_code, location_category_code, network_id, system_id, site_id, channel_number,
-                frequency_hz, status_flags, first_seen_ms, last_seen_ms, observation_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-            ON CONFLICT(channel_id, variant_code, location_category_code, network_id, system_id, site_id, channel_number,
-                frequency_hz)
+                channel_id, protocol_code, variant_code, dmr_model_code, nxdn_location_category_code,
+                network_id, system_id, site_id, channel_number, frequency_hz, status_flags,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(channel_id, protocol_code, variant_code, dmr_model_code, nxdn_location_category_code,
+                network_id, system_id, site_id, channel_number, frequency_hz)
             DO UPDATE SET
                 status_flags = trunked_site_neighbor_summary.status_flags | excluded.status_flags,
                 first_seen_ms = min(trunked_site_neighbor_summary.first_seen_ms, excluded.first_seen_ms),
@@ -933,16 +1045,18 @@ public final class TrunkedSiteSchema
             """))
         {
             statement.setInt(1, channelId);
-            statement.setInt(2, neighbor.variantCode());
-            statement.setInt(3, neighbor.locationCategoryCode());
-            statement.setInt(4, known(neighbor.networkId()));
-            statement.setInt(5, known(neighbor.systemId()));
-            statement.setInt(6, known(neighbor.siteId()));
-            statement.setInt(7, known(neighbor.channelNumber()));
-            statement.setLong(8, known(neighbor.frequencyHertz()));
-            statement.setInt(9, neighbor.statusFlags());
-            statement.setLong(10, observedAt);
-            statement.setLong(11, observedAt);
+            statement.setInt(2, protocolCode);
+            statement.setInt(3, neighbor.variantCode());
+            statement.setInt(4, neighbor.dmrModelCode());
+            statement.setInt(5, neighbor.nxdnLocationCategoryCode());
+            statement.setInt(6, known(neighbor.networkId()));
+            statement.setInt(7, known(neighbor.systemId()));
+            statement.setInt(8, known(neighbor.siteId()));
+            statement.setInt(9, known(neighbor.channelNumber()));
+            statement.setLong(10, known(neighbor.frequencyHertz()));
+            statement.setInt(11, neighbor.statusFlags());
+            statement.setLong(12, observedAt);
+            statement.setLong(13, observedAt);
             statement.executeUpdate();
         }
     }
@@ -976,8 +1090,8 @@ public final class TrunkedSiteSchema
         Set<NeighborKey> keys = new HashSet<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT variant_code, location_category_code, network_id, system_id, site_id, channel_number,
-                frequency_hz
+            SELECT variant_code, dmr_model_code, nxdn_location_category_code, network_id, system_id, site_id,
+                channel_number, frequency_hz
             FROM trunked_site_neighbor_summary WHERE channel_id = ?
             """))
         {
@@ -988,7 +1102,8 @@ public final class TrunkedSiteSchema
                 while(resultSet.next())
                 {
                     keys.add(new NeighborKey(resultSet.getInt(1), resultSet.getInt(2), resultSet.getInt(3),
-                        resultSet.getInt(4), resultSet.getInt(5), resultSet.getInt(6), resultSet.getLong(7)));
+                        resultSet.getInt(4), resultSet.getInt(5), resultSet.getInt(6), resultSet.getInt(7),
+                        resultSet.getLong(8)));
                 }
             }
         }
@@ -1076,15 +1191,17 @@ public final class TrunkedSiteSchema
         }
     }
 
-    public record Neighbor(int variantCode, int locationCategoryCode, Integer networkId, Integer systemId,
-                           Integer siteId, Integer channelNumber, Long frequencyHertz, int statusFlags,
+    public record Neighbor(int variantCode, int dmrModelCode, int nxdnLocationCategoryCode,
+                           Integer networkId, Integer systemId, Integer siteId, Integer channelNumber,
+                           Long frequencyHertz, int statusFlags,
                            long observedAtEpochMilliseconds)
     {
-        public Neighbor(int variantCode, int locationCategoryCode, Integer networkId, Integer systemId,
-                        Integer siteId, Integer channelNumber, Long frequencyHertz, int statusFlags)
+        public Neighbor(int variantCode, int dmrModelCode, int nxdnLocationCategoryCode,
+                        Integer networkId, Integer systemId, Integer siteId, Integer channelNumber,
+                        Long frequencyHertz, int statusFlags)
         {
-            this(variantCode, locationCategoryCode, networkId, systemId, siteId, channelNumber, frequencyHertz,
-                statusFlags, 0);
+            this(variantCode, dmrModelCode, nxdnLocationCategoryCode, networkId, systemId, siteId, channelNumber,
+                frequencyHertz, statusFlags, 0);
         }
     }
 
@@ -1102,20 +1219,48 @@ public final class TrunkedSiteSchema
         return previous != null && current != null && !previous.equals(current);
     }
 
+    private static boolean knownLocationCategoryChanged(int previous, int current)
+    {
+        return previous > 0 && current > 0 && previous != current;
+    }
+
+    private static int dmrNetworkMaximum(int modelCode)
+    {
+        return switch(modelCode)
+        {
+            case 1 -> 511;
+            case 2 -> 127;
+            case 3 -> 15;
+            case 4 -> 3;
+            default -> -1;
+        };
+    }
+
+    private static int nxdnSystemMaximum(int locationCategoryCode)
+    {
+        return switch(locationCategoryCode)
+        {
+            case 1 -> 1022;
+            case 2 -> 16382;
+            case 3 -> 131070;
+            default -> -1;
+        };
+    }
+
     private record SiteState(String snapshotHash, long lastSeenEpochMilliseconds, int protocolCode,
                              int variantCode, int locationCategoryCode, Integer networkId, Integer systemId,
-                             Integer siteId, Integer ran)
+                             Integer siteId, Integer ran, Integer modelCode)
     {
     }
 
-    private record NeighborKey(int variantCode, int locationCategoryCode, int networkId, int systemId, int siteId,
-                               int channelNumber, long frequencyHertz)
+    private record NeighborKey(int variantCode, int dmrModelCode, int nxdnLocationCategoryCode, int networkId,
+                               int systemId, int siteId, int channelNumber, long frequencyHertz)
     {
         private static NeighborKey from(Neighbor neighbor)
         {
-            return new NeighborKey(neighbor.variantCode(), neighbor.locationCategoryCode(), known(neighbor.networkId()),
-                known(neighbor.systemId()), known(neighbor.siteId()), known(neighbor.channelNumber()),
-                known(neighbor.frequencyHertz()));
+            return new NeighborKey(neighbor.variantCode(), neighbor.dmrModelCode(),
+                neighbor.nxdnLocationCategoryCode(), known(neighbor.networkId()), known(neighbor.systemId()),
+                known(neighbor.siteId()), known(neighbor.channelNumber()), known(neighbor.frequencyHertz()));
         }
     }
 }

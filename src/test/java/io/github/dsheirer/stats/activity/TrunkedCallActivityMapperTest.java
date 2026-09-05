@@ -77,6 +77,7 @@ class TrunkedCallActivityMapperTest
         assertEquals(2, record.timeslot());
         assertEquals("101", record.sourceRadioId());
         assertEquals("91", record.targetId());
+        assertEquals(" LCN:12 CHANID:26", record.lcn());
         assertTrue(record.encrypted());
         assertTrue(record.countedCall(), "typed start still identifies a call but completion owns counters");
         assertNull(record.wacn());
@@ -93,7 +94,7 @@ class TrunkedCallActivityMapperTest
         identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
         identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
         identifiers.update(EncryptionKeyIdentifier.create(Protocol.NXDN, NXDNEncryptionKey.create(3, 7)));
-        NXDNChannelLookup channel = new NXDNChannelLookup(12);
+        ThrowingNxdnLookupChannel channel = new ThrowingNxdnLookupChannel(12);
         channel.receive(null, Map.of(12, new ChannelFrequency(12, 452_012_500L, 0)));
         TrunkedCallStartEvent start = new TrunkedCallStartTracker(3_000).observe(parent, Protocol.NXDN,
             channel, null, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 2_000L);
@@ -106,9 +107,41 @@ class TrunkedCallActivityMapperTest
         assertNull(record.timeslot());
         assertEquals(Integer.toString(0x1134), record.sourceRadioId());
         assertEquals(Integer.toString(0x2223), record.targetId());
+        assertEquals("DN:452.0125 MHZ", record.lcn());
         assertEquals(3, record.encryptionAlgorithmId());
         assertEquals(7, record.encryptionKeyId());
         assertEquals(TrunkedIdentityDomain.NXDN_TYPE_D, record.identityDomain());
+        assertEquals(0, channel.toStringCalls(),
+            "NXDN producer capture and worker projection must both use frozen scalars");
+    }
+
+    @Test
+    void decoderPathSnapshotsDescriptorScalarsAndFormatsOnlyInTheMapper()
+    {
+        Channel parent = dmrParent();
+        ThrowingTierThreeChannel channel = new ThrowingTierThreeChannel(12, 2);
+        TimeslotFrequency mapping = new TimeslotFrequency();
+        mapping.setNumber(12);
+        mapping.setDownlinkFrequency(451_012_500L);
+        channel.setTimeslotFrequency(mapping);
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5_000L);
+
+        TrunkedCallStartTracker.ObservationResult initial = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 2, new MutableIdentifierCollection(), DecodeEventType.CALL_GROUP, 1_000L);
+        MutableIdentifierCollection identified = new MutableIdentifierCollection();
+        identified.update(DMRRadio.createFrom(101));
+        identified.update(DMRTalkgroup.create(91));
+        TrunkedCallStartTracker.ObservationResult enriched = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 2, identified, DecodeEventType.CALL_GROUP, 1_100L);
+
+        assertNotNull(initial.callStart());
+        assertNotNull(enriched.attribution());
+        assertEquals(0, channel.toStringCalls(),
+            "call-start and attribution capture must not format a live descriptor");
+        ReceiverActivityRecords.ActivityEvent projected = new TrunkedCallActivityMapper().map(initial.callStart());
+        assertEquals(" LCN:12 CHANID:26", projected.lcn());
+        assertEquals(0, channel.toStringCalls(),
+            "the mapper must format from frozen scalars rather than the live descriptor");
     }
 
     @Test
@@ -154,7 +187,8 @@ class TrunkedCallActivityMapperTest
                     parent.getConfigurationId().toString(), Protocol.DMR.name(), TrunkedIdentityDomain.STANDARD,
                     null, null, 91, Form.TALKGROUP.name(), java.util.List.of(), 101, true, 0x84, 101,
                     ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN,
-                    java.util.List.of(), java.util.List.of());
+                    java.util.List.of(), java.util.List.of(),
+                    "dmr:channel:" + parent.getConfigurationId());
             assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, completed));
             assertEquals(1, scalar(connection, """
                 SELECT logical_call_count FROM radio_system_identity_summary
@@ -206,6 +240,50 @@ class TrunkedCallActivityMapperTest
         mapping.setDownlinkFrequency(frequency);
         channel.setTimeslotFrequency(mapping);
         return channel;
+    }
+
+    private static final class ThrowingTierThreeChannel extends DMRTier3Channel
+    {
+        private int mToStringCalls;
+
+        private ThrowingTierThreeChannel(int channel, int timeslot)
+        {
+            super(channel, timeslot);
+        }
+
+        @Override
+        public String toString()
+        {
+            mToStringCalls++;
+            throw new AssertionError("Live descriptor formatting is not allowed on decoder callbacks");
+        }
+
+        private int toStringCalls()
+        {
+            return mToStringCalls;
+        }
+    }
+
+    private static final class ThrowingNxdnLookupChannel extends NXDNChannelLookup
+    {
+        private int mToStringCalls;
+
+        private ThrowingNxdnLookupChannel(int channel)
+        {
+            super(channel);
+        }
+
+        @Override
+        public String toString()
+        {
+            mToStringCalls++;
+            throw new AssertionError("Live NXDN descriptor formatting is not allowed on decoder callbacks");
+        }
+
+        private int toStringCalls()
+        {
+            return mToStringCalls;
+        }
     }
 
     private static EncryptionKey encryptedKey(int algorithm, int key)

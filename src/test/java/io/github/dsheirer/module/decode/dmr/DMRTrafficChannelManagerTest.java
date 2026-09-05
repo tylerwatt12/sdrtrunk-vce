@@ -15,11 +15,18 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.AbstractAudioModule;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
@@ -31,12 +38,17 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.List;
@@ -50,6 +62,51 @@ import org.junit.jupiter.api.Test;
 
 class DMRTrafficChannelManagerTest
 {
+    @Test
+    void nativeIdentityIsGenerationBoundAndIncompleteEvidenceFailsClosed()
+    {
+        Channel parent = new Channel("Tier III", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager oldManager = new DMRTrafficChannelManager(parent);
+        oldManager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            41, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
+        assertEquals("dmr:tier3:small:41", oldManager.getNativeRadioSystemKey());
+
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        assertNull(manager.getNativeRadioSystemKey(),
+            "a new processing-chain manager must not inherit the old chain's learned identity");
+        oldManager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            99, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
+        assertNull(manager.getNativeRadioSystemKey(),
+            "a late callback changes only the unreachable old manager");
+
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            42, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
+        assertEquals("dmr:tier3:small:42", manager.getNativeRadioSystemKey());
+
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            null, 1, null, null, null, null, null, null, List.of(), List.of()));
+        assertNull(manager.getNativeRadioSystemKey(),
+            "an incomplete supported-native tuple cannot retain an older generation's key");
+
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            43, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
+        manager.reset();
+        assertNull(manager.getNativeRadioSystemKey(), "reset must clear the chain-local learned identity");
+
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            44, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
+        manager.stop();
+        assertNull(manager.getNativeRadioSystemKey(), "stop must clear the chain-local learned identity");
+
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "CAPACITY_PLUS",
+            null, 1, null, null, null, null, null, null, List.of(), List.of()));
+        assertNull(manager.getNativeRadioSystemKey());
+    }
+
     @Test
     void restHandoffCoalescesUntilTheOwnedRequestCompletes()
     {
@@ -96,6 +153,10 @@ class DMRTrafficChannelManagerTest
         DMRTrafficChannelManager.PreparedRestChannelHandoff prepared =
             manager.prepareRestChannelHandoff(secondRequest);
         assertNotNull(prepared);
+        assertTrue(prepared.startRequest().getPreloadDataContents().getFirst() instanceof
+            RadioSystemKeyEvent);
+        assertNull(((RadioSystemKeyEvent)prepared.startRequest().getPreloadDataContents().getFirst())
+            .radioSystemKey());
         DMRRestChannelNetworkConfigurationPreloadData networkPreload = prepared.startRequest()
             .getPreloadDataContents().stream()
             .filter(DMRRestChannelNetworkConfigurationPreloadData.class::isInstance)
@@ -569,6 +630,7 @@ class DMRTrafficChannelManagerTest
     void trafficStartsCarryRequestScopedGrantEvents()
     {
         Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000061");
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
         config.setTrafficChannelPoolSize(2);
@@ -580,9 +642,13 @@ class DMRTrafficChannelManagerTest
         manager.setInterModuleEventBus(eventBus);
         List<DecodeEvent> grantEvents = new CopyOnWriteArrayList<>();
         manager.addDecodeEventListener(event -> grantEvents.add((DecodeEvent)event));
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            42, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
 
         manager.processChannelGrant(channel(12, 1, 451_012_500L), identifiers(101, 91),
             Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "CAPACITY_PLUS",
+            null, 1, null, null, null, null, null, null, List.of(), List.of()));
         manager.processChannelGrant(channel(13, 2, 451_025_000L), identifiers(102, 92),
             Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 2_000L, false);
 
@@ -593,11 +659,89 @@ class DMRTrafficChannelManagerTest
         DMRChannelGrantPreloadData firstPreload = grantPreload(firstRequest);
         DMRChannelGrantPreloadData secondPreload = grantPreload(secondRequest);
 
+        assertTrue(firstRequest.getPreloadDataContents().getFirst() instanceof RadioSystemKeyEvent);
+        assertEquals("dmr:tier3:small:42",
+            ((RadioSystemKeyEvent)firstRequest.getPreloadDataContents().getFirst()).radioSystemKey());
+        assertTrue(secondRequest.getPreloadDataContents().getFirst() instanceof RadioSystemKeyEvent);
+        assertEquals(RadioSystemKey.channelScoped(Protocol.DMR, TrunkedIdentityDomain.STANDARD,
+                parent.getConfigurationId()),
+            ((RadioSystemKeyEvent)secondRequest.getPreloadDataContents().getFirst()).radioSystemKey());
         assertSame(grantEvents.get(0), firstPreload.getChannelGrantEvent());
         assertSame(grantEvents.get(1), secondPreload.getChannelGrantEvent());
         assertNotSame(firstPreload.getChannelGrantEvent(), secondPreload.getChannelGrantEvent());
         assertSame(config, firstRequest.getChannel().getDecodeConfiguration());
         assertSame(config, secondRequest.getChannel().getDecodeConfiguration());
+    }
+
+    @Test
+    void reusedTrafficChildCorrelatesAnInFlightCallKeyWithoutRelabellingAnOlderCall()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000062");
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        StartRequestSubscriber starts = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(starts);
+        manager.setInterModuleEventBus(eventBus);
+        manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            42, 1, null, "SMALL", null, null, null, null, List.of(), List.of()));
+        DMRTier3Channel channel = channel(12, 1, 451_012_500L);
+        CallStartSubscriber callStarts = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(callStarts);
+
+        try
+        {
+            manager.processChannelGrant(channel, identifiers(101, 91),
+                Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+
+            assertEquals(1, starts.requests.size());
+            RadioSystemKeyEvent initial = (RadioSystemKeyEvent)starts.requests.getFirst()
+                .getPreloadDataContents().getFirst();
+            assertEquals("dmr:tier3:small:42", initial.radioSystemKey());
+            InterleavedAudioModule racingCall = new InterleavedAudioModule(DecoderType.DMR,
+                TrunkedIdentityDomain.STANDARD, parent.getConfigurationId(), 1, initial.radioSystemKey());
+            InterleavedAudioModule olderCall = new InterleavedAudioModule(DecoderType.DMR,
+                TrunkedIdentityDomain.STANDARD, parent.getConfigurationId(), 1, initial.radioSystemKey());
+            olderCall.beginAt(900L);
+            PostRequestSubscriber posts = new PostRequestSubscriber(racingCall, olderCall);
+            eventBus.register(posts);
+
+            manager.updateNetworkConfigurationSnapshot(new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+                null, 1, null, null, null, null, null, null, List.of(), List.of()));
+            manager.processChannelGrant(channel, identifiers(102, 92),
+                Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_100L, false);
+
+            assertEquals(1, posts.requests.size());
+            PostChannelModuleEventRequest post = posts.requests.getFirst();
+            assertEquals(List.of(starts.requests.getFirst().getChannel()), post.getChannels());
+            RadioSystemKeyEvent activation = (RadioSystemKeyEvent)post.getEvent();
+            String expected = RadioSystemKey.channelScoped(Protocol.DMR, TrunkedIdentityDomain.STANDARD,
+                parent.getConfigurationId());
+            assertEquals(expected, activation.radioSystemKey());
+            assertEquals(1_100L, activation.callStartEpochMilliseconds());
+            assertEquals(1, activation.timeslot());
+
+            racingCall.closeAt(1_200L);
+            olderCall.closeAt(1_200L);
+            assertEquals(expected, racingCall.lastCompletedSystemKey(),
+                "audio beginning after the frozen activation but before event delivery must receive that call's key");
+            assertEquals("dmr:tier3:small:42", olderCall.lastCompletedSystemKey(),
+                "a call from an older activation must retain its original key");
+            olderCall.beginAt(1_300L);
+            olderCall.closeAt(1_400L);
+            assertEquals(expected, olderCall.lastCompletedSystemKey(),
+                "the same update must become the template for the next call");
+            assertEquals(expected, callStarts.events.getLast().radioSystemKey());
+            assertEquals(racingCall.lastCompletedSystemKey(), callStarts.events.getLast().radioSystemKey());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(callStarts);
+        }
     }
 
     @Test
@@ -635,10 +779,10 @@ class DMRTrafficChannelManagerTest
         }
 
         assertEquals(2, subscriber.events.size());
-        assertEquals(91, subscriber.events.get(0).event().getIdentifierCollection().getToIdentifier().getValue());
-        assertEquals(92, subscriber.events.get(1).event().getIdentifierCollection().getToIdentifier().getValue());
-        assertEquals(1_000L, subscriber.events.get(0).event().getTimeStart());
-        assertEquals(1_200L, subscriber.events.get(1).event().getTimeStart());
+        assertEquals(91, subscriber.events.get(0).targetId());
+        assertEquals(92, subscriber.events.get(1).targetId());
+        assertEquals(1_000L, subscriber.events.get(0).callStartEpochMilliseconds());
+        assertEquals(1_200L, subscriber.events.get(1).callStartEpochMilliseconds());
     }
 
     @Test
@@ -694,25 +838,31 @@ class DMRTrafficChannelManagerTest
         assertEquals(1, startSubscriber.events.size());
         assertEquals(2, attributionSubscriber.events.size());
         assertTrue(attributionSubscriber.events.get(0).sourceBecameKnown());
-        assertEquals(101, attributionSubscriber.events.get(0).identifiers().getFromIdentifier().getValue());
+        assertEquals(101, attributionSubscriber.events.get(0).sourceRadioId());
         assertTrue(attributionSubscriber.events.get(1).encryptionBecameKnown());
     }
 
     @Test
-    void publishesOnlyExplicitTalkerAliasWithKnownSource()
+    void talkerAliasKeepsTheSystemCapturedWhenItsCallStarted()
     {
         Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(0);
         parent.setDecodeConfiguration(config);
         DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        manager.updateNativeRadioSystemKey("dmr:tier3:small:42");
+        DMRTier3Channel channel = channel(12, 1, 451_012_500L);
+        MutableIdentifierCollection identifiers = identifiers(101, 91);
+        manager.processChannelGrant(channel, identifiers,
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+        manager.updateNativeRadioSystemKey("dmr:tier3:small:43");
         TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
         MyEventBus.getGlobalEventBus().register(subscriber);
 
         try
         {
-            MutableIdentifierCollection identifiers = identifiers(101, 91);
-            manager.processTalkerAlias(DmrTalkerAliasIdentifier.create("ENGINE 4"),
+            manager.processTalkerAlias(channel, DmrTalkerAliasIdentifier.create("ENGINE 4"),
                 DMRRadio.createFrom(101), identifiers, 2_000L);
         }
         finally
@@ -721,8 +871,10 @@ class DMRTrafficChannelManagerTest
         }
 
         assertEquals(1, subscriber.events.size());
-        assertEquals("ENGINE 4", subscriber.events.getFirst().alias().getValue());
+        assertEquals("ENGINE 4", subscriber.events.getFirst().talkerAlias());
         assertEquals(101, subscriber.events.getFirst().radio().getValue());
+        assertEquals(1_000L, subscriber.events.getFirst().callStartEpochMilliseconds());
+        assertEquals("dmr:tier3:small:42", subscriber.events.getFirst().radioSystemKey());
     }
 
     @Test
@@ -925,6 +1077,71 @@ class DMRTrafficChannelManagerTest
         public void receive(ChannelStartProcessingRequest request)
         {
             requests.add(request);
+        }
+    }
+
+    private static class PostRequestSubscriber
+    {
+        private final List<PostChannelModuleEventRequest> requests = new CopyOnWriteArrayList<>();
+        private final InterleavedAudioModule mRacingCall;
+        private final InterleavedAudioModule mOlderCall;
+
+        private PostRequestSubscriber(InterleavedAudioModule racingCall, InterleavedAudioModule olderCall)
+        {
+            mRacingCall = racingCall;
+            mOlderCall = olderCall;
+        }
+
+        @Subscribe
+        public void receive(PostChannelModuleEventRequest request)
+        {
+            requests.add(request);
+            RadioSystemKeyEvent event = (RadioSystemKeyEvent)request.getEvent();
+            //This is the production race: traffic audio starts after the manager froze the activation, but before the
+            //processing-chain event reaches the audio module.
+            mRacingCall.beginAt(event.callStartEpochMilliseconds() + 1L);
+            mRacingCall.radioSystemKeyChanged(event);
+            mOlderCall.radioSystemKeyChanged(event);
+        }
+    }
+
+    private static class InterleavedAudioModule extends AbstractAudioModule
+    {
+        private final List<AudioCallEvent> mEvents = new CopyOnWriteArrayList<>();
+
+        private InterleavedAudioModule(DecoderType decoderType, TrunkedIdentityDomain identityDomain,
+                                       String configurationId, int timeslot, String radioSystemKey)
+        {
+            super(AliasList.empty("Test"), timeslot, 60_000L,
+                new CallLegSource(decoderType, configurationId, "Traffic", null, 0L, null, identityDomain,
+                    ChannelConfigurationPolicy.ChannelKind.TRUNKED, true, radioSystemKey));
+            setAudioCallEventListener(mEvents::add);
+        }
+
+        private void beginAt(long timestamp)
+        {
+            beginCurrentAudioSegment(timestamp);
+        }
+
+        private void closeAt(long timestamp)
+        {
+            closeAudioSegment(timestamp);
+        }
+
+        private String lastCompletedSystemKey()
+        {
+            return mEvents.stream().filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+                .toList().getLast().snapshot().callLegSource().radioSystemKey();
+        }
+
+        @Override
+        public void reset()
+        {
+        }
+
+        @Override
+        public void start()
+        {
         }
     }
 

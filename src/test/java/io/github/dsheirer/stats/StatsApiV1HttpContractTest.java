@@ -158,6 +158,20 @@ class StatsApiV1HttpContractTest
         assertTrue(dashboard.has("source_activity_24h"), dashboardResponse.body());
         assertFalse(dashboard.has("source_activity24h"), dashboardResponse.body());
 
+        HttpResponse<String> activityResponse = get(StatsApiV1.ACTIVITY + "?limit=1");
+        assertEquals(200, activityResponse.statusCode(), activityResponse.body());
+        JsonNode activity = OBJECT_MAPPER.readTree(activityResponse.body()).at("/data/0");
+        assertTrue(activity.path("source_identity_key").isTextual(), activityResponse.body());
+        assertTrue(activity.path("target_identity_key").isTextual(), activityResponse.body());
+        assertEquals("radio", activity.at("/source_entity_ref/kind").textValue(),
+            activityResponse.body());
+        assertEquals("talkgroup", activity.at("/target_entity_ref/kind").textValue(),
+            activityResponse.body());
+        assertEquals("talkgroup", activity.path("target_kind").textValue(), activityResponse.body());
+        assertFalse(activity.has("source_identity_kind_code"), activityResponse.body());
+        assertFalse(activity.has("target_identity_kind_code"), activityResponse.body());
+        assertFalse(activity.has("target_kind_code"), activityResponse.body());
+
         HttpResponse<String> actionsResponse = get(StatsApiV1.ACTIVITY_ACTIONS + "?range=24h");
         assertEquals(200, actionsResponse.statusCode(), actionsResponse.body());
         JsonNode actions = OBJECT_MAPPER.readTree(actionsResponse.body());
@@ -307,7 +321,7 @@ class StatsApiV1HttpContractTest
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
 
         HttpResponse<String> missingCursor = get(StatsApiV1.ACTIVITY +
-            "?before_id=999&group_identity_key=v1-p-bee00-49f-1&radio_identity_key=v1-r-bee00-49f-2" +
+            "?before_id=999&group_identity_key=v1-g-bee00-49f-56735&radio_identity_key=v1-r-bee00-49f-2" +
             "&radio_system_key=p25%3Abee00%3A49f&hide_grants=true&limit=1");
         assertEquals(200, missingCursor.statusCode(), missingCursor.body());
         JsonNode emptyPage = OBJECT_MAPPER.readTree(missingCursor.body());
@@ -663,6 +677,20 @@ class StatsApiV1HttpContractTest
                     radio_system_assigned_at_ms
                 ) VALUES (1, '00000000-0000-0000-0000-000000000071', 1000, 2000, 1, 1000),
                          (2, '4b75217f-2555-4c38-aafc-5d17bc0faf71', 1000, 2000, 2, 1000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (21, 2, 1, 0xBEE00, 0x49F, 56735, 1000, 2000),
+                         (22, 2, 2, 0xBEE00, 0x49F, 2, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id
+                ) VALUES (2, 2, 2000, 12, 2, 56735, 1, 22, 2, 21)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (

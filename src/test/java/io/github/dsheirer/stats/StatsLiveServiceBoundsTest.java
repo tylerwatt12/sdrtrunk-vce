@@ -12,6 +12,8 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -236,6 +238,47 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
+    void retainedLiveRowCannotRebindToAnotherRadioSystemUntilItsNextActivation()
+    {
+        String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+        AtomicReference<WebEntityNavigationCatalog.Snapshot> loaded = new AtomicReference<>(
+            navigationSnapshot(configurationId, "p25:bee00:49f", 0x49F));
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(loaded::get, 60_000L);
+        catalog.refreshNow();
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
+            "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
+            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
+
+        try
+        {
+            source.publish(activity("site", List.of(activityRow("call", configurationId,
+                List.of("VOICE"), navigation, 1L))));
+            Map<String,Object> onSystemA = rows(tables(service).getFirst()).getFirst();
+            assertEquals("p25:bee00:49f", map(onSystemA, "source_entity_ref").get("radio_system_key"));
+
+            loaded.set(navigationSnapshot(configurationId, "p25:bee00:4a0", 0x4A0));
+            catalog.refreshNow();
+            Map<String,Object> retainedAfterRebind = rows(tables(service).getFirst()).getFirst();
+            assertFalse(retainedAfterRebind.containsKey("source_entity_ref"));
+            assertFalse(retainedAfterRebind.containsKey("target_entity_ref"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId),
+                retainedAfterRebind.get("entity_ref"));
+
+            source.publish(activity("site", List.of(activityRow("call", configurationId,
+                List.of("VOICE"), navigation, 2L))));
+            Map<String,Object> nextActivation = rows(tables(service).getFirst()).getFirst();
+            assertEquals("p25:bee00:4a0", map(nextActivation, "source_entity_ref").get("radio_system_key"));
+            assertEquals("p25:bee00:4a0", map(nextActivation, "target_entity_ref").get("radio_system_key"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void rebuiltCatalogInvalidatesTheEncodedLiveSnapshot() throws Exception
     {
         String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
@@ -367,6 +410,112 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
+    void stoppedProjectionGenerationCannotPublishOrOverwriteStateAfterRestart() throws Exception
+    {
+        CountDownLatch oldProjectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseOldProjection = new CountDownLatch(1);
+        AtomicReference<Thread> oldProjectionThread = new AtomicReference<>();
+        List<String> blockingTags = new AbstractList<>()
+        {
+            @Override
+            public String get(int index)
+            {
+                oldProjectionThread.set(Thread.currentThread());
+                oldProjectionEntered.countDown();
+                boolean interrupted = false;
+
+                while(true)
+                {
+                    try
+                    {
+                        releaseOldProjection.await();
+                        break;
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        //Deliberately hold the retired worker beyond stop's bounded join. Production projections do
+                        //not normally ignore interruption, but the lifecycle must remain safe if optional work does.
+                        interrupted = true;
+                    }
+                }
+
+                if(interrupted)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return "VOICE";
+            }
+
+            @Override
+            public int size()
+            {
+                return 1;
+            }
+        };
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        StatsLiveEventHub.Subscription oldSubscription = null;
+
+        try
+        {
+            service.start();
+            assertEquals(1, source.listenerCount());
+            var oldListener = source.listeners().getFirst();
+            oldSubscription = service.subscribeChannelActivity();
+            assertNotNull(oldSubscription);
+
+            ChannelActivitySnapshot blocked = new ChannelActivitySnapshot("old-generation", "Old", "System",
+                "Site", "Control", null, true, true, List.of(),
+                List.of(activityRow("old-row", null, blockingTags, null)));
+            service.receiveChannelActivity(
+                new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, blocked, 1));
+            assertTrue(oldProjectionEntered.await(1, TimeUnit.SECONDS));
+
+            service.stop();
+            assertTrue(oldProjectionThread.get().isAlive(),
+                "the test must exercise a worker that outlives stop's bounded join");
+            assertTrue(oldSubscription.isClosed());
+            assertEquals(0, source.listenerCount());
+
+            service.start();
+            assertEquals(1, source.listenerCount());
+            try(StatsLiveEventHub.Subscription currentSubscription = service.subscribeChannelActivity())
+            {
+                assertNotNull(currentSubscription);
+                source.publish(activity("current-generation", List.of(activityRow("current-row"))));
+                StatsLiveEventHub.LiveEvent current = currentSubscription.poll(1, TimeUnit.SECONDS);
+                assertNotNull(current);
+                assertEquals("current-generation", tableId(current));
+                byte[] encodedCurrent = service.encodedSnapshot();
+
+                oldListener.receive(activity("stale-callback", List.of(activityRow("stale-row"))));
+                assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
+                    "a callback retained from the stopped registration must not enter the new generation");
+
+                releaseOldProjection.countDown();
+                waitUntil(() -> !oldProjectionThread.get().isAlive());
+                assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
+                    "the retired projection must not publish into the restarted event hub");
+                assertSame(encodedCurrent, service.encodedSnapshot(),
+                    "retired work must not invalidate or replace the current encoded snapshot");
+            }
+
+            service.stop();
+            assertEquals(0, source.listenerCount());
+        }
+        finally
+        {
+            releaseOldProjection.countDown();
+            if(oldSubscription != null)
+            {
+                oldSubscription.close();
+            }
+            service.close();
+        }
+    }
+
+    @Test
     void enforcesOneGlobalRowAndEncodedByteBudgetAndReusesTheEncodedSnapshot() throws Exception
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
@@ -424,9 +573,49 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
                                                             ChannelActivitySnapshot.Navigation navigation)
     {
-        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, 1L, "1",
+        return activityRow(key, configurationId, tags, navigation, 1L);
+    }
+
+    private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
+                                                            ChannelActivitySnapshot.Navigation navigation,
+                                                            long activationOrder)
+    {
+        return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, activationOrder, "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
             null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL");
+    }
+
+    private static WebEntityNavigationCatalog.Snapshot navigationSnapshot(String configurationId,
+                                                                           String radioSystemKey,
+                                                                           int p25SystemId)
+    {
+        return WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+            configurationId, WebEntityRef.channel(configurationId), WebEntityRef.radioSystem(radioSystemKey),
+            1, 0, 0xBEE00, p25SystemId)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> map(Map<String,Object> value, String key)
+    {
+        return (Map<String,Object>)value.get(key);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String tableId(StatsLiveEventHub.LiveEvent event)
+    {
+        return String.valueOf(((Map<String,Object>)event.data()).get("table_id"));
+    }
+
+    private static void waitUntil(java.util.function.BooleanSupplier condition) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5L);
+        }
+
+        assertTrue(condition.getAsBoolean());
     }
 
     @SuppressWarnings("unchecked")

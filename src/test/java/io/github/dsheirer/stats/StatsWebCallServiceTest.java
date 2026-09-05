@@ -41,6 +41,7 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
@@ -643,6 +644,29 @@ class StatsWebCallServiceTest
     }
 
     @Test
+    void omitsScopedNavigationWhenTheCatalogHasADifferentCurrentSystem() throws Exception
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000737";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:4a8"), 1, 0, 0xBEE00, 0x4A8))));
+        catalog.refreshNow();
+
+        try(StatsWebCallService service = started(new StatsWebCallService(null, catalog));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call());
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("p25:bee00:4a7", metadata.get("radio_system_key"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId), metadata.get("entity_ref"));
+            assertFalse(metadata.containsKey("radio_system_entity_ref"));
+            assertFalse(metadata.containsKey("source_entity_ref"));
+            assertFalse(metadata.containsKey("target_entity_ref"));
+        }
+    }
+
+    @Test
     void fullyQualifiedPrivateRadioUsesItsCanonicalHomeIdentityForNavigation() throws Exception
     {
         String configurationId = "00000000-0000-0000-0000-000000000737";
@@ -694,6 +718,50 @@ class StatsWebCallServiceTest
             Map<String,Object> metadata = client.awaitCall();
             assertEquals(authoritativeId, metadata.get("configuration_id"));
             assertEquals(Map.of("kind", "channel", "key", authoritativeId), metadata.get("entity_ref"));
+        }
+    }
+
+    @Test
+    void callLegSourceOwnsProtocolAndDecoderWhenTargetMetadataDisagrees() throws Exception
+    {
+        CompletedAudioCall p25WithDmrTarget = call(new DMRTalkgroup(4400));
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(p25WithDmrTarget);
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("APCO25", metadata.get("protocol"));
+            assertEquals("P25_PHASE1", metadata.get("decoder"));
+        }
+
+        CompletedAudioCall template = call(APCO25Talkgroup.create(4400));
+        CallLegSource dmrSource = new CallLegSource(DecoderType.DMR,
+            "00000000-0000-0000-0000-000000000737", "DMR conventional", null, 0, null,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false);
+        CompletedAudioCall conventionalDmr = withSource(template, dmrSource);
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(conventionalDmr);
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("DMR", metadata.get("protocol"));
+            assertEquals("DMR", metadata.get("decoder"));
+        }
+
+        CompletedAudioCall analogTemplate = conventionalCall("Source only");
+        IdentifierCollection withoutTarget = new IdentifierCollection(
+            analogTemplate.snapshot().identifierCollection().getIdentifiers().stream()
+                .filter(identifier -> identifier != analogTemplate.snapshot().identifierCollection().getToIdentifier())
+                .toList());
+        CompletedAudioCall sourceOnlyAnalog = withIdentifiers(analogTemplate, withoutTarget, null);
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(sourceOnlyAnalog);
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("NBFM", metadata.get("protocol"));
+            assertEquals("NBFM", metadata.get("decoder"));
         }
     }
 
@@ -925,6 +993,20 @@ class StatsWebCallServiceTest
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
             snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(), recordingMetadata,
             snapshot.voiceCallQuality(), snapshot.callLegId(), snapshot.callLegSource(),
+            snapshot.callEncryptionEvidence());
+        return new CompletedAudioCall(template.logicalCallId(), replaced, template.audioBuffers(),
+            template.resolvedPolicy(), template.callLegSummaries());
+    }
+
+    private static CompletedAudioCall withSource(CompletedAudioCall template, CallLegSource source)
+    {
+        AudioCallSnapshot snapshot = template.snapshot();
+        AudioCallSnapshot replaced = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
+            snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
+            snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
+            snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
+            snapshot.burstActive(), snapshot.complete(), snapshot.encryptionState(), snapshot.recordAudio(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality(), snapshot.callLegId(), source,
             snapshot.callEncryptionEvidence());
         return new CompletedAudioCall(template.logicalCallId(), replaced, template.audioBuffers(),
             template.resolvedPolicy(), template.callLegSummaries());

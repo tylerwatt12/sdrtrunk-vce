@@ -202,7 +202,8 @@ final class ReceiverActivityRetention
             "channel_id, channel_number, inbound_channel_number, timeslot, frequency_hz"));
         tasks.add(tuple("DMR/NXDN site neighbors", false, "trunked_site_neighbor_summary",
             "idx_trunked_site_neighbor_last_seen", "last_seen_ms",
-            "channel_id, variant_code, location_category_code, network_id, system_id, site_id, channel_number, frequency_hz"));
+            "channel_id, protocol_code, variant_code, dmr_model_code, nxdn_location_category_code, network_id, " +
+                "system_id, site_id, channel_number, frequency_hz"));
         tasks.add(sql("DMR/NXDN site snapshots", false, """
             DELETE FROM trunked_site_snapshot
             WHERE channel_id IN (

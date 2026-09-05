@@ -11,11 +11,20 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -26,6 +35,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Focused contract tests for the current saved-channel and radio-system identity model.
@@ -41,6 +51,9 @@ class RadioSystemIdentityModelTest
     private static final String NXDN_A = "77777777-7777-4777-8777-777777777777";
     private static final String NXDN_B = "88888888-8888-4888-8888-888888888888";
     private static final String CONVENTIONAL = "99999999-9999-4999-8999-999999999999";
+
+    @TempDir
+    Path mTemporaryFolder;
 
     @Test
     void nativeP25IdentityIsSharedButTheSameTalkgroupOnAnotherSystemIsNot() throws Exception
@@ -79,7 +92,67 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
-    void dmrAndNxdnRemainScopedToEachSavedChannel() throws Exception
+    void interruptedP25BindingSaveRestoresOnlyThatChannelsVerifiedSiteBeforeAnotherSnapshot() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("interrupted-p25-binding.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationRepository repository = new ConfigurationRepository(database);
+        Channel first = p25Channel("First P25 site", 851_012_500L);
+        Channel second = p25Channel("Other P25 site", 852_012_500L);
+        repository.replaceChannelAndBroadcastConfiguration(List.of(first, second), List.of());
+
+        P25SiteIdentity verified = new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1);
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            ReceiverActivitySchema.insertSite(connection,
+                p25Site(first.getConfigurationId(), 100, verified.wacn(), verified.system(), verified.rfss(),
+                    verified.site()));
+            ReceiverActivitySchema.validate(connection);
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE configuration_id='%s'
+                  AND coalesce(json_type(config_json, '$.p25SiteIdentity'), 'null')='null'
+                """.formatted(first.getConfigurationId())));
+        }
+
+        List<Channel> restored = repository.load().channels();
+        Channel restoredFirst = restored.stream()
+            .filter(channel -> first.getConfigurationId().equals(channel.getConfigurationId()))
+            .findFirst().orElseThrow();
+        Channel restoredSecond = restored.stream()
+            .filter(channel -> second.getConfigurationId().equals(channel.getConfigurationId()))
+            .findFirst().orElseThrow();
+        assertEquals(verified, restoredFirst.getP25SiteIdentity());
+        assertNull(restoredSecond.getP25SiteIdentity(),
+            "a current site may only hydrate the saved channel with the same configuration UUID");
+        assertFalse(restoredFirst.bindP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x3AA, 2, 3)),
+            "the restored first verified site remains sticky after restart");
+
+        //The next ordinary accepted save persists the restored value. Full runtime/startup validation succeeds
+        //immediately, without waiting for another decoder snapshot to repair contradictory state.
+        repository.replaceChannelAndBroadcastConfiguration(restored, List.of());
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            assertEquals(verified.wacn(), scalar(connection, """
+                SELECT json_extract(config_json, '$.p25SiteIdentity.wacn')
+                FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(first.getConfigurationId())));
+            assertEquals(verified.system(), scalar(connection, """
+                SELECT json_extract(config_json, '$.p25SiteIdentity.system')
+                FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(first.getConfigurationId())));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE configuration_id='%s'
+                  AND coalesce(json_type(config_json, '$.p25SiteIdentity'), 'null')='null'
+                """.formatted(second.getConfigurationId())));
+            ReceiverActivitySchema.validate(connection);
+        }
+        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+    }
+
+    @Test
+    void nativeDmrTierThreeAndNxdnTypeCSystemsConvergeAcrossSavedChannels() throws Exception
     {
         try(Connection connection = open())
         {
@@ -88,21 +161,379 @@ class RadioSystemIdentityModelTest
             insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
             insertChannel(connection, NXDN_B, "TRUNKED", "NXDN", 2, "NXDN B", correlation(7));
 
-            //Until native grouping rules are defined, DMR and NXDN intentionally remain saved-channel scoped.
+            //Calls received before native system metadata is available are deliberately isolated by saved channel.
             record(connection, trunked(DMR_A, "DMR", null, null, 91, 1_000));
             record(connection, trunked(DMR_B, "DMR", null, null, 91, 2_000));
             record(connection, trunked(NXDN_A, "NXDN", null, null, 91, 3_000,
                 TrunkedIdentityDomain.NXDN_TYPE_C));
             record(connection, trunked(NXDN_B, "NXDN", null, null, 91, 4_000,
                 TrunkedIdentityDomain.NXDN_TYPE_C));
-
-            Set<Long> systems = Set.of(radioSystemId(connection, DMR_A), radioSystemId(connection, DMR_B),
-                radioSystemId(connection, NXDN_A), radioSystemId(connection, NXDN_B));
-            assertEquals(4, systems.size());
             assertEquals("dmr:channel:" + DMR_A, systemKey(connection, radioSystemId(connection, DMR_A)));
-            assertEquals("dmr:channel:" + DMR_B, systemKey(connection, radioSystemId(connection, DMR_B)));
             assertEquals("nxdn-c:channel:" + NXDN_A, systemKey(connection, radioSystemId(connection, NXDN_A)));
-            assertEquals("nxdn-c:channel:" + NXDN_B, systemKey(connection, radioSystemId(connection, NXDN_B)));
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 5_000, 1, 2, 42));
+            recordTrunkedSite(connection, dmrSite(DMR_B, 6_000, 1, 2, 42));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 7_000, 1, 3, 303));
+            recordTrunkedSite(connection, nxdnSite(NXDN_B, 8_000, 1, 3, 303));
+
+            long dmrSystem = radioSystemId(connection, DMR_A);
+            long nxdnSystem = radioSystemId(connection, NXDN_A);
+            assertEquals(dmrSystem, radioSystemId(connection, DMR_B));
+            assertEquals(nxdnSystem, radioSystemId(connection, NXDN_B));
+            assertEquals("dmr:tier3:small:42", systemKey(connection, dmrSystem));
+            assertEquals("nxdn-c:local:303", systemKey(connection, nxdnSystem));
+            assertEquals(6, scalar(connection, "SELECT COUNT(*) FROM radio_system"));
+            assertEquals(4, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system WHERE configuration_id IS NOT NULL
+                """));
+            assertEquals(8, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary"),
+                "pre-identity fallback summaries remain historical and are never guessed into a native system");
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 8_100, 1, null, null));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 8_200, 1, 0, null));
+            assertEquals(dmrSystem, radioSystemId(connection, DMR_A));
+            assertEquals(nxdnSystem, radioSystemId(connection, NXDN_A));
+            assertEquals("dmr:tier3:small:42", systemKey(connection, dmrSystem));
+            assertEquals("nxdn-c:local:303", systemKey(connection, nxdnSystem));
+            assertEquals(42, scalar(connection, """
+                SELECT observed_network_id FROM trunked_site_snapshot
+                WHERE channel_id=(SELECT id FROM receiver_channel WHERE configuration_id='%s')
+                """.formatted(DMR_A)));
+            assertEquals(303, scalar(connection, """
+                SELECT observed_system_id FROM trunked_site_snapshot
+                WHERE channel_id=(SELECT id FROM receiver_channel WHERE configuration_id='%s')
+                """.formatted(NXDN_A)));
+
+            record(connection, trunked(DMR_A, "DMR", null, null, 91, 9_000));
+            record(connection, trunked(DMR_B, "DMR", null, null, 91, 10_000));
+            record(connection, trunked(NXDN_A, "NXDN", null, null, 91, 11_000,
+                TrunkedIdentityDomain.NXDN_TYPE_C));
+            record(connection, trunked(NXDN_B, "NXDN", null, null, 91, 12_000,
+                TrunkedIdentityDomain.NXDN_TYPE_C));
+            assertEquals(12, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary"),
+                "native calls converge while retained channel-scoped history remains separate");
+            assertEquals(16, scalar(connection,
+                "SELECT SUM(grant_count) FROM radio_system_identity_summary"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void incompleteSupportedNativeEvidenceStaysChannelScopedUntilTheTupleIsComplete() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, DMR_A, "TRUNKED", "DMR", 1, "DMR A", correlation(4));
+            insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 100, 1, 2, null));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 100, 1, 3, null));
+
+            assertEquals("dmr:channel:" + DMR_A, systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals("nxdn-c:channel:" + NXDN_A, systemKey(connection, radioSystemId(connection, NXDN_A)));
+            ReceiverActivitySchema.validate(connection);
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, 2, 42));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 200, 1, 3, 303));
+            assertEquals("dmr:tier3:small:42", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals("nxdn-c:local:303", systemKey(connection, radioSystemId(connection, NXDN_A)));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void newNativeSiteGenerationWaitsForCompleteIdentityWithoutReusingTheOldSystem() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, DMR_A, "TRUNKED", "DMR", 1, "DMR A", correlation(4));
+            insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
+            recordTrunkedSite(connection, dmrSite(DMR_A, 100, 1, 2, 42, 1));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 100, 1, 3, 303, 1));
+            assertEquals("dmr:tier3:small:42", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals("nxdn-c:local:303", systemKey(connection, radioSystemId(connection, NXDN_A)));
+
+            //A positively different site with only a partial native tuple is a new, unresolved generation.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, null, null, 2));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 200, 1, 3, null, 2));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM receiver_channel
+                WHERE configuration_id IN ('%s', '%s') AND radio_system_id IS NOT NULL
+                """.formatted(DMR_A, NXDN_A)));
+            assertEquals(2, scalar(connection, """
+                SELECT COUNT(*) FROM receiver_channel
+                WHERE configuration_id IN ('%s', '%s') AND radio_system_assigned_at_ms=200
+                """.formatted(DMR_A, NXDN_A)));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
+
+            //A second partial observation must not reattach a synthetic fallback while this generation is unresolved.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 250, 1, null, null, 2));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 250, 1, 3, null, 2));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM receiver_channel
+                WHERE configuration_id IN ('%s', '%s') AND radio_system_id IS NOT NULL
+                """.formatted(DMR_A, NXDN_A)));
+            assertEquals(2, scalar(connection, """
+                SELECT COUNT(*) FROM receiver_channel
+                WHERE configuration_id IN ('%s', '%s') AND radio_system_assigned_at_ms=250
+                """.formatted(DMR_A, NXDN_A)));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE configuration_id IS NOT NULL"));
+
+            //Generic signaling cannot recreate a fallback while a supported native generation is unresolved.
+            record(connection, trunked(DMR_A, "DMR", null, null, 90, 260));
+            record(connection, trunked(NXDN_A, "NXDN", null, null, 90, 260,
+                TrunkedIdentityDomain.NXDN_TYPE_C));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM receiver_channel
+                WHERE configuration_id IN ('%s', '%s') AND radio_system_id IS NOT NULL
+                """.formatted(DMR_A, NXDN_A)));
+
+            ReceiverActivityRecords.ActivityEvent queuedBeforePromotion =
+                trunked(DMR_A, "DMR", null, null, 92, 275);
+
+            //Delayed complete observations from the old generation cannot repopulate current site state.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 225, 1, 2, 42, 1));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 225, 1, 3, 303, 1));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 300, 1, 2, 43, 2));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 300, 1, 3, 304, 2));
+            assertEquals("dmr:tier3:small:43", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals("nxdn-c:local:304", systemKey(connection, radioSystemId(connection, NXDN_A)));
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
+
+            //A null-key signal captured before promotion cannot borrow the later native assignment.
+            record(connection, queuedBeforePromotion);
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=1 AND identity_id=92
+                """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void completedCallsAndOutputsKeepTheirCapturedEventTimeSystem() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, DMR_A, "TRUNKED", "DMR", 1, "DMR A", correlation(4));
+            insertChannel(connection, DMR_B, "TRUNKED", "DMR", 2, "DMR B", correlation(5));
+
+            //The site becomes known after this call started but before its completion reaches SQLite.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, 2, 42));
+            ReceiverActivityRecords.ResolvedLogicalCall early = dmrCall(DMR_A, 1, 100,
+                "dmr:channel:" + DMR_A);
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, early));
+            assertEquals("dmr:tier3:small:42", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals(1, scalar(connection, """
+                SELECT logical_call_count
+                FROM trunked_logical_call_bucket bucket
+                JOIN radio_system system ON system.id=bucket.radio_system_id
+                WHERE system.system_key='dmr:channel:%s'
+                """.formatted(DMR_A)));
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
+                new ReceiverActivityRecords.LogicalCallOutput(early, ReceiverActivityRecords.CallOutput.RECORDED)));
+            assertEquals(1, scalar(connection, """
+                SELECT recorded_output_count
+                FROM trunked_logical_call_bucket bucket
+                JOIN radio_system system ON system.id=bucket.radio_system_id
+                WHERE system.system_key='dmr:channel:%s'
+                """.formatted(DMR_A)));
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection,
+                attribution(DMR_A, 100, 1002, "dmr:channel:" + DMR_A)));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*)
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='dmr:channel:%s'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1002
+                """.formatted(DMR_A)));
+
+            //A second saved channel can resolve a captured native key even when no site snapshot reached SQLite.
+            ReceiverActivityRecords.ResolvedLogicalCall nativeKnown = dmrCall(DMR_B, 2, 250,
+                "dmr:tier3:small:42");
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, nativeKnown));
+            assertEquals(radioSystemId(connection, DMR_A), radioSystemId(connection, DMR_B));
+
+            //A delayed call from the prior native system remains historical after the receiver changes systems.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 400, 1, 2, 43));
+            ReceiverActivityRecords.ResolvedLogicalCall delayed = dmrCall(DMR_A, 3, 300,
+                "dmr:tier3:small:42");
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, delayed));
+            assertEquals("dmr:tier3:small:43", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection,
+                attribution(DMR_A, 300, 1003, "dmr:tier3:small:42")));
+            assertEquals("dmr:tier3:small:43", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*)
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='dmr:tier3:small:42'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1003
+                """));
+            assertTrue(ReceiverActivitySchema.applyLogicalCallOutput(connection,
+                new ReceiverActivityRecords.LogicalCallOutput(delayed, ReceiverActivityRecords.CallOutput.STREAMED)));
+            assertEquals(1, scalar(connection, """
+                SELECT streamed_output_count
+                FROM trunked_logical_call_bucket bucket
+                JOIN radio_system system ON system.id=bucket.radio_system_id
+                WHERE system.system_key='dmr:tier3:small:42'
+                """));
+
+            ReceiverActivityRecords.TalkerAliasUpdate delayedAlias =
+                new ReceiverActivityRecords.TalkerAliasUpdate(500, 300, DMR_A, "DMR", null, null, 1003,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, "OLD SYSTEM UNIT",
+                    TrunkedIdentityDomain.STANDARD, "dmr:tier3:small:42");
+            ReceiverActivitySchema.updateTalkerAlias(connection, delayedAlias);
+            assertEquals("OLD SYSTEM UNIT", text(connection, """
+                SELECT identity.last_talker_alias
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='dmr:tier3:small:42'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1003
+                """));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*)
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='dmr:tier3:small:43'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1003
+                """), "a delayed talker alias must not move to the receiver's newer system");
+            assertEquals(500, scalar(connection, """
+                SELECT identity.last_talker_alias_seen_ms
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='dmr:tier3:small:42'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1003
+                """));
+
+            //NXDN uses the same split: completion time updates alias freshness, while call start protects the newer
+            //receiver assignment from a late alias owned by the previous system.
+            insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 1_000, 1, 3, 303));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 1_300, 1, 3, 304));
+            ReceiverActivitySchema.updateTalkerAlias(connection,
+                new ReceiverActivityRecords.TalkerAliasUpdate(1_400, 1_200, NXDN_A, "NXDN", null, null, 2003,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, "NXDN OLD SYSTEM UNIT",
+                    TrunkedIdentityDomain.NXDN_TYPE_C, "nxdn-c:local:303"));
+            assertEquals("nxdn-c:local:304", systemKey(connection, radioSystemId(connection, NXDN_A)));
+            assertEquals("NXDN OLD SYSTEM UNIT", text(connection, """
+                SELECT identity.last_talker_alias
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='nxdn-c:local:303'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=2003
+                """));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*)
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='nxdn-c:local:304'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=2003
+                """));
+
+            //A delayed P25 completion uses its frozen key after the receiver changes systems. The key is enough to
+            //recover the original WACN/System tuple without borrowing the receiver's newer assignment.
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            record(connection, trunked(P25_A, "APCO25", 0xBEE00, 0x3A9, 91, 500));
+            record(connection, trunked(P25_A, "APCO25", 0xBEE00, 0x3AA, 91, 800));
+            assertEquals("p25:bee00:3aa", systemKey(connection, radioSystemId(connection, P25_A)));
+            ReceiverActivityRecords.ResolvedLogicalCall p25Delayed = p25Call(P25_A, 4, 600,
+                null, null, "p25:bee00:3a9");
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, p25Delayed));
+            assertEquals("p25:bee00:3aa", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(1, scalar(connection, """
+                SELECT identity.logical_call_count
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='p25:bee00:3a9'
+                  AND identity.identity_kind_code=1 AND identity.identity_id=91
+                """));
+            ReceiverActivitySchema.updateTalkerAlias(connection,
+                new ReceiverActivityRecords.TalkerAliasUpdate(900, 600, P25_A, "APCO25", 0xBEE00, 0x3A9,
+                    1004, ReceiverActivityRecords.P25Identity.ORDINARY, "P25 OLD SYSTEM UNIT",
+                    TrunkedIdentityDomain.STANDARD, "p25:bee00:3a9"));
+            assertEquals("p25:bee00:3aa", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals("P25 OLD SYSTEM UNIT", text(connection, """
+                SELECT identity.last_talker_alias
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='p25:bee00:3a9'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1004
+                """));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*)
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='p25:bee00:3aa'
+                  AND identity.identity_kind_code=2 AND identity.identity_id=1004
+                """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void equalTimestampCannotReplaceFallbackOrNativeSystemIdentity() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, DMR_A, "TRUNKED", "DMR", 1, "DMR A", correlation(4));
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 100, 5, null, null, 1));
+            long fallback = radioSystemId(connection, DMR_A);
+            assertEquals("dmr:channel:" + DMR_A, systemKey(connection, fallback));
+
+            //Fallback -> native at the same instant is contradictory, not an enrichment.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 100, 1, 2, 42, 1));
+            assertEquals(fallback, radioSystemId(connection, DMR_A));
+            assertEquals(5, scalar(connection, "SELECT variant_code FROM trunked_site_snapshot"));
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, 2, 42, 1));
+            long nativeSystem = radioSystemId(connection, DMR_A);
+            assertEquals("dmr:tier3:small:42", systemKey(connection, nativeSystem));
+
+            //Native -> different native and native -> fallback are likewise rejected at the same instant.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, 2, 43, 1));
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 5, null, null, 1));
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, null, null, 1));
+            recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, 2, 42, 2));
+            assertEquals(nativeSystem, radioSystemId(connection, DMR_A));
+            assertEquals(42, scalar(connection, "SELECT observed_network_id FROM trunked_site_snapshot"));
+            assertEquals(2, scalar(connection, "SELECT observed_model_code FROM trunked_site_snapshot"));
+            assertEquals(1, scalar(connection, "SELECT observed_site_id FROM trunked_site_snapshot"));
+            assertEquals(1, scalar(connection, "SELECT variant_code FROM trunked_site_snapshot"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void unprovenDmrVariantsAndNxdnTypeDStayChannelScopedWhileNativeDimensionsRemainDistinct()
+        throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, DMR_A, "TRUNKED", "DMR", 1, "DMR A", correlation(4));
+            insertChannel(connection, DMR_B, "TRUNKED", "DMR", 2, "DMR B", correlation(5));
+            insertChannel(connection, NXDN_A, "TRUNKED", "NXDN", 1, "NXDN A", correlation(6));
+            insertChannel(connection, NXDN_B, "TRUNKED", "NXDN", 2, "NXDN B", correlation(7));
+
+            recordTrunkedSite(connection, dmrSite(DMR_A, 1_000, 1, 2, 5));
+            recordTrunkedSite(connection, dmrSite(DMR_B, 2_000, 1, 3, 5));
+            recordTrunkedSite(connection, nxdnSite(NXDN_A, 3_000, 1, 1, 303));
+            execute(connection, "UPDATE configuration_channel SET address_domain_code=2 " +
+                "WHERE configuration_id='" + NXDN_B + "'");
+            recordTrunkedSite(connection, nxdnSite(NXDN_B, 4_000, 2, 4, 303));
+
+            assertEquals("dmr:tier3:small:5", systemKey(connection, radioSystemId(connection, DMR_A)));
+            assertEquals("dmr:tier3:large:5", systemKey(connection, radioSystemId(connection, DMR_B)));
+            assertEquals("nxdn-c:global:303", systemKey(connection, radioSystemId(connection, NXDN_A)));
+            assertEquals("nxdn-d:channel:" + NXDN_B,
+                systemKey(connection, radioSystemId(connection, NXDN_B)));
+
+            //The supported Capacity Plus/Connect Plus/Capacity Max/Hytera and unknown codes do not infer a system.
+            recordTrunkedSite(connection, dmrSite(DMR_A, 5_000, 5, 2, 5));
+            assertEquals("dmr:channel:" + DMR_A, systemKey(connection, radioSystemId(connection, DMR_A)));
+            ReceiverActivitySchema.validate(connection);
         }
     }
 
@@ -307,7 +738,7 @@ class RadioSystemIdentityModelTest
                 851_012_500L, "0-1", 1, false, null, null, 0xBEE00, 0x3A9, null, null, null, null,
                 false, null, null, TrunkedIdentityDomain.STANDARD,
                 ReceiverActivityRecords.P25Identity.ORDINARY,
-                ReceiverActivityRecords.P25Identity.ORDINARY, List.of()));
+                ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null));
 
             assertEquals(93, scalar(connection,
                 "SELECT talkgroup_observed_local_id FROM trunked_radio_affiliation"));
@@ -561,7 +992,7 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
-    void detachedP25GenerationRejectsAnOlderCompleteSiteSnapshotUntilTheNewIdentityIsComplete()
+    void completeP25SiteBindingRejectsLaterConflictingPartialAndCompleteSnapshots()
         throws Exception
     {
         try(Connection connection = open())
@@ -574,21 +1005,78 @@ class RadioSystemIdentityModelTest
 
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 200, null, 0x3AA, 1, 2));
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 250, null, 0x3AA, 1, 2));
-            assertEquals(0, scalar(connection,
-                "SELECT COUNT(*) FROM receiver_channel WHERE id=" + channelId + " AND radio_system_id IS NOT NULL"));
-            assertEquals(250, scalar(connection,
+            assertEquals("p25:bee00:3a9", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(100, scalar(connection,
                 "SELECT radio_system_assigned_at_ms FROM receiver_channel WHERE id=" + channelId));
 
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 225, 0xBEE00, 0x3A9, 1, 1));
-            assertEquals(0, scalar(connection,
-                "SELECT COUNT(*) FROM p25_site_snapshot WHERE channel_id=" + channelId));
-            assertEquals(0, scalar(connection,
-                "SELECT COUNT(*) FROM receiver_channel WHERE id=" + channelId + " AND radio_system_id IS NOT NULL"));
+            assertEquals(1, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(225, scalar(connection,
+                "SELECT last_seen_ms FROM p25_site_snapshot WHERE channel_id=" + channelId));
 
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 300, 0xBEE00, 0x3AA, 1, 2));
-            assertEquals(2, scalar(connection,
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 400, 0xBEE01, 0x3A9, 1, 1));
+            record(connection, trunked(P25_A, "APCO25", 0xBEE00, 0x3AA, 92, 500));
+            assertEquals(1, scalar(connection,
                 "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(225, scalar(connection,
+                "SELECT last_seen_ms FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals("p25:bee00:3a9", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*)
+                FROM radio_system_identity_summary identity
+                JOIN radio_system system ON system.id=identity.radio_system_id
+                WHERE system.system_key='p25:bee00:3aa'
+                  AND identity.identity_kind_code=1 AND identity.identity_id=92
+                """), "a complete late observation can remain historical without moving the saved channel");
+        }
+    }
+
+    @Test
+    void completeP25IdentityRequiresTheDecodedSourceToBeAnAdvertisedControl() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+
+            ReceiverActivitySchema.insertSite(connection,
+                p25Site(P25_A, 100, 0xBEE00, 0x3A9, 1, 1, 852_012_500L, 851_012_500L));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_channel"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_snapshot"));
+
+            ReceiverActivitySchema.insertSite(connection,
+                p25Site(P25_A, 200, 0xBEE00, 0x3AA, 2, 3, 852_012_500L, 852_012_500L));
             assertEquals("p25:bee00:3aa", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(3, scalar(connection, "SELECT site FROM p25_site_snapshot"));
+        }
+    }
+
+    @Test
+    void partialP25UpdateCannotEraseACompleteBindingOrMakeAnotherSiteTakeIt() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 100, 0xBEE00, 0x3A9, 1, 1));
+            long channelId = channelId(connection, P25_A);
+
+            ReceiverActivitySchema.insertSite(connection,
+                p25Site(P25_A, 200, 0xBEE00, 0x3A9, null, null));
+            assertEquals(1, scalar(connection,
+                "SELECT rfss FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(1, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(200, scalar(connection,
+                "SELECT last_seen_ms FROM p25_site_snapshot WHERE channel_id=" + channelId));
+
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 300, 0xBEE00, 0x3AA, 2, 2));
+            assertEquals("p25:bee00:3a9", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(1, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(200, scalar(connection,
+                "SELECT last_seen_ms FROM p25_site_snapshot WHERE channel_id=" + channelId));
         }
     }
 
@@ -617,7 +1105,101 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
-    void sameSystemSiteChangeClearsAndWatermarksChannelLocalPresence() throws Exception
+    void persistedP25BindingRejectsAContradictoryFirstActivitySnapshot() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            execute(connection, """
+                UPDATE configuration_channel
+                SET config_json='{"p25SiteIdentity":{"wacn":781824,"system":937,"rfss":1,"site":1}}'
+                WHERE configuration_id='%s'
+                """.formatted(P25_A));
+
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 100, 0xBEE00, 0x3AA, 1, 2));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_channel"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_snapshot"));
+
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 200, 0xBEE00, 0x3A9, 1, 1));
+            assertEquals("p25:bee00:3a9", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(1, scalar(connection, "SELECT site FROM p25_site_snapshot"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void changedSavedP25BindingWaitsForItsVerifiedSiteThenReplacesTheLearnedBinding() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 100, 0xBEE00, 0x3A9, 1, 1));
+            long channelId = channelId(connection, P25_A);
+            record(connection, p25Presence(P25_A, 125, 123,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+
+            execute(connection, """
+                UPDATE configuration_channel
+                SET config_json='{"p25SiteIdentity":{"wacn":781824,"system":938,"rfss":1,"site":2}}'
+                WHERE configuration_id='%s'
+                """.formatted(P25_A));
+            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+
+            //A call for the newly configured system may be counted historically, but it cannot move the receiver.
+            record(connection, trunked(P25_A, "APCO25", 0xBEE00, 0x3AA, 92, 150));
+            assertEquals("p25:bee00:3a9", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 200, 0xBEE00, 0x3AA, 1, 2));
+            assertEquals("p25:bee00:3aa", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(2, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            ReceiverActivitySchema.validate(connection);
+
+            execute(connection, """
+                UPDATE configuration_channel SET config_json='{}' WHERE configuration_id='%s'
+                """.formatted(P25_A));
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 300, 0xBEE00, 0x3A9, 1, 1));
+            assertEquals("p25:bee00:3aa", systemKey(connection, radioSystemId(connection, P25_A)));
+            assertEquals(2, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+        }
+    }
+
+    @Test
+    void changedSavedP25SiteWithinTheSameSystemClearsTheOldSiteState() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 100, 0xBEE00, 0x3A9, 1, 1));
+            long channelId = channelId(connection, P25_A);
+            long radioSystemId = radioSystemId(connection, P25_A);
+            record(connection, p25Presence(P25_A, 125, 123,
+                ReceiverActivityRecords.P25Identity.ORDINARY, false));
+
+            execute(connection, """
+                UPDATE configuration_channel
+                SET config_json='{"p25SiteIdentity":{"wacn":781824,"system":937,"rfss":2,"site":3}}'
+                WHERE configuration_id='%s'
+                """.formatted(P25_A));
+            ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 200, 0xBEE00, 0x3A9, 2, 3));
+
+            assertEquals(radioSystemId, radioSystemId(connection, P25_A));
+            assertEquals(2, scalar(connection,
+                "SELECT rfss FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(3, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(200, scalar(connection,
+                "SELECT radio_system_assigned_at_ms FROM receiver_channel WHERE id=" + channelId));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void completeP25SiteBindingRejectsASecondSiteWithoutClearingPresence() throws Exception
     {
         try(Connection connection = open())
         {
@@ -628,12 +1210,15 @@ class RadioSystemIdentityModelTest
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
 
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 200, 0xBEE00, 0x3A9, 1, 2));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(1, scalar(connection,
+                "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId(connection, P25_A)));
 
-            //A queued observation from the old site cannot recreate current state after the new-site watermark.
+            //The rejected snapshot does not advance the generation watermark or disturb the original site's data.
             record(connection, p25Presence(P25_A, 175, 123,
                 ReceiverActivityRecords.P25Identity.ORDINARY, false));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(175, scalar(connection,
+                "SELECT confirmed_at_ms FROM trunked_radio_channel_presence"));
 
             record(connection, p25Presence(P25_A, 250, 123,
                 ReceiverActivityRecords.P25Identity.ORDINARY, false));
@@ -788,6 +1373,16 @@ class RadioSystemIdentityModelTest
         return connection;
     }
 
+    private static Channel p25Channel(String name, long frequency)
+    {
+        Channel channel = new Channel(name);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
+        source.setFrequencies(List.of(frequency));
+        channel.setSourceConfiguration(source);
+        return channel;
+    }
+
     private static void insertChannel(Connection connection, String configurationId, String kind, String decoder,
                                       long aliasListId, String name, String radioResolveId) throws SQLException
     {
@@ -833,7 +1428,7 @@ class RadioSystemIdentityModelTest
             "0-1", 1, false, null, null, wacn, systemId, null, null, null, null, false, null, null,
             domain, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY,
-            List.of());
+            List.of(), null);
     }
 
     private static ReceiverActivityRecords.ActivityEvent p25Activity(String configurationId, long timestamp,
@@ -850,7 +1445,7 @@ class RadioSystemIdentityModelTest
             patchMembers, 851_012_500L, "0-1", 1, false, null, null, 0xBEE00, 0x3A9, null, null, null, null,
             false, null, presence, TrunkedIdentityDomain.STANDARD, target,
             presence != null ? presence.radioIdentity() : ReceiverActivityRecords.P25Identity.ORDINARY,
-            memberIdentities);
+            memberIdentities, null);
     }
 
     private static ReceiverActivityRecords.ActivityEvent p25Presence(String configurationId, long timestamp,
@@ -874,17 +1469,99 @@ class RadioSystemIdentityModelTest
             ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG, "NBFM", ReceiverActivityRecords.Action.CALL,
             "CALL", null, null, null, List.of(), frequency, null, null, false, null, null, null, null, null,
             null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
-            ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of());
+            ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(),
+            null);
+    }
+
+    private static ReceiverActivityRecords.ResolvedLogicalCall dmrCall(String configurationId, long sequence,
+                                                                        long timestamp, String radioSystemKey)
+    {
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new io.github.dsheirer.audio.call.LogicalCallId(7,
+            sequence), timestamp, configurationId, "DMR", TrunkedIdentityDomain.STANDARD, null, null, 91,
+            "TALKGROUP", List.of(), 1001, false, null, null, ReceiverActivityRecords.P25Identity.UNKNOWN,
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), List.of(), radioSystemKey);
+    }
+
+    private static ReceiverActivityRecords.ResolvedLogicalCall p25Call(String configurationId, long sequence,
+                                                                        long timestamp, Integer wacn,
+                                                                        Integer systemId,
+                                                                        String radioSystemKey)
+    {
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new io.github.dsheirer.audio.call.LogicalCallId(8,
+            sequence), timestamp, configurationId, "APCO25", TrunkedIdentityDomain.STANDARD, wacn, systemId, 91,
+            "TALKGROUP", List.of(), null, false, null, null, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), List.of(), radioSystemKey);
+    }
+
+    private static ReceiverActivityRecords.TrunkedCallAttribution attribution(String configurationId,
+                                                                                long callStart,
+                                                                                int sourceRadio,
+                                                                                String radioSystemKey)
+    {
+        return new ReceiverActivityRecords.TrunkedCallAttribution(callStart, configurationId, "DMR",
+            451_012_500L, 1, 91, "TALKGROUP", List.of(), sourceRadio, null, null,
+            false, true, false, false, TrunkedIdentityDomain.STANDARD, radioSystemKey);
     }
 
     private static ReceiverActivityRecords.SiteSnapshot p25Site(String configurationId, long timestamp,
                                                                  Integer wacn, Integer systemId, Integer rfss,
                                                                  Integer site)
     {
+        return p25Site(configurationId, timestamp, wacn, systemId, rfss, site,
+            851_012_500L, 851_012_500L);
+    }
+
+    private static ReceiverActivityRecords.SiteSnapshot p25Site(String configurationId, long timestamp,
+                                                                 Integer wacn, Integer systemId, Integer rfss,
+                                                                 Integer site, long sourceFrequency,
+                                                                 long advertisedControlFrequency)
+    {
         return new ReceiverActivityRecords.SiteSnapshot(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "a".repeat(64), "APCO25", wacn, systemId,
-            0x293, rfss, site, null, null, false, null, 851_012_500L, 851_012_500L,
-            List.of(), List.of(), List.of(), List.of(), List.of());
+            0x293, rfss, site, null, null, false, null, sourceFrequency, advertisedControlFrequency,
+            advertisedControlFrequency,
+            List.of(new io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot.Channel(
+                "primary_control", null, advertisedControlFrequency, null, false, 1)),
+            List.of(), List.of(), List.of(), List.of());
+    }
+
+    private static TrunkedSiteSchema.Snapshot dmrSite(String configurationId, long timestamp, int variantCode,
+                                                       Integer modelCode, Integer networkId)
+    {
+        return dmrSite(configurationId, timestamp, variantCode, modelCode, networkId, 1);
+    }
+
+    private static TrunkedSiteSchema.Snapshot dmrSite(String configurationId, long timestamp, int variantCode,
+                                                       Integer modelCode, Integer networkId, Integer siteId)
+    {
+        return new TrunkedSiteSchema.Snapshot(timestamp, configurationId, "%064x".formatted(timestamp),
+            TrunkedSiteSchema.PROTOCOL_DMR, variantCode, 0, networkId, null, siteId, null, modelCode,
+            null, null, null, null, null, null, 0, null, 851_012_500L, 851_012_500L,
+            List.of(), List.of());
+    }
+
+    private static TrunkedSiteSchema.Snapshot nxdnSite(String configurationId, long timestamp, int variantCode,
+                                                        int locationCategoryCode, Integer systemId)
+    {
+        return nxdnSite(configurationId, timestamp, variantCode, locationCategoryCode, systemId, 1);
+    }
+
+    private static TrunkedSiteSchema.Snapshot nxdnSite(String configurationId, long timestamp, int variantCode,
+                                                        int locationCategoryCode, Integer systemId, Integer siteId)
+    {
+        return new TrunkedSiteSchema.Snapshot(timestamp, configurationId, "%064x".formatted(timestamp),
+            TrunkedSiteSchema.PROTOCOL_NXDN, variantCode, locationCategoryCode, null, systemId, siteId, 1,
+            null, null, null, null, null, null, null, 0, null, 155_000_000L, 155_000_000L,
+            List.of(), List.of());
+    }
+
+    private static void recordTrunkedSite(Connection connection, TrunkedSiteSchema.Snapshot snapshot)
+        throws SQLException
+    {
+        if(ReceiverActivitySchema.ensureTrunkedSiteRadioSystem(connection, snapshot))
+        {
+            TrunkedSiteSchema.upsert(connection, snapshot, 0);
+        }
     }
 
     private static void record(Connection connection, ReceiverActivityRecords.ActivityEvent event) throws SQLException

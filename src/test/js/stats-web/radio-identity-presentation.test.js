@@ -55,9 +55,13 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('scannerHex')}
   ${functionSource('scannerIsP25')}
   ${functionSource('scannerNetworkSiteIdentity')}
+  ${functionSource('identityKind')}
+  ${functionSource('rowGroupIdentityKind')}
+  ${functionSource('observedGroupIdentityProtocol')}
+  ${functionSource('observedGroupIdentityKey')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
-    scannerNetworkSiteIdentity };
+    scannerNetworkSiteIdentity, observedGroupIdentityKey };
 })()`);
 
 const nativeDmr = Object.freeze({
@@ -86,3 +90,13 @@ const fallbackDmr = Object.freeze({
 assert.equal(behavior.radioSystemLabel(fallbackDmr), 'DMR saved channel scope');
 assert.equal(behavior.dashboardChannelContext(fallbackDmr), 'DMR saved channel scope · Site 7');
 assert.equal(behavior.trunkedSiteLabel({ ...fallbackDmr, system_name: '' }), 'DMR site 7');
+
+const conventionalDmr = {
+  topology: 'CONVENTIONAL', protocol: 'DMR',
+  configuration_id: '00000000-0000-0000-0000-000000000074',
+  group_identity_kind: 'talkgroup', native_id: 7, group_identity_id: 7,
+  frequency_hz: 460012500
+};
+assert.notEqual(behavior.observedGroupIdentityKey({ ...conventionalDmr, timeslot: 1 }),
+  behavior.observedGroupIdentityKey({ ...conventionalDmr, timeslot: 2 }),
+  'Conventional DMR discovery rows must retain their independent timeslot identity');

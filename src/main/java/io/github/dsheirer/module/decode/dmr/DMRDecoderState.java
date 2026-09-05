@@ -178,7 +178,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         {
                             eventBus.post(event);
                         }
-                });
+                }, this::getCurrentFrequency);
             }
         }
 
@@ -349,6 +349,21 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     public void reset()
     {
+        OperationalMode operationalMode = mOperationalMode.updateAndGet(
+            OperationalMode::withoutNetworkConfigurationSnapshot);
+        DMRNetworkConfigurationMonitor monitor = operationalMode.networkConfigurationMonitor();
+
+        if(monitor != null)
+        {
+            monitor.reset();
+        }
+
+        if(operationalMode.channel() != null && operationalMode.channel().isStandardChannel() &&
+            operationalMode.allocationManager() != null)
+        {
+            operationalMode.allocationManager().resetNetworkConfigurationIdentity();
+        }
+
         super.reset();
         resetState();
         setCurrentFrequency(0);
@@ -661,6 +676,14 @@ public class DMRDecoderState extends TimeslotDecoderState
             return new OperationalMode(authorityGeneration, channel, allocationManager, allocationAuthority,
                 networkConfigurationMonitor, snapshot, siteMetadataPublisher, restChannelHandoffCandidate,
                 authoritySuspension, rollbackMode);
+        }
+
+        private OperationalMode withoutNetworkConfigurationSnapshot()
+        {
+            return new OperationalMode(authorityGeneration, channel, allocationManager, allocationAuthority,
+                networkConfigurationMonitor, null, siteMetadataPublisher, restChannelHandoffCandidate,
+                authoritySuspension,
+                rollbackMode != null ? rollbackMode.withoutNetworkConfigurationSnapshot() : null);
         }
 
         private OperationalMode withRestChannelHandoffCandidate(RestChannelHandoffCandidate candidate)
@@ -1799,7 +1822,8 @@ public class DMRDecoderState extends TimeslotDecoderState
 
         if(mTrafficChannelEventManager != null && from instanceof RadioIdentifier radio)
         {
-            mTrafficChannelEventManager.processTalkerAlias(alias, radio, getIdentifierCollection().copyOf(), timestamp);
+            mTrafficChannelEventManager.processTalkerAlias(getCurrentChannel(), alias, radio,
+                getIdentifierCollection().copyOf(), timestamp);
         }
     }
 

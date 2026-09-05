@@ -253,9 +253,8 @@ public final class ConfigurationRepository
 
     private <T> T inTransaction(TransactionOperation<T> operation) throws IOException, SQLException
     {
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        try(Connection connection = SdrTrunkDatabase.openWriteTransaction(mDatabasePath))
         {
-            connection.setAutoCommit(false);
             try
             {
                 T result = operation.apply(connection);

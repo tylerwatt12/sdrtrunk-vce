@@ -46,7 +46,8 @@ class TrunkedSiteSchemaTest
             assertEquals(0, scalar(connection, """
                 SELECT COUNT(*) FROM database_metadata WHERE key='trunked_site_schema_version'
                 """));
-            assertEquals("channel_id|snapshot_hash|protocol_code|variant_code|location_category_code", text(connection,
+            assertEquals("channel_id|snapshot_hash|protocol_code|variant_code|observed_location_category_code",
+                text(connection,
                 """
                 SELECT group_concat(name, '|') FROM (
                     SELECT name FROM pragma_table_info('trunked_site_snapshot') WHERE cid < 5 ORDER BY cid)
@@ -67,7 +68,7 @@ class TrunkedSiteSchemaTest
                 451_000_000L, 456_000_000L, TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, 1_000);
             TrunkedSiteSchema.Channel traffic = new TrunkedSiteSchema.Channel(43, 43, 2,
                 452_000_000L, 457_000_000L, TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC, 1_000);
-            TrunkedSiteSchema.Neighbor neighbor = new TrunkedSiteSchema.Neighbor(1, 0, 0, null,
+            TrunkedSiteSchema.Neighbor neighbor = new TrunkedSiteSchema.Neighbor(1, 0, 0, 0, null,
                 2, 44, 453_000_000L, TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE, 1_000);
             assertTrue(TrunkedSiteSchema.upsert(connection,
                 dmr(1_000, HASH_A, List.of(control, traffic), List.of(neighbor))));
@@ -103,14 +104,14 @@ class TrunkedSiteSchemaTest
             seedReceiver(connection, DMR_CHANNEL, "DMR");
             TrunkedSiteSchema.Channel dmrChannel = new TrunkedSiteSchema.Channel(42, 42, 1,
                 451_000_000L, 456_000_000L, TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC, 1_000);
-            TrunkedSiteSchema.Neighbor dmrNeighbor = new TrunkedSiteSchema.Neighbor(1, 0, 0, null,
+            TrunkedSiteSchema.Neighbor dmrNeighbor = new TrunkedSiteSchema.Neighbor(1, 0, 0, 0, null,
                 2, 43, 452_000_000L, 1, 1_000);
             TrunkedSiteSchema.upsert(connection,
                 dmr(1_000, HASH_A, List.of(dmrChannel), List.of(dmrNeighbor)));
 
             TrunkedSiteSchema.Channel nxdnChannel = new TrunkedSiteSchema.Channel(120, 121, null,
                 155_000_000L, 160_000_000L, TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, 2_000);
-            TrunkedSiteSchema.Neighbor nxdnNeighbor = new TrunkedSiteSchema.Neighbor(2, 4, 1, 303,
+            TrunkedSiteSchema.Neighbor nxdnNeighbor = new TrunkedSiteSchema.Neighbor(2, 0, 4, 1, 303,
                 2, 122, 156_000_000L, 1, 2_000);
             TrunkedSiteSchema.upsert(connection, nxdn(DMR_CHANNEL, 2_000, HASH_B, 4,
                 List.of(nxdnChannel), List.of(nxdnNeighbor)));
@@ -121,7 +122,34 @@ class TrunkedSiteSchemaTest
             assertEquals(120, scalar(connection, "SELECT channel_number FROM trunked_site_channel_summary"));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_site_neighbor_summary"));
             assertEquals(4, scalar(connection,
-                "SELECT location_category_code FROM trunked_site_neighbor_summary"));
+                "SELECT nxdn_location_category_code FROM trunked_site_neighbor_summary"));
+        }
+    }
+
+    @Test
+    void dmrModelChangeStartsANewGenerationAndClearsOldChildren() throws Exception
+    {
+        try(Connection connection = open("model-transition.sqlite"))
+        {
+            seedReceiver(connection, DMR_CHANNEL, "DMR");
+            TrunkedSiteSchema.Channel channel = new TrunkedSiteSchema.Channel(42, 42, 1,
+                451_000_000L, 456_000_000L, TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC, 1_000);
+            TrunkedSiteSchema.Neighbor neighbor = new TrunkedSiteSchema.Neighbor(1, 0, 0, 0, null,
+                2, 43, 452_000_000L, 1, 1_000);
+            TrunkedSiteSchema.upsert(connection,
+                dmr(1_000, HASH_A, List.of(channel), List.of(neighbor)));
+
+            TrunkedSiteSchema.Snapshot differentModel = new TrunkedSiteSchema.Snapshot(2_000, DMR_CHANNEL, HASH_B,
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 0, 0, null, 1, null,
+                2, 1, 1, 1, 1, 1, null, 0, null, 451_000_000L, 451_000_000L,
+                List.of(), List.of());
+            assertTrue(TrunkedSiteSchema.upsert(connection, differentModel));
+
+            assertEquals(2, scalar(connection, "SELECT observed_model_code FROM trunked_site_snapshot"));
+            assertEquals(2_000, scalar(connection, "SELECT first_seen_ms FROM trunked_site_snapshot"));
+            assertEquals(1, scalar(connection, "SELECT observation_count FROM trunked_site_snapshot"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_channel_summary"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_neighbor_summary"));
         }
     }
 
@@ -143,20 +171,44 @@ class TrunkedSiteSchemaTest
             assertThrows(IllegalArgumentException.class, () -> TrunkedSiteSchema.upsert(connection,
                 dmr(1_000, HASH_A, List.of(new TrunkedSiteSchema.Channel(42, 42, 0,
                     451_000_000L, null, 1)), List.of())));
+            assertThrows(IllegalArgumentException.class, () -> TrunkedSiteSchema.upsert(connection,
+                new TrunkedSiteSchema.Snapshot(1_000, DMR_CHANNEL, HASH_A, 3, 1, 0,
+                    128, null, 1, null, 2, 1, 1, 1, 1, 1, null, 0, null,
+                    451_000_000L, 451_000_000L, List.of(), List.of())));
+            assertThrows(IllegalArgumentException.class, () -> TrunkedSiteSchema.upsert(connection,
+                new TrunkedSiteSchema.Snapshot(1_000, DMR_CHANNEL, HASH_A, 4, 1, 1,
+                    null, 1023, 1, 1, null, null, 1, null, null, null, 1, 16, null,
+                    155_000_000L, 155_000_000L, List.of(), List.of())));
 
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_site_snapshot(
-                    channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
-                    network_id, system_id, site_id, model_code, brand_code, mode_code, channel_type_code,
+                    channel_id, snapshot_hash, protocol_code, variant_code, observed_location_category_code,
+                    observed_network_id, observed_system_id, observed_site_id, observed_model_code,
+                    brand_code, mode_code, channel_type_code,
                     service_flags, first_seen_ms, last_seen_ms)
                 VALUES (%d, '%s', 3, 1, 0, 0, 303, 1, 1, 1, 1, 1, 0, 1000, 1000)
                 """.formatted(channel, HASH_A)));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_site_snapshot(
-                    channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
-                    network_id, site_id, model_code, brand_code, mode_code, channel_type_code,
+                    channel_id, snapshot_hash, protocol_code, variant_code, observed_location_category_code,
+                    observed_network_id, observed_site_id, observed_model_code,
+                    brand_code, mode_code, channel_type_code,
                     service_flags, first_seen_ms, last_seen_ms)
                 VALUES (%d, '%s', 3, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1000)
+                """.formatted(channel, HASH_A)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_site_snapshot(
+                    channel_id, snapshot_hash, protocol_code, variant_code,
+                    observed_location_category_code, observed_network_id, observed_site_id,
+                    observed_model_code, service_flags, first_seen_ms, last_seen_ms)
+                VALUES (%d, '%s', 3, 1, 0, 128, 1, 2, 0, 1000, 1000)
+                """.formatted(channel, HASH_A)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_site_snapshot(
+                    channel_id, snapshot_hash, protocol_code, variant_code,
+                    observed_location_category_code, observed_system_id, observed_site_id,
+                    observed_ran, service_flags, first_seen_ms, last_seen_ms)
+                VALUES (%d, '%s', 4, 1, 1, 1023, 1, 1, 16, 1000, 1000)
                 """.formatted(channel, HASH_A)));
 
             TrunkedSiteSchema.upsert(connection, dmr(1_000, HASH_A, List.of(), List.of()));
@@ -168,10 +220,25 @@ class TrunkedSiteSchemaTest
                 """.formatted(channel)));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO trunked_site_neighbor_summary(
-                    channel_id, variant_code, location_category_code, network_id, system_id, site_id,
-                    channel_number, frequency_hz, status_flags, first_seen_ms, last_seen_ms, observation_count)
-                VALUES (%d, 1, 0, 0, -1, 2, 43, 452000000, 4, 1000, 1000, 1)
+                    channel_id, protocol_code, variant_code, dmr_model_code, nxdn_location_category_code,
+                    network_id, system_id, site_id, channel_number, frequency_hz, status_flags,
+                    first_seen_ms, last_seen_ms, observation_count)
+                VALUES (%d, 3, 1, 0, 0, 0, -1, 2, 43, 452000000, 4, 1000, 1000, 1)
                 """.formatted(channel)));
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_site_neighbor_summary(
+                    channel_id, protocol_code, variant_code, dmr_model_code, nxdn_location_category_code,
+                    network_id, system_id, site_id, channel_number, frequency_hz, status_flags,
+                    first_seen_ms, last_seen_ms, observation_count)
+                VALUES (%d, 4, 1, 0, 3, 1, 303, 2, 43, 452000000, 0, 1000, 1000, 1)
+                """.formatted(channel)), "child protocol must match its parent snapshot");
+            assertThrows(SQLException.class, () -> execute(connection, """
+                INSERT INTO trunked_site_neighbor_summary(
+                    channel_id, protocol_code, variant_code, dmr_model_code, nxdn_location_category_code,
+                    network_id, system_id, site_id, channel_number, frequency_hz, status_flags,
+                    first_seen_ms, last_seen_ms, observation_count)
+                VALUES (%d, 3, 1, 2, 3, 42, -1, 2, 43, 452000000, 0, 1000, 1000, 1)
+                """.formatted(channel)), "DMR neighbors cannot use an NXDN location category");
         }
     }
 
@@ -184,10 +251,10 @@ class TrunkedSiteSchemaTest
             seedReceiver(connection, NXDN_CHANNEL, "NXDN");
             TrunkedSiteSchema.upsert(connection, dmr(1_000, HASH_A,
                 List.of(new TrunkedSiteSchema.Channel(42, 42, 1, 451_000_000L, null, 1, 1_000)),
-                List.of(new TrunkedSiteSchema.Neighbor(1, 0, 0, null, 2, 43, 452_000_000L, 1, 1_000))));
+                List.of(new TrunkedSiteSchema.Neighbor(1, 0, 0, 0, null, 2, 43, 452_000_000L, 1, 1_000))));
             TrunkedSiteSchema.upsert(connection, nxdn(NXDN_CHANNEL, 10_000, HASH_B, 4,
                 List.of(new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, null, 1, 10_000)),
-                List.of(new TrunkedSiteSchema.Neighbor(2, 4, 1, 303, 2, 122, 156_000_000L, 1, 10_000))));
+                List.of(new TrunkedSiteSchema.Neighbor(2, 0, 4, 1, 303, 2, 122, 156_000_000L, 1, 10_000))));
 
             assertEquals(3, ReceiverActivitySchema.runRetentionPass(connection, 5_000));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
@@ -219,7 +286,7 @@ class TrunkedSiteSchemaTest
             List<TrunkedSiteSchema.Neighbor> neighbors = new ArrayList<>();
             for(int x = 0; x < TrunkedSiteSchema.MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT + 25; x++)
             {
-                neighbors.add(new TrunkedSiteSchema.Neighbor(1, 0, 0, null, x, x,
+                neighbors.add(new TrunkedSiteSchema.Neighbor(1, 0, 0, 0, null, x, x,
                     460_000_000L + x * 12_500L, 1, 1_000));
             }
             TrunkedSiteSchema.upsert(connection, dmr(1_000, HASH_A, channels, neighbors));

@@ -548,6 +548,34 @@ class ChannelActivityModelTest
     }
 
     @Test
+    void ignoresSiteMetadataCapturedBeforeTheLiveChannelWasReconfigured() throws Exception
+    {
+        ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("Primary", "County", "Downtown", new DecodeConfigP25Phase1(),
+            851_012_500L);
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000111");
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x343, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x343, 2, 1, null, true),
+            List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", null, 851_012_500L,
+                null, false, 1)), List.of(), List.of(), List.of(), List.of());
+        SiteMetadataEvent stale = new SiteMetadataEvent(parent, snapshot, 1_000L, 851_012_500L);
+
+        parent.setConfigurationId("00000000-0000-0000-0000-000000000222");
+        SourceConfigTuner replacement = new SourceConfigTuner();
+        replacement.setFrequency(852_012_500L);
+        parent.setSourceConfiguration(replacement);
+
+        run(model, () -> {
+            model.channelStarted(parent, List.of());
+            model.receiveSiteMetadata(stale);
+        });
+
+        assertTrue(model.getTables().get(1).getLatestSnapshot().identifiers().isEmpty());
+        model.close();
+    }
+
+    @Test
     void unknownDmrMetadataDoesNotPromoteConventionalChannel() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
@@ -702,7 +730,8 @@ class ChannelActivityModelTest
 
         run(model, () -> {
             model.channelStarted(channel, List.of());
-            model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(),
+            model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(channel,
+                channel.getPersistedConfigurationId(),
                 856_137_500L, 1_000L, true, -20.5, -21.0, -25.0, -18.0, 97.5,
                 100, 1, 3, 0, 0, 999L));
         });
@@ -719,7 +748,8 @@ class ChannelActivityModelTest
             .controlLastValidDecodeMs());
 
         run(model, () -> model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(
-            channel, channel.getRadioResolveId(), 856_137_500L, 2_000L, false, -20.5, -21.0, -25.0, -18.0,
+            channel, channel.getPersistedConfigurationId(), 856_137_500L, 2_000L, false,
+            -20.5, -21.0, -25.0, -18.0,
             97.5, 100, 1, 3, 0, 0, 999L)));
         assertNull(row.getSignalDbfs());
         assertNull(row.getDecodeHealthPercent());
@@ -1025,7 +1055,8 @@ class ChannelActivityModelTest
     private static ControlChannelQualitySnapshot quality(Channel channel, long frequency, long timestamp,
                                                          boolean active)
     {
-        return new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(), frequency, timestamp, active,
+        return new ControlChannelQualitySnapshot(channel, channel.getPersistedConfigurationId(), frequency,
+            timestamp, active,
             -20.5, -21.0, -25.0, -18.0, 97.5, 100, 1, 3, 0, 0, timestamp - 1);
     }
 

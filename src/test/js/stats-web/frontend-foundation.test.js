@@ -445,6 +445,30 @@ async function main() {
   assert.equal(dashboardChannelContext({ protocol: 'DMR', channel_kind: 'trunked', system: 'Metro',
     site_id: 9 }), 'Metro · Site 9');
 
+  const scannerCallRenderKey = vm.runInNewContext(
+    `(function(call, state, site) ${functionBinding(appSource, 'scannerCallRenderKey')})`, {
+      scannerDetailMode: 'normal', scannerMatchedScanLists: () => ''
+    });
+  const scannerCall = { call_id: 'call-1', started_at_ms: 100 };
+  const scannerState = { stopped: false, paused: false };
+  const withoutChannel = scannerCallRenderKey(scannerCall, scannerState, null);
+  const channelA = scannerCallRenderKey(scannerCall, scannerState, {
+    configuration_id: 'channel-a', channel_kind: 'CONVENTIONAL',
+    entity_ref: { kind: 'channel', key: 'channel-a' }
+  });
+  const channelB = scannerCallRenderKey(scannerCall, scannerState, {
+    configuration_id: 'channel-b', channel_kind: 'TRUNKED',
+    entity_ref: { kind: 'channel', key: 'channel-b' }
+  });
+  assert.notEqual(withoutChannel, channelA,
+    'Asynchronous channel metadata must invalidate captured scanner navigation handlers');
+  assert.notEqual(channelA, channelB,
+    'Changing channel identity must invalidate captured scanner navigation handlers');
+  const scannerRenderer = functionBinding(appSource, 'renderScanner');
+  assert.ok(scannerRenderer.indexOf('currentChannel = null;') <
+    scannerRenderer.indexOf('renderScannerCall(display, state, currentChannel);'),
+  'A call transition must clear old channel metadata before rendering its navigation handlers');
+
   const decoderLabel = vm.runInNewContext(
     `(function(value, compact = false) ${functionBinding(appSource, 'decoderLabel')})`);
   const channelMode = vm.runInNewContext(
@@ -467,11 +491,13 @@ async function main() {
     `(function(value) ${functionBinding(appSource, 'semanticLabel')})`);
   const isSavedChannelRadioSystem = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'isSavedChannelRadioSystem')})`);
+  const radioSystemAssignmentLabel = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'radioSystemAssignmentLabel')})`);
   const radioSystemsDirectoryDetails = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'radioSystemsDirectoryDetails')})`, {
       channelDirectoryDetails, isP25: (row) => row.protocol === 'P25', hex,
       trunkedVariant, identityDomainLabel, identifierNumber, semanticLabel,
-      isSavedChannelRadioSystem, protocolFamily: (row) => row.protocol
+      isSavedChannelRadioSystem, protocolFamily: (row) => row.protocol, radioSystemAssignmentLabel
     });
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
     address_domain: 'nxdn_type_c', network_id: 1, system_id: 2,
@@ -483,6 +509,13 @@ async function main() {
   assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', variant: 'TYPE_C',
     location_category: 'local', system_id: 303, radio_system_key: 'nxdn-c:local:303' }),
   'Type-C · Local · System 303');
+  assert.equal(radioSystemsDirectoryDetails({ protocol: 'DMR', assignment_state: 'CURRENT',
+    variant: 'TIER_III', model: 'small', network_id: 42, radio_system_key: 'dmr:tier3:small:42' }),
+  'Current receiver assignment · Tier III · Small · Network 42');
+  assert.equal(radioSystemsDirectoryDetails({ protocol: 'NXDN', assignment_state: 'HISTORICAL',
+    variant: 'TYPE_C', address_domain: 'nxdn_type_c',
+    radio_system_key: 'nxdn-c:channel:728d2d66-de4e-476b-a696-919f32dd4d12' }),
+  'Historical activity · Scoped to this saved channel · Type-C');
 
   const savedChannelScopeLabel = vm.runInNewContext(
     `(function(row) ${functionBinding(appSource, 'savedChannelScopeLabel')})`, {

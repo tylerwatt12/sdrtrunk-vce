@@ -172,7 +172,26 @@ class CallPlaybackTargetTest
     }
 
     @Test
-    void trunkedDmrScopesStaySeparateUntilNativeGroupingIsProven()
+    void conventionalPlaybackIgnoresMissingIncompleteOrContradictoryDecodedTargets()
+    {
+        CallLegSource analog = source(DecoderType.NBFM, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL);
+        CallLegSource p25 = source(DecoderType.P25_CONVENTIONAL, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL);
+        CallLegSource nxdnTypeD = source(DecoderType.NXDN, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, TrunkedIdentityDomain.NXDN_TYPE_D);
+
+        assertEquals("channel:" + CHANNEL_A, target(analog, null, 0).key());
+        assertEquals("channel:" + CHANNEL_A,
+            target(analog, NXDNTalkgroupIdentifier.createTo(9001), 0).key());
+        assertEquals("channel:" + CHANNEL_B,
+            target(p25, APCO25IncompleteRadioIdentifier.createTo(123), 0).key());
+        assertEquals("channel:" + CHANNEL_B,
+            target(nxdnTypeD, NXDNTalkgroupIdentifier.createTo(9001), 0).key());
+    }
+
+    @Test
+    void trunkedDmrFallsBackToSavedChannelUntilNativeGroupingIsKnown()
     {
         Identifier<?> talkgroup = new DMRTalkgroup(9001);
         CallPlaybackTarget first = target(source(DecoderType.DMR, CHANNEL_A, null,
@@ -186,7 +205,26 @@ class CallPlaybackTargetTest
     }
 
     @Test
-    void trunkedNxdnScopesStaySeparateUntilNativeGroupingIsProven()
+    void nativeDmrTierThreeHoldAndAvoidCrossesSitesAndTimeslotsButNotSystems()
+    {
+        Identifier<?> talkgroup = new DMRTalkgroup(9001);
+        CallPlaybackTarget firstSite = target(source(DecoderType.DMR, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.STANDARD,
+            "dmr:tier3:small:42"), talkgroup, DMRMessage.TIMESLOT_1);
+        CallPlaybackTarget secondSite = target(source(DecoderType.DMR, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.STANDARD,
+            "dmr:tier3:small:42"), talkgroup, DMRMessage.TIMESLOT_2);
+        CallPlaybackTarget otherModel = target(source(DecoderType.DMR, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.STANDARD,
+            "dmr:tier3:large:5"), talkgroup, DMRMessage.TIMESLOT_1);
+
+        assertEquals("system:dmr:tier3:small:42:v1-g-x-x-9001", firstSite.key());
+        assertEquals(firstSite, secondSite, "timeslot is resource context, not radio-system identity");
+        assertNotEquals(firstSite, otherModel);
+    }
+
+    @Test
+    void trunkedNxdnFallsBackToSavedChannelUntilNativeGroupingIsKnown()
     {
         Identifier<?> talkgroup = NXDNTalkgroupIdentifier.createTo(9001);
         CallPlaybackTarget first = target(source(DecoderType.NXDN, CHANNEL_A, null,
@@ -197,6 +235,25 @@ class CallPlaybackTargetTest
         assertEquals("system:nxdn-c:channel:" + CHANNEL_A + ":v1-g-x-x-9001", first.key());
         assertEquals("system:nxdn-c:channel:" + CHANNEL_B + ":v1-g-x-x-9001", second.key());
         assertNotEquals(first, second);
+    }
+
+    @Test
+    void nativeNxdnTypeCHoldAndAvoidCrossesSitesButNotLocationCategories()
+    {
+        Identifier<?> talkgroup = NXDNTalkgroupIdentifier.createTo(9001);
+        CallPlaybackTarget firstSite = target(source(DecoderType.NXDN, CHANNEL_A, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.NXDN_TYPE_C,
+            "nxdn-c:local:303"), talkgroup, 0);
+        CallPlaybackTarget secondSite = target(source(DecoderType.NXDN, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.NXDN_TYPE_C,
+            "nxdn-c:local:303"), talkgroup, 0);
+        CallPlaybackTarget otherCategory = target(source(DecoderType.NXDN, CHANNEL_B, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, TrunkedIdentityDomain.NXDN_TYPE_C,
+            "nxdn-c:global:303"), talkgroup, 0);
+
+        assertEquals("system:nxdn-c:local:303:v1-g-x-x-9001", firstSite.key());
+        assertEquals(firstSite, secondSite);
+        assertNotEquals(firstSite, otherCategory);
     }
 
     @Test
@@ -240,16 +297,23 @@ class CallPlaybackTargetTest
                                         ChannelConfigurationPolicy.ChannelKind channelKind,
                                         TrunkedIdentityDomain identityDomain)
     {
+        return source(decoderType, configurationId, p25, channelKind, identityDomain, null);
+    }
+
+    private static CallLegSource source(DecoderType decoderType, String configurationId, P25SiteIdentity p25,
+                                        ChannelConfigurationPolicy.ChannelKind channelKind,
+                                        TrunkedIdentityDomain identityDomain, String radioSystemKey)
+    {
         return new CallLegSource(decoderType, configurationId, "Display name", null, 1, p25,
             identityDomain, channelKind,
-            channelKind == ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+            channelKind == ChannelConfigurationPolicy.ChannelKind.TRUNKED, radioSystemKey);
     }
 
     private static CallPlaybackTarget target(CallLegSource source, Identifier<?> target, int timeslot)
     {
         AudioCallId callId = new AudioCallId(1, 1, timeslot);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
-            new IdentifierCollection(List.of(target)), Set.of(), 1, 2, 1, 1, 1, 2,
+            new IdentifierCollection(target != null ? List.of(target) : List.of()), Set.of(), 1, 2, 1, 1, 1, 2,
             false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
             CallLegId.from(callId), source, null);
         return CallPlaybackTarget.from(snapshot, target);

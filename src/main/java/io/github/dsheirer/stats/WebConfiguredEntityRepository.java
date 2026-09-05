@@ -33,8 +33,11 @@ final class WebConfiguredEntityRepository
             config.decoder_type AS decoder, config.primary_frequency_hz,
             channel.id AS channel_id, channel.first_seen_ms, channel.last_seen_ms,
             radio_system.id AS radio_system_id, radio_system.system_key AS radio_system_key,
+            radio_system.configuration_id AS radio_system_configuration_id,
             radio_system.protocol_code AS radio_system_protocol_code,
-            config.address_domain_code, radio_system.p25_wacn, radio_system.p25_system_id
+            config.address_domain_code, radio_system.p25_wacn, radio_system.p25_system_id,
+            radio_system.dmr_model_code, radio_system.dmr_network_id,
+            radio_system.nxdn_location_category_code, radio_system.nxdn_system_id
         FROM configuration_channel config
         LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
         LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
@@ -98,8 +101,11 @@ final class WebConfiguredEntityRepository
             nullableLong(row.get("alias_list_id")), text(row.get("decoder")),
             nullableLong(row.get("primary_frequency_hz")), protocol, nullableLong(row.get("channel_id")),
             nullableLong(row.get("radio_system_id")), text(row.get("radio_system_key")),
-            nullableInt(row.get("radio_system_protocol_code")), nullableInt(row.get("address_domain_code")),
-            nullableInt(row.get("p25_wacn")), nullableInt(row.get("p25_system_id")),
+            text(row.get("radio_system_configuration_id")), nullableInt(row.get("radio_system_protocol_code")),
+            nullableInt(row.get("address_domain_code")), nullableInt(row.get("p25_wacn")),
+            nullableInt(row.get("p25_system_id")), nullableInt(row.get("dmr_model_code")),
+            nullableInt(row.get("dmr_network_id")), nullableInt(row.get("nxdn_location_category_code")),
+            nullableInt(row.get("nxdn_system_id")),
             nullableLong(row.get("first_seen_ms")), nullableLong(row.get("last_seen_ms")));
     }
 
@@ -131,8 +137,10 @@ final class WebConfiguredEntityRepository
     record ConfiguredChannel(long rowId, String configurationId, ChannelKind channelKind, String systemName,
                              String siteName, String name, String aliasListName, Long aliasListId,
                              String decoder, Long primaryFrequencyHz, StatsApiProtocol protocol, Long channelId,
-                             Long radioSystemId, String radioSystemKey, Integer radioSystemProtocolCode,
-                             Integer addressDomainCode, Integer p25Wacn, Integer p25SystemId,
+                             Long radioSystemId, String radioSystemKey, String radioSystemConfigurationId,
+                             Integer radioSystemProtocolCode, Integer addressDomainCode, Integer p25Wacn,
+                             Integer p25SystemId, Integer dmrModelCode, Integer dmrNetworkId,
+                             Integer nxdnLocationCategoryCode, Integer nxdnSystemId,
                              Long firstSeenMs, Long lastSeenMs)
     {
         ConfiguredChannel
@@ -147,6 +155,11 @@ final class WebConfiguredEntityRepository
         int protocolCode()
         {
             return protocol.databaseCode();
+        }
+
+        boolean hasChannelScopedRadioSystem()
+        {
+            return configurationId.equals(radioSystemConfigurationId);
         }
 
         Map<String,Object> toApiMap()
@@ -164,6 +177,36 @@ final class WebConfiguredEntityRepository
             put(row, "protocol", protocol.wireName());
             put(row, "primary_frequency_hz", primaryFrequencyHz);
             put(row, "radio_system_key", radioSystemKey);
+            switch(protocol)
+            {
+                case P25 ->
+                {
+                    put(row, "wacn", p25Wacn);
+                    put(row, "system_id", p25SystemId);
+                }
+                case DMR ->
+                {
+                    put(row, "network_id", dmrNetworkId);
+                    put(row, "dmr_model_code", dmrModelCode);
+                    if(dmrModelCode != null)
+                    {
+                        row.put("variant", "TIER_III");
+                    }
+                }
+                case NXDN ->
+                {
+                    put(row, "system_id", nxdnSystemId);
+                    put(row, "nxdn_location_category_code", nxdnLocationCategoryCode);
+                    if(nxdnLocationCategoryCode != null)
+                    {
+                        row.put("variant", "TYPE_C");
+                    }
+                }
+                default ->
+                {
+                    //Conventional and unsupported protocols have no canonical trunked radio-system identity.
+                }
+            }
             put(row, "first_seen_ms", firstSeenMs);
             put(row, "last_seen_ms", lastSeenMs);
             WebEntityRef.put(row, WebEntityRef.channel(configurationId));

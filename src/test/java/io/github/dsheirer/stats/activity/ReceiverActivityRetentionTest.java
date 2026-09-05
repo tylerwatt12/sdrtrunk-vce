@@ -166,7 +166,7 @@ class ReceiverActivityRetentionTest
                 ORDER BY system.id LIMIT 64
                 """);
             assertTrue(orphanPlan.contains("idx_receiver_channel_radio_system"), orphanPlan);
-            assertTrue(orphanPlan.contains("idx_receiver_activity_event_radio_system"), orphanPlan);
+            assertTrue(orphanPlan.contains("idx_receiver_activity_event_system_time"), orphanPlan);
             assertTrue(orphanPlan.contains("idx_trunked_signaling_activity_system"), orphanPlan);
 
             String learnedPlan = queryPlan(connection, """

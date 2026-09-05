@@ -22,6 +22,8 @@ import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.CallTimer;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.source.config.SourceConfigRecording;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -93,7 +95,8 @@ class TrunkedSiteMetadataMapperTest
                 value.observedAtEpochMilliseconds() == 700L));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE,
             mapped.neighbors().getFirst().statusFlags());
-        assertEquals(0, mapped.neighbors().getFirst().locationCategoryCode());
+        assertEquals(2, mapped.neighbors().getFirst().dmrModelCode());
+        assertEquals(0, mapped.neighbors().getFirst().nxdnLocationCategoryCode());
         assertEquals(800L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
 
         TrunkedSiteSchema.Snapshot heartbeat = TrunkedSiteMetadataMapper.map(
@@ -172,8 +175,8 @@ class TrunkedSiteMetadataMapperTest
         NXDNNetworkConfigurationSnapshot source = new NXDNNetworkConfigurationSnapshot(
             "NXDN", "TYPE-D", 5,
             new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, null, 7),
-            9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
-            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),
+            9, "CONTROL", null, null, List.of(Service.VOICE_CALL, Service.DATA_CALL), List.of(),
+            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, CallTimer.CT4),
             List.of(new NXDNNetworkConfigurationSnapshot.Channel("CONTROL_1", "DFA", null,
                 120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null, 600L)),
             List.of(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
@@ -198,14 +201,15 @@ class TrunkedSiteMetadataMapperTest
             value.observedAtEpochMilliseconds() == 900L));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ISOLATED,
             mapped.neighbors().getFirst().statusFlags());
-        assertEquals(4, mapped.neighbors().getFirst().locationCategoryCode());
+        assertEquals(0, mapped.neighbors().getFirst().dmrModelCode());
+        assertEquals(4, mapped.neighbors().getFirst().nxdnLocationCategoryCode());
         assertEquals(700L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
 
         NXDNNetworkConfigurationSnapshot refreshedSource = new NXDNNetworkConfigurationSnapshot(
             "NXDN", "TYPE-D", 5,
             new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, null, 7),
-            9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
-            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),
+            9, "CONTROL", null, null, List.of(Service.VOICE_CALL, Service.DATA_CALL), List.of(),
+            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, CallTimer.CT4),
             List.of(new NXDNNetworkConfigurationSnapshot.Channel("CONTROL_1", "DFA", null,
                 120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null, 1_600L)),
             List.of(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
@@ -273,6 +277,31 @@ class TrunkedSiteMetadataMapperTest
     }
 
     @Test
+    void rejectsProducerTimeSiteStateAfterTheLiveChannelIsEdited()
+    {
+        Channel channel = channel(451_000_000L);
+        DMRNetworkConfigurationSnapshot source = new DMRNetworkConfigurationSnapshot(
+            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
+            1, 2, List.of(), List.of());
+        ProtocolSiteMetadataEvent event = new ProtocolSiteMetadataEvent(channel, source, 1_000L,
+            451_000_000L);
+
+        channel.setConfigurationId("00000000-0000-0000-0000-000000000999");
+        channel.setName("Replacement");
+        channel.setSite("Replacement Site");
+        SourceConfigRecording replacement = new SourceConfigRecording();
+        replacement.setFrequency(460_000_000L);
+        channel.setSourceConfiguration(replacement);
+
+        TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(event);
+        assertNull(mapped);
+        assertEquals(CONFIGURATION_ID, event.receiverContext().configurationId());
+        assertEquals(451_000_000L, event.receiverContext().effectivePrimaryFrequency());
+        assertEquals("Control", event.receiverContext().channelName());
+        assertEquals("Downtown", event.receiverContext().siteName());
+    }
+
+    @Test
     void existingSingleWriterPersistsMappedTrunkedSnapshot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("writer.sqlite");
@@ -300,7 +329,7 @@ class TrunkedSiteMetadataMapperTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT protocol_code, network_id, site_id
+                SELECT protocol_code, observed_network_id, observed_site_id
                 FROM trunked_site_snapshot
                 JOIN receiver_channel receiver ON receiver.id = trunked_site_snapshot.channel_id
                 WHERE receiver.configuration_id='%s'
@@ -308,8 +337,8 @@ class TrunkedSiteMetadataMapperTest
         {
             assertTrue(resultSet.next());
             assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, resultSet.getInt("protocol_code"));
-            assertEquals(10, resultSet.getInt("network_id"));
-            assertEquals(20, resultSet.getInt("site_id"));
+            assertEquals(10, resultSet.getInt("observed_network_id"));
+            assertEquals(20, resultSet.getInt("observed_site_id"));
         }
     }
 

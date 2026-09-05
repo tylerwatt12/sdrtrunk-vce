@@ -1057,9 +1057,7 @@ final class StatsAliasCatalog
         SourceIdentityTargets sourceTargets = SourceIdentityTargets.from(aliases, coverage);
         applyTrunkedEvidence(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyConventionalDmrEvidence(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
-            new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyConventionalDmrOutputs(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
+        applyConventionalEvidence(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
         applyRelationships(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
@@ -1125,23 +1123,39 @@ final class StatsAliasCatalog
         throws SQLException
     {
         StringBuilder trunkedSql = new StringBuilder("""
-            SELECT source.id AS radio_system_id, source.system_key AS radio_system_key, source.protocol_code,
-                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
-                channel.id AS channel_id, channel.configuration_id,
-                coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
-                nullif(trim(config.system_name), '') AS system_name,
-                config.alias_list_id, list.name AS alias_list_name
-            FROM radio_system source
-            JOIN receiver_channel channel ON channel.radio_system_id = source.id
-            JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
-            JOIN alias_list list ON list.id = config.alias_list_id
-            WHERE config.channel_kind = 'TRUNKED' AND
+            WITH coverage AS (
+                SELECT source.id AS radio_system_id, source.system_key AS radio_system_key,
+                    source.protocol_code, source.p25_wacn AS wacn, source.p25_system_id AS system_id,
+                    channel.id AS channel_id, channel.configuration_id,
+                    coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
+                    nullif(trim(config.system_name), '') AS system_name,
+                    config.alias_list_id, list.name AS alias_list_name
+                FROM radio_system source
+                JOIN receiver_channel channel ON channel.radio_system_id = source.id
+                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+                JOIN alias_list list ON list.id = config.alias_list_id
+                WHERE config.channel_kind = 'TRUNKED'
+                UNION
+                SELECT source.id AS radio_system_id, source.system_key AS radio_system_key,
+                    source.protocol_code, source.p25_wacn AS wacn, source.p25_system_id AS system_id,
+                    channel.id AS channel_id, channel.configuration_id,
+                    coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
+                    nullif(trim(config.system_name), '') AS system_name,
+                    config.alias_list_id, list.name AS alias_list_name
+                FROM radio_system source
+                JOIN configuration_channel config ON config.configuration_id = source.configuration_id
+                JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
+                JOIN alias_list list ON list.id = config.alias_list_id
+                WHERE config.channel_kind = 'TRUNKED'
+            )
+            SELECT * FROM coverage
+            WHERE
             """);
         List<Object> trunkedParameters = new ArrayList<>();
-        targets.appendCoveragePredicate(trunkedSql, trunkedParameters, "source.protocol_code",
-            "config.alias_list_id");
+        targets.appendCoveragePredicate(trunkedSql, trunkedParameters, "coverage.protocol_code",
+            "coverage.alias_list_id");
         trunkedSql.append("""
-            ORDER BY source.id, channel.id
+            ORDER BY radio_system_id, channel_id
             LIMIT ?
             """);
         trunkedParameters.add(MAX_COVERAGE_ROWS + 1);
@@ -1157,24 +1171,30 @@ final class StatsAliasCatalog
             SELECT channel.id AS channel_id, channel.configuration_id,
                 coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS site_name,
                 config.alias_list_id, list.name AS alias_list_name,
-                nullif(trim(config.system_name), '') AS system_name
+                nullif(trim(config.system_name), '') AS system_name,
+                CASE WHEN config.decoder_type LIKE 'P25%' THEN 1
+                     WHEN config.decoder_type = 'DMR' THEN 3
+                     WHEN config.decoder_type = 'NXDN' THEN 4 END AS protocol_code
             FROM receiver_channel channel
             JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             JOIN alias_list list ON list.id = config.alias_list_id
-            WHERE config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR' AND
+            WHERE config.channel_kind = 'CONVENTIONAL'
+              AND (config.decoder_type LIKE 'P25%' OR config.decoder_type IN ('DMR', 'NXDN')) AND
             """);
         List<Object> conventionalParameters = new ArrayList<>();
-        targets.appendAliasListPredicate(conventionalSql, conventionalParameters, 3,
+        targets.appendCoveragePredicate(conventionalSql, conventionalParameters,
+            "CASE WHEN config.decoder_type LIKE 'P25%' THEN 1 " +
+                "WHEN config.decoder_type = 'DMR' THEN 3 WHEN config.decoder_type = 'NXDN' THEN 4 END",
             "config.alias_list_id");
         conventionalSql.append("""
             ORDER BY channel.id
             LIMIT ?
             """);
         conventionalParameters.add(MAX_COVERAGE_ROWS - trunked.size() + 1);
-        List<Map<String,Object>> conventionalDmr = queryRows(connection, conventionalSql.toString(),
+        List<Map<String,Object>> conventional = queryRows(connection, conventionalSql.toString(),
             conventionalParameters.toArray());
 
-        if(trunked.size() + conventionalDmr.size() > MAX_COVERAGE_ROWS)
+        if(trunked.size() + conventional.size() > MAX_COVERAGE_ROWS)
         {
             throw new StatsApiException(413, "Alias coverage exceeds the bounded receiver limit");
         }
@@ -1209,9 +1229,9 @@ final class StatsAliasCatalog
         List<CoverageSource> sources = new ArrayList<>(p25ById.values());
         sources.addAll(trunkedByProjection.values());
 
-        for(Map<String,Object> row: conventionalDmr)
+        for(Map<String,Object> row: conventional)
         {
-            CoverageSource source = CoverageSource.conventionalDmr(row);
+            CoverageSource source = CoverageSource.conventional(row);
             source.addAliasList(number(row.get("alias_list_id")), text(row.get("alias_list_name")));
             sources.add(source);
         }
@@ -1286,75 +1306,6 @@ final class StatsAliasCatalog
         applyEvidenceRows(evidence, metrics);
     }
 
-    private void applyConventionalDmrEvidence(Connection connection,
-                                               Map<Long,Map<String,MetricAccumulator>> metrics,
-                                               Set<Long> channelIds, Map<Long,List<CoverageSource>> sources,
-                                               SourceIdentityTargets targets, EvidenceBudget budget)
-        throws SQLException
-    {
-        if(channelIds.isEmpty())
-        {
-            return;
-        }
-
-        String placeholders = placeholders(channelIds.size());
-        StringBuilder sql = new StringBuilder();
-        List<Object> parameters = new ArrayList<>();
-        targets.appendCte(sql, parameters, false);
-        sql.append("""
-            SELECT summary.channel_id, 1 AS identity_kind_code, summary.talkgroup_id AS identity_id,
-                summary.first_seen_ms, summary.last_seen_ms,
-                summary.call_count AS logical_call_count,
-                NULL AS recorded_logical_call_count,
-                NULL AS stream_submitted_logical_call_count,
-                summary.encrypted_count AS encrypted_logical_call_count,
-                NULL AS grant_observation_count, NULL AS join_observation_count,
-                NULL AS emergency_observation_count, NULL AS register_observation_count,
-                NULL AS logout_observation_count, NULL AS denial_observation_count,
-                NULL AS data_observation_count, NULL AS other_signaling_observation_count,
-                NULL AS signaling_observation_count,
-                3 AS protocol_code
-            FROM dmr_conventional_talkgroup_summary summary
-            WHERE summary.channel_id IN (%1$s)
-              AND
-            """.formatted(placeholders));
-        parameters.addAll(channelIds);
-        targets.appendPredicate(sql, "summary.channel_id", "1", "summary.talkgroup_id");
-        sql.append("""
-
-            UNION ALL
-
-            SELECT summary.channel_id, 2 AS identity_kind_code, summary.radio_id AS identity_id,
-                summary.first_seen_ms, summary.last_seen_ms,
-                summary.call_count AS logical_call_count,
-                NULL AS recorded_logical_call_count,
-                NULL AS stream_submitted_logical_call_count,
-                summary.encrypted_count AS encrypted_logical_call_count,
-                NULL AS grant_observation_count, NULL AS join_observation_count,
-                NULL AS emergency_observation_count, NULL AS register_observation_count,
-                NULL AS logout_observation_count, NULL AS denial_observation_count,
-                NULL AS data_observation_count, NULL AS other_signaling_observation_count,
-                NULL AS signaling_observation_count,
-                3 AS protocol_code
-            FROM dmr_conventional_radio_summary summary
-            WHERE summary.channel_id IN (%1$s)
-              AND
-            """.formatted(placeholders));
-        parameters.addAll(channelIds);
-        targets.appendPredicate(sql, "summary.channel_id", "2", "summary.radio_id");
-        sql.append("""
-            ORDER BY channel_id, identity_kind_code, identity_id
-            LIMIT ?
-            """);
-        parameters.add(budget.queryLimit());
-        List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
-        budget.consume(evidence.size());
-        evidence = projectEvidence(evidence, sources, "channel_id", targets, budget);
-
-        mResolver.resolveEvidenceAliases(connection, evidence);
-        applyEvidenceRows(evidence, metrics);
-    }
-
     private static void applyEvidenceRows(List<Map<String,Object>> evidence,
                                           Map<Long,Map<String,MetricAccumulator>> metrics)
     {
@@ -1378,14 +1329,13 @@ final class StatsAliasCatalog
     }
 
     /**
-     * Completed-call output counts live in the protocol-neutral hourly identity buckets.  DMR's durable conventional
-     * summaries remain the sole source for call/encryption totals; this query adds only recorded/streamed output so
-     * those calls are not counted twice.
+     * Conventional call facts are owned by the exact saved channel. The shared hourly identity buckets cover P25,
+     * DMR, and NXDN without borrowing an Alias List or identity from another channel.
      */
-    private void applyConventionalDmrOutputs(Connection connection,
-                                             Map<Long,Map<String,MetricAccumulator>> metrics,
-                                             Set<Long> channelIds, Map<Long,List<CoverageSource>> sources,
-                                             SourceIdentityTargets targets, EvidenceBudget budget)
+    private void applyConventionalEvidence(Connection connection,
+                                           Map<Long,Map<String,MetricAccumulator>> metrics,
+                                           Set<Long> channelIds, Map<Long,List<CoverageSource>> sources,
+                                           SourceIdentityTargets targets, EvidenceBudget budget)
         throws SQLException
     {
         if(channelIds.isEmpty())
@@ -1398,29 +1348,32 @@ final class StatsAliasCatalog
         targets.appendCte(sql, parameters, false);
         sql.append("""
             SELECT bucket.channel_id, bucket.identity_kind_code, bucket.identity_id,
-                NULL AS first_seen_ms, NULL AS last_seen_ms,
-                NULL AS logical_call_count,
+                min(bucket.bucket_start_ms) AS first_seen_ms,
+                max(bucket.bucket_start_ms) AS last_seen_ms,
+                sum(bucket.call_count) AS logical_call_count,
                 sum(bucket.recorded_count) AS recorded_logical_call_count,
                 sum(bucket.streamed_count) AS stream_submitted_logical_call_count,
-                NULL AS encrypted_logical_call_count,
+                sum(bucket.encrypted_count) AS encrypted_logical_call_count,
                 NULL AS grant_observation_count, NULL AS join_observation_count,
                 NULL AS emergency_observation_count, NULL AS register_observation_count,
                 NULL AS logout_observation_count, NULL AS denial_observation_count,
                 NULL AS data_observation_count, NULL AS other_signaling_observation_count,
                 NULL AS signaling_observation_count,
-                3 AS protocol_code
+                CASE WHEN config.decoder_type LIKE 'P25%%' THEN 1
+                     WHEN config.decoder_type = 'DMR' THEN 3
+                     WHEN config.decoder_type = 'NXDN' THEN 4 END AS protocol_code
             FROM conventional_call_identity_bucket bucket
             JOIN receiver_channel channel ON channel.id = bucket.channel_id
             JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             WHERE bucket.channel_id IN (%s) AND config.channel_kind = 'CONVENTIONAL'
-              AND config.decoder_type = 'DMR'
-              AND bucket.identity_kind_code IN (1, 2)
+              AND (config.decoder_type LIKE 'P25%%' OR config.decoder_type IN ('DMR', 'NXDN'))
+              AND bucket.identity_kind_code IN (1, 2, 3)
               AND
             """.formatted(placeholders(channelIds.size())));
         parameters.addAll(channelIds);
         targets.appendPredicate(sql, "bucket.channel_id", "bucket.identity_kind_code", "bucket.identity_id");
         sql.append("""
-            GROUP BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id
+            GROUP BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id, config.decoder_type
             ORDER BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id
             LIMIT ?
             """);
@@ -2075,23 +2028,6 @@ final class StatsAliasCatalog
             sql.append(' ');
         }
 
-        private void appendAliasListPredicate(StringBuilder sql, List<Object> parameters, int protocol,
-                                              String aliasListColumn)
-        {
-            Set<Long> aliasListIds = mAliasListIds.getOrDefault(protocol, Set.of());
-
-            if(aliasListIds.isEmpty())
-            {
-                sql.append("0 ");
-                return;
-            }
-
-            sql.append(aliasListColumn).append(" IN (")
-                .append(placeholders(aliasListIds.size())).append(')');
-            parameters.addAll(aliasListIds);
-            sql.append(' ');
-        }
-
     }
 
     private record SourceTargetKey(boolean trunked, long radioSystemId, Long projectionAliasListId,
@@ -2133,7 +2069,7 @@ final class StatsAliasCatalog
 
                 for(CoverageSource source: coverage.getOrDefault(aliasId, Map.of()).values())
                 {
-                    Long projectionAliasListId = source.protocolCode == 1 ? null :
+                    Long projectionAliasListId = source.trunked && source.protocolCode == 1 ? null :
                         nullableNumber(alias.get("alias_list_id"));
                     SourceTargetKey key = new SourceTargetKey(source.trunked, source.numericId,
                         projectionAliasListId, kind);
@@ -2216,7 +2152,8 @@ final class StatsAliasCatalog
             int kind = (int)number(row.get("identity_kind_code"));
             kind = kind == 3 ? 1 : kind;
             long identity = number(row.get("identity_id"));
-            Long projectionAliasListId = source.protocolCode == 1 ? null : source.canonicalAliasListId;
+            Long projectionAliasListId = source.trunked && source.protocolCode == 1 ? null :
+                source.canonicalAliasListId;
             List<IdentityRange> ranges = mRanges.getOrDefault(new SourceTargetKey(source.trunked,
                 source.numericId, projectionAliasListId, kind), List.of());
             return ranges.stream().anyMatch(range -> identity >= range.minimum() && identity <= range.maximum());
@@ -2275,10 +2212,18 @@ final class StatsAliasCatalog
                 nullableNumber(row.get("system_id")));
         }
 
-        private static CoverageSource conventionalDmr(Map<String,Object> row)
+        private static CoverageSource conventional(Map<String,Object> row)
         {
             long id = number(row.get("channel_id"));
-            return new CoverageSource("channel:" + id, id, null, id, false, 3, "DMR", null,
+            int protocolCode = (int)number(row.get("protocol_code"));
+            String protocol = switch(protocolCode)
+            {
+                case 1 -> "P25";
+                case 3 -> "DMR";
+                case 4 -> "NXDN";
+                default -> "Unknown";
+            };
+            return new CoverageSource("channel:" + id, id, null, id, false, protocolCode, protocol, null,
                 text(row.get("configuration_id")), text(row.get("system_name")),
                 text(row.get("site_name")), null, null);
         }

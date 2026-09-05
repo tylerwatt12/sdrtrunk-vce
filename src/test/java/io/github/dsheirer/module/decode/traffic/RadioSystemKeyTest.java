@@ -103,6 +103,31 @@ class RadioSystemKeyTest
     }
 
     @Test
+    void validatesNativeAndCapturedFallbackKeysAgainstTheReceiver()
+    {
+        String dmrFallback = "dmr:channel:" + CHANNEL_ID;
+        String nxdnFallback = "nxdn-c:channel:" + CHANNEL_ID;
+
+        assertEquals("dmr:tier3:small:42", RadioSystemKey.nativeFor(Protocol.DMR,
+            TrunkedIdentityDomain.STANDARD, "dmr:tier3:small:42"));
+        assertEquals("nxdn-c:local:303", RadioSystemKey.nativeFor(Protocol.NXDN,
+            TrunkedIdentityDomain.NXDN_TYPE_C, "nxdn-c:local:303"));
+        assertEquals(dmrFallback, RadioSystemKey.effectiveForReceiver(Protocol.DMR,
+            TrunkedIdentityDomain.STANDARD, CHANNEL_ID, null));
+        assertEquals(dmrFallback, RadioSystemKey.validateForReceiver(Protocol.DMR,
+            TrunkedIdentityDomain.STANDARD, CHANNEL_ID, dmrFallback));
+        assertEquals(nxdnFallback, RadioSystemKey.validateForReceiver(Protocol.NXDN,
+            TrunkedIdentityDomain.NXDN_TYPE_C, CHANNEL_ID, nxdnFallback));
+
+        assertThrows(IllegalArgumentException.class, () -> RadioSystemKey.nativeFor(Protocol.DMR,
+            TrunkedIdentityDomain.STANDARD, dmrFallback));
+        assertThrows(IllegalArgumentException.class, () -> RadioSystemKey.validateForReceiver(Protocol.DMR,
+            TrunkedIdentityDomain.STANDARD, CHANNEL_ID, nxdnFallback));
+        assertThrows(IllegalArgumentException.class, () -> RadioSystemKey.validateForReceiver(Protocol.NXDN,
+            TrunkedIdentityDomain.NXDN_TYPE_D, CHANNEL_ID, "nxdn-c:local:303"));
+    }
+
+    @Test
     void parsesEveryExactCanonicalForm()
     {
         for(String key: List.of(

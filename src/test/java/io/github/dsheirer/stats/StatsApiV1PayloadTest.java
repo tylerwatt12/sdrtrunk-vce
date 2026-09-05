@@ -24,8 +24,10 @@ class StatsApiV1PayloadTest
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
         "group_identity_summary_id", "source_identity_summary_id", "target_identity_summary_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key",
-        "protocol_code", "variant_code",
-        "address_domain_code", "location_category_code", "identity_kind_code", "target_kind_code",
+        "protocol_code", "variant_code", "site_variant_code",
+        "address_domain_code", "location_category_code", "site_location_category_code",
+        "dmr_model_code", "nxdn_location_category_code", "site_model_code",
+        "identity_kind_code", "source_identity_kind_code", "target_identity_kind_code", "target_kind_code",
         "group_identity_kind_code", "group_identity_kind_label", "last_group_identity_kind_code",
         "home_wacn", "home_system_id", "channel_kind_code",
         "identity_role_code", "model_code", "brand_code", "mode_code", "channel_type_code",
@@ -126,12 +128,29 @@ class StatsApiV1PayloadTest
     }
 
     @Test
+    void activityKeepsSemanticIdentityReferencesWithoutNumericDiscriminators()
+    {
+        JsonNode activity = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("protocol", "APCO25"),
+            Map.entry("source_identity_key", "v1-r-bee00-348-205"),
+            Map.entry("target_identity_key", "v1-g-bee00-348-101"),
+            Map.entry("source_identity_kind_code", 2),
+            Map.entry("target_identity_kind_code", 1),
+            Map.entry("target_kind_code", 1)));
+
+        assertEquals("v1-r-bee00-348-205", activity.path("source_identity_key").textValue());
+        assertEquals("v1-g-bee00-348-101", activity.path("target_identity_key").textValue());
+        assertEquals("talkgroup", activity.path("target_kind").textValue());
+        assertNoInternalFields(activity);
+    }
+
+    @Test
     void presentsDmrChannelLocationSemantics()
     {
         JsonNode channel = StatsApiV1Payload.present(Map.ofEntries(
             Map.entry("channel_id", 1001), Map.entry("configuration_id", "channel-1"),
             Map.entry("protocol_code", 3), Map.entry("site_id", 7), Map.entry("variant_code", 3),
-            Map.entry("location_category_code", 4), Map.entry("brand_code", 2),
+            Map.entry("location_category_code", 0), Map.entry("brand_code", 2),
             Map.entry("model_code", 4), Map.entry("mode_code", 1), Map.entry("channel_type_code", 2)));
         assertEquals("dmr", channel.path("protocol").textValue());
         assertEquals("capacity_max", channel.path("variant").textValue());
@@ -159,6 +178,84 @@ class StatsApiV1PayloadTest
             OBJECT_MAPPER.convertValue(channel.get("services"), List.class));
         assertEquals(45, channel.path("failure_call_timer_seconds").intValue());
         assertNoInternalFields(channel);
+    }
+
+    @Test
+    void presentsAuthoritativeNativeSystemDimensionsWithoutDatabaseCodes()
+    {
+        JsonNode dmr = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 3, "radio_system_key", "dmr:tier3:small:42",
+            "variant", "TIER_III", "dmr_model_code", 2, "network_id", 42));
+        assertEquals("dmr", dmr.path("protocol").textValue());
+        assertEquals("tier_iii", dmr.path("variant").textValue());
+        assertEquals("small", dmr.path("model").textValue());
+        assertEquals(42, dmr.path("network_id").intValue());
+        assertNoInternalFields(dmr);
+
+        JsonNode nxdn = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 4, "radio_system_key", "nxdn-c:local:303",
+            "address_domain_code", 1, "variant", "TYPE_C",
+            "nxdn_location_category_code", 3, "system_id", 303));
+        assertEquals("nxdn", nxdn.path("protocol").textValue());
+        assertEquals("type_c", nxdn.path("variant").textValue());
+        assertEquals("local", nxdn.path("location_category").textValue());
+        assertEquals(303, nxdn.path("system_id").intValue());
+        assertNoInternalFields(nxdn);
+    }
+
+    @Test
+    void presentsDmrAndNxdnNeighborClassificationsInSeparateFields()
+    {
+        JsonNode dmr = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 3, "variant_code", 1, "dmr_model_code", 2,
+            "network_id", 42, "site_id", 7));
+        assertEquals("dmr", dmr.path("protocol").textValue());
+        assertEquals("tier_iii", dmr.path("variant").textValue());
+        assertEquals("small", dmr.path("model").textValue());
+        assertFalse(dmr.has("location_category"));
+        assertNoInternalFields(dmr);
+
+        JsonNode nxdn = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 4, "variant_code", 1, "nxdn_location_category_code", 3,
+            "system_id", 303, "site_id", 9));
+        assertEquals("nxdn", nxdn.path("protocol").textValue());
+        assertEquals("type_c", nxdn.path("variant").textValue());
+        assertEquals("local", nxdn.path("location_category").textValue());
+        assertFalse(nxdn.has("model"));
+        assertNoInternalFields(nxdn);
+    }
+
+    @Test
+    void keepsRadioSystemIdentitySeparateFromObservedSiteFacts()
+    {
+        JsonNode dmr = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("protocol_code", 3), Map.entry("radio_system_key", "dmr:tier3:small:42"),
+            Map.entry("variant", "TIER_III"), Map.entry("dmr_model_code", 2), Map.entry("network_id", 42),
+            Map.entry("site_variant_code", 1), Map.entry("site_model_code", 3),
+            Map.entry("site_network_id", 7), Map.entry("site_id", 9)));
+
+        assertEquals("tier_iii", dmr.path("variant").textValue());
+        assertEquals("small", dmr.path("model").textValue());
+        assertEquals(42, dmr.path("network_id").intValue());
+        assertEquals("tier_iii", dmr.path("site_variant").textValue());
+        assertEquals("large", dmr.path("site_model").textValue());
+        assertEquals(7, dmr.path("site_network_id").intValue());
+        assertEquals(9, dmr.path("site_id").intValue());
+        assertNoInternalFields(dmr);
+
+        JsonNode nxdn = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("protocol_code", 4), Map.entry("radio_system_key", "nxdn-c:local:303"),
+            Map.entry("variant", "TYPE_C"), Map.entry("nxdn_location_category_code", 3),
+            Map.entry("system_id", 303), Map.entry("site_variant_code", 1),
+            Map.entry("site_location_category_code", 2), Map.entry("site_system_id", 12)));
+
+        assertEquals("type_c", nxdn.path("variant").textValue());
+        assertEquals("local", nxdn.path("location_category").textValue());
+        assertEquals(303, nxdn.path("system_id").intValue());
+        assertEquals("type_c", nxdn.path("site_variant").textValue());
+        assertEquals("regional", nxdn.path("site_location_category").textValue());
+        assertEquals(12, nxdn.path("site_system_id").intValue());
+        assertNoInternalFields(nxdn);
     }
 
     @Test

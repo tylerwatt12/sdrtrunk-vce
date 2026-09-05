@@ -12,18 +12,31 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
+import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.protocol.Protocol;
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +50,46 @@ class TrunkedCallStartTrackerTest
         APCO25Channel channel = APCO25Channel.create(0, 459);
         assertNull(new TrunkedCallStartTracker(5_000).observe(parent, Protocol.APCO25, channel, 0,
             identifiers(APCO25Talkgroup.create(1_200)), DecodeEventType.CALL_GROUP, 1_000L));
+    }
+
+    @Test
+    void rejectsUnknownZeroFrequencyDescriptorWithoutFormattingOrMergingIt()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        IChannelDescriptor unresolved = new ThrowingUnresolvedDescriptor();
+
+        assertNull(new TrunkedCallStartTracker(5_000L).observe(parent, Protocol.DMR, unresolved, 1,
+            identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_000L));
+    }
+
+    @Test
+    void ignoresStringEncodedNumericIdentifiersWithoutFormattingOrParsingThem()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(new ThrowingStringRadio("101"));
+        identifiers.update(DMRTalkgroup.create(91));
+
+        TrunkedCallStartEvent event = new TrunkedCallStartTracker(5_000L).observe(parent, Protocol.DMR,
+            new DMRTier3Channel(12, 1), 1, identifiers, DecodeEventType.CALL_GROUP, 1_000L);
+
+        assertNotNull(event);
+        assertNull(event.sourceRadioId(), "only a Number value is a numeric radio identity");
+    }
+
+    @Test
+    void rejectsNxdnIdentifiersFromTheWrongConfiguredAddressDomain()
+    {
+        Channel parent = new Channel("NXDN Type-D Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigNXDN(TransmissionMode.TYPE_D));
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(NXDNRadioIdentifier.createFrom(101));
+        identifiers.update(NXDNTalkgroupIdentifier.createTo(91));
+
+        assertNull(new TrunkedCallStartTracker(5_000L).observe(parent, Protocol.NXDN,
+            new NXDNChannelLookup(12), null, identifiers, DecodeEventType.CALL_GROUP, 1_000L));
     }
 
     @Test
@@ -57,10 +110,10 @@ class TrunkedCallStartTrackerTest
             identifiers(102, 92), DecodeEventType.CALL_GROUP, 1_300L);
 
         assertNotNull(first);
-        assertEquals(Protocol.DMR, first.event().getProtocol());
-        assertEquals(451_012_500L, first.event().getChannelDescriptor().getDownlinkFrequency());
-        assertEquals(1, first.event().getTimeslot());
-        assertEquals(101, first.event().getIdentifierCollection().getFromIdentifier().getValue());
+        assertEquals(Protocol.DMR, first.protocol());
+        assertEquals(451_012_500L, first.frequencyHertz());
+        assertEquals(1, first.timeslot());
+        assertEquals(101, first.sourceRadioId());
         assertNull(talkerUpdate);
         assertNotNull(targetChange);
         assertNull(repeatedGrant);
@@ -105,8 +158,8 @@ class TrunkedCallStartTrackerTest
         assertFalse(sourceAndEncryption.attribution().destinationBecameKnown());
         assertTrue(sourceAndEncryption.attribution().sourceBecameKnown());
         assertTrue(sourceAndEncryption.attribution().encryptionBecameKnown());
-        assertEquals(91, sourceAndEncryption.attribution().identifiers().getToIdentifier().getValue());
-        assertEquals(101, sourceAndEncryption.attribution().identifiers().getFromIdentifier().getValue());
+        assertEquals(91, sourceAndEncryption.attribution().destinationId());
+        assertEquals(101, sourceAndEncryption.attribution().sourceRadioId());
         assertNull(repeated.callStart());
         assertNull(repeated.attribution());
         assertNull(delayed.callStart());
@@ -220,8 +273,8 @@ class TrunkedCallStartTrackerTest
         assertNotNull(valid.attribution());
         assertTrue(valid.attribution().destinationBecameKnown());
         assertTrue(valid.attribution().sourceBecameKnown());
-        assertEquals(91, valid.attribution().identifiers().getToIdentifier().getValue());
-        assertEquals(101, valid.attribution().identifiers().getFromIdentifier().getValue());
+        assertEquals(91, valid.attribution().destinationId());
+        assertEquals(101, valid.attribution().sourceRadioId());
         assertNull(repeated.callStart());
         assertNull(repeated.attribution());
     }
@@ -287,6 +340,48 @@ class TrunkedCallStartTrackerTest
     }
 
     @Test
+    void correlatesDifferentDmrDescriptorSubtypesForTheSameLogicalChannel()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(3_000L);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel controlDescriptor = new DMRTier3Channel(6, 1);
+        DMRLsn trafficDescriptor = new DMRLsn(11); //LCN 6, timeslot 1
+
+        TrunkedCallStartTracker.ObservationResult started = tracker.observeWithAttribution(parent, Protocol.DMR,
+            controlDescriptor, 1, identifiers(0, 91), DecodeEventType.CALL_GROUP, 1_000L);
+        TrunkedCallStartTracker.ObservationResult enriched = tracker.enrichActiveCall(parent, Protocol.DMR,
+            trafficDescriptor, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_100L);
+
+        assertNotNull(started.callStart());
+        assertNull(enriched.callStart());
+        assertNotNull(enriched.attribution());
+        assertTrue(enriched.attribution().sourceBecameKnown());
+
+        tracker.end(trafficDescriptor, 1, 1_200L);
+        assertNotNull(tracker.observe(parent, Protocol.DMR, controlDescriptor, 1, identifiers(102, 91),
+            DecodeEventType.CALL_GROUP, 1_201L));
+    }
+
+    @Test
+    void usesTheCapturedDmrTimeslotWhenTheCallerDoesNotRepeatIt()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(3_000L);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+
+        TrunkedCallStartEvent timeslotOne = tracker.observe(parent, Protocol.DMR,
+            new DMRTier3Channel(12, 1), null, identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_000L);
+        TrunkedCallStartEvent timeslotTwo = tracker.observe(parent, Protocol.DMR,
+            new DMRTier3Channel(12, 2), null, identifiers(102, 91), DecodeEventType.CALL_GROUP, 1_001L);
+
+        assertNotNull(timeslotOne);
+        assertNotNull(timeslotTwo);
+        assertEquals(1, timeslotOne.timeslot());
+        assertEquals(2, timeslotTwo.timeslot());
+    }
+
+    @Test
     void trafficProgressKeepsAnActiveCallFromRestarting()
     {
         TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(3_000);
@@ -300,6 +395,43 @@ class TrunkedCallStartTrackerTest
         tracker.touch(channel, 1, 4_500L);
         assertNull(tracker.observe(parent, Protocol.DMR, channel, 1, identifiers,
             DecodeEventType.CALL_GROUP, 5_000L));
+    }
+
+    @Test
+    void capturesOneEffectiveSystemKeyForTheWholePhysicalCall()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(3_000);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel channel = channel(451_012_500L, 1);
+        String fallback = RadioSystemKey.channelScoped(Protocol.DMR, TrunkedIdentityDomain.STANDARD,
+            ChannelConfigurationKey.configured(parent));
+
+        TrunkedCallStartTracker.ObservationResult initial = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(0, 91), DecodeEventType.CALL_GROUP, 1_000L, null);
+        TrunkedCallStartTracker.ObservationResult enriched = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_100L,
+            "dmr:tier3:small:42");
+
+        assertEquals(fallback, initial.callStart().radioSystemKey());
+        assertEquals(fallback, enriched.attribution().radioSystemKey(),
+            "learning a system in the middle of a call must not relabel that call");
+
+        tracker.end(channel, 1, 1_200L);
+        TrunkedCallStartTracker.ObservationResult next = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(0, 92), DecodeEventType.CALL_GROUP, 1_201L,
+            "dmr:tier3:small:42");
+        assertEquals("dmr:tier3:small:42", next.callStart().radioSystemKey());
+
+        TrunkedCallStartTracker.ObservationResult nextEnrichment = tracker.observeWithAttribution(parent,
+            Protocol.DMR, channel, 1, identifiers(102, 92), DecodeEventType.CALL_GROUP, 1_250L, null);
+        assertEquals("dmr:tier3:small:42", nextEnrichment.attribution().radioSystemKey(),
+            "clearing the manager's identity only affects the next physical call");
+
+        tracker.end(channel, 1, 1_300L);
+        TrunkedCallStartTracker.ObservationResult fallbackNext = tracker.observeWithAttribution(parent,
+            Protocol.DMR, channel, 1, identifiers(103, 93), DecodeEventType.CALL_GROUP, 1_301L, null);
+        assertEquals(fallback, fallbackNext.callStart().radioSystemKey());
     }
 
     private static MutableIdentifierCollection identifiers(int radio, int talkgroup)
@@ -340,5 +472,42 @@ class TrunkedCallStartTrackerTest
                 return true;
             }
         };
+    }
+
+    private static final class ThrowingUnresolvedDescriptor implements IChannelDescriptor
+    {
+        @Override public long getDownlinkFrequency() { return 0L; }
+        @Override public long getUplinkFrequency() { return 0L; }
+        @Override public int[] getFrequencyBandIdentifiers() { return new int[0]; }
+        @Override public void setFrequencyBand(IFrequencyBand bandIdentifier) { }
+        @Override public boolean isTDMAChannel() { return true; }
+        @Override public int getTimeslotCount() { return 2; }
+        @Override public Protocol getProtocol() { return Protocol.DMR; }
+
+        @Override
+        public String toString()
+        {
+            throw new AssertionError("An unresolved live descriptor must not be formatted into a call key");
+        }
+    }
+
+    private static final class ThrowingStringRadio extends StringIdentifier
+    {
+        private ThrowingStringRadio(String value)
+        {
+            super(value, IdentifierClass.USER, Form.RADIO, Role.FROM);
+        }
+
+        @Override
+        public Protocol getProtocol()
+        {
+            return Protocol.DMR;
+        }
+
+        @Override
+        public String toString()
+        {
+            throw new AssertionError("String-encoded numeric identifiers must not be formatted or parsed");
+        }
     }
 }

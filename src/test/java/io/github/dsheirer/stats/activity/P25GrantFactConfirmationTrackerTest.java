@@ -46,6 +46,6 @@ class P25GrantFactConfirmationTrackerTest
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", java.util.List.of(), 854_187_500L, "0-509", 0,
             false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
-            ReceiverActivityRecords.P25Identity.ORDINARY, java.util.List.of());
+            ReceiverActivityRecords.P25Identity.ORDINARY, java.util.List.of(), null);
     }
 }

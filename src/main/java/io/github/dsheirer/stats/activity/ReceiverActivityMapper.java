@@ -41,10 +41,10 @@ import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
-import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
@@ -147,15 +147,15 @@ class ReceiverActivityMapper
 
     ReceiverActivityRecords.TalkerAliasUpdate map(TrunkedTalkerAliasEvent event)
     {
-        if(event == null || event.channel() == null || event.radio() == null || event.alias() == null ||
-            event.alias().getValue() == null || event.alias().getValue().toString().isBlank() ||
-            event.protocol() == null || event.protocol() == Protocol.UNKNOWN)
+        if(event == null || event.configurationId() == null || event.radio() == null ||
+            event.talkerAlias() == null || event.talkerAlias().isBlank() || event.decoderType() == null ||
+            event.protocol() == null || event.protocol() == Protocol.UNKNOWN ||
+            event.callStartEpochMilliseconds() <= 0)
         {
             return null;
         }
 
-        DecoderType decoderType = event.channel().getDecodeConfiguration() != null ?
-            event.channel().getDecodeConfiguration().getDecoderType() : null;
+        DecoderType decoderType = event.decoderType();
 
         boolean decoderMatches = switch(event.protocol())
         {
@@ -170,22 +170,17 @@ class ReceiverActivityMapper
             return null;
         }
 
-        IdentifierFacts facts = IdentifierFacts.from(event.identifiers());
-        String configurationId = ChannelConfigurationKey.configured(event.channel());
-
-        if(configurationId == null)
-        {
-            return null;
-        }
-
-        long observedAt = event.timestamp() > 0 ? event.timestamp() : System.currentTimeMillis();
-        return new ReceiverActivityRecords.TalkerAliasUpdate(observedAt, configurationId,
+        IdentifierFacts facts = IdentifierFacts.from(event.identifierCollection());
+        long observedAt = event.observedAtEpochMilliseconds() > 0 ?
+            event.observedAtEpochMilliseconds() : System.currentTimeMillis();
+        return new ReceiverActivityRecords.TalkerAliasUpdate(observedAt, event.callStartEpochMilliseconds(),
+            event.configurationId(),
             configuredProtocolName(decoderType, event.protocol()),
             facts.wacn(),
             facts.systemId(), event.radio().getValue(),
             p25Identity(event.radio(), event.protocol() == Protocol.APCO25),
-            event.alias().getValue().toString().trim(),
-            event.identityDomain());
+            event.talkerAlias(),
+            event.identityDomain(), event.radioSystemKey());
     }
 
     ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event)
@@ -195,27 +190,83 @@ class ReceiverActivityMapper
 
     ReceiverActivityRecords.ActivityEvent map(P25CallStartEvent callStart)
     {
-        if(callStart == null)
+        if(callStart == null || callStart.configurationId() == null || callStart.decoderType() == null)
         {
             return null;
         }
 
-        return map(callStart.channel(), callStart.event(), ReceiverActivityRecords.Action.CALL);
+        DecoderType decoderType = callStart.decoderType();
+        ReceiverActivityRecords.ReceiverKind receiverKind = decoderType == DecoderType.P25_CONVENTIONAL ?
+            ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 :
+            decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ?
+                ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE : null;
+
+        if(receiverKind == null)
+        {
+            return null;
+        }
+
+        IdentifierCollection identifiers = callStart.identifierCollection();
+        IdentifierFacts facts = IdentifierFacts.from(identifiers);
+        Long frequency = callStart.frequencyHertz() != null ? callStart.frequencyHertz() : facts.frequencyHertz();
+        String channelDescriptor = firstNonBlank(callStart.channelDescriptor(), facts.channelDescriptor(),
+            facts.logicalChannelName());
+        Integer timeslot = callStart.timeslot() != null ? callStart.timeslot() : facts.timeslot();
+        Identifier targetIdentifier = identifiers.getToIdentifier();
+        Identifier sourceIdentifier = identifiers.getFromIdentifier();
+        boolean encrypted = facts.encrypted() && callStart.encryptionConfirmed();
+        Integer encryptionAlgorithmId = encrypted ? facts.encryptionAlgorithmId() : null;
+        Integer encryptionKeyId = encrypted ? facts.encryptionKeyId() : null;
+        long observedAt = callStart.startedAtEpochMilliseconds() > 0 ?
+            callStart.startedAtEpochMilliseconds() : System.currentTimeMillis();
+
+        return new ReceiverActivityRecords.ActivityEvent(observedAt, callStart.configurationId(), receiverKind,
+            protocolName(callStart.protocol(), facts, decoderType), ReceiverActivityRecords.Action.CALL,
+            callStart.eventType() != null ? callStart.eventType().name() : null, facts.sourceId(), facts.targetId(),
+            facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, channelDescriptor, timeslot, encrypted,
+            encryptionAlgorithmId, encryptionKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(),
+            facts.site(), facts.talkerAlias(), true, null, null, TrunkedIdentityDomain.STANDARD,
+            p25TargetIdentity(targetIdentifier, true), p25Identity(sourceIdentifier, true),
+            facts.p25PatchMemberIdentities(), callStart.radioSystemKey());
     }
 
     ReceiverActivityRecords.ActivityEvent map(P25GrantObservationEvent observation)
     {
-        if(observation == null)
+        if(observation == null || observation.configurationId() == null || observation.decoderType() == null)
         {
             return null;
         }
 
-        IDecodeEvent event = P25DecodeEvent.builder(observation.eventType(), observation.timestamp())
-            .channel(observation.channelDescriptor())
-            .identifiers(observation.identifiers())
-            .build();
-        return map(observation.channel(), event, observation.continuation() ?
-            ReceiverActivityRecords.Action.CONTINUE : ReceiverActivityRecords.Action.GRANT);
+        DecoderType decoderType = observation.decoderType();
+        ReceiverActivityRecords.ReceiverKind receiverKind = decoderType == DecoderType.P25_CONVENTIONAL ?
+            ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 :
+            decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ?
+                ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE : null;
+
+        if(receiverKind == null)
+        {
+            return null;
+        }
+
+        IdentifierCollection identifiers = observation.identifierCollection();
+        IdentifierFacts facts = IdentifierFacts.from(identifiers);
+        Long frequency = observation.frequencyHertz() != null ? observation.frequencyHertz() : facts.frequencyHertz();
+        String descriptor = firstNonBlank(observation.channelDescriptor(), facts.channelDescriptor(),
+            facts.logicalChannelName());
+        Integer timeslot = observation.timeslot() != null ? observation.timeslot() : facts.timeslot();
+        Identifier target = identifiers.getToIdentifier();
+        Identifier source = identifiers.getFromIdentifier();
+        ReceiverActivityRecords.Action action = observation.continuation() ?
+            ReceiverActivityRecords.Action.CONTINUE : ReceiverActivityRecords.Action.GRANT;
+        long observedAt = observation.timestamp() > 0 ? observation.timestamp() : System.currentTimeMillis();
+
+        return new ReceiverActivityRecords.ActivityEvent(observedAt, observation.configurationId(), receiverKind,
+            protocolName(observation.protocol(), facts, decoderType), action,
+            observation.eventType() != null ? observation.eventType().name() : null, facts.sourceId(), facts.targetId(),
+            facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, descriptor, timeslot, false, null, null,
+            facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.talkerAlias(), false, null,
+            null, TrunkedIdentityDomain.STANDARD, p25TargetIdentity(target, true), p25Identity(source, true),
+            facts.p25PatchMemberIdentities(), observation.radioSystemKey());
     }
 
     ReceiverActivityRecords.ConventionalCallOutput mapConventionalCallOutput(CompletedAudioCall call,
@@ -304,12 +355,24 @@ class ReceiverActivityMapper
             return null;
         }
 
+        String radioSystemKey = null;
+        if(dmr || nxdn)
+        {
+            Protocol receiverProtocol = dmr ? Protocol.DMR : Protocol.NXDN;
+            radioSystemKey = winnerSource.radioSystemKey() != null ?
+                RadioSystemKey.validateForReceiver(receiverProtocol, winnerSource.identityDomain(), configurationId,
+                    winnerSource.radioSystemKey()) :
+                RadioSystemKey.effectiveForReceiver(receiverProtocol, winnerSource.identityDomain(), configurationId,
+                    null);
+        }
+
         return new ReceiverActivityRecords.ResolvedLogicalCall(call.logicalCallId(), timestamp, configurationId,
             protocol, winnerSource.identityDomain(), systemWacn, systemId,
             destination != null ? destination : 0, facts.targetForm(),
             facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
             facts.encryptionAlgorithmId(), facts.encryptionKeyId(), resolvedTargetIdentity,
-            resolvedSourceIdentity, p25 ? facts.p25PatchMemberIdentities() : List.of(), siteObservations);
+            resolvedSourceIdentity, p25 ? facts.p25PatchMemberIdentities() : List.of(), siteObservations,
+            radioSystemKey);
     }
 
     private static List<ReceiverActivityRecords.P25SiteCallObservation> p25SiteCallObservations(
@@ -472,6 +535,13 @@ class ReceiverActivityMapper
     private ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
                                                      ReceiverActivityRecords.Action actionOverride)
     {
+        return map(channel, event, actionOverride, null);
+    }
+
+    private ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
+                                                       ReceiverActivityRecords.Action actionOverride,
+                                                       String radioSystemKey)
+    {
         if(channel == null || event == null || channel.getDecodeConfiguration() == null)
         {
             return null;
@@ -616,7 +686,7 @@ class ReceiverActivityMapper
                 (receiverKind != ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
             radioPresenceUpdate, configuredIdentityDomain, p25TargetIdentity,
             p25SourceIdentity,
-            facts.p25PatchMemberIdentities());
+            facts.p25PatchMemberIdentities(), radioSystemKey);
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
@@ -633,12 +703,12 @@ class ReceiverActivityMapper
 
     ReceiverActivityRecords.SiteSnapshot map(SiteMetadataEvent event)
     {
-        if(event == null || event.channel() == null || event.snapshot() == null || !event.snapshot().isUseful())
+        if(event == null || event.receiverContext() == null || event.snapshot() == null ||
+            !event.snapshot().isUseful() || !event.matchesCurrentChannel())
         {
             return null;
         }
 
-        Channel channel = event.channel();
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
         P25NetworkConfigurationSnapshot.CurrentSite currentSite = snapshot.currentSite();
         Integer wacn = snapshot.network() != null ? snapshot.network().wacn() : null;
@@ -648,6 +718,37 @@ class ReceiverActivityMapper
             snapshot.network().nac() : currentSite != null ? currentSite.nac() : null;
         Integer rfss = currentSite != null ? currentSite.rfss() : null;
         Integer site = currentSite != null ? currentSite.site() : null;
+        P25SiteIdentity coherentIdentity = P25SiteIdentity.from(snapshot);
+
+        if(snapshot.network() != null && currentSite != null &&
+            (snapshot.network().system() != null && currentSite.system() != null &&
+                !snapshot.network().system().equals(currentSite.system()) ||
+             snapshot.network().nac() != null && currentSite.nac() != null &&
+                !snapshot.network().nac().equals(currentSite.nac())))
+        {
+            //Network and current-site signaling must describe one coherent source even while RFSS/Site is partial.
+            return null;
+        }
+
+        if(wacn != null && system != null && rfss != null && site != null && coherentIdentity == null)
+        {
+            //Do not combine independently stabilized values into a site identity that the P25 tuple itself rejects.
+            return null;
+        }
+
+        if(coherentIdentity != null)
+        {
+            if(!event.isSourceAdvertisedControlChannel())
+            {
+                //A stale snapshot from a previous tuning epoch cannot establish the saved receiver's site.
+                return null;
+            }
+
+            wacn = coherentIdentity.wacn();
+            system = coherentIdentity.system();
+            rfss = coherentIdentity.rfss();
+            site = coherentIdentity.site();
+        }
         Integer lra = currentSite != null && currentSite.lra() != null ? currentSite.lra() :
             snapshot.network() != null ? snapshot.network().lra() : null;
         Boolean activeRfssNetworkConnection = currentSite != null ? currentSite.activeRfssNetworkConnection() : null;
@@ -658,7 +759,7 @@ class ReceiverActivityMapper
             safe(snapshot.frequencyBands()), safe(snapshot.patchGroups()),
             safe(snapshot.siteStatus() != null ? snapshot.siteStatus().withoutVolatileTiming() : null),
             safe(snapshot.foreignSystemBands())));
-        String configurationId = ChannelConfigurationKey.configured(channel);
+        String configurationId = event.receiverContext().configurationId();
 
         if(configurationId == null)
         {
@@ -668,7 +769,7 @@ class ReceiverActivityMapper
         return new ReceiverActivityRecords.SiteSnapshot(event.observedAtEpochMilliseconds(), configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
             wacn, system, nac, rfss, site, lra, activeRfssNetworkConnection, tdma, snapshot.siteStatus(),
-            currentControl, currentControl,
+            event.sourceFrequency(), currentControl, currentControl,
             snapshot.channels(), snapshot.neighborSites(),
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.foreignSystemBands());
     }

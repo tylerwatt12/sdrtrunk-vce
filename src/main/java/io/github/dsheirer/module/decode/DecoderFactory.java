@@ -411,7 +411,6 @@ public class DecoderFactory
             }
 
             modules.add(new NXDNDecoder(configNXDN));
-            modules.add(new NXDNAudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
 
             if(channel.getChannelType() == ChannelType.STANDARD)
             {
@@ -431,6 +430,9 @@ public class DecoderFactory
             {
                 mLog.warn("Expected non-null NXDN traffic channel manager for channel " + channel.getName());
             }
+
+            //Construct the standard-channel identity publisher before audio; both remain scoped to this one chain.
+            modules.add(new NXDNAudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
         }
         else
         {

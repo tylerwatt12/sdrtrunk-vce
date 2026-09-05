@@ -254,6 +254,27 @@ class SiteControlChannelLearnerTest
         assertEquals(List.of(PRIMARY), frequencies(channel));
     }
 
+    @Test
+    void ignoresMetadataCapturedBeforeTheChannelWasReplaced()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = channel(List.of(PRIMARY));
+        SiteMetadataEvent stale = event(channel, PRIMARY, 1_000, WACN, SYSTEM, RFSS, SITE,
+            List.of(PRIMARY, ALTERNATE));
+
+        channel.setConfigurationId("00000000-0000-0000-0000-000000000999");
+        SourceConfigTunerMultipleFrequency replacement = new SourceConfigTunerMultipleFrequency();
+        replacement.setFrequencies(List.of(SECOND_ALTERNATE));
+        channel.setSourceConfiguration(replacement);
+
+        learner.receiveSiteMetadata(stale);
+
+        assertNull(channel.getP25SiteIdentity());
+        assertEquals(List.of(SECOND_ALTERNATE), frequencies(channel));
+        assertEquals(0, saves.get());
+    }
+
     private static Channel channel(List<Long> frequencies)
     {
         return channel(frequencies, true);

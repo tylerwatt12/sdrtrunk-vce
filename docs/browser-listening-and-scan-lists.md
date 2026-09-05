@@ -97,11 +97,18 @@ while Hold or Avoid controls the stable channel or radio-system identity that pr
 - Trunked calls use `radio_system_key` plus the talkgroup, patch group, or radio identity. The same talkgroup number on
   two radio systems therefore remains two separate Hold/Avoid targets. Native P25 systems use their WACN and System ID
   in the stable radio-system key, so saved channels that discover the same P25 system share Hold and Avoid state.
-  Trunked DMR and NXDN are currently kept separate for each saved channel. They will only be joined across channels
-  after the decoder can prove a safe native system identity.
+  Standard DMR Tier III uses its model (`tiny`, `small`, `large`, or `huge`) and Network ID, and NXDN Type-C uses its
+  location category (`global`, `regional`, or `local`) and System ID. Saved channels share Hold and Avoid state only
+  inside this receiver profile and only after the decoder has learned those complete identities. Capacity Plus,
+  Connect Plus, Capacity Max, Hytera Tier III, unknown or incomplete DMR, incomplete NXDN Type-C, and NXDN Type-D
+  remain separate for each saved channel.
+- On trunked DMR, the timeslot says which radio resource carried the call. It does not split the radio system or the
+  talkgroup Hold/Avoid target. Conventional DMR still uses the saved channel plus timeslot as described above.
 
 The API returns this exact control target in `playback_target`. Its `label` is user-facing text; its `key` is the identity used
-for selection. Channel names, Alias names, and RadioResolve IDs are never used as the key.
+for selection. Channel names, Alias names, and RadioResolve IDs are never used as the key. For system-scoped targets, the
+browser Avoid List also shows the system label and stable `radio_system_key`, so identical Alias text and numeric IDs on
+different systems remain visibly distinguishable.
 
 ## The Default Setup
 

@@ -42,6 +42,16 @@ final class TestChannelActivitySource implements StatsLiveService.ActivitySource
         mListeners.remove(listener);
     }
 
+    int listenerCount()
+    {
+        return mListeners.size();
+    }
+
+    List<Listener<ChannelActivityEvent>> listeners()
+    {
+        return List.copyOf(mListeners);
+    }
+
     void publish(ChannelActivityEvent event)
     {
         if(event == null || event.operation() == null || event.snapshot() == null)

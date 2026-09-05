@@ -12,6 +12,7 @@
 package io.github.dsheirer.database.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -229,6 +230,48 @@ class ConfigurationRepositorySnapshotTest
         {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void configurationWriteWaitsForAnExistingWriterBeforeReadingItsSnapshot() throws Exception
+    {
+        Path database = database("snapshot-write-contention.sqlite");
+        ConfigurationRepository repository = new ConfigurationRepository(database);
+        ConfigurationSnapshot baseline = seed(repository, "County P25", 1001,
+            851_012_500L, "Primary Stream");
+        baseline.channels().getFirst().setName("Queued Control");
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch saveSubmitted = new CountDownLatch(1);
+
+        try(Connection blocker = SdrTrunkDatabase.openWriteTransaction(database);
+            Statement statement = blocker.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE database_metadata
+                SET updated_at_ms = updated_at_ms + 1
+                WHERE key = 'database_format_version'
+                """);
+            Future<?> save = executor.submit(() ->
+            {
+                saveSubmitted.countDown();
+                repository.replaceChannelAndBroadcastConfiguration(baseline.channels(),
+                    baseline.broadcastConfigurations());
+                return null;
+            });
+
+            assertTrue(saveSubmitted.await(2, TimeUnit.SECONDS));
+            Thread.sleep(100);
+            assertFalse(save.isDone(), "configuration save did not wait for the active SQLite writer");
+            //Changing back to auto-commit commits without opening the next configured IMMEDIATE transaction.
+            blocker.setAutoCommit(true);
+            save.get(5, TimeUnit.SECONDS);
+        }
+        finally
+        {
+            executor.shutdownNow();
+        }
+
+        assertEquals("Queued Control", repository.load().channels().getFirst().getName());
     }
 
     private Path database(String name) throws Exception

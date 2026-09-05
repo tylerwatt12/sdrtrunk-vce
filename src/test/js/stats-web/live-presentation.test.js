@@ -49,9 +49,11 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
+  ${functionSource('rowGroupIdentityKind')}
+  ${functionSource('groupIdentityLabel')}
   ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
-    liveIdentityType, liveIdentityLabel, activityTargetKind };
+    liveIdentityType, liveIdentityLabel, rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
 
 const preferences = {
@@ -69,6 +71,14 @@ assert.equal(behavior.liveIdentityType({
 }, 'target'), 'patch_group');
 assert.equal(behavior.liveIdentityLabel({ target_matcher: { type: 'patch_group' } }, 'target'), 'patch group');
 assert.equal(behavior.liveIdentityLabel({ target_form: 'PATCH_GROUP' }, 'target', true), 'Patch Group');
+assert.equal(behavior.liveIdentityType({}, 'target'), 'unknown');
+assert.equal(behavior.liveIdentityLabel({}, 'target'), 'identity');
+assert.equal(behavior.liveIdentityLabel({ target_form: 'UNKNOWN' }, 'target', true), 'Identity');
+assert.equal(behavior.liveIdentityLabel({ target_form: 'TELEPHONE_NUMBER' }, 'target', true), 'Identity');
+assert.equal(behavior.rowGroupIdentityKind({}), 'unknown');
+assert.equal(behavior.rowGroupIdentityKind({ target_kind: 'telephone_number' }), 'unknown');
+assert.equal(behavior.groupIdentityLabel({}), 'ID');
+assert.equal(behavior.groupIdentityLabel({ target_kind: 'telephone_number' }, null, false), 'Identity');
 assert.equal(behavior.activityTargetKind({ target_kind: 'patch_group' }), 'patch_group');
 assert.equal(behavior.activityTargetKind({ target_kind: 'talkgroup' }), 'talkgroup');
 assert.equal(behavior.activityTargetKind({ target_kind: 'radio' }), 'radio');

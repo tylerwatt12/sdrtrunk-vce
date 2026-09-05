@@ -137,6 +137,27 @@ class RadioResolveBroadcasterTest
         assertEquals(RADIORESOLVE_ID, metadataPayload.get("radresGuid").getAsString());
     }
 
+    @Test
+    void sitePayloadUsesProducerTimeChannelLabelsAfterAChannelEdit()
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        Channel channel = new Channel("Original Control");
+        channel.setRadioResolveId(RADIORESOLVE_ID);
+        channel.setAliasListName("Original Aliases");
+        SiteMetadataEvent event = new SiteMetadataEvent(channel, completeSiteSnapshot(), 1_000L,
+            854_087_500L);
+
+        channel.setName("Replacement Control");
+        channel.setAliasListName("Replacement Aliases");
+        channel.setRadioResolveId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+
+        JsonObject payload = RadioResolveBroadcaster.createSiteMetadataPayload(event, "hash", configuration,
+            1_000L);
+        assertEquals(RADIORESOLVE_ID, payload.get("radresGuid").getAsString());
+        assertEquals("Original Control", payload.getAsJsonObject("channel").get("name").getAsString());
+        assertEquals("Original Aliases", payload.getAsJsonObject("channel").get("aliasList").getAsString());
+    }
+
     private static AudioRecording recording(Path path)
     {
         return new AudioRecording(path, List.of(), new IdentifierCollection(), System.currentTimeMillis(), 1000);

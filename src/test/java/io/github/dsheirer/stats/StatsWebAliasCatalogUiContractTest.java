@@ -210,6 +210,23 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
+    void observedGroupsUseTheFieldsReturnedByTheCurrentApi() throws Exception
+    {
+        String source = source();
+        String system = function(source, "function observedGroupIdentitySystem(row)");
+        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
+
+        assertTrue(system.contains("row.channel_names"));
+        assertFalse(system.contains("row.source_label"));
+        assertFalse(system.contains("row.site_name"));
+        assertTrue(detail.contains("row.channel_names"));
+        assertTrue(detail.contains("row.frequency_hz"));
+        assertTrue(detail.contains("row.timeslot"));
+        assertFalse(detail.contains("row.frequency_count"));
+        assertFalse(detail.contains("row.timeslot_count"));
+    }
+
+    @Test
     void keepsBulkSelectionExplicitBoundedAndTriState() throws Exception
     {
         String source = source();

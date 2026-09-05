@@ -1536,14 +1536,14 @@ function identityKind(value) {
 
 function rowGroupIdentityKind(row, explicitKind) {
   return identityKind(explicitKind ?? row?.group_identity_kind ?? row?.identity_kind ?? row?.target_kind) ||
-    'talkgroup';
+    'unknown';
 }
 
 function groupIdentityLabel(row, explicitKind, compact = true) {
   const kind = rowGroupIdentityKind(row, explicitKind);
   if (kind === 'patch_group') return compact ? 'Patch' : 'Patch Group';
   if (kind === 'radio') return 'Radio';
-  if (kind === 'unknown') return compact ? 'Unknown' : 'Unknown Identity';
+  if (kind === 'unknown') return compact ? 'ID' : 'Identity';
   return compact ? 'TG' : 'Talkgroup';
 }
 
@@ -4736,10 +4736,9 @@ function observedGroupIdentityValue(row) {
 
 function observedGroupIdentitySystem(row) {
   const wrapper = node('div', 'observed-group-identity-system');
-  const label = row.source_label || row.system_name || row.site_name || row.radio_system_key || 'Unknown source';
+  const label = row.channel_names || row.system_name || row.radio_system_key || 'Unknown source';
   const details = [protocolFamily(row), row.topology,
-    row.system_name && row.system_name !== label ? row.system_name : null,
-    row.site_name && row.site_name !== label ? row.site_name : null]
+    row.system_name && row.system_name !== label ? row.system_name : null]
     .filter(Boolean).join(' · ');
   wrapper.append(node('strong', '', label));
   if (details) wrapper.append(node('small', '', details));
@@ -4774,8 +4773,10 @@ function observedGroupIdentityKey(row) {
   if (row?.radio_system_key) source = `radio-system:${row.radio_system_key}`;
   else if (row?.configuration_id) source = `channel:${row.configuration_id}`;
   const canonical = String(row?.identity_key || '').trim() || `native:${row?.native_id ?? 'x'}`;
+  const carrier = topology === 'CONVENTIONAL' && protocol === 'dmr' ?
+    `|frequency:${row?.frequency_hz ?? 'x'}|timeslot:${row?.timeslot ?? 'x'}` : '';
   return `${topology}|${protocol}|${source}|${rowGroupIdentityKind(row)}|${canonical}|local:${
-    row.group_identity_id ?? 'x'}`;
+    row.group_identity_id ?? 'x'}${carrier}`;
 }
 
 function observedGroupIdentityFocusKey(row) {
@@ -4881,19 +4882,15 @@ function observedGroupIdentityDetail(row, selectedList) {
       identityNumber(row, row.group_identity_id)],
     ['Protocol', protocolFamily(row) || row.protocol],
     ['System', row.system_name || '—'],
-    ['Channel', row.site_name || row.source_label || '—'],
+    ['Channel', row.channel_names || '—'],
     ['Topology', row.topology || '—'],
     ['WACN', row.wacn === null || row.wacn === undefined ? '—' : hexDecimalPair(row.wacn, 5)],
     ['System ID', row.system_id === null || row.system_id === undefined ? '—' : hexDecimalPair(row.system_id, 3)],
     ['Network ID', row.network_id === null || row.network_id === undefined ? '—' : identifierNumber(row.network_id)],
-    ['Frequency', row.frequency_count === null || row.frequency_count === undefined ||
-      Number(row.frequency_count) <= 0 ? '—' :
-      Number(row.frequency_count) === 1 ? frequency(row.frequency_hz) :
-        `${number(row.frequency_count)} frequencies`],
-    ['Timeslot', row.timeslot_count === null || row.timeslot_count === undefined ||
-      Number(row.timeslot_count) <= 0 ? '—' :
-      Number(row.timeslot_count) === 1 ? identifierNumber(row.timeslot) :
-        `${number(row.timeslot_count)} timeslots`]
+    ['Frequency', row.frequency_hz === null || row.frequency_hz === undefined ? '—' :
+      frequency(row.frequency_hz)],
+    ['Timeslot', row.timeslot === null || row.timeslot === undefined ? '—' :
+      identifierNumber(row.timeslot)]
   ];
   identityColumn.append(section('Identity', keyValues(identity)));
   const coverage = [['Match', observedGroupIdentityMatch(row)]];
@@ -8025,7 +8022,8 @@ function scannerCallRenderKey(call, state, site) {
   return JSON.stringify([
     scannerDetailMode, call.call_id || '', call.started_at_ms || '',
     scannerMatchedScanLists(call, state), site?.p25_decoder_mode || '',
-    site?.modulation || ''
+    site?.modulation || '', site?.configuration_id || '', site?.channel_kind || '',
+    site?.entity_ref?.key || ''
   ]);
 }
 
@@ -8132,6 +8130,7 @@ function openPlaybackAvoidList(player = webCallPlayer) {
       const row = node('div', 'scanner-modal-row');
       const copy = node('div');
       copy.append(node('strong', '', avoid.label || 'Avoided target'));
+      if (avoid.system_scope) copy.append(node('span', '', avoid.system_scope));
       const remove = node('button', 'secondary', 'Remove');
       remove.type = 'button';
       remove.addEventListener('click', () => {
@@ -8337,6 +8336,12 @@ function renderScanner() {
   };
   const draw = (state) => {
     latestState = state;
+    const nextConfigurationId = String((state.displayCall || state.current)?.configuration_id || '');
+    const channelChanged = nextConfigurationId !== currentConfigurationId;
+    if (channelChanged) {
+      currentConfigurationId = nextConfigurationId;
+      currentChannel = null;
+    }
     playbackStatus.textContent = state.status ||
       (state.stopped ? 'Ready' : state.paused ? 'Paused' : 'Listening');
     playbackStatus.classList.toggle('active', !state.stopped && !state.paused);
@@ -8373,10 +8378,7 @@ function renderScanner() {
       scanButtons.append(button);
     });
 
-    const nextConfigurationId = String((state.displayCall || state.current)?.configuration_id || '');
-    if (nextConfigurationId !== currentConfigurationId) {
-      currentConfigurationId = nextConfigurationId;
-      currentChannel = null;
+    if (channelChanged) {
       if (nextConfigurationId) void scannerChannelMetadata(nextConfigurationId).then((channel) => {
         if (currentConfigurationId === nextConfigurationId && display.isConnected) {
           currentChannel = channel;
@@ -12910,14 +12912,15 @@ function liveIdentityType(row, kind) {
   if (form.includes('PATCH_GROUP')) return 'patch_group';
   if (form.includes('RADIO')) return 'radio';
   if (form.includes('TALKGROUP')) return 'talkgroup';
-  return '';
+  return 'unknown';
 }
 
 function liveIdentityLabel(row, kind, titleCase = false) {
   const type = liveIdentityType(row, kind);
   if (type === 'radio') return titleCase ? 'Radio' : 'radio';
   if (type === 'patch_group') return titleCase ? 'Patch Group' : 'patch group';
-  return titleCase ? 'Talkgroup' : 'talkgroup';
+  if (type === 'talkgroup') return titleCase ? 'Talkgroup' : 'talkgroup';
+  return titleCase ? 'Identity' : 'identity';
 }
 
 function liveIdentityInfo(row, kind) {
@@ -13486,22 +13489,31 @@ async function renderTunerSpectrum() {
     'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
 }
 
+function radioSystemAssignmentLabel(row) {
+  const state = String(row?.assignment_state || '').trim().toUpperCase();
+  if (state === 'CURRENT') return 'Current receiver assignment';
+  if (state === 'HISTORICAL') return 'Historical activity';
+  return '';
+}
+
 function radioSystemsDirectoryDetails(row) {
   if (row.directory_type === 'channel') return channelDirectoryDetails(row);
+  const assignment = radioSystemAssignmentLabel(row);
   if (isP25(row)) {
     return [
+      assignment,
       row.wacn == null ? '' : `WACN ${hex(row.wacn, 5)}`,
       row.system_id == null ? '' : `System ${hex(row.system_id, 3)}`
     ].filter(Boolean).join(' · ');
   }
   if (!isSavedChannelRadioSystem(row)) {
     if (protocolFamily(row) === 'DMR') {
-      return [trunkedVariant(row), semanticLabel(row.model),
+      return [assignment, trunkedVariant(row), semanticLabel(row.model),
         row.network_id == null ? '' : `Network ${identifierNumber(row.network_id)}`]
         .filter(Boolean).join(' · ');
     }
     if (protocolFamily(row) === 'NXDN') {
-      return [trunkedVariant(row), semanticLabel(row.location_category),
+      return [assignment, trunkedVariant(row), semanticLabel(row.location_category),
         row.system_id == null ? '' : `System ${identifierNumber(row.system_id)}`]
         .filter(Boolean).join(' · ');
     }
@@ -13511,7 +13523,7 @@ function radioSystemsDirectoryDetails(row) {
   const variantKey = variant.toLowerCase().replace(/[^a-z0-9]/g, '');
   const domainKey = domain.toLowerCase().replace(/[^a-z0-9]/g, '');
   return [
-    'Scoped to this saved channel', variant, domain && domainKey !== variantKey ? domain : ''
+    assignment, 'Scoped to this saved channel', variant, domain && domainKey !== variantKey ? domain : ''
   ].filter(Boolean).join(' · ');
 }
 
@@ -13599,8 +13611,7 @@ async function renderRadioSystem() {
     route.set('tab', tab);
     window.history.replaceState({}, '', currentHref());
   }
-  const pageContext = [system.channel_names, isSavedChannelRadioSystem(system) ?
-    'Scoped to this saved channel' : radioSystemsDirectoryDetails(system)].filter(Boolean).join(' · ');
+  const pageContext = [system.channel_names, radioSystemsDirectoryDetails(system)].filter(Boolean).join(' · ');
   if (!beginPage(renderContext,
     pageHeader(radioSystemValue(system), pageContext),
     radioSystemTabs(system, tab))) return;
@@ -13657,6 +13668,7 @@ async function renderRadioSystem() {
     }
     blocks.push(section(isSavedChannelRadioSystem(system) ? 'Saved Channel Scope' : 'System Info', keyValues([
       [radioSystemOwnerLabel(system), radioSystemInfoValue(system)],
+      ['Assignment', radioSystemAssignmentLabel(system)],
       ['Alias Lists', radioSystemAliasLists(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
     ])), tableSection('Retained Signaling Observations',

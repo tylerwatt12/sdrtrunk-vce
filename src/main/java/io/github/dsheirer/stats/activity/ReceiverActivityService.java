@@ -15,18 +15,15 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
-import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
-import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
@@ -391,12 +388,19 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void processControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
+        if(snapshot == null || !snapshot.matchesCurrentChannel())
+        {
+            //A queued measurement whose retained channel no longer has the captured receiver configuration must not
+            //update current site state.  The quality monitor separately rejects callbacks from a stopped lifecycle.
+            return;
+        }
+
         ReceiverActivityWriter writer = getCollectionWriter();
 
         if(snapshot != null && !snapshot.active() && snapshot.configurationId() != null)
         {
             mObservedTrunkedSites.computeIfPresent(snapshot.configurationId(), (_, evidence) ->
-                evidence.channel() == snapshot.channel() ? null : evidence);
+                evidence.receiverContext().isSameReceiver(snapshot.receiverContext()) ? null : evidence);
         }
 
         TrunkedSiteEvidence evidence = snapshot != null && snapshot.configurationId() != null ?
@@ -412,16 +416,11 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             snapshot.active() && snapshot.configurationId() != null && !snapshot.configurationId().isBlank() &&
                 snapshot.frequencyHz() > 0)
         {
-            DecoderType decoderType = decoderType(snapshot.channel());
-            TrunkedIdentityDomain identityDomain =
+            SiteReceiverContext receiverContext = snapshot.receiverContext();
+            DecoderType decoderType = receiverContext != null ? receiverContext.decoderType() : null;
+            TrunkedIdentityDomain identityDomain = receiverContext != null &&
+                receiverContext.identityDomain() != null ? receiverContext.identityDomain() :
                 TrunkedIdentityDomain.STANDARD;
-
-            if(snapshot.channel().getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn)
-            {
-                identityDomain = nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
-                    TrunkedIdentityDomain.NXDN_TYPE_D :
-                    TrunkedIdentityDomain.NXDN_TYPE_C;
-            }
 
             enqueueObservation(writer, new ReceiverActivityRecords.ControlChannelQuality(snapshot.observedAtMs(),
                 snapshot.configurationId(), decoderType != null && decoderType.getProtocol() != null ?
@@ -441,28 +440,17 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     static boolean hasCurrentTrunkedSiteEvidence(ControlChannelQualitySnapshot snapshot,
                                                   TrunkedSiteEvidence evidence)
     {
-        if(snapshot == null || snapshot.channel() == null || evidence == null ||
-            evidence.channel() != snapshot.channel())
+        if(snapshot == null || snapshot.receiverContext() == null || evidence == null ||
+            evidence.receiverContext() == null ||
+            !evidence.receiverContext().isSameReceiver(snapshot.receiverContext()))
         {
             return false;
         }
 
-        DecoderType decoderType = decoderType(snapshot.channel());
-        DecodeConfiguration configuration = snapshot.channel().getDecodeConfiguration();
-
-        if(decoderType == DecoderType.DMR &&
-            (!(configuration instanceof DecodeConfigDMR dmr) || !dmr.isTrunked()))
-        {
-            return false;
-        }
-
-        if(decoderType == DecoderType.NXDN &&
-            (!(configuration instanceof DecodeConfigNXDN nxdn) || !nxdn.isTrunked()))
-        {
-            return false;
-        }
-
-        return configuration == evidence.decodeConfiguration() && decoderType == evidence.decoderType();
+        SiteReceiverContext receiverContext = snapshot.receiverContext();
+        return receiverContext.isTrunked() &&
+            (receiverContext.decoderType() == DecoderType.DMR ||
+                receiverContext.decoderType() == DecoderType.NXDN);
     }
 
     /**
@@ -470,13 +458,11 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
      */
     static boolean isTrunkedControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
-        DecoderType decoderType = snapshot != null ? decoderType(snapshot.channel()) : null;
-        DecodeConfiguration configuration = snapshot != null && snapshot.channel() != null ?
-            snapshot.channel().getDecodeConfiguration() : null;
+        SiteReceiverContext receiverContext = snapshot != null ? snapshot.receiverContext() : null;
+        DecoderType decoderType = receiverContext != null ? receiverContext.decoderType() : null;
         return decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ||
-            (decoderType == DecoderType.NXDN && configuration instanceof DecodeConfigNXDN nxdn &&
-                nxdn.isTrunked()) ||
-            (decoderType == DecoderType.DMR && configuration instanceof DecodeConfigDMR dmr && dmr.isTrunked());
+            (decoderType == DecoderType.NXDN || decoderType == DecoderType.DMR) &&
+                receiverContext.isTrunked();
     }
 
     /**
@@ -491,7 +477,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             return false;
         }
 
-        DecoderType decoderType = snapshot != null ? decoderType(snapshot.channel()) : null;
+        DecoderType decoderType = snapshot != null && snapshot.receiverContext() != null ?
+            snapshot.receiverContext().decoderType() : null;
 
         if(decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2)
         {
@@ -500,16 +487,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         if(decoderType == DecoderType.DMR)
         {
-            return snapshot.channel().getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isTrunked();
+            return snapshot.receiverContext().isTrunked();
         }
 
         return observedTrunkedSite;
-    }
-
-    private static DecoderType decoderType(Channel channel)
-    {
-        return channel != null && channel.getDecodeConfiguration() != null ?
-            channel.getDecodeConfiguration().getDecoderType() : null;
     }
 
     public void dispose()
@@ -1289,6 +1270,13 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void processSiteMetadata(SiteMetadataEvent event)
     {
+        if(event == null || !event.matchesCurrentChannel())
+        {
+            //History may describe the old receiver, but this writer also owns current receiver-to-site assignment.
+            //Fail closed instead of letting a delayed observation rewind that assignment.
+            return;
+        }
+
         ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
@@ -1312,6 +1300,12 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void processProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
+        if(event == null || !event.matchesCurrentChannel())
+        {
+            //Do not let a delayed site observation from a preceding channel generation replace current assignment.
+            return;
+        }
+
         ReceiverActivityWriter writer = getCollectionWriter();
 
         if(writer == null)
@@ -1320,12 +1314,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         }
 
         var snapshot = TrunkedSiteMetadataMapper.map(event);
-        Channel channel = event != null ? event.channel() : null;
-        String configurationId = ChannelConfigurationKey.configured(channel);
+        SiteReceiverContext receiverContext = event != null ? event.receiverContext() : null;
+        String configurationId = receiverContext != null ? receiverContext.configurationId() : null;
 
-        if(channel != null &&
-            (channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isConventional() ||
-                channel.getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn && nxdn.isConventional()))
+        if(receiverContext != null && receiverContext.isConventional())
         {
             if(configurationId != null)
             {
@@ -1340,8 +1332,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             if(snapshot.configurationId() != null)
             {
                 mObservedTrunkedSites.put(snapshot.configurationId(),
-                    new TrunkedSiteEvidence(channel,
-                        channel != null ? channel.getDecodeConfiguration() : null, decoderType(channel)));
+                    new TrunkedSiteEvidence(receiverContext));
             }
 
             enqueueObservation(writer, new ReceiverActivityRecords.TrunkedSiteSnapshot(
@@ -1353,7 +1344,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         }
     }
 
-    record TrunkedSiteEvidence(Channel channel, DecodeConfiguration decodeConfiguration, DecoderType decoderType)
+    record TrunkedSiteEvidence(SiteReceiverContext receiverContext)
     {
     }
 

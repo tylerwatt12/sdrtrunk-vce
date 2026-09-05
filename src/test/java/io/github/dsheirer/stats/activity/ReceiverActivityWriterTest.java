@@ -392,7 +392,7 @@ class ReceiverActivityWriterTest
             "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1, false, null, null,
             0xBEE00, 0x3A9, 0x293, 2, 1, null, action == ReceiverActivityRecords.Action.CALL, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
-            ReceiverActivityRecords.P25Identity.ORDINARY, List.of());
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }
 
     private static void awaitWritten(ReceiverActivityWriter writer, long count) throws Exception

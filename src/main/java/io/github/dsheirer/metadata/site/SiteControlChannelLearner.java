@@ -53,8 +53,15 @@ public class SiteControlChannelLearner implements SiteMetadataListener
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful())
+        if(event == null || !event.isUseful() || !event.matchesCurrentChannel())
         {
+            if(event != null && event.receiverContext() != null &&
+                event.receiverContext().configurationId() != null)
+            {
+                mMatchingIdentityObservedSince.remove(event.receiverContext().configurationId());
+                mLastObservedSourceFrequency.remove(event.receiverContext().configurationId());
+            }
+
             return;
         }
 
@@ -69,11 +76,12 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         P25SiteIdentity observedIdentity = P25SiteIdentity.from(event.snapshot());
         Set<Long> advertisedFrequencies = getControlChannelFrequencies(event.snapshot());
         long sourceFrequency = event.sourceFrequency();
-        String channelKey = channel.getConfigurationId();
+        String channelKey = event.receiverContext().configurationId() != null ?
+            event.receiverContext().configurationId() : channel.getConfigurationId();
 
         //A complete identity is authoritative only when the site identifies the frequency currently being decoded as
         //one of its own controls. This prevents stale snapshots from authorizing a different tuning epoch.
-        if(observedIdentity == null || sourceFrequency <= 0 || !advertisedFrequencies.contains(sourceFrequency))
+        if(observedIdentity == null || !event.isSourceAdvertisedControlChannel())
         {
             mMatchingIdentityObservedSince.remove(channelKey);
             return;

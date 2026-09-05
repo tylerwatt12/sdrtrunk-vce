@@ -145,6 +145,54 @@ class StatsCsvExportTest
     }
 
     @Test
+    void neighborExportKeepsSourceContextSeparateFromObservedNeighborIdentity() throws Exception
+    {
+        Map<String,Object> p25Row = Map.ofEntries(
+            Map.entry("source_protocol", "P25"), Map.entry("source_system_name", "Home"),
+            Map.entry("source_radio_system_key", "p25:bee00:49f"),
+            Map.entry("source_configuration_id", "00000000-0000-0000-0000-000000000071"),
+            Map.entry("source_wacn", 0xBEE00), Map.entry("source_system_id", 0x49F),
+            Map.entry("entry_type", "ISSI"), Map.entry("wacn", 0xABCDE),
+            Map.entry("system_id", 0x123), Map.entry("observation_count", 4));
+        CSVRecord p25 = firstRecord(StatsCsvExport.create("channel-neighbors", "Home", List.of(p25Row)));
+
+        assertEquals("BEE00", p25.get("source_wacn_hex"));
+        assertEquals("49F", p25.get("source_system_id_hex"));
+        assertEquals("ABCDE", p25.get("wacn_hex"));
+        assertEquals("123", p25.get("system_id_hex"));
+
+        Map<String,Object> dmrRow = Map.ofEntries(
+            Map.entry("source_protocol", "DMR"), Map.entry("source_network_id", 42),
+            Map.entry("source_site_id", 7), Map.entry("entry_type", "CHANNEL"),
+            Map.entry("protocol_code", 3), Map.entry("variant_code", 1), Map.entry("dmr_model_code", 2),
+            Map.entry("network_id", 99), Map.entry("site_id", 12), Map.entry("observation_count", 2));
+        CSVRecord dmr = firstRecord(StatsCsvExport.create("channel-neighbors", "DMR", List.of(dmrRow)));
+        assertEquals("42", dmr.get("source_network_id"));
+        assertEquals("7", dmr.get("source_site_id"));
+        assertEquals("tier_iii", dmr.get("variant"));
+        assertEquals("small", dmr.get("model"));
+        assertEquals("", dmr.get("location_category"));
+        assertEquals("99", dmr.get("network_id"));
+        assertEquals("12", dmr.get("site_id"));
+
+        Map<String,Object> nxdnRow = Map.ofEntries(
+            Map.entry("source_protocol", "NXDN"), Map.entry("source_system_id", 303),
+            Map.entry("source_ran", 5), Map.entry("entry_type", "CHANNEL"),
+            Map.entry("protocol_code", 4), Map.entry("variant_code", 1),
+            Map.entry("nxdn_location_category_code", 3),
+            Map.entry("system_id", 404), Map.entry("site_id", 9), Map.entry("observation_count", 2));
+        CSVRecord nxdn = firstRecord(StatsCsvExport.create("channel-neighbors", "NXDN", List.of(nxdnRow)));
+        assertEquals("303", nxdn.get("source_system_id"));
+        assertEquals("5", nxdn.get("source_ran"));
+        assertEquals("type_c", nxdn.get("variant"));
+        assertEquals("", nxdn.get("model"));
+        assertEquals("local", nxdn.get("location_category"));
+        assertEquals("404", nxdn.get("system_id"));
+        assertEquals("9", nxdn.get("site_id"));
+        assertFalse(nxdn.isMapped("site_classification"));
+    }
+
+    @Test
     void normalizesConventionalProtocolAndMissingTimeslot() throws Exception
     {
         StatsCsvExport export = StatsCsvExport.create("channels", "all", List.of(Map.of(

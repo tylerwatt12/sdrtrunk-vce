@@ -69,7 +69,7 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
      */
     public static CallPlaybackTarget from(AudioCallSnapshot snapshot, Identifier<?> target)
     {
-        if(snapshot == null || target instanceof IncompleteIdentifier)
+        if(snapshot == null)
         {
             return null;
         }
@@ -87,23 +87,12 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
         ChannelConfigurationPolicy.ChannelKind channelKind = source.channelKind();
         DecoderType decoderType = source.decoderType();
         Protocol configuredProtocol = canonicalProtocol(decoderType.getProtocol());
-        Protocol targetProtocol = canonicalProtocol(target != null ? target.getProtocol() : Protocol.UNKNOWN);
-
-        if(configuredProtocol == Protocol.UNKNOWN || targetProtocol != Protocol.UNKNOWN &&
-            configuredProtocol != targetProtocol)
+        if(configuredProtocol == Protocol.UNKNOWN)
         {
             return null;
         }
 
         Protocol protocol = configuredProtocol;
-        TrunkedIdentityDomain identityDomain = source.identityDomain();
-        if(protocol == Protocol.NXDN &&
-            (!TrunkedIdentityEligibility.nxdnIdentifierMatchesDomain(target, identityDomain) ||
-                !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers, identityDomain)))
-        {
-            return null;
-        }
-
         if(channelKind == ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL)
         {
             if(protocol == Protocol.DMR)
@@ -127,8 +116,28 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
             return null;
         }
 
+        if(target instanceof IncompleteIdentifier)
+        {
+            return null;
+        }
+
+        Protocol targetProtocol = canonicalProtocol(target != null ? target.getProtocol() : Protocol.UNKNOWN);
+        if(targetProtocol != Protocol.UNKNOWN && protocol != targetProtocol)
+        {
+            return null;
+        }
+
+        TrunkedIdentityDomain identityDomain = source.identityDomain();
+        if(protocol == Protocol.NXDN &&
+            (!TrunkedIdentityEligibility.nxdnIdentifierMatchesDomain(target, identityDomain) ||
+                !TrunkedIdentityEligibility.nxdnIdentifiersMatchDomain(identifiers, identityDomain)))
+        {
+            return null;
+        }
+
         P25Home servingP25Home = protocol == Protocol.APCO25 ? servingP25Home(source, identifiers) : null;
-        String radioSystemKey = radioSystemKey(protocol, identityDomain, configurationId, servingP25Home);
+        String radioSystemKey = radioSystemKey(protocol, identityDomain, configurationId, servingP25Home,
+            source.radioSystemKey());
 
         if(radioSystemKey == null)
         {
@@ -220,11 +229,22 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
     }
 
     private static String radioSystemKey(Protocol protocol, TrunkedIdentityDomain identityDomain,
-                                         String configurationId, P25Home servingP25Home)
+                                         String configurationId, P25Home servingP25Home,
+                                         String learnedNativeSystemKey)
     {
         if(protocol == Protocol.APCO25 && servingP25Home != null)
         {
             return RadioSystemKey.p25(servingP25Home.wacn(), servingP25Home.system());
+        }
+
+        boolean nativeDmrTierThree = protocol == Protocol.DMR && learnedNativeSystemKey != null &&
+            learnedNativeSystemKey.startsWith("dmr:tier3:");
+        boolean nativeNxdnTypeC = protocol == Protocol.NXDN && identityDomain == TrunkedIdentityDomain.NXDN_TYPE_C &&
+            learnedNativeSystemKey != null && learnedNativeSystemKey.startsWith("nxdn-c:") &&
+            !learnedNativeSystemKey.startsWith("nxdn-c:channel:");
+        if((nativeDmrTierThree || nativeNxdnTypeC) && RadioSystemKey.isCanonical(learnedNativeSystemKey))
+        {
+            return learnedNativeSystemKey;
         }
 
         return protocol == Protocol.APCO25 ? null :

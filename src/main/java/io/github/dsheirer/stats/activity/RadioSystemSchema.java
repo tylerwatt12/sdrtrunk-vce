@@ -14,6 +14,7 @@ package io.github.dsheirer.stats.activity;
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -44,6 +45,15 @@ final class RadioSystemSchema
     private static final int IDENTITY_DOMAIN_STANDARD = 0;
     private static final int IDENTITY_DOMAIN_NXDN_TYPE_C = 1;
     private static final int IDENTITY_DOMAIN_NXDN_TYPE_D = 2;
+    private static final int DMR_VARIANT_TIER_III = 1;
+    private static final int DMR_MODEL_TINY = 1;
+    private static final int DMR_MODEL_SMALL = 2;
+    private static final int DMR_MODEL_LARGE = 3;
+    private static final int DMR_MODEL_HUGE = 4;
+    private static final int NXDN_VARIANT_TYPE_C = 1;
+    private static final int NXDN_LOCATION_GLOBAL = 1;
+    private static final int NXDN_LOCATION_REGIONAL = 2;
+    private static final int NXDN_LOCATION_LOCAL = 3;
     static final int MAX_IDENTITIES_PER_SYSTEM = 100_000;
     static final int MAX_RELATIONSHIPS_PER_SYSTEM = 500_000;
     static final int MAX_TALKER_ALIAS_CHARACTERS = 160;
@@ -168,19 +178,34 @@ final class RadioSystemSchema
                     (typeof(p25_wacn) = 'integer' AND p25_wacn BETWEEN 0 AND 1048575)),
                 p25_system_id INTEGER CHECK(p25_system_id IS NULL OR
                     (typeof(p25_system_id) = 'integer' AND p25_system_id BETWEEN 0 AND 4095)),
+                dmr_model_code INTEGER CHECK(dmr_model_code IS NULL OR
+                    (typeof(dmr_model_code) = 'integer' AND dmr_model_code BETWEEN 1 AND 4)),
+                dmr_network_id INTEGER CHECK(dmr_network_id IS NULL OR
+                    (typeof(dmr_network_id) = 'integer' AND dmr_network_id >= 0)),
+                nxdn_location_category_code INTEGER CHECK(nxdn_location_category_code IS NULL OR
+                    (typeof(nxdn_location_category_code) = 'integer'
+                        AND nxdn_location_category_code BETWEEN 1 AND 3)),
+                nxdn_system_id INTEGER CHECK(nxdn_system_id IS NULL OR
+                    (typeof(nxdn_system_id) = 'integer' AND nxdn_system_id >= 1)),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL
                     CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 UNIQUE(p25_wacn, p25_system_id),
+                UNIQUE(dmr_model_code, dmr_network_id),
+                UNIQUE(nxdn_location_category_code, nxdn_system_id),
                 CHECK(
                     (protocol_code = 1 AND address_domain_code = 0
                         AND configuration_id IS NULL
                         AND p25_wacn IS NOT NULL AND p25_system_id IS NOT NULL
+                        AND dmr_model_code IS NULL AND dmr_network_id IS NULL
+                        AND nxdn_location_category_code IS NULL AND nxdn_system_id IS NULL
                         AND system_key = printf('p25:%05x:%03x', p25_wacn, p25_system_id))
                     OR
                     (protocol_code = 3 AND address_domain_code = 0
                         AND configuration_id IS NOT NULL
                         AND p25_wacn IS NULL AND p25_system_id IS NULL
+                        AND dmr_model_code IS NULL AND dmr_network_id IS NULL
+                        AND nxdn_location_category_code IS NULL AND nxdn_system_id IS NULL
                         AND system_key = 'dmr:channel:' || configuration_id
                         AND length(system_key) = 48
                         AND substr(system_key, 1, 12) = 'dmr:channel:'
@@ -192,9 +217,23 @@ final class RadioSystemSchema
                         AND length(replace(substr(system_key, 13), '-', '')) = 32
                         AND replace(substr(system_key, 13), '-', '') NOT GLOB '*[^0-9a-f]*')
                     OR
+                    (protocol_code = 3 AND address_domain_code = 0
+                        AND configuration_id IS NULL
+                        AND p25_wacn IS NULL AND p25_system_id IS NULL
+                        AND dmr_model_code IS NOT NULL AND dmr_network_id IS NOT NULL
+                        AND dmr_model_code BETWEEN 1 AND 4
+                        AND dmr_network_id BETWEEN 0 AND CASE dmr_model_code
+                            WHEN 1 THEN 511 WHEN 2 THEN 127 WHEN 3 THEN 15 WHEN 4 THEN 3 END
+                        AND nxdn_location_category_code IS NULL AND nxdn_system_id IS NULL
+                        AND system_key = 'dmr:tier3:' || CASE dmr_model_code
+                            WHEN 1 THEN 'tiny' WHEN 2 THEN 'small'
+                            WHEN 3 THEN 'large' WHEN 4 THEN 'huge' END || ':' || dmr_network_id)
+                    OR
                     (protocol_code = 4 AND address_domain_code IN (1, 2)
                         AND p25_wacn IS NULL AND p25_system_id IS NULL
                         AND configuration_id IS NOT NULL
+                        AND dmr_model_code IS NULL AND dmr_network_id IS NULL
+                        AND nxdn_location_category_code IS NULL AND nxdn_system_id IS NULL
                         AND system_key = CASE address_domain_code
                             WHEN 1 THEN 'nxdn-c:channel:' || configuration_id
                             WHEN 2 THEN 'nxdn-d:channel:' || configuration_id
@@ -208,6 +247,18 @@ final class RadioSystemSchema
                         AND substr(system_key, 16) = lower(substr(system_key, 16))
                         AND length(replace(substr(system_key, 16), '-', '')) = 32
                         AND replace(substr(system_key, 16), '-', '') NOT GLOB '*[^0-9a-f]*')
+                    OR
+                    (protocol_code = 4 AND address_domain_code = 1
+                        AND configuration_id IS NULL
+                        AND p25_wacn IS NULL AND p25_system_id IS NULL
+                        AND dmr_model_code IS NULL AND dmr_network_id IS NULL
+                        AND nxdn_location_category_code IS NOT NULL AND nxdn_system_id IS NOT NULL
+                        AND nxdn_location_category_code BETWEEN 1 AND 3
+                        AND nxdn_system_id BETWEEN 1 AND CASE nxdn_location_category_code
+                            WHEN 1 THEN 1022 WHEN 2 THEN 16382 WHEN 3 THEN 131070 END
+                        AND system_key = 'nxdn-c:' || CASE nxdn_location_category_code
+                            WHEN 1 THEN 'global' WHEN 2 THEN 'regional' WHEN 3 THEN 'local' END ||
+                            ':' || nxdn_system_id)
                 )
             )
             """;
@@ -417,7 +468,8 @@ final class RadioSystemSchema
 
         return List.of(
             new SqliteSchemaValidator.Table("radio_system", "id", "system_key", "configuration_id", "protocol_code",
-                "address_domain_code", "p25_wacn", "p25_system_id", "first_seen_ms", "last_seen_ms"),
+                "address_domain_code", "p25_wacn", "p25_system_id", "dmr_model_code",
+                "dmr_network_id", "nxdn_location_category_code", "nxdn_system_id", "first_seen_ms", "last_seen_ms"),
             new SqliteSchemaValidator.Table("radio_system_identity_summary", identityColumns),
             new SqliteSchemaValidator.Table("trunked_radio_group_summary", relationshipColumns),
             new SqliteSchemaValidator.Table("trunked_radio_affiliation", "radio_system_id", "radio_kind_code",
@@ -539,7 +591,7 @@ final class RadioSystemSchema
         throws SQLException
     {
         RadioSystem radioSystem = ensureRadioSystem(connection, channelId, activity.observedAtEpochMilliseconds(),
-            activity.identityDomain(), activity.wacn(), activity.systemId());
+            activity.identityDomain(), activity.wacn(), activity.systemId(), activity.radioSystemKey());
 
         if(radioSystem == null ||
             (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
@@ -1039,7 +1091,7 @@ final class RadioSystemSchema
                                     ReceiverActivityRecords.TrunkedCallAttribution attribution) throws SQLException
     {
         RadioSystem radioSystem = ensureRadioSystem(connection, channelId, attribution.callStartEpochMilliseconds(),
-            attribution.identityDomain());
+            attribution.identityDomain(), null, null, attribution.radioSystemKey());
 
         if(radioSystem == null || attribution.callStartEpochMilliseconds() < radioSystem.firstSeenEpochMilliseconds())
         {
@@ -1132,8 +1184,8 @@ final class RadioSystemSchema
 
     static boolean updateTalkerAlias(Connection connection, int channelId, int radioId,
                                      ReceiverActivityRecords.P25Identity p25RadioIdentity, String talkerAlias,
-                                     long observedAt, TrunkedIdentityDomain identityDomain,
-                                     Integer p25Wacn, Integer p25SystemId)
+                                     long observedAt, long callStart, TrunkedIdentityDomain identityDomain,
+                                     Integer p25Wacn, Integer p25SystemId, String radioSystemKey)
         throws SQLException
     {
         if(talkerAlias == null || talkerAlias.isBlank())
@@ -1141,14 +1193,14 @@ final class RadioSystemSchema
             return false;
         }
 
-        RadioSystem radioSystem = ensureRadioSystem(connection, channelId, observedAt, identityDomain,
-            p25Wacn, p25SystemId);
+        RadioSystem radioSystem = ensureRadioSystem(connection, channelId, callStart, identityDomain,
+            p25Wacn, p25SystemId, radioSystemKey);
         Identity radio = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, radioId,
             p25RadioIdentity);
 
         if(radioSystem == null ||
             (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
-                observedAt < radioSystem.firstSeenEpochMilliseconds()) ||
+                callStart < radioSystem.firstSeenEpochMilliseconds()) ||
             radio == null)
         {
             return false;
@@ -1169,23 +1221,80 @@ final class RadioSystemSchema
                              Integer p25Wacn, Integer p25SystemId) throws SQLException
     {
         return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
-            p25SystemId);
+            p25SystemId, null, null, null);
+    }
+
+    static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
+                                         TrunkedIdentityDomain observationDomain,
+                                         Integer p25Wacn, Integer p25SystemId, String radioSystemKey)
+        throws SQLException
+    {
+        return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
+            p25SystemId, null, radioSystemKey, null);
+    }
+
+    /** Resolves a DMR/NXDN site using native identity only for the capture-proven protocol variants. */
+    static RadioSystem ensureTrunkedSiteRadioSystem(Connection connection, int channelId, long observedAt,
+                                                    TrunkedIdentityDomain observationDomain,
+                                                    int variantCode, Integer modelCode, Integer networkId,
+                                                    Integer locationCategoryCode, Integer systemId)
+        throws SQLException
+    {
+        return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, null, null,
+            new SiteSystemEvidence(variantCode, modelCode, networkId, locationCategoryCode, systemId), null, null);
+    }
+
+    /** True when this protocol/variant is one of the native identities supported by the profile-local model. */
+    static boolean supportsNativeTrunkedSiteIdentity(int protocol, TrunkedIdentityDomain observationDomain,
+                                                     int variantCode)
+    {
+        return new SiteSystemEvidence(variantCode, null, null, null, null).supportsNativeVariant(
+            TrunkedIdentityPolicy.protocolFamilyCode(protocol),
+            addressDomainCode(TrunkedIdentityPolicy.protocolFamilyCode(protocol), observationDomain));
+    }
+
+    /** Returns a complete canonical native key, or {@code null} while required native evidence is incomplete. */
+    static String nativeTrunkedSiteSystemKey(int protocol, TrunkedIdentityDomain observationDomain,
+                                             int variantCode, Integer modelCode, Integer networkId,
+                                             Integer locationCategoryCode, Integer systemId)
+    {
+        int family = TrunkedIdentityPolicy.protocolFamilyCode(protocol);
+        NativeSystemIdentity identity = nativeSystemIdentity(family,
+            addressDomainCode(family, observationDomain),
+            new SiteSystemEvidence(variantCode, modelCode, networkId, locationCategoryCode, systemId));
+        return identity != null ? identity.systemKey() : null;
     }
 
     /** Resolves one completed receiver-local logical call. */
     static RadioSystem ensureReceiverRadioSystem(Connection connection, int channelId, long observedAt,
                                                 TrunkedIdentityDomain observationDomain,
-                                                Integer p25Wacn, Integer p25SystemId)
+                                                Integer p25Wacn, Integer p25SystemId, String radioSystemKey)
         throws SQLException
     {
         return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
-            p25SystemId);
+            p25SystemId, null, radioSystemKey, null);
+    }
+
+    /** Resolves the complete P25 site identity whose decoded source was verified as an advertised control. */
+    static RadioSystem ensureVerifiedP25SiteRadioSystem(Connection connection, int channelId, long observedAt,
+                                                        P25SiteIdentity siteIdentity) throws SQLException
+    {
+        if(siteIdentity == null)
+        {
+            return null;
+        }
+
+        return ensureRadioSystemInternal(connection, channelId, observedAt, TrunkedIdentityDomain.STANDARD,
+            siteIdentity.wacn(), siteIdentity.system(), null, null, siteIdentity);
     }
 
     private static RadioSystem ensureRadioSystemInternal(Connection connection, int channelId, long observedAt,
                                                          TrunkedIdentityDomain observationDomain,
                                                          Integer observedP25Wacn,
-                                                         Integer observedP25SystemId)
+                                                         Integer observedP25SystemId,
+                                                         SiteSystemEvidence siteEvidence,
+                                                         String capturedSystemKey,
+                                                         P25SiteIdentity verifiedP25SiteIdentity)
         throws SQLException
     {
         ReceiverChannel channel = receiverChannel(connection, channelId);
@@ -1202,8 +1311,38 @@ final class RadioSystemSchema
             return null;
         }
 
+        int addressDomainCode = addressDomainCode(protocol, observationDomain);
+
+        if(capturedSystemKey != null)
+        {
+            try
+            {
+                capturedSystemKey = RadioSystemKey.validateForReceiver(protocol(protocol),
+                    identityDomain(addressDomainCode), channel.configurationId(), capturedSystemKey);
+            }
+            catch(IllegalArgumentException exception)
+            {
+                return null;
+            }
+        }
+
+        NativeSystemIdentity capturedNativeIdentity = nativeSystemIdentity(protocol, addressDomainCode,
+            capturedSystemKey);
         Integer p25Wacn = protocol == TrunkedIdentityPolicy.PROTOCOL_P25 ? observedP25Wacn : null;
         Integer p25SystemId = protocol == TrunkedIdentityPolicy.PROTOCOL_P25 ? observedP25SystemId : null;
+
+        if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25 && capturedNativeIdentity != null)
+        {
+            if(p25Wacn != null && !p25Wacn.equals(capturedNativeIdentity.p25Wacn()) ||
+                p25SystemId != null && !p25SystemId.equals(capturedNativeIdentity.p25SystemId()))
+            {
+                return null;
+            }
+
+            p25Wacn = capturedNativeIdentity.p25Wacn();
+            p25SystemId = capturedNativeIdentity.p25SystemId();
+        }
+
         boolean observedCompleteP25Identity = p25Wacn != null && p25SystemId != null;
         boolean currentCompleteP25Identity = channel.currentP25Wacn() != null &&
             channel.currentP25SystemId() != null;
@@ -1231,11 +1370,42 @@ final class RadioSystemSchema
             return null;
         }
 
-        int addressDomainCode = addressDomainCode(protocol, observationDomain);
-        String systemKey = p25Wacn != null && p25SystemId != null ?
-            RadioSystemKey.p25(p25Wacn, p25SystemId) :
-            RadioSystemKey.channelScoped(protocol(protocol), identityDomain(addressDomainCode),
-                channel.configurationId());
+        NativeSystemIdentity nativeIdentity = capturedNativeIdentity != null ? capturedNativeIdentity :
+            nativeSystemIdentity(protocol, addressDomainCode, siteEvidence);
+        boolean capturedFallback = capturedSystemKey != null && capturedNativeIdentity == null;
+        boolean incompleteCompatibleNativeEvidence = siteEvidence != null && nativeIdentity == null &&
+            siteEvidence.supportsNativeVariant(protocol, addressDomainCode);
+
+        if(protocol != TrunkedIdentityPolicy.PROTOCOL_P25 && capturedSystemKey == null &&
+            channel.currentSystemKey() == null && channel.radioSystemAssignedAtEpochMilliseconds() != null &&
+            (siteEvidence == null || incompleteCompatibleNativeEvidence))
+        {
+            //A prior site-generation change deliberately detached this channel. Untyped signaling and repeated
+            //partial native evidence may advance their own observations, but cannot recreate a fallback system.
+            return null;
+        }
+
+        if(protocol != TrunkedIdentityPolicy.PROTOCOL_P25 &&
+            capturedSystemKey == null &&
+            (siteEvidence == null || incompleteCompatibleNativeEvidence) &&
+            channel.currentSystemKey() != null && channel.currentSystemConfigurationId() == null)
+        {
+            if(addressDomainCode != channel.currentSystemAddressDomainCode() ||
+                channel.radioSystemAssignedAtEpochMilliseconds() != null &&
+                    observedAt < channel.radioSystemAssignedAtEpochMilliseconds())
+            {
+                return null;
+            }
+
+            touchRadioSystem(connection, channel.radioSystemId(), observedAt);
+            return selectRadioSystem(connection, channel.radioSystemId());
+        }
+
+        String systemKey = capturedSystemKey != null ? capturedSystemKey :
+            p25Wacn != null && p25SystemId != null ?
+            RadioSystemKey.p25(p25Wacn, p25SystemId) : nativeIdentity != null ? nativeIdentity.systemKey() :
+                RadioSystemKey.channelScoped(protocol(protocol), identityDomain(addressDomainCode),
+                    channel.configurationId());
         if(systemKey == null)
         {
             return null;
@@ -1258,67 +1428,76 @@ final class RadioSystemSchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO radio_system (
                 system_key, configuration_id, protocol_code, address_domain_code, p25_wacn, p25_system_id,
-                first_seen_ms, last_seen_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                dmr_model_code, dmr_network_id,
+                nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(system_key) DO UPDATE SET
                 first_seen_ms = min(radio_system.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(radio_system.last_seen_ms, excluded.last_seen_ms)
             """))
         {
             statement.setString(1, systemKey);
-            statement.setString(2, protocol == TrunkedIdentityPolicy.PROTOCOL_P25 ? null :
-                channel.configurationId());
+            statement.setString(2, RadioSystemKey.isChannelScoped(systemKey) ? channel.configurationId() : null);
             statement.setInt(3, protocol);
             statement.setInt(4, addressDomainCode);
             setInteger(statement, 5, p25Wacn);
             setInteger(statement, 6, p25SystemId);
-            statement.setLong(7, observedAt);
-            statement.setLong(8, observedAt);
+            setInteger(statement, 7, nativeIdentity != null ? nativeIdentity.dmrModelCode() : null);
+            setInteger(statement, 8, nativeIdentity != null ? nativeIdentity.dmrNetworkId() : null);
+            setInteger(statement, 9, nativeIdentity != null ? nativeIdentity.nxdnLocationCategoryCode() : null);
+            setInteger(statement, 10, nativeIdentity != null ? nativeIdentity.nxdnSystemId() : null);
+            statement.setLong(11, observedAt);
+            statement.setLong(12, observedAt);
             statement.executeUpdate();
         }
 
-        RadioSystem radioSystem;
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, protocol_code, address_domain_code, p25_wacn, p25_system_id, first_seen_ms
-            FROM radio_system
-            WHERE system_key = ?
-            """))
+        RadioSystem radioSystem = selectRadioSystem(connection, systemKey);
+        if(radioSystem == null)
         {
-            statement.setString(1, systemKey);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                if(!resultSet.next())
-                {
-                    throw new SQLException("Missing radio system [" + systemKey + "]");
-                }
-
-                radioSystem = new RadioSystem(resultSet.getInt("id"), resultSet.getInt("protocol_code"),
-                    identityDomain(resultSet.getInt("address_domain_code")), systemKey,
-                    nullableInteger(resultSet, "p25_wacn"), nullableInteger(resultSet, "p25_system_id"),
-                    resultSet.getLong("first_seen_ms"));
-            }
+            throw new SQLException("Missing radio system [" + systemKey + "]");
         }
 
         boolean assignmentChanged = channel.radioSystemId() == null ||
             channel.radioSystemId() != radioSystem.radioSystemId();
         boolean assignToChannel = true;
 
-        if(assignmentChanged && protocol == TrunkedIdentityPolicy.PROTOCOL_P25 &&
-            channel.radioSystemAssignedAtEpochMilliseconds() != null)
+        if(capturedFallback && channel.radioSystemAssignedAtEpochMilliseconds() != null &&
+            (channel.radioSystemId() == null || channel.currentSystemConfigurationId() == null))
+        {
+            //An event that began before native identity was learned retains its exact fallback owner, but absence of
+            //native evidence can never demote or resolve a newer native generation.
+            assignToChannel = false;
+        }
+
+        if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25 && assignmentChanged)
+        {
+            boolean conflictsWithConfiguredBinding = channel.hasConflictingConfiguredP25Binding(p25Wacn,
+                p25SystemId);
+            boolean conflictsWithDerivedBinding = channel.hasConflictingDerivedP25Binding(p25Wacn, p25SystemId);
+            boolean verifiedConfiguredReplacement = verifiedP25SiteIdentity != null &&
+                channel.matchesConfiguredP25Binding(verifiedP25SiteIdentity);
+
+            if(conflictsWithConfiguredBinding || conflictsWithDerivedBinding && !verifiedConfiguredReplacement)
+            {
+                //Calls and delayed metadata may retain historical attribution, but only a verified site snapshot
+                //matching an explicit saved binding may replace the current learned site generation.
+                assignToChannel = false;
+            }
+        }
+
+        if(assignToChannel && assignmentChanged && channel.radioSystemAssignedAtEpochMilliseconds() != null)
         {
             long assignmentStartedAt = channel.radioSystemAssignedAtEpochMilliseconds();
 
-            //A native-to-native change requires a strictly newer observation. Delayed completed work may still be
-            //attributed to its historical native system, but can never move this channel back to an older system.
+            //Any system-generation change requires a strictly newer observation. Delayed completed work may still
+            //be attributed to its historical system, but can never move this channel back to an older system.
             assignToChannel = observedAt > assignmentStartedAt;
         }
 
         if(!assignToChannel)
         {
-            //Complete delayed P25 calls still belong to their native radio system. Return it for historical
-            //aggregation without changing the receiver channel's monotonic current assignment.
+            //A complete delayed native observation can still belong to its historical radio system. Return it for
+            //historical aggregation without changing the receiver channel's monotonic current assignment.
             return radioSystem;
         }
 
@@ -1378,7 +1557,9 @@ final class RadioSystemSchema
     private static RadioSystem selectRadioSystem(Connection connection, String systemKey) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, protocol_code, address_domain_code, p25_wacn, p25_system_id, first_seen_ms
+            SELECT id, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                dmr_model_code, dmr_network_id, nxdn_location_category_code, nxdn_system_id,
+                first_seen_ms
             FROM radio_system WHERE system_key = ?
             """))
         {
@@ -1388,9 +1569,160 @@ final class RadioSystemSchema
                 return resultSet.next() ? new RadioSystem(resultSet.getInt("id"),
                     resultSet.getInt("protocol_code"), identityDomain(resultSet.getInt("address_domain_code")),
                     systemKey, nullableInteger(resultSet, "p25_wacn"),
-                    nullableInteger(resultSet, "p25_system_id"), resultSet.getLong("first_seen_ms")) : null;
+                    nullableInteger(resultSet, "p25_system_id"), nullableInteger(resultSet, "dmr_model_code"),
+                    nullableInteger(resultSet, "dmr_network_id"),
+                    nullableInteger(resultSet, "nxdn_location_category_code"),
+                    nullableInteger(resultSet, "nxdn_system_id"), resultSet.getLong("first_seen_ms")) : null;
             }
         }
+    }
+
+    private static RadioSystem selectRadioSystem(Connection connection, Integer radioSystemId) throws SQLException
+    {
+        if(radioSystemId == null)
+        {
+            return null;
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT system_key FROM radio_system WHERE id = ?"))
+        {
+            statement.setInt(1, radioSystemId);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? selectRadioSystem(connection, resultSet.getString(1)) : null;
+            }
+        }
+    }
+
+    private static void touchRadioSystem(Connection connection, Integer radioSystemId, long observedAt)
+        throws SQLException
+    {
+        if(radioSystemId == null)
+        {
+            return;
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement(
+            "UPDATE radio_system SET last_seen_ms=max(last_seen_ms, ?) WHERE id=?"))
+        {
+            statement.setLong(1, observedAt);
+            statement.setInt(2, radioSystemId);
+            statement.executeUpdate();
+        }
+    }
+
+    private static NativeSystemIdentity nativeSystemIdentity(int protocol, int addressDomainCode,
+                                                             SiteSystemEvidence evidence)
+    {
+        if(evidence == null)
+        {
+            return null;
+        }
+
+        if(protocol == TrunkedIdentityPolicy.PROTOCOL_DMR && evidence.variantCode() == DMR_VARIANT_TIER_III)
+        {
+            String model = dmrModelName(evidence.modelCode());
+            String key = RadioSystemKey.dmrTier3(model, evidence.networkId());
+            return key != null ? new NativeSystemIdentity(key, null, null, evidence.modelCode(),
+                evidence.networkId(), null, null) : null;
+        }
+
+        if(protocol == TrunkedIdentityPolicy.PROTOCOL_NXDN &&
+            addressDomainCode == IDENTITY_DOMAIN_NXDN_TYPE_C &&
+                evidence.variantCode() == NXDN_VARIANT_TYPE_C)
+        {
+            String category = nxdnLocationCategoryName(evidence.locationCategoryCode());
+            String key = RadioSystemKey.nxdnTypeC(category, evidence.systemId());
+            return key != null ? new NativeSystemIdentity(key, null, null, null, null,
+                evidence.locationCategoryCode(), evidence.systemId()) : null;
+        }
+
+        return null;
+    }
+
+    private static NativeSystemIdentity nativeSystemIdentity(int protocol, int addressDomainCode, String systemKey)
+    {
+        if(systemKey == null || RadioSystemKey.isChannelScoped(systemKey))
+        {
+            return null;
+        }
+
+        try
+        {
+            String canonical = RadioSystemKey.nativeFor(protocol(protocol), identityDomain(addressDomainCode),
+                systemKey);
+            String[] parts = canonical.split(":");
+            if(protocol == TrunkedIdentityPolicy.PROTOCOL_P25 && parts.length == 3)
+            {
+                return new NativeSystemIdentity(canonical, Integer.parseInt(parts[1], 16),
+                    Integer.parseInt(parts[2], 16), null, null, null, null);
+            }
+            if(protocol == TrunkedIdentityPolicy.PROTOCOL_DMR && parts.length == 4)
+            {
+                Integer modelCode = dmrModelCode(parts[2]);
+                return modelCode != null ? new NativeSystemIdentity(canonical, null, null, modelCode,
+                    Integer.parseInt(parts[3]), null, null) : null;
+            }
+            if(protocol == TrunkedIdentityPolicy.PROTOCOL_NXDN && parts.length == 3)
+            {
+                Integer locationCode = nxdnLocationCategoryCode(parts[1]);
+                return locationCode != null ? new NativeSystemIdentity(canonical, null, null, null, null,
+                    locationCode, Integer.parseInt(parts[2])) : null;
+            }
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static Integer dmrModelCode(String model)
+    {
+        return switch(model != null ? model : "")
+        {
+            case "tiny" -> DMR_MODEL_TINY;
+            case "small" -> DMR_MODEL_SMALL;
+            case "large" -> DMR_MODEL_LARGE;
+            case "huge" -> DMR_MODEL_HUGE;
+            default -> null;
+        };
+    }
+
+    private static Integer nxdnLocationCategoryCode(String category)
+    {
+        return switch(category != null ? category : "")
+        {
+            case "global" -> NXDN_LOCATION_GLOBAL;
+            case "regional" -> NXDN_LOCATION_REGIONAL;
+            case "local" -> NXDN_LOCATION_LOCAL;
+            default -> null;
+        };
+    }
+
+    private static String dmrModelName(Integer code)
+    {
+        return switch(code != null ? code : 0)
+        {
+            case DMR_MODEL_TINY -> "tiny";
+            case DMR_MODEL_SMALL -> "small";
+            case DMR_MODEL_LARGE -> "large";
+            case DMR_MODEL_HUGE -> "huge";
+            default -> null;
+        };
+    }
+
+    private static String nxdnLocationCategoryName(Integer code)
+    {
+        return switch(code != null ? code : 0)
+        {
+            case NXDN_LOCATION_GLOBAL -> "global";
+            case NXDN_LOCATION_REGIONAL -> "regional";
+            case NXDN_LOCATION_LOCAL -> "local";
+            default -> null;
+        };
     }
 
     /**
@@ -1918,8 +2250,22 @@ final class RadioSystemSchema
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT channel.id, channel.configuration_id, channel.radio_system_id,
                 channel.radio_system_assigned_at_ms,
+                system.system_key, system.configuration_id AS system_configuration_id,
+                system.address_domain_code AS system_address_domain_code,
                 system.p25_wacn, system.p25_system_id, configured.decoder_type,
-                configured.address_domain_code
+                configured.address_domain_code,
+                CASE WHEN json_type(configured.config_json, '$.p25SiteIdentity.wacn')='integer'
+                     THEN json_extract(configured.config_json, '$.p25SiteIdentity.wacn') END AS configured_p25_wacn,
+                CASE WHEN json_type(configured.config_json, '$.p25SiteIdentity.system')='integer'
+                     THEN json_extract(configured.config_json, '$.p25SiteIdentity.system') END AS configured_p25_system_id,
+                CASE WHEN json_type(configured.config_json, '$.p25SiteIdentity.rfss')='integer'
+                     THEN json_extract(configured.config_json, '$.p25SiteIdentity.rfss') END AS configured_p25_rfss,
+                CASE WHEN json_type(configured.config_json, '$.p25SiteIdentity.site')='integer'
+                     THEN json_extract(configured.config_json, '$.p25SiteIdentity.site') END AS configured_p25_site,
+                EXISTS (
+                    SELECT 1 FROM p25_site_snapshot site
+                    WHERE site.channel_id=channel.id AND site.rfss IS NOT NULL AND site.site IS NOT NULL
+                ) AS complete_p25_site_binding
             FROM receiver_channel channel
             JOIN configuration_channel configured
               ON configured.configuration_id = channel.configuration_id
@@ -1941,7 +2287,15 @@ final class RadioSystemSchema
                     resultSet.getInt("address_domain_code"),
                     nullableInteger(resultSet, "radio_system_id"),
                     nullableLong(resultSet, "radio_system_assigned_at_ms"),
-                    nullableInteger(resultSet, "p25_wacn"), nullableInteger(resultSet, "p25_system_id"));
+                    resultSet.getString("system_key"), resultSet.getString("system_configuration_id"),
+                    resultSet.getObject("system_address_domain_code") != null ?
+                        resultSet.getInt("system_address_domain_code") : IDENTITY_DOMAIN_STANDARD,
+                    nullableInteger(resultSet, "p25_wacn"), nullableInteger(resultSet, "p25_system_id"),
+                    nullableInteger(resultSet, "configured_p25_wacn"),
+                    nullableInteger(resultSet, "configured_p25_system_id"),
+                    nullableInteger(resultSet, "configured_p25_rfss"),
+                    nullableInteger(resultSet, "configured_p25_site"),
+                    resultSet.getInt("complete_p25_site_binding") != 0);
             }
         }
     }
@@ -2018,7 +2372,8 @@ final class RadioSystemSchema
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT id, system_key, configuration_id, protocol_code, address_domain_code,
-                       p25_wacn, p25_system_id
+                       p25_wacn, p25_system_id, dmr_model_code, dmr_network_id,
+                       nxdn_location_category_code, nxdn_system_id
                 FROM radio_system
                 ORDER BY id
                 """))
@@ -2030,11 +2385,24 @@ final class RadioSystemSchema
                 String configurationId = resultSet.getString("configuration_id");
                 Integer wacn = nullableInteger(resultSet, "p25_wacn");
                 Integer systemId = nullableInteger(resultSet, "p25_system_id");
+                Integer dmrModelCode = nullableInteger(resultSet, "dmr_model_code");
+                Integer dmrNetworkId = nullableInteger(resultSet, "dmr_network_id");
+                Integer nxdnLocationCategoryCode = nullableInteger(resultSet, "nxdn_location_category_code");
+                Integer nxdnSystemId = nullableInteger(resultSet, "nxdn_system_id");
                 String expected;
 
                 if(wacn != null && systemId != null)
                 {
                     expected = RadioSystemKey.p25(wacn, systemId);
+                }
+                else if(dmrModelCode != null && dmrNetworkId != null)
+                {
+                    expected = RadioSystemKey.dmrTier3(dmrModelName(dmrModelCode), dmrNetworkId);
+                }
+                else if(nxdnLocationCategoryCode != null && nxdnSystemId != null)
+                {
+                    expected = RadioSystemKey.nxdnTypeC(
+                        nxdnLocationCategoryName(nxdnLocationCategoryCode), nxdnSystemId);
                 }
                 else
                 {
@@ -2053,8 +2421,76 @@ final class RadioSystemSchema
 
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
+                SELECT channel.id
+                FROM receiver_channel channel
+                JOIN radio_system system ON system.id=channel.radio_system_id
+                JOIN trunked_site_snapshot site ON site.channel_id=channel.id
+                WHERE site.protocol_code<>system.protocol_code
+                   OR (system.protocol_code=3 AND system.dmr_model_code IS NOT NULL AND
+                       (site.variant_code<>1 OR site.observed_model_code IS NULL OR
+                        site.observed_network_id IS NULL OR
+                        site.observed_model_code<>system.dmr_model_code OR
+                        site.observed_network_id<>system.dmr_network_id))
+                   OR (system.protocol_code=4 AND system.nxdn_location_category_code IS NOT NULL AND
+                       (site.variant_code<>1 OR site.observed_location_category_code=0 OR
+                        site.observed_system_id IS NULL OR
+                        site.observed_location_category_code<>system.nxdn_location_category_code OR
+                        site.observed_system_id<>system.nxdn_system_id))
+                   OR (system.configuration_id IS NOT NULL AND
+                       ((site.protocol_code=3 AND site.variant_code=1 AND
+                         site.observed_model_code IS NOT NULL AND site.observed_network_id IS NOT NULL) OR
+                        (site.protocol_code=4 AND system.address_domain_code=1 AND site.variant_code=1 AND
+                         site.observed_location_category_code BETWEEN 1 AND 3 AND
+                         site.observed_system_id IS NOT NULL)))
+                LIMIT 1
+                """))
+        {
+            if(resultSet.next())
+            {
+                throw new SQLException("Receiver channel [" + resultSet.getInt(1) +
+                    "] has site evidence that contradicts its radio system");
+            }
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                WITH configured_p25 AS (
+                    SELECT configuration_id,
+                        json_extract(config_json, '$.p25SiteIdentity.wacn') AS wacn,
+                        json_extract(config_json, '$.p25SiteIdentity.system') AS system_id,
+                        json_extract(config_json, '$.p25SiteIdentity.rfss') AS rfss,
+                        json_extract(config_json, '$.p25SiteIdentity.site') AS site
+                    FROM configuration_channel
+                    WHERE channel_kind='TRUNKED' AND decoder_type IN ('P25_PHASE1', 'P25_PHASE2')
+                      AND json_type(config_json, '$.p25SiteIdentity.wacn')='integer'
+                      AND json_type(config_json, '$.p25SiteIdentity.system')='integer'
+                      AND json_type(config_json, '$.p25SiteIdentity.rfss')='integer'
+                      AND json_type(config_json, '$.p25SiteIdentity.site')='integer'
+                )
+                SELECT channel.id
+                FROM configured_p25 configured
+                JOIN receiver_channel channel ON channel.configuration_id=configured.configuration_id
+                LEFT JOIN radio_system system ON system.id=channel.radio_system_id
+                LEFT JOIN p25_site_snapshot site ON site.channel_id=channel.id
+                WHERE (system.p25_wacn IS NOT NULL AND system.p25_wacn<>configured.wacn)
+                   OR (system.p25_system_id IS NOT NULL AND system.p25_system_id<>configured.system_id)
+                   OR (site.rfss IS NOT NULL AND site.rfss<>configured.rfss)
+                   OR (site.site IS NOT NULL AND site.site<>configured.site)
+                LIMIT 1
+                """))
+        {
+            if(resultSet.next())
+            {
+                throw new SQLException("Receiver channel [" + resultSet.getInt(1) +
+                    "] has a learned P25 site that contradicts its saved binding");
+            }
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
                 SELECT channel.id, channel.configuration_id, system.system_key, system.configuration_id AS
                     system_configuration_id, system.protocol_code,
+                    system.address_domain_code AS system_address_domain_code,
                     configured.channel_kind, configured.decoder_type, configured.address_domain_code
                 FROM receiver_channel channel
                 JOIN radio_system system ON system.id = channel.radio_system_id
@@ -2071,16 +2507,16 @@ final class RadioSystemSchema
                 String key = resultSet.getString("system_key");
                 String configurationId = resultSet.getString("configuration_id");
                 String systemConfigurationId = resultSet.getString("system_configuration_id");
-                boolean nativeP25 = RadioSystemKey.isP25Native(key);
+                boolean nativeSystem = systemConfigurationId == null;
                 String configuredKey = RadioSystemKey.channelScoped(protocol(systemProtocol),
                     identityDomain(resultSet.getInt("address_domain_code")), configurationId);
 
                 if(!"TRUNKED".equals(resultSet.getString("channel_kind")) ||
                     configuredProtocol != systemProtocol ||
-                    (!nativeP25 && !configurationId.equals(systemConfigurationId)) ||
-                    (nativeP25 && systemConfigurationId != null) ||
-                    (!nativeP25 && !key.equals(configuredKey)) ||
-                    (nativeP25 && systemProtocol != TrunkedIdentityPolicy.PROTOCOL_P25))
+                    resultSet.getInt("address_domain_code") != resultSet.getInt("system_address_domain_code") ||
+                    (!nativeSystem && !configurationId.equals(systemConfigurationId)) ||
+                    (!nativeSystem && !key.equals(configuredKey)) ||
+                    (nativeSystem && !RadioSystemKey.isCanonical(key)))
                 {
                     throw new SQLException("Receiver channel [" + resultSet.getInt("id") +
                         "] is attached to an incompatible radio system");
@@ -2425,7 +2861,9 @@ final class RadioSystemSchema
     }
 
     record RadioSystem(int radioSystemId, int protocolCode, TrunkedIdentityDomain identityDomain,
-                 String systemKey, Integer p25Wacn, Integer p25SystemId, long firstSeenEpochMilliseconds)
+                 String systemKey, Integer p25Wacn, Integer p25SystemId, Integer dmrModelCode,
+                 Integer dmrNetworkId, Integer nxdnLocationCategoryCode, Integer nxdnSystemId,
+                 long firstSeenEpochMilliseconds)
     {
     }
 
@@ -2458,7 +2896,53 @@ final class RadioSystemSchema
     private record ReceiverChannel(int id, String configurationId, Integer protocolCode,
                                    int configuredAddressDomainCode, Integer radioSystemId,
                                    Long radioSystemAssignedAtEpochMilliseconds,
-                                   Integer currentP25Wacn, Integer currentP25SystemId)
+                                   String currentSystemKey, String currentSystemConfigurationId,
+                                   int currentSystemAddressDomainCode,
+                                   Integer currentP25Wacn, Integer currentP25SystemId,
+                                   Integer configuredP25Wacn, Integer configuredP25SystemId,
+                                   Integer configuredP25Rfss, Integer configuredP25Site,
+                                   boolean completeP25SiteSnapshot)
+    {
+        private boolean hasCompleteConfiguredP25SiteBinding()
+        {
+            return configuredP25Wacn != null && configuredP25SystemId != null && configuredP25Rfss != null &&
+                configuredP25Site != null;
+        }
+
+        private boolean hasConflictingConfiguredP25Binding(Integer observedWacn, Integer observedSystemId)
+        {
+            return hasCompleteConfiguredP25SiteBinding() &&
+                (!configuredP25Wacn.equals(observedWacn) || !configuredP25SystemId.equals(observedSystemId));
+        }
+
+        private boolean hasConflictingDerivedP25Binding(Integer observedWacn, Integer observedSystemId)
+        {
+            return completeP25SiteSnapshot && currentP25Wacn != null && currentP25SystemId != null &&
+                (!currentP25Wacn.equals(observedWacn) || !currentP25SystemId.equals(observedSystemId));
+        }
+
+        private boolean matchesConfiguredP25Binding(P25SiteIdentity observed)
+        {
+            return hasCompleteConfiguredP25SiteBinding() && observed != null &&
+                configuredP25Wacn == observed.wacn() && configuredP25SystemId == observed.system() &&
+                configuredP25Rfss == observed.rfss() && configuredP25Site == observed.site();
+        }
+    }
+
+    private record SiteSystemEvidence(int variantCode, Integer modelCode, Integer networkId,
+                                      Integer locationCategoryCode, Integer systemId)
+    {
+        private boolean supportsNativeVariant(int protocolCode, int addressDomainCode)
+        {
+            return protocolCode == TrunkedIdentityPolicy.PROTOCOL_DMR && variantCode == DMR_VARIANT_TIER_III ||
+                protocolCode == TrunkedIdentityPolicy.PROTOCOL_NXDN && variantCode == NXDN_VARIANT_TYPE_C &&
+                    addressDomainCode == IDENTITY_DOMAIN_NXDN_TYPE_C;
+        }
+    }
+
+    private record NativeSystemIdentity(String systemKey, Integer p25Wacn, Integer p25SystemId,
+                                        Integer dmrModelCode, Integer dmrNetworkId,
+                                        Integer nxdnLocationCategoryCode, Integer nxdnSystemId)
     {
     }
 

@@ -30,6 +30,8 @@ import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.config.RecordConfiguration;
+import io.github.dsheirer.source.config.SourceConfigRecording;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
@@ -79,6 +81,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static final String RADIO_SYSTEM_BOUNDARY = "radio_system_metrics_started_at_ms";
     private static final String CONVENTIONAL_CALL_BOUNDARY = "conventional_call_output_metrics_started_at_ms";
     private static final String TRUNKED_CALL_BOUNDARY = "trunked_logical_call_metrics_started_at_ms";
+    private static final List<String> REPLACED_METRIC_BOUNDARIES = List.of(OLD_IDENTITY_BOUNDARY,
+        CONVENTIONAL_CALL_BOUNDARY, TRUNKED_CALL_BOUNDARY, RADIO_SYSTEM_BOUNDARY);
     private static final String RETIRED_NAMED_CHANNEL_MAP_TABLE = "configuration_channel_map";
     private static final List<String> PRESERVED_AUTOINCREMENT_TABLES = List.of(
         "alias_list", "alias", "scan_list", "alias_broadcast_channel",
@@ -201,6 +205,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "radio-system and receiver-channel identity cache", DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Rebuild stable radio systems and saved-channel links from live decoder observations"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "activity metric boundaries", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Start fresh conventional-call, trunked-call, and radio-system measurement windows"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "redundant subsystem version markers", SUBSYSTEM_VERSION_KEYS.size(),
                 "Keep the one authoritative whole-database format version"),
@@ -258,6 +265,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             long siteRows = countRows(connection, SITE_TABLES);
             long qualityRows = countRows(connection, QUALITY_TABLES);
             long identityRows = countRows(connection, IDENTITY_TABLES);
+            long metricBoundaryRows = countMetadataRows(connection, REPLACED_METRIC_BOUNDARIES);
             long retiredNamedChannelMapRows = countRows(connection, List.of(RETIRED_NAMED_CHANNEL_MAP_TABLE));
             long preservedRows = countRows(connection, List.of("alias_list", "alias", "scan_list",
                 "alias_scan_list_membership", "alias_list_unmatched_talkgroup_scan_list_membership",
@@ -265,7 +273,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "application_settings", "application_icons", "web_user", "web_access_policy"));
             return new MigrationInput(channels, broadcasts, aliasRoutes, unmatchedRoutes, preferences, policy,
                 portablePreferences, sequences, callHistoryRows, siteRows, qualityRows, identityRows,
-                retiredNamedChannelMapRows, preservedRows);
+                metricBoundaryRows, retiredNamedChannelMapRows, preservedRows);
         }
         catch(IOException | IllegalArgumentException exception)
         {
@@ -309,6 +317,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "radio-system and receiver-channel identity cache", input.identityRows(),
                 "Rebuild stable radio systems and saved-channel links from live decoder observations"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "activity metric boundaries", input.metricBoundaryRows(),
+                "Start fresh conventional-call, trunked-call, and radio-system measurement windows"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "redundant subsystem version markers", SUBSYSTEM_VERSION_KEYS.size(),
                 "Keep the one authoritative whole-database format version"),
@@ -742,6 +753,11 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 String siteName = nullableText(rows, "site_name");
                 String name = nullableText(rows, "name");
                 String label = savedChannelLabel(rowId, systemName, siteName, name);
+                String storedDecoderType = nullableText(rows, "decoder_type");
+                if(storedDecoderType == null || storedDecoderType.isBlank())
+                {
+                    throw new IOException(label + " has no decoder type");
+                }
                 String configurationId = canonicalUuid(text(rows, "configuration_id"),
                     label + " stable ID");
                 String priorChannel = configurationIds.putIfAbsent(configurationId, label);
@@ -751,7 +767,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 }
 
                 ObjectNode payload = parseObject(text(rows, "config_json"), label);
-                normalizeLegacyChannelMode(payload, nullableText(rows, "decoder_type"), label);
+                normalizeLegacyChannelMode(payload, storedDecoderType, label);
                 requireJsonText(payload, "configurationId", configurationId, label, false, true);
                 boolean autoStart = booleanFlag(rows, "auto_start", label);
                 Integer autoStartOrder = nullableInteger(rows, "auto_start_order", label);
@@ -810,9 +826,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     throw new IOException(label + " has a negative sort order");
                 }
                 String decoderType = projection.decoderType();
-                if(decoderType != null && decoderType.isBlank())
+                if(decoderType == null || decoderType.isBlank())
                 {
-                    throw new IOException(label + " has a blank decoder type");
+                    throw new IOException(label + " has no decoder type");
                 }
                 Long primaryFrequency = projection.primaryFrequencyHz();
                 if(primaryFrequency != null && primaryFrequency <= 0)
@@ -843,10 +859,20 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         EventLogConfiguration eventLog = channel.getEventLogConfiguration();
         boolean recording = record != null && record.getRecorders() != null && !record.getRecorders().isEmpty();
         boolean logging = eventLog != null && eventLog.getLoggers() != null && !eventLog.getLoggers().isEmpty();
+        Long storedPrimaryFrequency = nullableLong(rows, "primary_frequency_hz", label);
+
+        // The frozen format-14 writer stored the primitive default frequency from single-tuner and recording sources
+        // as integer zero.  Its multiple-frequency source already converted an empty/default choice to NULL, so do
+        // not broaden this compatibility rule to that source type or to malformed rows.
+        if(storedPrimaryFrequency != null && storedPrimaryFrequency == 0 &&
+            (source instanceof SourceConfigTuner || source instanceof SourceConfigRecording))
+        {
+            storedPrimaryFrequency = null;
+        }
 
         if(!Objects.equals(projection.decoderType(), nullableText(rows, "decoder_type")) ||
             !Objects.equals(sourceType, nullableText(rows, "source_type")) ||
-            !Objects.equals(projection.primaryFrequencyHz(), nullableLong(rows, "primary_frequency_hz", label)) ||
+            !Objects.equals(projection.primaryFrequencyHz(), storedPrimaryFrequency) ||
             frequencyCount != integer(rows, "frequency_count", label) ||
             recording != booleanFlag(rows, "recording_enabled", label) ||
             logging != booleanFlag(rows, "event_logging_enabled", label))
@@ -1726,12 +1752,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 
     private static List<String> replacedMetadataKeys()
     {
-        List<String> keys = new ArrayList<>(SUBSYSTEM_VERSION_KEYS.size() + 4);
+        List<String> keys = new ArrayList<>(SUBSYSTEM_VERSION_KEYS.size() + REPLACED_METRIC_BOUNDARIES.size());
         keys.addAll(SUBSYSTEM_VERSION_KEYS);
-        keys.add(OLD_IDENTITY_BOUNDARY);
-        keys.add(CONVENTIONAL_CALL_BOUNDARY);
-        keys.add(TRUNKED_CALL_BOUNDARY);
-        keys.add(RADIO_SYSTEM_BOUNDARY);
+        keys.addAll(REPLACED_METRIC_BOUNDARIES);
         return List.copyOf(keys);
     }
 
@@ -1747,6 +1770,28 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     if(!rows.next())
                     {
                         throw new SQLException("Unable to count " + table);
+                    }
+                    total = Math.addExact(total, rows.getLong(1));
+                }
+            }
+        }
+        return total;
+    }
+
+    private static long countMetadataRows(Connection connection, Collection<String> keys) throws SQLException
+    {
+        long total = 0;
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT COUNT(*) FROM database_metadata WHERE key=?"))
+        {
+            for(String key: keys)
+            {
+                statement.setString(1, key);
+                try(ResultSet rows = statement.executeQuery())
+                {
+                    if(!rows.next())
+                    {
+                        throw new SQLException("Unable to count database metadata " + key);
                     }
                     total = Math.addExact(total, rows.getLong(1));
                 }
@@ -2324,7 +2369,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                                   List<PreferenceRow> preferences, PolicyInput policy,
                                   PortablePreferencesUpdate portablePreferences, Map<String,Long> sequences,
                                   long callHistoryRows,
-                                  long siteRows, long qualityRows, long identityRows,
+                                  long siteRows, long qualityRows, long identityRows, long metricBoundaryRows,
                                   long retiredNamedChannelMapRows, long preservedRows)
     {
     }

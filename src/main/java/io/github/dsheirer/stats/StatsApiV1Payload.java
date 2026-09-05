@@ -29,8 +29,10 @@ final class StatsApiV1Payload
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
         "group_identity_summary_id", "source_identity_summary_id", "target_identity_summary_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key", "site_type",
-        "protocol_code", "variant_code",
-        "address_domain_code", "location_category_code", "identity_kind_code", "target_kind_code",
+        "protocol_code", "variant_code", "site_variant_code",
+        "address_domain_code", "location_category_code", "site_location_category_code",
+        "dmr_model_code", "nxdn_location_category_code", "site_model_code",
+        "identity_kind_code", "source_identity_kind_code", "target_identity_kind_code", "target_kind_code",
         "group_identity_kind_code", "group_identity_kind_label",
         "home_wacn", "home_system_id", "channel_kind_code", "identity_role_code", "model_code",
         "brand_code", "mode_code", "channel_type_code", "service_flags", "failure_code", "role_flags",
@@ -155,6 +157,12 @@ final class StatsApiV1Payload
             presented.put("variant", protocol.variant(variant.longValue()));
         }
 
+        if((protocol == StatsApiProtocol.DMR || protocol == StatsApiProtocol.NXDN) &&
+            source.get("site_variant_code") instanceof JsonNode variant && variant.isNumber())
+        {
+            presented.put("site_variant", protocol.variant(variant.longValue()));
+        }
+
         putIdentityKind(source, presented, "identity_kind_code", "identity_kind");
         putIdentityKind(source, presented, "target_kind_code", "target_kind");
         putIdentityKind(source, presented, "group_identity_kind_code", "group_identity_kind");
@@ -173,16 +181,34 @@ final class StatsApiV1Payload
             addNxdnDisplays(presented, addressDomain);
         }
 
-        if(source.get("location_category_code") instanceof JsonNode category && category.isNumber())
+        if(protocol == StatsApiProtocol.NXDN &&
+            source.get("location_category_code") instanceof JsonNode category && category.isNumber())
         {
-            if(protocol == StatsApiProtocol.DMR)
-            {
-                presented.put("model", protocol.siteClassification(category.longValue()));
-            }
-            else if(protocol == StatsApiProtocol.NXDN)
-            {
-                presented.put("location_category", protocol.siteClassification(category.longValue()));
-            }
+            presented.put("location_category", protocol.siteClassification(category.longValue()));
+        }
+
+        if(protocol == StatsApiProtocol.DMR &&
+            source.get("dmr_model_code") instanceof JsonNode model && model.isNumber())
+        {
+            presented.put("model", protocol.siteClassification(model.longValue()));
+        }
+
+        if(protocol == StatsApiProtocol.NXDN &&
+            source.get("nxdn_location_category_code") instanceof JsonNode category && category.isNumber())
+        {
+            presented.put("location_category", protocol.siteClassification(category.longValue()));
+        }
+
+        if(protocol == StatsApiProtocol.DMR &&
+            source.get("site_model_code") instanceof JsonNode model && model.isNumber())
+        {
+            presented.put("site_model", protocol.siteClassification(model.longValue()));
+        }
+
+        if(protocol == StatsApiProtocol.NXDN &&
+            source.get("site_location_category_code") instanceof JsonNode category && category.isNumber())
+        {
+            presented.put("site_location_category", protocol.siteClassification(category.longValue()));
         }
 
         addProtocolChannelFields(source, presented, protocol);

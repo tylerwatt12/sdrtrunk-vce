@@ -22,15 +22,27 @@ identities remain separate Alias evidence and never replace that destination.
 Queries join `alias_list` by ID. They do not copy or match an Alias List name in activity tables. Renaming an Alias
 List therefore changes display text without changing ownership or requiring synchronized activity updates.
 
-Observed activity is owned by the saved channel UUID through `receiver_channel.configuration_id`. Display names,
-system/site labels, decoder choices, and RadioResolve identifiers do not participate in identity.
+Each observation is owned by the saved channel UUID through `receiver_channel.configuration_id`. A proven native
+radio system can then collect system-wide summaries from several channels. Display names, system/site labels, decoder
+choices, and RadioResolve identifiers do not participate in identity.
 
 For trunked systems:
 
 - complete P25 WACN/System identity can be shared by several receiver channels;
-- incomplete P25 observations create no radio-system identity, while DMR and NXDN systems remain saved-channel-specific;
-  and
-- each channel keeps its exact Alias List assignment even when several channels share one P25 radio system.
+- standard DMR Tier III can be shared after its complete model (`tiny`, `small`, `large`, or `huge`) and Network ID
+  are known;
+- NXDN Type-C can be shared after its complete location category (`global`, `regional`, or `local`) and System ID are
+  known;
+- incomplete DMR/NXDN observations and unsupported native variants stay scoped to the saved channel, while incomplete
+  P25 observations create no provisional radio system; and
+- each channel keeps its exact Alias List assignment even when several channels share one native radio system.
+
+Capacity Plus, Connect Plus, Capacity Max, Hytera Tier III, unknown DMR variants, and NXDN Type-D are always
+saved-channel-scoped. A DMR timeslot describes the carrier resource that carried an observation; it is never part of
+the radio-system identity.
+
+Native grouping is local to this receiver profile. It joins the sites and saved channels that this installation sees;
+it is not a claim that the resulting key is a worldwide registry identifier or safe to compare across installations.
 
 A system-level alias is returned only when every applicable assigned list that resolves the identity produces the
 same effective alias presentation. If two lists disagree, or only some applicable lists resolve it, the system-level
@@ -62,9 +74,14 @@ Discovery reads existing bounded summaries; it creates no new activity table and
 selects the radio systems reached through receiver channels whose `configuration_channel.alias_list_id` equals the
 selected list, then reads talkgroup and patch identities through the summary primary key.
 
-Shared P25 systems can be reached by channels assigned to different lists. Filtering remains channel-owned: selecting
-one list does not silently expose another list's configuration. System-level presentation follows the unambiguous
-resolution rule above.
+Shared native systems can be reached by channels assigned to different lists. Filtering remains channel-owned:
+selecting one list does not silently expose another list's configuration. System-level presentation follows the
+unambiguous resolution rule above.
+
+DMR and NXDN may initially collect derived summaries under an isolated saved-channel fallback. Once a complete,
+supported native identity is established, new observations build the native system summary. Earlier fallback facts
+remain attached to the exact saved channel and are presented as historical activity until normal retention or an
+explicit clear removes them. They are never relabeled as facts about a system that had not yet been proven.
 
 The trunked discovery path is equivalent to this bounded shape:
 
@@ -119,9 +136,9 @@ replacement identity.
 The storage and query layer uses these keys:
 
 - `configuration_id` as the durable saved-channel identity, with numeric `channel_id` used only for internal joins;
-- `radio_system_key` as the durable trunked-system identity, with numeric `radio_system_id` used only for internal
-  joins; and
-- `source_label`, `system_name`, and `site_name` for current display text.
+- `radio_system_key` as the durable trunked-system identity within this receiver profile, with numeric
+  `radio_system_id` used only for internal joins; and
+- `channel_names` and `system_name` for current display text.
 
 Public API and CSV rows expose `configuration_id` and `radio_system_key`, not the internal numeric owner IDs. Numeric
 talkgroup IDs are never assumed to be globally unique. Every list is server-bounded to 500 rows.
@@ -134,9 +151,10 @@ summary key whenever possible. Normal steady-state row creation approaches zero 
 
 Observed summaries use the configured Statistics retention period of 1 through 365 days. Time-first indexes select at
 most 1,000 expired rows per cleanup statement. Deleting a saved channel cascades its channel-owned conventional facts.
-Deleting a DMR or NXDN saved channel cascades its explicitly owned channel-scoped radio system and summaries. A native
-P25 system remains while another receiver channel or retained system fact uses it, then bounded orphan cleanup removes
-it. Incomplete P25 observations never create a provisional system.
+Deleting a saved channel cascades any explicitly owned channel-scoped DMR or NXDN radio system and its summaries. A
+shared native P25, standard DMR Tier III, or NXDN Type-C system remains while another receiver channel or retained
+system fact uses it, then bounded orphan cleanup removes it. Incomplete P25 observations never create a provisional
+system.
 
 Alias policies, routes, and scan-list memberships are configuration and remain until an administrator changes or
 deletes them. Statistics clear never deletes those configuration rows.

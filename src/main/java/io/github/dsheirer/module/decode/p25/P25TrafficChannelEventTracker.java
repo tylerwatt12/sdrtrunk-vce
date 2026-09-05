@@ -24,6 +24,9 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.protocol.Protocol;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +42,7 @@ public class P25TrafficChannelEventTracker
     static final long CONTROL_CONTINUATION_THRESHOLD_MS = 10000;
     private static final long MAX_TDMA_DATA_CHANNEL_EVENT_DURATION_MS = 15000;
     private P25ChannelGrantEvent mEvent;
+    private final String mRadioSystemKey;
     private long mLastObservationTimestamp;
     private boolean mStarted = false;
     private boolean mComplete = false;
@@ -49,8 +53,23 @@ public class P25TrafficChannelEventTracker
      */
     public P25TrafficChannelEventTracker(P25ChannelGrantEvent event)
     {
+        this(event, null);
+    }
+
+    /**
+     * @param radioSystemKey immutable serving-system key captured when this physical call began
+     */
+    public P25TrafficChannelEventTracker(P25ChannelGrantEvent event, String radioSystemKey)
+    {
         mEvent = event;
+        mRadioSystemKey = radioSystemKey != null ? RadioSystemKey.nativeFor(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, radioSystemKey) : null;
         mLastObservationTimestamp = event.getTimeStart();
+    }
+
+    public String getRadioSystemKey()
+    {
+        return mRadioSystemKey;
     }
 
     /**

@@ -82,6 +82,8 @@ import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationRespons
 import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationResponseTypeD;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasComplete;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
+import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
@@ -129,7 +131,8 @@ public class NXDNDecoderState extends DecoderState
         mTrunkingEnabled = config == null || config.isTrunked();
         mSiteMetadataPublisher = mTrunkingEnabled ? new ProtocolSiteMetadataPublisher(mChannel,
             mNetworkConfigurationMonitor::getSnapshot, this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter) : null;
+            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter,
+            this::getCurrentFrequency) : null;
     }
 
     /**
@@ -148,6 +151,12 @@ public class NXDNDecoderState extends DecoderState
     @Override
     public void reset()
     {
+        mNetworkConfigurationMonitor.reset();
+        if(mChannel != null && mChannel.isStandardChannel() && mTrafficChannelManager != null)
+        {
+            mTrafficChannelManager.updateNativeRadioSystemKey(null);
+        }
+
         if(!mTrunkingEnabled)
         {
             resetState();
@@ -922,10 +931,41 @@ public class NXDNDecoderState extends DecoderState
 
         if(mSiteMetadataPublisher != null)
         {
+            updateNativeRadioSystemKey();
             mSiteMetadataPublisher.publish(layer3.getTimestamp());
         }
 
         broadcast(new DecoderStateEvent(this, event, state));
+    }
+
+    private void updateNativeRadioSystemKey()
+    {
+        if(mChannel != null && mChannel.isStandardChannel())
+        {
+            updateNativeRadioSystemKey(mTrafficChannelManager, mNetworkConfigurationMonitor.getSnapshot());
+        }
+    }
+
+    static void updateNativeRadioSystemKey(NXDNTrafficChannelManager trafficChannelManager,
+                                            NXDNNetworkConfigurationSnapshot snapshot)
+    {
+        if(trafficChannelManager == null)
+        {
+            return;
+        }
+
+        String radioSystemKey = null;
+        if(trafficChannelManager.getConfiguredIdentityDomain() == TrunkedIdentityDomain.NXDN_TYPE_C &&
+            snapshot != null && "TYPE_C".equals(snapshot.variant()))
+        {
+            NXDNNetworkConfigurationSnapshot.Location location = snapshot.currentLocation();
+            radioSystemKey = location != null ?
+                RadioSystemKey.nxdnTypeC(location.category(), location.system()) : null;
+        }
+
+        //Incomplete Type-C evidence, Type-D, and a changed-RAN snapshot with no variant are all unresolved for native
+        //grouping. None may retain a key learned from an older decoder/site generation.
+        trafficChannelManager.updateNativeRadioSystemKey(radioSystemKey);
     }
 
     /**

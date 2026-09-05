@@ -816,11 +816,9 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     long childRetentionCutoff = System.currentTimeMillis() -
                         TimeUnit.DAYS.toMillis(Math.max(1, mRetentionDays));
-                    if(ReceiverActivitySchema.isAuthoritativeTrunkedSiteSnapshot(
-                        connection, trunkedSiteSnapshot.snapshot()))
+                    if(ReceiverActivitySchema.ensureTrunkedSiteRadioSystem(connection,
+                        trunkedSiteSnapshot.snapshot()))
                     {
-                        ReceiverActivitySchema.ensureTrunkedSiteRadioSystem(connection,
-                            trunkedSiteSnapshot.snapshot());
                         TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot(), childRetentionCutoff);
                     }
                     writtenRecords++;

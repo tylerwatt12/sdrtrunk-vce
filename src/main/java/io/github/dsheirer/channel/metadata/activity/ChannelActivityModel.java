@@ -493,7 +493,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
-        if(snapshot == null || snapshot.channel() == null || snapshot.frequencyHz() <= 0)
+        if(snapshot == null || snapshot.channel() == null || snapshot.receiverContext() == null ||
+            snapshot.frequencyHz() <= 0)
         {
             return;
         }
@@ -503,6 +504,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     private void processControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
+        if(snapshot == null || !snapshot.matchesCurrentChannel())
+        {
+            return;
+        }
+
         SiteActivitySession session = isConfiguredTrunkedControlParent(snapshot.channel()) ?
             getOrCreateSiteSession(snapshot.channel()) : mSiteSessions.get(snapshot.channel());
         ChannelActivityTableState table = session != null ? session.getTableState() : null;
@@ -732,7 +738,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || event.channel() == null || event.snapshot() == null)
+        if(event == null || event.receiverContext() == null || event.snapshot() == null)
         {
             return;
         }
@@ -742,6 +748,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     private void processSiteMetadata(SiteMetadataEvent event)
     {
+        if(event == null || !event.matchesCurrentChannel())
+        {
+            return;
+        }
+
         Channel parentChannel = event.channel();
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
 
@@ -851,15 +862,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     private void processProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
-        if(!TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event))
+        if(!TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event) ||
+            !event.matchesCurrentChannel())
         {
             return;
         }
 
         Channel parentChannel = event.channel();
 
-        if(parentChannel != null && parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr &&
-            !dmr.isTrunked())
+        if(event.receiverContext().isConventional())
         {
             return;
         }
