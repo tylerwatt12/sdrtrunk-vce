@@ -22,7 +22,7 @@ package io.github.dsheirer.gui.configuration.radioreference;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
-import io.github.dsheirer.alias.AliasFactory;
+import io.github.dsheirer.alias.RadioReferenceAliasFields;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
@@ -952,13 +952,9 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             return ImportStatus.NOT_PRESENT;
         }
 
-        boolean identical = normalizedEquals(alias.getName(), talkgroup.getAlphaTag()) &&
-            normalizedEquals(alias.getDescription(), talkgroup.getDescription());
-
-        if(category != null)
-        {
-            identical &= normalizedEquals(alias.getGroup(), category.getName());
-        }
+        boolean identical = RadioReferenceAliasFields.identical(alias,
+            talkgroup.getAlphaTag(), talkgroup.getDescription(), category == null ? null : category.getName(),
+            category != null);
 
         return identical ? ImportStatus.IDENTICAL : ImportStatus.DIFFERENT;
     }
@@ -995,17 +991,8 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             throw new IllegalArgumentException("Alias and RadioReference talkgroup are required");
         }
 
-        Alias replacement = AliasFactory.copyOf(alias);
-        replacement.setId(alias.getId());
-        replacement.setName(talkgroup.getAlphaTag());
-        replacement.setDescription(talkgroup.getDescription());
-
-        if(category != null)
-        {
-            replacement.setGroup(category.getName());
-        }
-
-        return replacement;
+        return RadioReferenceAliasFields.replacement(alias, talkgroup.getAlphaTag(),
+            talkgroup.getDescription(), category == null ? null : category.getName(), category != null);
     }
 
     private static void addChange(List<ImportedFieldChange> changes, String field, String oldValue, String newValue)

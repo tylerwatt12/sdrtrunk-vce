@@ -50,6 +50,58 @@ class AliasAdminHttpControllerTest
     Path mTemporaryFolder;
 
     @Test
+    void transferRequiresMatchingPreviewAndExplicitReplaceConfirmation() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("transfer-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        long listId = service.createAliasList("Transfer", AliasListFamily.P25).aliasListId();
+        AliasAdminHttpController controller = new AliasAdminHttpController(service);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
+        server.start();
+        try(HttpClient client = HttpClient.newHttpClient())
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            String path = AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId + "/transfer";
+            Map<String,Object> body = new java.util.LinkedHashMap<>();
+            body.put("format", "RADIOREFERENCE"); body.put("mode", "REPLACE"); body.put("action", "preview");
+            body.put("csv", "Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category\r\n123,7b,Dispatch,D,Fire dispatch,Fire Dispatch,Fire\r\n");
+            JsonNode preview = json(send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))));
+            assertEquals(1, preview.at("/counts/added").intValue());
+            assertEquals(0, service.transferSnapshot(listId).aliases().size());
+            body.put("action", "apply"); body.put("revision", preview.get("revision").longValue());
+            body.put("digest", preview.get("digest").textValue());
+            assertEquals(400, send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            body.put("confirm_replace", true);
+            body.put("digest", "changed");
+            assertEquals(409, send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            body.put("digest", preview.get("digest").textValue());
+            assertEquals(200, send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            assertEquals(1, service.transferSnapshot(listId).aliases().size());
+            assertEquals(409, send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            HttpResponse<String> exported = send(client, request(origin, path).GET());
+            assertEquals(200, exported.statusCode());
+            assertTrue(exported.headers().firstValue("Content-Type").orElseThrow().startsWith("text/csv"));
+            assertTrue(exported.headers().firstValue("Content-Disposition").orElseThrow().contains("attachment"));
+            body.put("format", "VCE"); body.put("mode", "UPDATE_ADD"); body.put("action", "preview");
+            body.put("csv", exported.body());
+            preview = json(send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))));
+            assertEquals(1, preview.at("/counts/unchanged").intValue());
+        }
+        finally
+        {
+            server.stop(0);
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
     void rejectsUnknownJsonAndCreatesUpdatesAndDeletesAnAlias() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("data");

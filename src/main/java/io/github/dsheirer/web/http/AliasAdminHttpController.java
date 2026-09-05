@@ -13,6 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasImportService;
+import io.github.dsheirer.alias.AliasTransferCsv;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -84,6 +86,7 @@ public final class AliasAdminHttpController
     private final AliasAdministrationService mService;
     private final Runnable mAliasChanged;
     private final AliasListDeletion mAliasListDeletion;
+    private final java.util.concurrent.Semaphore mTransferAdmission = new java.util.concurrent.Semaphore(1);
 
     public AliasAdminHttpController(AliasAdministrationService service)
     {
@@ -205,6 +208,11 @@ public final class AliasAdminHttpController
 
     private void handleAliasLists(HttpExchange exchange, String path) throws Exception
     {
+        if(path.endsWith("/transfer"))
+        {
+            handleTransfer(exchange, requiredItemId(path.substring(0, path.length() - "/transfer".length()), ALIAS_LISTS_PATH));
+            return;
+        }
         if(ALIAS_LISTS_PATH.equals(path))
         {
             requireNoQuery(exchange);
@@ -295,6 +303,63 @@ public final class AliasAdminHttpController
             default -> methodNotAllowed(exchange, "DELETE");
         }
     }
+
+    private void handleTransfer(HttpExchange exchange, long listId) throws Exception
+    {
+        requireNoQuery(exchange);
+        if(!mTransferAdmission.tryAcquire())
+            throw error(429, "configuration_busy", "Another alias transfer is running; try again");
+        try
+        {
+            AliasImportService importer = new AliasImportService(mService);
+            if("GET".equals(exchange.getRequestMethod()))
+            {
+                requireNoBody(exchange);
+                byte[] bytes = importer.export(listId).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/csv; charset=utf-8");
+                exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"vce-alias-list-" + listId + ".csv\"");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try(var output = exchange.getResponseBody()) { output.write(bytes); }
+                return;
+            }
+            requireMethod(exchange, "POST");
+            TransferRequest request = readJson(exchange, TransferRequest.class, 16 * 1024 * 1024);
+            AliasTransferCsv.Format format = AliasTransferCsv.Format.valueOf(required(request.format(), "format"));
+            AliasImportService.Mode mode = AliasImportService.Mode.valueOf(required(request.mode(), "mode"));
+            if(request.csv() == null || request.csv().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > AliasTransferCsv.MAX_BYTES)
+                throw invalid("CSV must be at most 8 MiB");
+            var options = mService.options(listId);
+            var inputs = AliasTransferCsv.read(request.csv(), format, options.aliasList());
+            var plan = importer.preview(listId, mode, inputs, request.defaults());
+            var preview = plan.preview();
+            if(preview.revision() != options.revision())
+                throw new AliasAdministrationService.StaleRevisionException(options.revision(), preview.revision());
+            String digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(OBJECT_MAPPER.writeValueAsBytes(preview)));
+            if("apply".equals(request.action()))
+            {
+                if(request.revision() == null || request.revision() != preview.revision() || !digest.equals(request.digest()))
+                    throw error(409, "stale_revision", "Import changed; refresh the preview before applying");
+                if(mode == AliasImportService.Mode.REPLACE && !Boolean.TRUE.equals(request.confirmReplace()))
+                    throw invalid("Confirm replacement of the selected list");
+                sendData(exchange, 200, mutationResponse(changed(importer.apply(plan))));
+            }
+            else if("preview".equals(request.action()))
+            {
+                int offset = request.offset() == null ? 0 : request.offset();
+                if(offset < 0 || offset > preview.rows().size()) throw invalid("Invalid preview offset");
+                int end = Math.min(offset + 100, preview.rows().size());
+                sendData(exchange, 200, Map.of("revision", preview.revision(), "digest", digest,
+                    "counts", preview.counts(), "rows", preview.rows().subList(offset, end),
+                    "total", preview.rows().size(), "offset", offset));
+            }
+            else throw invalid("action must be preview or apply");
+        }
+        finally { mTransferAdmission.release(); }
+    }
+
+    private record TransferRequest(String action, String format, String mode, String csv,
+        AliasImportService.Defaults defaults, Long revision, String digest, Boolean confirmReplace, Integer offset) {}
 
     private void handleAliases(HttpExchange exchange, String path) throws Exception
     {
@@ -1166,6 +1231,11 @@ public final class AliasAdminHttpController
 
     private static <T> T readJson(HttpExchange exchange, Class<T> type) throws IOException, RequestException
     {
+        return readJson(exchange, type, MAXIMUM_JSON_BODY_BYTES);
+    }
+
+    private static <T> T readJson(HttpExchange exchange, Class<T> type, int maximumBytes) throws IOException, RequestException
+    {
         String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         if(contentType == null || !"application/json".equals(contentType.toLowerCase(Locale.ROOT)
             .split(";", 2)[0].strip()))
@@ -1183,7 +1253,7 @@ public final class AliasAdminHttpController
                 {
                     throw invalid("Content-Length is invalid");
                 }
-                if(parsed > MAXIMUM_JSON_BODY_BYTES)
+                if(parsed > maximumBytes)
                 {
                     throw error(413, "request_too_large", "The JSON request is too large");
                 }
@@ -1194,7 +1264,7 @@ public final class AliasAdminHttpController
             }
         }
 
-        byte[] bytes = ApiRequestDecoder.readBody(exchange, MAXIMUM_JSON_BODY_BYTES);
+        byte[] bytes = ApiRequestDecoder.readBody(exchange, maximumBytes);
 
         try
         {
@@ -1202,7 +1272,7 @@ public final class AliasAdminHttpController
             {
                 throw invalid("A JSON request body is required");
             }
-            if(bytes.length > MAXIMUM_JSON_BODY_BYTES)
+            if(bytes.length > maximumBytes)
             {
                 throw error(413, "request_too_large", "The JSON request is too large");
             }

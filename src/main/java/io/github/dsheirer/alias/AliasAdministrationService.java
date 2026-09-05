@@ -110,6 +110,70 @@ public final class AliasAdministrationService
         });
     }
 
+    /** One bounded, detached configuration view for transfer previews and exports. */
+    public TransferSnapshot transferSnapshot(long listId)
+    {
+        return onConfigurationThread(() ->
+        {
+            AliasListDefinition definition = requireAliasList(listId);
+            List<Alias> aliases = aliasesForList(definition);
+            if(aliases.size() > 10_000)
+            {
+                throw new IllegalArgumentException("Alias transfer is limited to 10,000 aliases per list");
+            }
+            return new TransferSnapshot(options(listId), aliases.stream().map(alias ->
+                new AliasEntry(revision(), copyAlias(alias),
+                    scanListModel().scanListIdsForAlias(alias.getId()))).toList());
+        });
+    }
+
+    public record TransferSnapshot(Options options, List<AliasEntry> aliases) {}
+
+    /** Commits a reviewed import, including deletions and explicit memberships, in one configuration transaction. */
+    public MutationResult applyTransfer(long listId, List<AliasEntry> entries, List<Long> deletions,
+                                        long expectedRevision)
+    {
+        if(entries.size() > 10_000 || deletions.size() > 10_000)
+        {
+            throw new IllegalArgumentException("Alias transfer exceeds 10,000 rows");
+        }
+        List<AliasEntry> detached = entries.stream().map(entry -> new AliasEntry(expectedRevision,
+            entry.alias().getId() == 0 ? prepareNewAlias(entry.alias()) :
+                prepareReplacement(entry.alias().getId(), entry.alias()), entry.scanListIds())).toList();
+        return mutate(Long.valueOf(expectedRevision), () ->
+        {
+            requireAliasList(listId);
+            Set<Long> saved = new HashSet<>();
+            for(AliasEntry entry: detached)
+            {
+                Alias alias = entry.alias();
+                if(alias.getAliasListId() != listId || alias.getId() > 0 &&
+                    (requireAlias(alias.getId()).getAliasListId() != listId || !saved.add(alias.getId())))
+                {
+                    throw new IllegalArgumentException("Import alias is outside the destination list or duplicated");
+                }
+                validatedScanListIds(entry.scanListIds());
+            }
+            Set<Long> removed = new HashSet<>();
+            for(long id: deletions)
+            {
+                if(!removed.add(id) || saved.contains(id) || requireAlias(id).getAliasListId() != listId)
+                {
+                    throw new IllegalArgumentException("Import deletion is outside the destination list or duplicated");
+                }
+            }
+            if(!deletions.isEmpty())
+            {
+                deleteAliasesTarget(deletions, deletions.stream().map(this::requireAlias).toList());
+            }
+            List<Alias> aliases = detached.stream().map(AliasEntry::alias).toList();
+            if(!aliases.isEmpty()) saveAliasesTarget(aliases);
+            detached.forEach(entry -> scanListModel().replaceAliasMemberships(entry.alias().getId(), entry.scanListIds()));
+            return new MutationTarget(null, deletions, aliases.size() + deletions.size(), aliases,
+                PublicationMode.ALIASES_THEN_SCAN_LISTS, null);
+        });
+    }
+
     /**
      * Returns a bounded list of aliases whose matchers collide with the selected Alias under the same rules used by
      * the runtime Alias-list index. The exact total is retained so an administrator can tell when the display list
