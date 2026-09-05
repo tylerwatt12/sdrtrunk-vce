@@ -51,6 +51,10 @@ class SpectrumSnapPresetCatalogTest
         assertNull(scope(country, "ism-900").snap());
         assertEquals(902_000_000, scope(country, "ism-900").minHz());
         assertEquals(928_000_000, scope(country, "ism-900").maxHz());
+        assertEquals("700 MHz public safety (base)", scope(country, "700-base").label());
+        assertEquals("700 MHz public safety (mobile)", scope(country, "700-mobile").label());
+        assertEquals("800 MHz public safety (base)", scope(country, "800-base").label());
+        assertEquals("800 MHz public safety (mobile)", scope(country, "800-mobile").label());
     }
 
     @Test
