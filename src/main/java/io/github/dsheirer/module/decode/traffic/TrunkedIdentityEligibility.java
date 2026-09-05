@@ -13,6 +13,10 @@ package io.github.dsheirer.module.decode.traffic;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IncompleteIdentifier;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.dmr.message.type.Tier3Gateway;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
@@ -52,6 +56,74 @@ public final class TrunkedIdentityEligibility
         };
     }
 
+    /**
+     * Tests the durable identity carried by a decoded identifier.  A fully-qualified P25 identifier is keyed by its
+     * home identity, while its temporary local address is validated separately as observation evidence.
+     */
+    public static boolean isEligibleDecodedIdentifier(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                                       Identifier<?> identifier)
+    {
+        if(identifier == null || identifier instanceof IncompleteIdentifier)
+        {
+            return false;
+        }
+
+        Form form = identifier.getForm();
+        Identifier<?> primary = identifier;
+        Integer observedLocalId = number(identifier);
+
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
+            patch.getValue().getPatchGroup() != null)
+        {
+            primary = patch.getValue().getPatchGroup();
+            observedLocalId = patch.getValue().getPatchGroup().getValue();
+        }
+
+        if((protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2) &&
+            primary instanceof FullyQualifiedRadioIdentifier radio && radio.getProtocol() == Protocol.APCO25)
+        {
+            return validP25Home(radio.getWacn(), radio.getSystem()) &&
+                isEligible(protocol, identityDomain, form, radio.getRadio()) &&
+                isObservedLocalEligible(protocol, identityDomain, form, observedLocalId, true);
+        }
+
+        if((protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2) &&
+            primary instanceof FullyQualifiedTalkgroupIdentifier talkgroup &&
+            talkgroup.getProtocol() == Protocol.APCO25)
+        {
+            return validP25Home(talkgroup.getWacn(), talkgroup.getSystem()) &&
+                isEligible(protocol, identityDomain, form, talkgroup.getTalkgroup()) &&
+                isObservedLocalEligible(protocol, identityDomain, form, observedLocalId, true);
+        }
+
+        return isEligible(protocol, identityDomain, form, observedLocalId);
+    }
+
+    /**
+     * Validates an over-the-air local address without confusing it with a durable home identity.  P25 fully-qualified
+     * radios may use any assignable 24-bit working address, including values above the permanent Unit ID range.
+     */
+    public static boolean isObservedLocalEligible(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                                   Form form, Integer identifier, boolean fullyQualified)
+    {
+        if(!fullyQualified || protocol != Protocol.APCO25 && protocol != Protocol.APCO25_PHASE2)
+        {
+            return isEligible(protocol, identityDomain, form, identifier);
+        }
+
+        if(form == null || identifier == null || identifier < 0)
+        {
+            return false;
+        }
+
+        return switch(form)
+        {
+            case TALKGROUP, PATCH_GROUP -> identifier <= RadioSystemIdentityKey.MAX_P25_GROUP_ID;
+            case RADIO -> identifier <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
+            default -> false;
+        };
+    }
+
     public static boolean isTalkgroup(Protocol protocol, TrunkedIdentityDomain identityDomain, int talkgroup)
     {
         if(talkgroup <= 0)
@@ -68,6 +140,16 @@ public final class TrunkedIdentityEligibility
                     talkgroup != NXDN_TYPE_C_RESERVED_GROUP && talkgroup != NXDN_MAX_ID);
             default -> false;
         };
+    }
+
+    private static boolean validP25Home(int wacn, int system)
+    {
+        return wacn >= 0 && wacn <= 0xFFFFF && system >= 0 && system <= 0xFFF;
+    }
+
+    private static Integer number(Identifier<?> identifier)
+    {
+        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
     }
 
     public static boolean isRadio(Protocol protocol, TrunkedIdentityDomain identityDomain, int radio)

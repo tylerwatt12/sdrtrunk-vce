@@ -125,6 +125,23 @@ final class TrunkedIdentityPolicy
             Form.RADIO, radio);
     }
 
+    /** Validates an observed local address separately from the canonical directory identity. */
+    static boolean isObservedLocalIdentity(int protocolCode, TrunkedIdentityDomain identityDomain,
+                                           int identityKindCode, Integer identifier, boolean fullyQualified)
+    {
+        Form form = switch(identityKindCode)
+        {
+            case IDENTITY_KIND_TALKGROUP -> Form.TALKGROUP;
+            case IDENTITY_KIND_RADIO -> Form.RADIO;
+            case IDENTITY_KIND_PATCH_GROUP -> Form.PATCH_GROUP;
+            default -> null;
+        };
+
+        return form != null && TrunkedIdentityEligibility.isObservedLocalEligible(protocol(protocolCode),
+            identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD, form, identifier,
+            fullyQualified);
+    }
+
     private static Protocol protocol(int protocolCode)
     {
         return switch(protocolCode)

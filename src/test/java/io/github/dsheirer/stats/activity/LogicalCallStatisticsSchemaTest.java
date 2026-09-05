@@ -82,6 +82,37 @@ class LogicalCallStatisticsSchemaTest
     }
 
     @Test
+    void keepsAHighP25WorkingAddressBesideThePermanentRadioIdentity() throws Exception
+    {
+        try(Connection connection = open("roaming-radio.sqlite"))
+        {
+            insertChannel(connection, CHANNEL_A);
+            ReceiverActivityRecords.P25Identity radio =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x954, 831_102);
+            P25SiteIdentity servingSite = new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1);
+            ReceiverActivityRecords.ResolvedLogicalCall call = new ReceiverActivityRecords.ResolvedLogicalCall(
+                new LogicalCallId(9, 99), CALL_START, CHANNEL_A, Protocol.APCO25.name(),
+                TrunkedIdentityDomain.STANDARD, 0xBEE00, 0x3A9, 1201, Form.TALKGROUP.name(),
+                List.of(), 0xFFFD26, false, null, null, ReceiverActivityRecords.P25Identity.ORDINARY,
+                radio, List.of(), List.of(new ReceiverActivityRecords.P25SiteCallObservation(CHANNEL_A,
+                    servingSite, 0xFFFD26, 1201, Form.TALKGROUP.name(),
+                    ReceiverActivityRecords.P25Identity.ORDINARY, radio, List.of(), List.of())));
+
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, call));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND home_wacn=0xBEE00 AND home_system_id=0x954
+                  AND identity_id=831102
+                """));
+            assertEquals(0xFFFD26, scalar(connection, """
+                SELECT observed_local_id FROM p25_site_call_identity_bucket
+                WHERE identity_role_code=2
+                """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
     void nativeP25CallsShareASystemWhileUnresolvedCallsCreateNoSyntheticSystem() throws Exception
     {
         try(Connection connection = open("identity.sqlite"))

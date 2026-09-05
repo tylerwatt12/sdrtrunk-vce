@@ -21,6 +21,7 @@ import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -548,10 +549,21 @@ class ReceiverActivityMapper
         P25AffiliationEvent affiliationEvent = event instanceof P25AffiliationEvent affiliation ? affiliation : null;
         String sourceRadioId = affiliationEvent != null && affiliationEvent.getRadioId() != null ?
             affiliationEvent.getRadioId().toString() : facts.sourceId();
-        String targetId = affiliationEvent != null && affiliationEvent.getTalkgroupId() != null ?
-            affiliationEvent.getTalkgroupId().toString() : facts.targetId();
-        String targetKind = affiliationEvent != null && affiliationEvent.getTalkgroupId() != null ?
-            Form.TALKGROUP.name() : facts.targetForm();
+        String targetId;
+        String targetKind;
+
+        if(affiliationEvent != null)
+        {
+            targetId = affiliationEvent.getTalkgroupId() != null ?
+                affiliationEvent.getTalkgroupId().toString() : null;
+            targetKind = affiliationEvent.getTalkgroupId() != null ? Form.TALKGROUP.name() : null;
+        }
+        else
+        {
+            targetId = facts.targetId();
+            targetKind = facts.targetForm();
+        }
+
         IdentifierCollection eventIdentifiers = event.getIdentifierCollection();
         Identifier targetIdentifier = affiliationEvent != null ? affiliationTarget(affiliationEvent,
             eventIdentifiers) : eventIdentifiers != null ? eventIdentifiers.getToIdentifier() : null;
@@ -922,6 +934,11 @@ class ReceiverActivityMapper
             primary = patchGroup.getValue().getPatchGroup();
         }
 
+        if(primary instanceof IncompleteIdentifier)
+        {
+            return ReceiverActivityRecords.P25Identity.UNKNOWN;
+        }
+
         if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified &&
             fullyQualified.getProtocol() == Protocol.APCO25)
         {
@@ -944,6 +961,11 @@ class ReceiverActivityMapper
 
     private static ReceiverActivityRecords.P25Identity p25Identity(Identifier identifier, boolean p25Decoder)
     {
+        if(identifier instanceof IncompleteIdentifier)
+        {
+            return ReceiverActivityRecords.P25Identity.UNKNOWN;
+        }
+
         if(identifier instanceof FullyQualifiedRadioIdentifier fullyQualified &&
             fullyQualified.getProtocol() == Protocol.APCO25)
         {

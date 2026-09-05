@@ -24,6 +24,8 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCHeader;
@@ -31,6 +33,8 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCUn
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitRegistrationResponse;
 import io.github.dsheirer.module.decode.p25.reference.Response;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
@@ -39,6 +43,7 @@ class P25P1DecoderStateRegistrationTest
 {
     private static final int NAC = 0x293;
     private static final int RADIO_ID = 1_811_524;
+    private static final String ABBREVIATED_REGISTRATION = "AC0009540CAE7EFFFD2657BA";
 
     @Test
     void tsbkAndAmbtcUnitRegistrationResponsesBroadcastStructuredState()
@@ -55,6 +60,55 @@ class P25P1DecoderStateRegistrationTest
         assertEquals(2, events.size());
         assertRegistration(events.get(0), P25AffiliationEvent.Outcome.ACCEPTED, 1_000L);
         assertRegistration(events.get(1), P25AffiliationEvent.Outcome.REJECTED, 2_000L);
+    }
+
+    @Test
+    void abbreviatedRegistrationUsesTheLearnedServingWacnWithoutReplacingItsHomeSystem()
+    {
+        Channel channel = new Channel("P25 Roaming Registration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        P25NetworkConfigurationStabilizer stabilizer = stabilizer(0xBEE00, 0x3A9, 0x3A1);
+        P25P1DecoderState state = new P25P1DecoderState(channel, new P25TrafficChannelManager(channel), stabilizer);
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+
+        state.receive(new UnitRegistrationResponse(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+            CorrectedBinaryMessage.loadHex(ABBREVIATED_REGISTRATION), 0x3A1, 1_000L));
+
+        P25AffiliationEvent event = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        APCO25FullyQualifiedRadioIdentifier radio = assertInstanceOf(
+            APCO25FullyQualifiedRadioIdentifier.class, event.getRadioIdentifier());
+        assertEquals(0xFFFD26, radio.getValue());
+        assertEquals(0xBEE00, radio.getWacn());
+        assertEquals(0x954, radio.getSystem());
+        assertEquals(831_102, radio.getRadio());
+    }
+
+    @Test
+    void abbreviatedRegistrationRemainsIncompleteBeforeTheServingWacnIsKnown()
+    {
+        Channel channel = new Channel("P25 Registration", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        P25P1DecoderState state = new P25P1DecoderState(channel, new P25TrafficChannelManager(channel));
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+
+        state.receive(new UnitRegistrationResponse(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+            CorrectedBinaryMessage.loadHex(ABBREVIATED_REGISTRATION), 0x3A1, 1_000L));
+
+        P25AffiliationEvent event = assertInstanceOf(P25AffiliationEvent.class, events.getFirst());
+        assertInstanceOf(APCO25IncompleteRadioIdentifier.class, event.getRadioIdentifier());
+        assertEquals(0xFFFD26, event.getRadioId());
+    }
+
+    private static P25NetworkConfigurationStabilizer stabilizer(int wacn, int system, int nac)
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(wacn, system, nac, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(system, nac, 1, 1, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of()), 100L);
+        return stabilizer;
     }
 
     private static void assertRegistration(IDecodeEvent candidate, P25AffiliationEvent.Outcome outcome,

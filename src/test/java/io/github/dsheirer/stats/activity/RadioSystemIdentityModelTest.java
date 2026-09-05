@@ -206,6 +206,68 @@ class RadioSystemIdentityModelTest
     }
 
     @Test
+    void roamingP25RadioKeepsItsPermanentIdentityAndHighWorkingAddress() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivityRecords.P25Identity roamingRadio =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x954, 831_102);
+
+            record(connection, p25Presence(P25_A, 1_000, 0xFFFD26, roamingRadio, false));
+
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND home_wacn=0xBEE00 AND home_system_id=0x954
+                  AND identity_id=831102
+                """));
+            assertEquals(0xFFFD26, scalar(connection,
+                "SELECT observed_local_id FROM trunked_radio_channel_presence"));
+            assertEquals(0xFFFD26, scalar(connection, """
+                SELECT source_observed_local_id FROM receiver_activity_event
+                WHERE source_identity_summary_id IS NOT NULL
+                """));
+
+            record(connection, p25Presence(P25_A, 1_100, 0xFFFD26, roamingRadio, true));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(0xFFFD26, scalar(connection,
+                "SELECT observed_local_id FROM trunked_radio_channel_presence_clear"));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
+    void aRegistrationWithoutAGroupUpdatesRadioPresenceButNotAffiliation() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            ReceiverActivityRecords.P25Identity roamingRadio =
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00, 0x954, 831_102);
+            ReceiverActivityRecords.RadioPresenceUpdate presence =
+                ReceiverActivityRecords.RadioPresenceUpdate.confirmed(0xFFFD26, null,
+                    ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION, roamingRadio,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN);
+
+            record(connection, p25Activity(P25_A, 1_000, null, null, List.of(),
+                ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), presence));
+
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+            assertEquals(0, scalar(connection, """
+                SELECT COUNT(*) FROM receiver_activity_event
+                WHERE target_observed_local_id IS NOT NULL OR target_kind_code IS NOT NULL
+                """));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM radio_system_identity_summary
+                WHERE identity_kind_code=2 AND home_wacn=0xBEE00 AND home_system_id=0x954
+                  AND identity_id=831102
+                """));
+            ReceiverActivitySchema.validate(connection);
+        }
+    }
+
+    @Test
     void authoritativeRadioPresenceUsesTimestampEvidenceAndClearWatermarks() throws Exception
     {
         try(Connection connection = open())

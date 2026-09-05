@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -305,10 +306,16 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             Identifier<?> primary = destination instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
                 patch.getValue().getPatchGroup() : destination;
 
+            if(destination instanceof IncompleteIdentifier || primary instanceof IncompleteIdentifier)
+            {
+                return null;
+            }
+
             if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
             {
                 Protocol protocol = normalizeProtocol(primary.getProtocol());
-                return eligible(protocol, kind, fullyQualified.getTalkgroup()) ?
+                return eligible(protocol, kind, fullyQualified.getTalkgroup()) &&
+                    eligibleDecoded(protocol, destination) ?
                     new DestinationIdentity(protocol, kind, fullyQualified.getValue(), fullyQualified.getTalkgroup(),
                         DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem())) :
                     null;
@@ -316,7 +323,8 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             else if(primary instanceof FullyQualifiedRadioIdentifier fullyQualified)
             {
                 Protocol protocol = normalizeProtocol(primary.getProtocol());
-                return eligible(protocol, Form.RADIO, fullyQualified.getRadio()) ?
+                return eligible(protocol, Form.RADIO, fullyQualified.getRadio()) &&
+                    eligibleDecoded(protocol, destination) ?
                     new DestinationIdentity(protocol, Form.RADIO, fullyQualified.getValue(), fullyQualified.getRadio(),
                         DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem())) :
                     null;
@@ -365,6 +373,12 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
         {
             return protocol != Protocol.APCO25 || TrunkedIdentityEligibility.isEligible(protocol,
                 TrunkedIdentityDomain.STANDARD, kind, identifier);
+        }
+
+        private static boolean eligibleDecoded(Protocol protocol, Identifier<?> identifier)
+        {
+            return protocol != Protocol.APCO25 || TrunkedIdentityEligibility.isEligibleDecodedIdentifier(protocol,
+                TrunkedIdentityDomain.STANDARD, identifier);
         }
     }
 

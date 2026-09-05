@@ -23,6 +23,8 @@ public final class RadioSystemIdentityKey
     public static final int MAX_P25_GROUP_ID = 65_534;
     /** Largest non-P25 group identity supported by the shared tuple syntax (DMR uses 24 bits). */
     public static final int MAX_OTHER_GROUP_ID = 0xFFFFFF;
+    /** Largest assignable P25 working unit address (TIA-102.AABC-B, Section 2.3.27). */
+    public static final int MAX_P25_WORKING_UNIT_ID = 0xFFFFFC;
     public static final int MAX_P25_RADIO_ID = 9_999_999;
     public static final int MAX_OTHER_RADIO_ID = 0xFFFFFF;
     public static final int NO_HOME = -1;

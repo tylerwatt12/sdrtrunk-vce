@@ -357,7 +357,7 @@ final class RadioSystemSchema
                     CHECK(typeof(radio_identity_id) = 'integer' AND radio_identity_id > 0),
                 channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 observed_local_id INTEGER CHECK(observed_local_id IS NULL OR
-                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 0 AND 16777215)),
+                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 0 AND 16777212)),
                 evidence_code INTEGER NOT NULL
                     CHECK(typeof(evidence_code) = 'integer' AND evidence_code IN (1, 2)),
                 confirmed_at_ms INTEGER NOT NULL
@@ -384,7 +384,7 @@ final class RadioSystemSchema
                     CHECK(typeof(radio_identity_id) = 'integer' AND radio_identity_id > 0),
                 channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
                 observed_local_id INTEGER CHECK(observed_local_id IS NULL OR
-                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 1 AND 9999999)),
+                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 1 AND 16777212)),
                 cleared_at_ms INTEGER NOT NULL CHECK(typeof(cleared_at_ms) = 'integer' AND cleared_at_ms > 0),
                 PRIMARY KEY(radio_system_id, radio_identity_id, channel_id),
                 FOREIGN KEY(radio_identity_id, radio_system_id, radio_kind_code)
@@ -1863,11 +1863,8 @@ final class RadioSystemSchema
             return null;
         }
 
-        if(localId != null && (localId < 0 || localId == 0 &&
-            (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 ||
-                !evidence.isStableFullyQualified()) || localId > 0 &&
-            !TrunkedIdentityPolicy.isDirectoryIdentity(radioSystem.protocolCode(), radioSystem.identityDomain(),
-                kindCode, localId)))
+        if(localId != null && !TrunkedIdentityPolicy.isObservedLocalIdentity(radioSystem.protocolCode(),
+            radioSystem.identityDomain(), kindCode, localId, evidence.isStableFullyQualified()))
         {
             return null;
         }

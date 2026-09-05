@@ -1535,8 +1535,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             (identifier.getRole() == Role.TO && (identifier.getForm() == Form.TALKGROUP ||
                 identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO));
 
-        return expectedRole && TrunkedIdentityEligibility.isEligible(protocol, TrunkedIdentityDomain.STANDARD,
-            identifier.getForm(), integerValue(identifier));
+        return expectedRole && TrunkedIdentityEligibility.isEligibleDecodedIdentifier(protocol,
+            TrunkedIdentityDomain.STANDARD, identifier);
     }
 
     private static Identifier getP25EndFrameSlot(IdentifierCollection identifiers, Identifier candidate)
@@ -1548,22 +1548,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return identifiers.getIdentifier(candidate.getIdentifierClass(), candidate.getForm(), candidate.getRole());
-    }
-
-    private static Integer integerValue(Identifier identifier)
-    {
-        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
-            patch.getValue().getPatchGroup() != null)
-        {
-            return patch.getValue().getPatchGroup().getValue();
-        }
-
-        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
-        {
-            return radio.getValue() != null && radio.getValue() > 0 ? radio.getValue() : radio.getRadio();
-        }
-
-        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
     }
 
     /**

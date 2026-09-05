@@ -10,9 +10,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Focused mapper coverage for the immutable conventional producer records. */
@@ -61,5 +69,47 @@ class ReceiverActivityMapperTest
         assertNull(mapper.map(new NXDNConventionalCallEvent(1_000, 2_000, "display-name", 461_125_000,
             NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false,
             TrunkedIdentityDomain.NXDN_TYPE_C)));
+    }
+
+    @Test
+    void keepsAnIncompleteP25RegistrationAsRawEvidenceOnly()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        APCO25IncompleteRadioIdentifier radio = APCO25IncompleteRadioIdentifier.createTo(831_102);
+        P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
+            P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
+        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(radio)));
+
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
+
+        assertEquals("831102", record.sourceRadioId());
+        assertNull(record.targetId());
+        assertNull(record.targetKind());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.UNKNOWN, record.p25SourceIdentity().state());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.UNKNOWN,
+            record.radioPresenceUpdate().radioIdentity().state());
+    }
+
+    @Test
+    void mapsAQualifiedP25RegistrationWithoutInventingARadioTarget()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        APCO25FullyQualifiedRadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26,
+            0xBEE00, 0x954, 831_102);
+        P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
+            P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
+        event.setIdentifierCollection(new MutableIdentifierCollection(List.of(radio)));
+
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
+
+        assertEquals(Integer.toString(0xFFFD26), record.sourceRadioId());
+        assertNull(record.targetId());
+        assertNull(record.targetKind());
+        assertEquals(ReceiverActivityRecords.P25IdentityState.STABLE_FULLY_QUALIFIED,
+            record.p25SourceIdentity().state());
+        assertEquals(0xFFFD26, record.radioPresenceUpdate().radioId());
+        assertNull(record.radioPresenceUpdate().talkgroupId());
     }
 }

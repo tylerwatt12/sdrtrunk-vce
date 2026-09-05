@@ -27,6 +27,7 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -74,6 +75,15 @@ class ResolvedCallPolicyTest
             APCO25RadioIdentifier.createTo(10_000_000)));
         assertNull(ResolvedCallPolicy.DestinationIdentity.from(
             APCO25FullyQualifiedRadioIdentifier.createTo(123, 0xABCDE, 0x321, 10_000_000)));
+        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFFFD, 0xABCDE, 0x321, 9_001)));
+        assertNull(ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25IncompleteRadioIdentifier.createTo(9_001)));
+
+        ResolvedCallPolicy.DestinationIdentity roaming = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedRadioIdentifier.createTo(0xFFFD26, 0xBEE00, 0x954, 831_102));
+        assertEquals(0xFFFD26, roaming.localAddress());
+        assertEquals(831_102, roaming.canonicalIdentity());
     }
 
     @Test

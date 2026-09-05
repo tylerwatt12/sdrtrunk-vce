@@ -15,7 +15,6 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
@@ -643,9 +642,8 @@ public class P25NetworkConfigurationStabilizer
                 .filter(value -> value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_GROUP_ID)
                 .distinct().sorted().toList(),
             patchGroup.getPatchedRadioIdentifiers().stream()
-                .filter(member -> !(member instanceof FullyQualifiedRadioIdentifier))
                 .map(RadioIdentifier::getValue).filter(java.util.Objects::nonNull)
-                .filter(value -> value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_RADIO_ID)
+                .filter(value -> value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
                 .distinct().sorted().toList());
     }
 }

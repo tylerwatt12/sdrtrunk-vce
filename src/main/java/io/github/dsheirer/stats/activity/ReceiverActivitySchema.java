@@ -1637,7 +1637,7 @@ public class ReceiverActivitySchema
                 identity_summary_id INTEGER NOT NULL
                     CHECK(typeof(identity_summary_id) = 'integer' AND identity_summary_id > 0),
                 observed_local_id INTEGER CHECK(observed_local_id IS NULL OR
-                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 0 AND 9999999)),
+                    (typeof(observed_local_id) = 'integer' AND observed_local_id BETWEEN 0 AND 16777212)),
                 last_observed_at_ms INTEGER NOT NULL
                     CHECK(typeof(last_observed_at_ms) = 'integer' AND last_observed_at_ms > 0),
                 observed_call_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(observed_call_count) = 'integer' AND observed_call_count >= 0),
@@ -2040,7 +2040,7 @@ public class ReceiverActivitySchema
                 local_patch_group_id INTEGER NOT NULL
                     CHECK(typeof(local_patch_group_id) = 'integer' AND local_patch_group_id BETWEEN 1 AND 65534),
                 local_radio_id INTEGER NOT NULL
-                    CHECK(typeof(local_radio_id) = 'integer' AND local_radio_id BETWEEN 1 AND 9999999),
+                    CHECK(typeof(local_radio_id) = 'integer' AND local_radio_id BETWEEN 1 AND 16777212),
                 confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
                 PRIMARY KEY(channel_id, local_patch_group_id, local_radio_id),
                 FOREIGN KEY(channel_id, local_patch_group_id)
@@ -2054,7 +2054,7 @@ public class ReceiverActivitySchema
                 local_patch_group_id INTEGER NOT NULL
                     CHECK(typeof(local_patch_group_id) = 'integer' AND local_patch_group_id BETWEEN 1 AND 65534),
                 local_radio_id INTEGER NOT NULL
-                    CHECK(typeof(local_radio_id) = 'integer' AND local_radio_id BETWEEN 1 AND 9999999),
+                    CHECK(typeof(local_radio_id) = 'integer' AND local_radio_id BETWEEN 1 AND 16777212),
                 first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
                 last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
                 observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),

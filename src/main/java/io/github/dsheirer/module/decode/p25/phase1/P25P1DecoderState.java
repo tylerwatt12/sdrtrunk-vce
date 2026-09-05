@@ -221,8 +221,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final boolean mSiteMetadataEnabled;
     private final PatchGroupManager mPatchGroupManager = new PatchGroupManager();
     private final P25P1NetworkConfigurationMonitor mNetworkConfigurationMonitor;
-    private final P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer =
-        new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+    private final P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer;
     private final P25SiteMetadataPublisher mSiteMetadataPublisher;
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
@@ -239,7 +238,16 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     public P25P1DecoderState(Channel channel, P25TrafficChannelManager trafficChannelManager)
     {
+        this(channel, trafficChannelManager, new P25NetworkConfigurationStabilizer("P25_PHASE_1"));
+    }
+
+    /** Package-private constructor for sharing a pre-observed network identity in focused decoder tests. */
+    P25P1DecoderState(Channel channel, P25TrafficChannelManager trafficChannelManager,
+                      P25NetworkConfigurationStabilizer networkConfigurationStabilizer)
+    {
         mChannel = channel;
+        mNetworkConfigurationStabilizer = networkConfigurationStabilizer != null ? networkConfigurationStabilizer :
+            new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         mDecoderType = channel.getDecodeConfiguration().getDecoderType();
         mSiteMetadataEnabled = channel.isStandardChannel() && channel.getDecodeConfiguration() instanceof DecodeConfigP25;
 
@@ -853,9 +861,25 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     if(ambtc instanceof AMBTCGroupAffiliationResponse gar)
                     {
                         Response response = gar.getAffiliationResponse();
+                        StringBuilder details = new StringBuilder(response + " AFFILIATION");
+
+                        if(gar.getGroupAddress() != null)
+                        {
+                            details.append(" GROUP:").append(gar.getGroupAddress());
+                        }
+
+                        if(gar.getAnnouncementGroup() != null)
+                        {
+                            details.append(ANNOUNCEMENT_GROUP_LABEL).append(gar.getAnnouncementGroup());
+                        }
+
+                        if(gar.getGroupAddress() == null && gar.getAnnouncementGroup() == null)
+                        {
+                            details.append(" - NO GROUP ASSIGNED");
+                        }
+
                         broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.RESPONSE,
-                            response + " AFFILIATION GROUP:" + gar.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL +
-                                gar.getAnnouncementGroup(), P25AffiliationEvent.Outcome.from(response),
+                            details.toString(), P25AffiliationEvent.Outcome.from(response),
                             gar.getTargetAddress(), gar.getGroupAddress());
                     }
                     break;
@@ -1902,9 +1926,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof UnitRegistrationResponse urr)
         {
-            broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REGISTER,
-                urr.getResponse() + " UNIT REGISTRATION - UNIT ID:" + urr.getRegisteredRadio(),
-                P25AffiliationEvent.Outcome.from(urr.getResponse()), urr.getRegisteredRadio(), null);
+            var stableSite = mNetworkConfigurationStabilizer.getStableSiteIdentity();
+            Identifier registeredRadio = urr.getRegisteredRadio(stableSite != null ? stableSite.wacn() : null);
+            broadcastAffiliation(List.of(registeredRadio), tsbk.getTimestamp(), DecodeEventType.REGISTER,
+                urr.getResponse() + " UNIT REGISTRATION - UNIT ID:" + registeredRadio,
+                P25AffiliationEvent.Outcome.from(urr.getResponse()), registeredRadio, null);
         }
     }
 

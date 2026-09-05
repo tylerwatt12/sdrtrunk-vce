@@ -32,6 +32,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -2389,9 +2390,17 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
     private static SourceIdentity sourceIdentity(Identifier<?> identifier)
     {
+        if(identifier instanceof IncompleteIdentifier)
+        {
+            return null;
+        }
+
         if(identifier instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
-            if(!eligibleP25Radio(identifier.getProtocol(), fullyQualified.getRadio()))
+            if(!eligibleP25Radio(identifier.getProtocol(), fullyQualified.getRadio()) ||
+                (identifier.getProtocol() == Protocol.APCO25 || identifier.getProtocol() == Protocol.APCO25_PHASE2) &&
+                    !TrunkedIdentityEligibility.isEligibleDecodedIdentifier(identifier.getProtocol(),
+                        TrunkedIdentityDomain.STANDARD, identifier))
             {
                 return null;
             }
