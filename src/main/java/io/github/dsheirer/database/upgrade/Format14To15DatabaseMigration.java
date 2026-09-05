@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
@@ -84,6 +85,15 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static final List<String> REPLACED_METRIC_BOUNDARIES = List.of(OLD_IDENTITY_BOUNDARY,
         CONVENTIONAL_CALL_BOUNDARY, TRUNKED_CALL_BOUNDARY, RADIO_SYSTEM_BOUNDARY);
     private static final String RETIRED_NAMED_CHANNEL_MAP_TABLE = "configuration_channel_map";
+    /**
+     * Legacy JSON copies of fields whose format-14 load contract took from the relational channel row.  They must be
+     * removed before decoding so an absent, stale, or malformed duplicate cannot override the administrator-owned row
+     * value while crossing the one-owner format boundary.  The configuration UUID is intentionally excluded: format
+     * 14 required that identity to be present, canonical, and identical in both representations.
+     */
+    private static final List<String> LEGACY_CHANNEL_ROW_OWNED_JSON_FIELDS = List.of(
+        "system", "site", "name", "aliasListName", "aliasListId", "radioResolveId", "radresGuid",
+        "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
     private static final List<String> PRESERVED_AUTOINCREMENT_TABLES = List.of(
         "alias_list", "alias", "scan_list", "alias_broadcast_channel",
         "alias_list_unmatched_talkgroup_stream", "configuration_channel",
@@ -768,40 +778,12 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 
                 ObjectNode payload = parseObject(text(rows, "config_json"), label);
                 normalizeLegacyChannelMode(payload, storedDecoderType, label);
-                requireJsonText(payload, "configurationId", configurationId, label, false, true);
+                requireChannelConfigurationId(payload, configurationId, label);
                 boolean autoStart = booleanFlag(rows, "auto_start", label);
                 Integer autoStartOrder = nullableInteger(rows, "auto_start_order", label);
-                requireJsonBooleanProjection(payload, List.of("autoStart", "enabled"), autoStart, label,
-                    "auto-start");
-                requireJsonIntegerProjection(payload, List.of("autoStartOrder", "order"), autoStartOrder, label,
-                    "auto-start order");
-                Channel channel = decodeChannel(payload, label);
-                if(channel.isConfigurationIdPersistenceRequired() || !configurationId.equals(channel.getConfigurationId()))
-                {
-                    throw new IOException(label + " changes its stable identity while decoding");
-                }
-                if(!ChannelConfigurationPolicy.isActive(channel))
-                {
-                    throw new IOException(label + " is not an active supported channel");
-                }
-
-                String channelKind = text(rows, "channel_kind");
-                if(!ChannelConfigurationPolicy.requireChannelKind(channel).name().equals(channelKind))
-                {
-                    throw new IOException(label + " channel_kind does not match config_json");
-                }
-
-                requireJsonText(payload, "system", systemName, label, false, systemName != null);
-                requireJsonText(payload, "site", siteName, label, false, siteName != null);
-                requireJsonText(payload, "name", name, label, false, name != null);
-
                 String aliasListName = normalizeBlank(nullableText(rows, "alias_list_name"));
-                requireJsonText(payload, "aliasListName", aliasListName, label, true, aliasListName != null);
                 Long aliasListId = resolveAliasList(connection, aliasListName, label);
-                requireJsonLongProjection(payload, "aliasListId", aliasListId, label, "Alias List ID");
-
                 String radioResolveId = normalizeBlank(nullableText(rows, "radres_guid"));
-                requireRadioResolveJson(payload, radioResolveId, label);
                 if(radioResolveId != null)
                 {
                     radioResolveId = canonicalUuid(radioResolveId, label + " RadioResolve ID");
@@ -813,10 +795,33 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     }
                 }
 
-                if(channel.getAutoStart() != autoStart || !Objects.equals(channel.getAutoStartOrder(), autoStartOrder))
+                //Format 14 loaded these values from the relational row after decoding.  Remove legacy JSON copies
+                //before decoding and then apply the authoritative row exactly as that loader did.
+                payload.remove(LEGACY_CHANNEL_ROW_OWNED_JSON_FIELDS);
+                Channel channel = decodeChannel(payload, label);
+                if(channel.isConfigurationIdPersistenceRequired() || !configurationId.equals(channel.getConfigurationId()))
                 {
-                    throw new IOException(label + " auto-start fields do not match config_json");
+                    throw new IOException(label + " changes its stable identity while decoding");
                 }
+                channel.setSystem(systemName);
+                channel.setSite(siteName);
+                channel.setName(name);
+                channel.setAliasListName(aliasListName);
+                channel.setAliasListId(aliasListId != null ? aliasListId : AliasListDefinition.UNASSIGNED_ID);
+                channel.setRadioResolveId(radioResolveId);
+                channel.setAutoStart(autoStart);
+                channel.setAutoStartOrder(autoStartOrder);
+                if(!ChannelConfigurationPolicy.isActive(channel))
+                {
+                    throw new IOException(label + " is not an active supported channel");
+                }
+
+                String channelKind = text(rows, "channel_kind");
+                if(!ChannelConfigurationPolicy.requireChannelKind(channel).name().equals(channelKind))
+                {
+                    throw new IOException(label + " channel_kind does not match config_json");
+                }
+
                 ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
                 requireOldProjectionMatches(rows, channel, projection, label);
 
@@ -836,9 +841,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     throw new IOException(label + " has a nonpositive primary frequency");
                 }
 
-                payload.remove(List.of("configurationId", "system", "site", "name", "aliasListName", "aliasListId",
-                    "radioResolveId", "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder",
-                    "order", "channelType"));
+                payload.remove("configurationId");
                 channels.add(new ChannelRow(rowId, configurationId, channelKind, sortOrder,
                     systemName, siteName, name, aliasListId, radioResolveId, autoStart, autoStartOrder,
                     decoderType, projection.addressDomainCode(), primaryFrequency,
@@ -1957,118 +1960,18 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void requireJsonText(ObjectNode payload, String field, String scalar, String label,
-                                        boolean caseInsensitive, boolean required) throws IOException
+    private static void requireChannelConfigurationId(ObjectNode payload, String expected, String label)
+        throws IOException
     {
-        JsonNode node = payload.get(field);
+        JsonNode node = payload.get("configurationId");
         if(node == null)
         {
-            if(required)
-            {
-                throw new IOException(label + " is missing JSON field " + field);
-            }
-            return;
+            throw new IOException(label + " is missing JSON field configurationId");
         }
-        String value;
-        if(node.isNull())
+        if(!node.isTextual() || !expected.equals(node.textValue()))
         {
-            value = null;
+            throw new IOException(label + " JSON field configurationId does not match its scalar value");
         }
-        else if(node.isTextual())
-        {
-            value = caseInsensitive ? normalizeBlank(node.textValue()) : node.textValue();
-        }
-        else
-        {
-            throw new IOException(label + " JSON field " + field + " is not text or null");
-        }
-        boolean matches = caseInsensitive ? equalsIgnoreCase(value, scalar) : Objects.equals(value, scalar);
-        if(!matches)
-        {
-            throw new IOException(label + " JSON field " + field + " does not match its scalar value");
-        }
-    }
-
-    private static void requireRadioResolveJson(ObjectNode payload, String scalar, String label) throws IOException
-    {
-        List<String> fields = List.of("radresGuid", "radioResolveId", "radres_guid");
-        List<String> present = fields.stream().filter(payload::has).toList();
-        if(present.size() > 1)
-        {
-            throw new IOException(label + " mixes RadioResolve JSON field names");
-        }
-        if(present.isEmpty())
-        {
-            if(scalar != null)
-            {
-                throw new IOException(label + " is missing its RadioResolve JSON value");
-            }
-            return;
-        }
-        JsonNode node = payload.get(present.getFirst());
-        if(!node.isNull() && !node.isTextual())
-        {
-            throw new IOException(label + " RadioResolve JSON value is not text or null");
-        }
-        String jsonValue = node.isNull() ? null : normalizeBlank(node.textValue());
-        if(!Objects.equals(jsonValue, scalar))
-        {
-            throw new IOException(label + " RadioResolve JSON value does not match its scalar value");
-        }
-    }
-
-    private static void requireJsonBooleanProjection(ObjectNode payload, List<String> fields, boolean scalar,
-                                                      String label, String description) throws IOException
-    {
-        for(String field: fields)
-        {
-            JsonNode node = payload.get(field);
-            if(node != null && (!node.isBoolean() || node.booleanValue() != scalar))
-            {
-                throw new IOException(label + " JSON field " + field + " does not match its " + description +
-                    " row value");
-            }
-        }
-    }
-
-    private static void requireJsonIntegerProjection(ObjectNode payload, List<String> fields, Integer scalar,
-                                                      String label, String description) throws IOException
-    {
-        for(String field: fields)
-        {
-            JsonNode node = payload.get(field);
-            if(node != null)
-            {
-                Integer value = node.isNull() ? null :
-                    node.isIntegralNumber() && node.canConvertToInt() ? node.intValue() : null;
-                if((!node.isNull() && value == null) || !Objects.equals(value, scalar))
-                {
-                    throw new IOException(label + " JSON field " + field + " does not match its " + description +
-                        " row value");
-                }
-            }
-        }
-    }
-
-    private static void requireJsonLongProjection(ObjectNode payload, String field, Long scalar,
-                                                   String label, String description) throws IOException
-    {
-        JsonNode node = payload.get(field);
-        if(node != null)
-        {
-            Long value = node.isNull() ? null :
-                node.isIntegralNumber() && node.canConvertToLong() ? node.longValue() : null;
-            if((!node.isNull() && value == null) || !Objects.equals(value, scalar))
-            {
-                throw new IOException(label + " JSON field " + field + " does not match its " + description +
-                    " row relationship");
-            }
-        }
-    }
-
-    private static boolean equalsIgnoreCase(String first, String second)
-    {
-        return first == null ? second == null : second != null && first.equalsIgnoreCase(second);
     }
 
     private static String normalizeBlank(String value)

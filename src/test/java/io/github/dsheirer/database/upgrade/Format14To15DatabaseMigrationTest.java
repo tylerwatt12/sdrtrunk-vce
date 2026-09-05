@@ -502,7 +502,7 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesUnresolvedOrMismatchedAliasListsWithoutWriting() throws Exception
+    void refusesUnresolvedAliasListNamesWithoutWriting() throws Exception
     {
         assertRefused("unresolved-alias.sqlite", """
             UPDATE configuration_channel
@@ -510,33 +510,201 @@ class Format14To15DatabaseMigrationTest
                 config_json=json_set(config_json, '$.aliasListName', 'Missing Alias')
             WHERE configuration_id='%s'
             """.formatted(MIXED_CASE_CHANNEL), "missing Alias List");
-        assertRefused("mismatched-alias.sqlite", """
-            UPDATE configuration_channel
-            SET config_json=json_set(config_json, '$.aliasListName', 'Default P25')
-            WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "does not match");
-        assertRefused("mismatched-alias-id.sqlite", """
-            UPDATE configuration_channel
-            SET config_json=json_set(config_json, '$.aliasListId', 999999)
-            WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "Alias List ID row relationship");
     }
 
     @Test
-    void refusesConflictingAutoStartAliasesWithoutWriting() throws Exception
+    void preservesRowAutoStartWhenLegacyJsonOmitsTheBoolean() throws Exception
     {
-        assertRefused("conflicting-auto-start.sqlite", """
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("missing-json-auto-start.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET auto_start=1,
+                    auto_start_order=1,
+                    config_json=json_remove(
+                        json_set(config_json, '$.autoStartOrder', 1),
+                        '$.autoStart', '$.enabled', '$.order')
+                WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL));
+
+            new Format14To15DatabaseMigration().validateSource(connection);
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertEquals(1, number(connection, """
+                SELECT auto_start FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals(1, number(connection, """
+                SELECT auto_start_order FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            JsonNode migrated = MAPPER.readTree(scalar(connection, """
+                SELECT config_json FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertFalse(migrated.has("autoStart"));
+            assertFalse(migrated.has("enabled"));
+            assertFalse(migrated.has("autoStartOrder"));
+            assertFalse(migrated.has("order"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void ignoresMalformedLegacyJsonCopiesOfRelationalChannelFields() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("malformed-row-owned-json.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET system_name='Authoritative Malformed-JSON System',
+                    auto_start=1,
+                    auto_start_order=4,
+                    config_json=json_set(config_json,
+                        '$.system', json('{}'),
+                        '$.autoStart', 'not-a-boolean',
+                        '$.autoStartOrder', json('[]'))
+                WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL));
+
+            connection.setAutoCommit(false);
+            DatabaseMigrationChain.migrate(connection);
+            connection.commit();
+        }
+
+        var channel = new ConfigurationRepository(database).load().channels().stream()
+            .filter(candidate -> MIXED_CASE_CHANNEL.equals(candidate.getConfigurationId()))
+            .findFirst().orElseThrow();
+        assertEquals("Authoritative Malformed-JSON System", channel.getSystem());
+        assertTrue(channel.getAutoStart());
+        assertEquals(4, channel.getAutoStartOrder());
+
+        try(Connection connection = open(database))
+        {
+            JsonNode migrated = MAPPER.readTree(scalar(connection, """
+                SELECT config_json FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertFalse(migrated.has("system"));
+            assertFalse(migrated.has("autoStart"));
+            assertFalse(migrated.has("autoStartOrder"));
+        }
+    }
+
+    @Test
+    void ignoresConflictingLegacyJsonCopiesOfRelationalChannelFields() throws Exception
+    {
+        String authoritativeRadioResolveId = "30000000-0000-4000-8000-000000000001";
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("stale-row-owned-json.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET system_name='Authoritative System',
+                    site_name='Authoritative Site',
+                    name='Authoritative Channel',
+                    alias_list_name='migration mixed case',
+                    radres_guid='%s',
+                    auto_start=0,
+                    auto_start_order=7,
+                    config_json=json_set(config_json,
+                        '$.system', 'Stale System',
+                        '$.site', 'Stale Site',
+                        '$.name', 'Stale Channel',
+                        '$.aliasListName', 'Default P25',
+                        '$.aliasListId', 999999,
+                        '$.radioResolveId', '30000000-0000-4000-8000-000000000002',
+                        '$.radresGuid', '30000000-0000-4000-8000-000000000003',
+                        '$.radres_guid', '30000000-0000-4000-8000-000000000004',
+                        '$.autoStart', json('true'),
+                        '$.enabled', json('true'),
+                        '$.autoStartOrder', 98,
+                        '$.order', 99,
+                        '$.channelType', 'TRAFFIC')
+                WHERE configuration_id='%s'
+                """.formatted(authoritativeRadioResolveId, MIXED_CASE_CHANNEL));
+
+            connection.setAutoCommit(false);
+            DatabaseMigrationChain.migrate(connection);
+            connection.commit();
+        }
+
+        try(Connection connection = open(database))
+        {
+            assertEquals("Authoritative System", scalar(connection, """
+                SELECT system_name FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals("Authoritative Site", scalar(connection, """
+                SELECT site_name FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals("Authoritative Channel", scalar(connection, """
+                SELECT name FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals("Migration Mixed Case", scalar(connection, """
+                SELECT list.name FROM configuration_channel channel
+                JOIN alias_list list ON list.id=channel.alias_list_id
+                WHERE channel.configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals(authoritativeRadioResolveId, scalar(connection, """
+                SELECT radioresolve_id FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals(0, number(connection, """
+                SELECT auto_start FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals(7, number(connection, """
+                SELECT auto_start_order FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+
+            JsonNode migrated = MAPPER.readTree(scalar(connection, """
+                SELECT config_json FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            for(String removed: List.of("system", "site", "name", "aliasListName", "aliasListId",
+                "radioResolveId", "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder",
+                "order", "channelType"))
+            {
+                assertFalse(migrated.has(removed), removed);
+            }
+        }
+
+        var channel = new ConfigurationRepository(database).load().channels().stream()
+            .filter(candidate -> MIXED_CASE_CHANNEL.equals(candidate.getConfigurationId()))
+            .findFirst().orElseThrow();
+        assertEquals("Authoritative System", channel.getSystem());
+        assertEquals("Authoritative Site", channel.getSite());
+        assertEquals("Authoritative Channel", channel.getName());
+        assertEquals("Migration Mixed Case", channel.getAliasListName());
+        assertEquals(authoritativeRadioResolveId, channel.getRadioResolveId());
+        assertFalse(channel.getAutoStart());
+        assertEquals(7, channel.getAutoStartOrder());
+    }
+
+    @Test
+    void stillRefusesChannelIdentityKindAndDecoderSourceProjectionMismatches() throws Exception
+    {
+        assertRefused("mismatched-channel-identity.sqlite", """
             UPDATE configuration_channel
-            SET auto_start=1,
-                config_json=json_set(config_json, '$.autoStart', json('true'), '$.enabled', json('false'))
+            SET config_json=json_set(config_json, '$.configurationId',
+                '40000000-0000-4000-8000-000000000001')
             WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "JSON field enabled does not match");
-        assertRefused("conflicting-auto-start-order.sqlite", """
-            UPDATE configuration_channel
-            SET auto_start_order=1,
-                config_json=json_set(config_json, '$.autoStartOrder', 1, '$.order', 2)
+            """.formatted(MIXED_CASE_CHANNEL), "JSON field configurationId does not match");
+        assertRefused("mismatched-channel-kind.sqlite", """
+            UPDATE configuration_channel SET channel_kind='CONVENTIONAL'
             WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "JSON field order does not match");
+            """.formatted(MIXED_CASE_CHANNEL), "channel_kind does not match config_json");
+        assertRefused("mismatched-channel-source.sqlite", """
+            UPDATE configuration_channel SET source_type='RECORDING'
+            WHERE configuration_id='%s'
+            """.formatted(MIXED_CASE_CHANNEL), "query projection does not match config_json");
+    }
+
+    @Test
+    void stillRefusesMalformedAuthoritativeAutoStartScalars() throws Exception
+    {
+        assertRefusedIgnoringCheckConstraints("invalid-row-auto-start.sqlite", """
+            UPDATE configuration_channel SET auto_start=2 WHERE configuration_id='%s'
+            """.formatted(MIXED_CASE_CHANNEL), "auto_start is not a boolean flag");
+        assertRefusedIgnoringCheckConstraints("fractional-row-auto-start-order.sqlite", """
+            UPDATE configuration_channel SET auto_start_order=1.5 WHERE configuration_id='%s'
+            """.formatted(MIXED_CASE_CHANNEL), "auto_start_order is not stored as an integer");
     }
 
     @Test
@@ -830,6 +998,28 @@ class Format14To15DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             execute(connection, mutation);
+            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
+            SQLException exception = assertThrows(SQLException.class,
+                () -> new Format14To15DatabaseMigration().validateSource(connection), filename);
+            assertTrue(exception.getMessage().contains(message), filename + ": " + exception.getMessage());
+            assertThrows(SQLException.class, () -> new Format14To15DatabaseMigration().migrate(connection), filename);
+            assertEquals("14", scalar(connection, """
+                SELECT value FROM database_metadata WHERE key='database_format_version'
+                """));
+            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
+            assertTrue(columns(connection, "configuration_channel").contains("alias_list_name"));
+        }
+    }
+
+    private void assertRefusedIgnoringCheckConstraints(String filename, String mutation, String message)
+        throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve(filename));
+        try(Connection connection = open(database); var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            execute(connection, mutation);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             SQLException exception = assertThrows(SQLException.class,
                 () -> new Format14To15DatabaseMigration().validateSource(connection), filename);
