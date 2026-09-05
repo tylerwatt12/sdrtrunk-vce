@@ -69,56 +69,6 @@ This section describes the rolling Nightly line, not Alpha 10. For shipped Alpha
 [Alpha release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases). The checked-in
 [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md) remains the historical document for that exact release.
 
-## Screenshots
-
-Click any screenshot to view it at full size.
-
-<p align="center">
-  <a href="docs/screenshots/web-live-systems.png"><img src="docs/screenshots/web-live-systems.png" width="85%" alt="Live view showing stable conventional and trunked channel activity"></a>
-  <br>
-  <strong>Live</strong> — stable channel rows with current calls, signal level, and decode quality.
-</p>
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-system-overview.png"><img src="docs/screenshots/web-system-overview.png" alt="P25 radio-system overview with channel and activity totals"></a>
-      <p align="center"><strong>Radio system overview</strong></p>
-    </td>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-control-channel-quality.png"><img src="docs/screenshots/web-control-channel-quality.png" alt="Control-channel signal and decode-quality charts"></a>
-      <p align="center"><strong>Signal and decode quality</strong></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-systems-sites-directory.png"><img src="docs/screenshots/web-systems-sites-directory.png" alt="Radio Systems directory"></a>
-      <p align="center"><strong>Radio Systems directory</strong></p>
-    </td>
-    <td width="50%" valign="top">
-      <a href="docs/screenshots/web-site-overview.png"><img src="docs/screenshots/web-site-overview.png" alt="Trunked channel overview with decoded information and top group identities"></a>
-      <p align="center"><strong>Trunked channel overview</strong></p>
-    </td>
-  </tr>
-</table>
-
-<details>
-  <summary><strong>More screenshots</strong></summary>
-  <br>
-  <table>
-    <tr>
-      <td width="50%" valign="top">
-        <a href="docs/screenshots/web-dashboard-overview.png"><img src="docs/screenshots/web-dashboard-overview.png" alt="Dashboard with signal health, call volume, radio systems, channels, group identities, and radios"></a>
-        <p align="center"><strong>Operations dashboard</strong></p>
-      </td>
-      <td width="50%" valign="top">
-        <a href="docs/screenshots/web-site-activity.png"><img src="docs/screenshots/web-site-activity.png" alt="Detailed radio-system activity with calls, radios, group identities, channels, and security status"></a>
-        <p align="center"><strong>Detailed radio-system activity</strong></p>
-      </td>
-    </tr>
-  </table>
-</details>
-
 ## Which Release Channel Should I Use?
 
 | Channel | What you get | Download |
