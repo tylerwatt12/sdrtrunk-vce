@@ -869,6 +869,7 @@ class StatsWebInteractionUiContractTest
         String networkSite = function(source, "function scannerNetworkSiteIdentity(call)");
         String callQuality = function(source, "function scannerCallQuality(call)");
         String voiceMeter = function(source, "function scannerVoiceMeter(call)");
+        String coverageTree = function(source, "function scanListCoverageTree(coverage)");
         String configuration = function(source, "async function renderConfiguration()");
         String scanLists = function(source, "async function renderAdminScanLists()");
 
@@ -901,6 +902,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Replay Last Call"));
         assertTrue(scanner.contains("Clear Queue"));
         assertTrue(scanner.contains("View coverage tree"));
+        assertTrue(coverageTree.contains("const listId = aliasListId(alias)"));
+        assertTrue(coverageTree.contains("if (listId === null) return"));
+        assertFalse(coverageTree.contains("alias.alias_list_id ?? alias.alias_list"));
         assertTrue(source.contains("scannerParticipant('Target'"));
         assertTrue(source.contains("scannerParticipant('Source'"));
         assertTrue(scannerCall.contains("scannerField('Network / Site'"));

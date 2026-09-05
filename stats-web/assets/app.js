@@ -1421,6 +1421,12 @@ function groupIdentityApiPath(radioSystemKey, identityKey, child = '') {
   return child ? `${base}/${child}` : base;
 }
 
+function canonicalConfigurationId(value) {
+  const configurationId = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(configurationId) ?
+    configurationId : '';
+}
+
 function channelApiPath(configurationId, child = '') {
   const base = `/api/v1/channels/${encodeURIComponent(String(configurationId || ''))}`;
   return child ? `${base}/${child}` : base;
@@ -6232,6 +6238,7 @@ async function signalHealthSection() {
   const renderCurrent = () => {
     const now = Date.now();
     const channels = sortSignalChannels((currentResponse?.rows || []).filter((channel) =>
+      canonicalConfigurationId(channel?.configuration_id) &&
       now - Number(channel.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
     const healthy = channels.filter((channel) =>
       optionalNumber(channel.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
@@ -6250,7 +6257,7 @@ async function signalHealthSection() {
 
     const activeKeys = new Set();
     const orderedTiles = channels.map((channel) => {
-      const key = channel.configuration_id || channelLabel(channel);
+      const key = canonicalConfigurationId(channel.configuration_id);
       activeKeys.add(key);
       const existing = tileNodes.get(key);
       const tile = existing ? updateSignalCurrentTile(existing, channel) : signalCurrentTile(channel);
@@ -8150,7 +8157,9 @@ function scanListCoverageTree(coverage) {
   const aliases = Array.isArray(coverage?.aliases) ? coverage.aliases : [];
   const lists = new Map();
   aliases.forEach((alias) => {
-    const listKey = String(alias.alias_list_id ?? alias.alias_list ?? 'unknown');
+    const listId = aliasListId(alias);
+    if (listId === null) return;
+    const listKey = String(listId);
     if (!lists.has(listKey)) lists.set(listKey, { name: alias.alias_list || 'Alias List', groups: new Map() });
     const list = lists.get(listKey);
     const groupName = String(alias.group || 'Ungrouped');
@@ -15874,8 +15883,7 @@ function p25OverrideCreateRouteConfigurationId(parameters) {
   if (!parameters || typeof parameters.get !== 'function' || parameters.get('createP25Override') !== '1') {
     return null;
   }
-  const value = String(parameters.get('configuration_id') || '').trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : null;
+  return canonicalConfigurationId(parameters.get('configuration_id')) || null;
 }
 
 function p25OverrideDetectedBands(documentValue, requestedProfile) {

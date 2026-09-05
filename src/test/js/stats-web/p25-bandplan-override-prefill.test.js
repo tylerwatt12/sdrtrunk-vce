@@ -42,6 +42,7 @@ function constantSource(name, ending) {
 
 const behavior = vm.runInNewContext(`(() => {
   ${constantSource('P25_OVERRIDE_CREATE_ROUTE_KEYS', ']);')}
+  ${functionSource('canonicalConfigurationId')}
   ${functionSource('p25OverrideCreateRouteProfile')}
   ${functionSource('p25OverrideCreateRouteConfigurationId')}
   ${functionSource('p25OverrideDetectedBands')}

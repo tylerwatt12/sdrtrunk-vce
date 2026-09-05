@@ -279,6 +279,9 @@ class StatsWebDashboardUiContractTest
         assertFalse(sorter.contains("decode_health_pct"));
         assertFalse(section.contains("Highest decode"));
         assertFalse(section.contains("Weakest signal"));
+        assertTrue(section.contains("canonicalConfigurationId(channel?.configuration_id)"));
+        assertTrue(section.contains("const key = canonicalConfigurationId(channel.configuration_id)"));
+        assertFalse(section.contains("channel.configuration_id || channelLabel(channel)"));
         String tile = function(source, "function updateSignalCurrentTile(tile, channel)");
         assertTrue(tile.contains("channelNameSummary(channel)"));
         assertTrue(tile.contains("dashboardChannelContext(channel)"));
