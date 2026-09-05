@@ -283,8 +283,8 @@ class StatsWebDashboardUiContractTest
         String context = function(source, "function dashboardChannelContext(row)");
         assertTrue(context.contains("dashboardChannelKind(row)"));
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
-        assertTrue(context.contains("`Site ${isP25(row) ? hex(row.site_id, 2) : " +
-            "identifierNumber(row.site_id)}`"));
+        assertTrue(context.contains("protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id"));
+        assertTrue(context.contains("`Site ${isP25(row) ? hex(site, 2) : identifierNumber(site)}`"));
         assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
     }
 

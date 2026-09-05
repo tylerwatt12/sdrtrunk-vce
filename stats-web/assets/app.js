@@ -1348,8 +1348,9 @@ function trunkedSystemLabel(row) {
 }
 
 function trunkedSiteLabel(row) {
+  const site = protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id;
   return row.name || row.system_name ||
-    `${protocolFamily(row)} site ${identifierNumber(row.site_id) || identifierNumber(row.ran) ||
+    `${protocolFamily(row)} site ${identifierNumber(site) || identifierNumber(row.ran) ||
       row.configuration_id}`;
 }
 
@@ -1377,21 +1378,6 @@ function identityDomainLabel(row) {
   const value = row?.address_domain || row?.model || row?.location_category || '';
   return String(value).toLowerCase().replace(/^(dmr|nxdn)_/, '').replace(/_/g, ' ').replace(/\b\w/g,
     (character) => character.toUpperCase());
-}
-
-function trunkedIdentity(row) {
-  const values = [];
-  const domain = identityDomainLabel(row);
-  if (domain && domain !== trunkedVariant(row)) values.push(domain);
-  if (row.network_id !== null && row.network_id !== undefined) {
-    values.push(`Network ${identifierNumber(row.network_id)}`);
-  }
-  if (row.system_id !== null && row.system_id !== undefined) {
-    values.push(`System ${identifierNumber(row.system_id)}`);
-  }
-  if (row.site_id !== null && row.site_id !== undefined) values.push(`Site ${identifierNumber(row.site_id)}`);
-  if (row.ran !== null && row.ran !== undefined) values.push(`RAN ${identifierNumber(row.ran)}`);
-  return values.join(' · ');
 }
 
 function badge(label, className = '', title = '') {
@@ -8590,8 +8576,9 @@ function trunkedNeighborStatus(value) {
 
 function channelDirectoryRfIdentity(row) {
   if (!isP25(row)) {
+    const site = protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id;
     return [
-      row.site_id == null ? '' : `Site ${identifierNumber(row.site_id)}`,
+      site == null ? '' : `Site ${identifierNumber(site)}`,
       row.ran == null ? '' : `RAN ${identifierNumber(row.ran)}`
     ].filter(Boolean).join(' · ');
   }
@@ -8626,8 +8613,9 @@ function dashboardChannelContext(row) {
   if (trunked) {
     values.push(isP25(row) ? radioSystemLabel(row) : trunkedSystemLabel(row));
     if (isP25(row) && row.rfss != null) values.push(`RFSS ${hex(row.rfss, 2)}`);
-    if (row.site_id != null) {
-      values.push(`Site ${isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)}`);
+    const site = protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id;
+    if (site != null) {
+      values.push(`Site ${isP25(row) ? hex(site, 2) : identifierNumber(site)}`);
     }
     if (!isP25(row) && row.ran != null) values.push(`RAN ${identifierNumber(row.ran)}`);
   }
@@ -13887,7 +13875,23 @@ async function renderRadio() {
 }
 
 function channelLocationIdentity(channel) {
-  if (!isP25(channel)) return trunkedIdentity(channel);
+  if (protocolFamily(channel) === 'DMR') {
+    const model = semanticLabel(channel.model);
+    return [
+      model ? `${model} model` : '',
+      channel.network_id == null ? '' : `Network ${identifierNumber(channel.network_id)}`,
+      channel.site_system_id == null ? '' : `Site ${identifierNumber(channel.site_system_id)}`
+    ].filter(Boolean).join(' · ');
+  }
+  if (protocolFamily(channel) === 'NXDN') {
+    return [
+      semanticLabel(channel.location_category),
+      channel.system_id == null ? '' : `System ${identifierNumber(channel.system_id)}`,
+      channel.site_id == null ? '' : `Site ${identifierNumber(channel.site_id)}`,
+      channel.site_network_id == null ? '' : `Integrator ${identifierNumber(channel.site_network_id)}`,
+      channel.ran == null ? '' : `RAN ${identifierNumber(channel.ran)}`
+    ].filter(Boolean).join(' · ');
+  }
   return [
     channel.wacn == null ? '' : `WACN ${hex(channel.wacn, 5)}`,
     channel.system_id == null ? '' : `System ${hex(channel.system_id, 3)}`,
@@ -13920,30 +13924,61 @@ function p25ChannelDetailRows(channel) {
   ];
 }
 
+function distinctObservedVariant(channel) {
+  const observed = trunkedVariant({ variant: channel?.site_variant });
+  const authoritative = trunkedVariant(channel);
+  return observed && observed !== authoritative ? observed : '';
+}
+
+function distinctObservedClassification(observed, authoritative) {
+  const observedLabel = semanticLabel(observed);
+  return observedLabel && observedLabel !== semanticLabel(authoritative) ? observedLabel : '';
+}
+
 function dmrChannelDetailRows(channel) {
-  return [
-    ['Variant', trunkedVariant(channel)], ['Network', identifierNumber(channel.network_id)],
-    ['System', identifierNumber(channel.system_id)], ['Site', identifierNumber(channel.site_id)],
-    ['RAN', identifierNumber(channel.ran)], ['Brand', semanticLabel(channel.brand)],
-    ['Model', semanticLabel(channel.model)], ['Mode', semanticLabel(channel.mode)],
+  const rows = [
+    ['Radio System Variant', trunkedVariant(channel)],
+    ['Radio System Network', identifierNumber(channel.network_id)],
+    ['Radio System Model', semanticLabel(channel.model)],
+    ['Observed Site', identifierNumber(channel.site_system_id)]
+  ];
+  const siteVariant = distinctObservedVariant(channel);
+  const siteModel = distinctObservedClassification(channel.site_model, channel.model);
+  if (siteVariant) rows.push(['Observed Site Variant', siteVariant]);
+  if (siteModel) rows.push(['Observed Site Model', siteModel]);
+  rows.push(
+    ['Brand', semanticLabel(channel.brand)], ['Mode', semanticLabel(channel.mode)],
     ['Channel Type', semanticLabel(channel.channel_type)],
     ['Color Code TS1', identifierNumber(channel.color_code_ts1)],
     ['Color Code TS2', identifierNumber(channel.color_code_ts2)]
-  ];
+  );
+  return rows;
 }
 
 function nxdnChannelDetailRows(channel) {
-  return [
-    ['Variant', trunkedVariant(channel)], ['Network', identifierNumber(channel.network_id)],
-    ['System', identifierNumber(channel.system_id)], ['Site', identifierNumber(channel.site_id)],
-    ['RAN', identifierNumber(channel.ran)], ['Category', identityDomainLabel(channel)],
+  const rows = [
+    ['Radio System Variant', trunkedVariant(channel)],
+    ['Radio System Category', semanticLabel(channel.location_category)],
+    ['Radio System ID', identifierNumber(channel.system_id)],
+    ['Observed Site', identifierNumber(channel.site_id)]
+  ];
+  const integrator = identifierNumber(channel.site_network_id);
+  const siteVariant = distinctObservedVariant(channel);
+  const siteCategory = distinctObservedClassification(channel.site_location_category,
+    channel.location_category);
+  if (integrator) rows.push(['Observed Integrator', integrator]);
+  if (siteVariant) rows.push(['Observed Site Variant', siteVariant]);
+  if (siteCategory) rows.push(['Observed Site Category', siteCategory]);
+  rows.push(
+    ['RAN', identifierNumber(channel.ran)],
     ['Repeater State', semanticLabel(channel.repeater_state)],
     ['Current Repeater', identifierNumber(channel.current_repeater)],
     ['Services', (channel.services || []).map(semanticLabel).join(', ')],
     ['Failure Call Timer', Object.hasOwn(channel, 'failure_call_timer_seconds') ?
       (channel.failure_call_timer_seconds == null ? 'Unspecified' :
         `${number(channel.failure_call_timer_seconds)} seconds`) : '']
-  ];
+  );
+  return rows;
 }
 
 function channelProtocolDetailRows(channel) {
@@ -14159,7 +14194,9 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
   const tabItems = trunkedChannelTabItems(channel);
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
   const display = channelDisplayParts(channel);
-  const subtitle = [display.secondary, protocolFamily(channel), trunkedVariant(channel), channelLocationIdentity(channel)]
+  const siteVariant = trunkedVariant({ variant: channel.site_variant });
+  const subtitle = [display.secondary, protocolFamily(channel), trunkedVariant(channel) || siteVariant,
+    channelLocationIdentity(channel)]
     .filter(Boolean).join(' · ');
   if (!beginPage(renderContext, pageHeader(channelValue(channel), subtitle), trunkedChannelTabs(channel, tab))) return;
 

@@ -61,6 +61,35 @@ class StatsWebTrunkedChannelUiContractTest
     }
 
     @Test
+    void separatesRadioSystemIdentityFromObservedDmrAndNxdnSiteFacts() throws Exception
+    {
+        String source = source();
+        String directoryIdentity = function(source, "function channelDirectoryRfIdentity(row)");
+        String locationIdentity = function(source, "function channelLocationIdentity(channel)");
+        String dmr = function(source, "function dmrChannelDetailRows(channel)");
+        String nxdn = function(source, "function nxdnChannelDetailRows(channel)");
+
+        assertTrue(directoryIdentity.contains("protocolFamily(row) === 'DMR' ? row.site_system_id : row.site_id"));
+        assertTrue(locationIdentity.contains("channel.site_system_id"));
+        assertTrue(locationIdentity.contains("channel.site_network_id"));
+
+        assertTrue(dmr.contains("['Radio System Network', identifierNumber(channel.network_id)]"));
+        assertTrue(dmr.contains("['Radio System Model', semanticLabel(channel.model)]"));
+        assertTrue(dmr.contains("['Observed Site', identifierNumber(channel.site_system_id)]"));
+        assertFalse(dmr.contains("channel.system_id"));
+        assertFalse(dmr.contains("channel.site_id"));
+        assertFalse(dmr.contains("channel.site_network_id"));
+
+        assertTrue(nxdn.contains("['Radio System Category', semanticLabel(channel.location_category)]"));
+        assertTrue(nxdn.contains("['Radio System ID', identifierNumber(channel.system_id)]"));
+        assertTrue(nxdn.contains("['Observed Site', identifierNumber(channel.site_id)]"));
+        assertTrue(nxdn.contains("identifierNumber(channel.site_network_id)"));
+        assertTrue(nxdn.contains("['Observed Integrator', integrator]"));
+        assertFalse(nxdn.contains("channel.network_id"));
+        assertFalse(nxdn.contains("channel.site_system_id"));
+    }
+
+    @Test
     void rendersNeighborSiteFromTheCanonicalIdentifier() throws Exception
     {
         String source = source();
