@@ -264,8 +264,8 @@ class ReceiverActivityMapper
         IdentifierCollection identifiers = snapshot.identifierCollection();
         IdentifierFacts facts = IdentifierFacts.from(identifiers);
         P25SiteIdentity winnerSite = winnerSource.p25SiteIdentity();
-        Integer systemWacn = p25 ? winnerSite != null ? winnerSite.wacn() : facts.wacn() : null;
-        Integer systemId = p25 ? winnerSite != null ? winnerSite.system() : facts.systemId() : null;
+        Integer systemWacn = p25 ? winnerSite != null ? Integer.valueOf(winnerSite.wacn()) : facts.wacn() : null;
+        Integer systemId = p25 ? winnerSite != null ? Integer.valueOf(winnerSite.system()) : facts.systemId() : null;
         if(p25 && (systemWacn == null || systemId == null || systemWacn < 0 || systemWacn > 0xFFFFF ||
             systemId < 0 || systemId > 0xFFF))
         {

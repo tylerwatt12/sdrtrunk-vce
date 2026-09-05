@@ -15,6 +15,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.AudioCallId;
@@ -27,8 +28,11 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ChannelAndBroadcastConfiguration;
+import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
@@ -43,12 +47,15 @@ import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSna
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
@@ -73,6 +80,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ReceiverActivityServiceLifecycleTest
 {
+    private static final String ACTIVITY_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
+    private static final String LEARNED_P25_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000902";
+
     @TempDir
     Path mTemporaryFolder;
 
@@ -81,6 +91,7 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        persistChannels(database, p25TrunkedChannel(LEARNED_P25_CONFIGURATION_ID));
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
@@ -453,6 +464,13 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
+    void unresolvedP25CallWithoutNetworkIdentityIsIgnoredCleanly()
+    {
+        assertNull(new ReceiverActivityMapper().mapResolvedLogicalCall(
+            uncertainP25TrafficCall(9_002L, System.currentTimeMillis())));
+    }
+
+    @Test
     void blockedProjectionDisposeLeavesQueuedCleanupToWorker() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
@@ -518,6 +536,8 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000305");
+        persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
@@ -549,9 +569,6 @@ class ReceiverActivityServiceLifecycleTest
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot);
-        Channel channel = new Channel("Observation epochs", Channel.ChannelType.STANDARD);
-        channel.setRadioResolveId("00000000-0000-0000-0000-000000000305");
-        channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long oldTimestamp = System.currentTimeMillis();
         long disabledTimestamp = oldTimestamp + 5_000L;
         long newTimestamp = oldTimestamp + 10_000L;
@@ -629,6 +646,8 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000304");
+        persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
@@ -652,8 +671,6 @@ class ReceiverActivityServiceLifecycleTest
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot);
-        Channel channel = new Channel("Completed-call epochs", Channel.ChannelType.STANDARD);
-        channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
         DecodeEvent context = DecodeEvent.builder(DecodeEventType.CALL, start)
@@ -726,6 +743,9 @@ class ReceiverActivityServiceLifecycleTest
         Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
         SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
         SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000306");
+        persistChannels(firstDatabase, channel);
+        persistChannels(secondDatabase, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
@@ -769,9 +789,6 @@ class ReceiverActivityServiceLifecycleTest
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
             pauseAfterSnapshot, pauseBeforeActivation);
-        Channel channel = new Channel("Writer transition epochs", Channel.ChannelType.STANDARD);
-        channel.setRadioResolveId("00000000-0000-0000-0000-000000000306");
-        channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long start = System.currentTimeMillis();
         DecodeEvent oldActive = conventionalEvent(start);
         DecodeEvent inactive = conventionalEvent(start + 5_000L);
@@ -931,14 +948,20 @@ class ReceiverActivityServiceLifecycleTest
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
-        identifiers.update(RadioResolveConfigurationIdentifier.create(guid));
+        if(guid != null && !guid.isBlank())
+        {
+            identifiers.update(RadioResolveConfigurationIdentifier.create(guid));
+        }
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
         AudioCallId callId = new AudioCallId(sequence, sequence + 1, 0);
+        CallLegSource source = new CallLegSource(DecoderType.NBFM, configurationId, "Conventional NBFM", guid,
+            0, null, TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), timestamp, timestamp + 100L, 1, 1, timestamp, timestamp + 100L,
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
-            CallLegId.from(callId), null, null);
+            CallLegId.from(callId), source, null);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 
@@ -947,8 +970,8 @@ class ReceiverActivityServiceLifecycleTest
         AudioCallId callId = new AudioCallId(99, sequence, 1);
         CallLegId callLegId = CallLegId.from(callId);
         IdentifierCollection identifiers = new IdentifierCollection();
-        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "uncertain-config",
-            "Uncertain Site", "uncertain-guid", 0, null,
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1,
+            "00000000-0000-0000-0000-000000000901", "Uncertain Site", null, 0, null,
             io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
@@ -966,8 +989,8 @@ class ReceiverActivityServiceLifecycleTest
         identifiers.update(APCO25Talkgroup.create(9_001));
         identifiers.update(APCO25RadioIdentifier.createFrom(1_234_567));
         P25SiteIdentity learnedSite = new P25SiteIdentity(0xBEE00, 0x348, 2, 1);
-        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1, "learned-config",
-            "Learned Site", "learned-guid", 77L, learnedSite,
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1,
+            "00000000-0000-0000-0000-000000000902", "Learned Site", null, 77L, learnedSite,
             io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(), timestamp,
@@ -1172,13 +1195,12 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel channel = p25ConventionalChannel("00000000-0000-0000-0000-000000000302");
+        persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         ReceiverActivityService service = new ReceiverActivityService(userPreferences);
-        Channel channel = new Channel("LorainCountySO", Channel.ChannelType.STANDARD);
-        channel.setRadioResolveId("00000000-0000-0000-0000-000000000302");
-        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
         manager.addDecodeEventListener(event -> service.getDecodeEventListener().accept(channel, event));
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
@@ -1214,13 +1236,12 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000301");
+        persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
         ReceiverActivityService service = new ReceiverActivityService(userPreferences);
-        Channel channel = new Channel("County Fire", Channel.ChannelType.STANDARD);
-        channel.setRadioResolveId("00000000-0000-0000-0000-000000000301");
-        channel.setDecodeConfiguration(new DecodeConfigNBFM());
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
 
@@ -1259,6 +1280,16 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String expiredDmr = "00000000-0000-0000-0000-000000000111";
+        String currentDmr = "00000000-0000-0000-0000-000000000112";
+        String expiredNxdn = "00000000-0000-0000-0000-000000000113";
+        String currentNxdn = "00000000-0000-0000-0000-000000000114";
+        persistChannels(database,
+            p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID),
+            dmrChannel(expiredDmr, DMRChannelMode.TRUNKED),
+            dmrChannel(currentDmr, DMRChannelMode.TRUNKED),
+            nxdnTrunkedChannel(expiredNxdn),
+            nxdnTrunkedChannel(currentNxdn));
         long now = System.currentTimeMillis();
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -1268,22 +1299,14 @@ class ReceiverActivityServiceLifecycleTest
             ReceiverActivitySchema.recordActivity(connection,
                 activity(now - TimeUnit.DAYS.toMillis(2)), true);
 
-            try(var statement = connection.prepareStatement("""
-                INSERT INTO trunked_site_snapshot (
-                    guid, snapshot_hash, protocol_code, variant_code, identity_domain_code,
-                    first_seen_ms, last_seen_ms, observation_count
-                ) VALUES (?, ?, ?, 1, 1, ?, ?, 1)
-                """))
-            {
-                insertTrunkedSite(statement, "expired-dmr", TrunkedSiteSchema.PROTOCOL_DMR,
-                    now - TimeUnit.DAYS.toMillis(40));
-                insertTrunkedSite(statement, "current-dmr", TrunkedSiteSchema.PROTOCOL_DMR,
-                    now - TimeUnit.DAYS.toMillis(2));
-                insertTrunkedSite(statement, "expired-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN,
-                    now - TimeUnit.DAYS.toMillis(40));
-                insertTrunkedSite(statement, "current-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN,
-                    now - TimeUnit.DAYS.toMillis(2));
-            }
+            insertTrunkedSite(connection, expiredDmr, "a".repeat(64), TrunkedSiteSchema.PROTOCOL_DMR,
+                now - TimeUnit.DAYS.toMillis(40));
+            insertTrunkedSite(connection, currentDmr, "b".repeat(64), TrunkedSiteSchema.PROTOCOL_DMR,
+                now - TimeUnit.DAYS.toMillis(2));
+            insertTrunkedSite(connection, expiredNxdn, "c".repeat(64), TrunkedSiteSchema.PROTOCOL_NXDN,
+                now - TimeUnit.DAYS.toMillis(40));
+            insertTrunkedSite(connection, currentNxdn, "d".repeat(64), TrunkedSiteSchema.PROTOCOL_NXDN,
+                now - TimeUnit.DAYS.toMillis(2));
         }
 
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
@@ -1333,7 +1356,7 @@ class ReceiverActivityServiceLifecycleTest
             assertEquals(ReceiverActivityStatus.State.DISABLED, service.getStatus().state());
 
             Channel channel = new Channel("Disabled collection", Channel.ChannelType.STANDARD);
-            channel.setRadioResolveId("00000000-0000-0000-0000-000000000102");
+            channel.setConfigurationId("00000000-0000-0000-0000-000000000102");
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(channel,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 1, 2, null, null, null, null,
                     null, null, List.of(), List.of()),
@@ -1379,6 +1402,9 @@ class ReceiverActivityServiceLifecycleTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201", DMRChannelMode.TRUNKED);
+        Channel conventional = dmrChannel("00000000-0000-0000-0000-000000000202");
+        persistChannels(database, trunked, conventional);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
@@ -1387,7 +1413,6 @@ class ReceiverActivityServiceLifecycleTest
         try
         {
             long now = System.currentTimeMillis();
-            Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201", DMRChannelMode.TRUNKED);
             service.getControlChannelQualityListener().receive(quality(trunked, now));
             awaitCount(database, "trunked_control_channel_quality", 1);
 
@@ -1414,8 +1439,8 @@ class ReceiverActivityServiceLifecycleTest
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
-            Channel reusedGuid = dmrChannel(trunked.getRadioResolveId(), DMRChannelMode.TRUNKED);
-            service.getControlChannelQualityListener().receive(quality(reusedGuid, now + 60_000L));
+            Channel reusedConfiguration = dmrChannel(trunked.getPersistedConfigurationId(), DMRChannelMode.TRUNKED);
+            service.getControlChannelQualityListener().receive(quality(reusedConfiguration, now + 60_000L));
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
@@ -1434,7 +1459,6 @@ class ReceiverActivityServiceLifecycleTest
                     1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 640_000L));
 
-            Channel conventional = dmrChannel("00000000-0000-0000-0000-000000000202");
             service.getControlChannelQualityListener().receive(quality(conventional, now + 660_000L));
             awaitCount(database, "trunked_control_channel_quality", 8);
         }
@@ -1521,15 +1545,15 @@ class ReceiverActivityServiceLifecycleTest
         assertEquals(expected, actual);
     }
 
-    private static Channel dmrChannel(String guid)
+    private static Channel dmrChannel(String configurationId)
     {
-        return dmrChannel(guid, DMRChannelMode.CONVENTIONAL);
+        return dmrChannel(configurationId, DMRChannelMode.CONVENTIONAL);
     }
 
-    private static Channel dmrChannel(String guid, DMRChannelMode mode)
+    private static Channel dmrChannel(String configurationId, DMRChannelMode mode)
     {
         Channel channel = new Channel("DMR", Channel.ChannelType.STANDARD);
-        channel.setRadioResolveId(guid);
+        channel.setConfigurationId(configurationId);
         DecodeConfigDMR configuration = new DecodeConfigDMR();
         configuration.setChannelMode(mode);
         channel.setDecodeConfiguration(configuration);
@@ -1543,30 +1567,94 @@ class ReceiverActivityServiceLifecycleTest
 
     private static ControlChannelQualitySnapshot quality(Channel channel, long observedAt, boolean active)
     {
-        return new ControlChannelQualitySnapshot(channel, channel.getRadioResolveId(), 451_012_500L, observedAt,
+        return new ControlChannelQualitySnapshot(channel, channel.getPersistedConfigurationId(), 451_012_500L, observedAt,
             active, -20.0, -21.0, -25.0, -18.0, 95.0, 100, 2, 1, 0, 0, observedAt);
     }
 
-    private static void insertTrunkedSite(java.sql.PreparedStatement statement, String guid, int protocol,
-                                          long observedAt) throws Exception
+    private static void insertTrunkedSite(Connection connection, String configurationId, String snapshotHash,
+                                          int protocol, long observedAt) throws Exception
     {
-        statement.setString(1, guid);
-        statement.setString(2, "hash-" + guid);
-        statement.setInt(3, protocol);
-        statement.setLong(4, observedAt);
-        statement.setLong(5, observedAt);
-        statement.executeUpdate();
+        try(var channel = connection.prepareStatement("""
+                INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
+                VALUES (?, ?, ?)
+                """))
+        {
+            channel.setString(1, configurationId);
+            channel.setLong(2, observedAt);
+            channel.setLong(3, observedAt);
+            channel.executeUpdate();
+        }
+
+        try(var snapshot = connection.prepareStatement("""
+                INSERT INTO trunked_site_snapshot (
+                    channel_id, snapshot_hash, protocol_code, variant_code, location_category_code,
+                    first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ((SELECT id FROM receiver_channel WHERE configuration_id = ?), ?, ?, 1, ?, ?, ?, 1)
+                """))
+        {
+            snapshot.setString(1, configurationId);
+            snapshot.setString(2, snapshotHash);
+            snapshot.setInt(3, protocol);
+            snapshot.setInt(4, protocol == TrunkedSiteSchema.PROTOCOL_NXDN ? 1 : 0);
+            snapshot.setLong(5, observedAt);
+            snapshot.setLong(6, observedAt);
+            snapshot.executeUpdate();
+        }
     }
 
     private static ReceiverActivityRecords.ActivityEvent activity(long timestamp)
     {
-        String guid = "123e4567-e89b-12d3-a456-426614174000";
-        return new ReceiverActivityRecords.ActivityEvent(timestamp, guid,
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, ACTIVITY_CONFIGURATION_ID,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
             false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of());
+    }
+
+    private static Channel nbfmChannel(String configurationId)
+    {
+        Channel channel = new Channel("Conventional NBFM", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        return channel;
+    }
+
+    private static Channel p25ConventionalChannel(String configurationId)
+    {
+        Channel channel = new Channel("Conventional P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        return channel;
+    }
+
+    private static Channel p25TrunkedChannel(String configurationId)
+    {
+        Channel channel = new Channel("Trunked P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        return channel;
+    }
+
+    private static Channel nxdnTrunkedChannel(String configurationId)
+    {
+        Channel channel = new Channel("Trunked NXDN", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(configurationId);
+        DecodeConfigNXDN configuration = new DecodeConfigNXDN();
+        configuration.setChannelMode(NXDNChannelMode.TRUNKED);
+        channel.setDecodeConfiguration(configuration);
+        return channel;
+    }
+
+    private static void persistChannels(Path database, Channel... channels) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            connection.setAutoCommit(false);
+            new ConfigurationDatabaseStore(database).replace(connection,
+                new ChannelAndBroadcastConfiguration(List.of(channels), List.of()));
+            connection.commit();
+        }
     }
 
     private static class TestUserPreferences extends UserPreferences
