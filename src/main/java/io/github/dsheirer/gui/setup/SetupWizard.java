@@ -466,9 +466,9 @@ public final class SetupWizard extends JDialog
             Runnable inspect = () -> job("Checking your saved settings…", null,
                 () -> ApplicationMigrationService.readMigrationPlan(database), plan -> {
                     page.removeAll();
-                    paragraph("Your saved settings can be used with this version.");
+                    paragraph("Your saved settings can be used with this version. Before updating, we’ll save a recovery copy. Your recorded audio files will stay unchanged.");
                     migrationDetails(plan);
-                    next.setText(plan.source().requiresMigration() ? "Update my settings" : "Continue setup");
+                    next.setText(plan.source().requiresMigration() ? "Back up & update" : "Continue setup");
                     accept = plan.source().requiresMigration() ? () -> migrate(null, false, false, plan) :
                         () -> job("Loading your settings…", null, () -> { initialize(false); return true; }, ignored -> showPage(initialStep()));
                     page.revalidate();
@@ -1244,10 +1244,17 @@ public final class SetupWizard extends JDialog
     }
     private void migrationDetails(DatabaseMigrationChain.PreflightReport plan)
     {
-        for(var migration:plan.steps()) for(var effect:migration.effects())
-            if(effect.kind()==DatabaseMigrationEffect.Kind.RESET || effect.kind()==DatabaseMigrationEffect.Kind.DROP)
-                paragraph("Please note: " + effect.subject() + " — " + effect.detail());
-        details("Technical import details",ApplicationMigrationService.describePlan(plan));
+        if(plan.source().requiresMigration())
+        {
+            notice("What stays", "Supported channels, aliases and streaming settings will be kept.", false);
+            if(plan.steps().stream().flatMap(step -> step.effects().stream())
+                .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.RESET))
+                paragraph("Activity history and statistics will start fresh. Radio-system and site information will be learned again as receiving resumes.");
+            if(plan.steps().stream().flatMap(step -> step.effects().stream())
+                .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP))
+                paragraph("Obsolete data and settings from retired features will be removed. Expand the details below to see the full list of changes.");
+        }
+        details("Technical details",ApplicationMigrationService.describePlan(plan));
     }
     private static String colorHex(Color color) { return String.format("#%02x%02x%02x",color.getRed(),color.getGreen(),color.getBlue()); }
     private static JTextArea text(String value)
