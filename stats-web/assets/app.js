@@ -4677,13 +4677,33 @@ function unmatchedTalkgroupsSupported(selectedList) {
   return ['P25', 'DMR', 'NXDN', 'NBFM'].includes(aliasListFamily(selectedList));
 }
 
+function aliasTransferListDefaults(selectedList, options = {}) {
+  const policy = selectedList?.unmatched_talkgroup_policy ||
+    options?.alias_list?.unmatched_talkgroup_policy || {};
+  const names = (ids, choices, id) => {
+    const configured = new Map((choices || []).map((choice) => [String(choice?.[id] ?? ''), choice?.name]));
+    return (ids || []).map((value) => configured.get(String(value)) || `Missing (${value})`);
+  };
+  return {
+    recordable: Boolean(policy.recordable),
+    scanLists: names(policy.scan_list_ids, options.scan_lists, 'id'),
+    streams: names(policy.broadcast_configuration_ids, options.streams, 'configuration_id')
+  };
+}
+
+function aliasTransferListDefaultsSummary(defaults) {
+  const list = (values) => values?.length ? values.join(', ') : 'None';
+  return `Recording: ${defaults?.recordable ? 'On' : 'Off'} · Scan lists: ${list(defaults?.scanLists)} · ` +
+    `Streaming: ${list(defaults?.streams)}`;
+}
+
 function openAliasTransferModal(selectedList) {
   const listId = aliasListId(selectedList);
   const endpoint = `/api/v1/admin/alias-lists/${listId}/transfer`;
   const options = aliasEditorContext?.options || {};
   const body = node('div', 'alias-editor-form alias-transfer');
   body.append(node('p', 'modal-introduction', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)}. ` +
-    'Transfer alias configuration only. History, counters, and Alias List Defaults are not imported.'));
+    'Import into this selected list. History, counters, and Alias List Defaults are never changed.'));
   const tabBar = node('div', 'toolbar');
   const panels = new Map();
   const tabButtons = new Map();
@@ -4691,7 +4711,7 @@ function openAliasTransferModal(selectedList) {
     panels.forEach((panel, key) => { panel.hidden = key !== name; });
     tabButtons.forEach((button, key) => button.setAttribute('aria-pressed', String(key === name)));
   };
-  ['Import', 'Review', 'Export'].forEach((name) => {
+  ['Import', 'Export'].forEach((name) => {
     const button = node('button', 'button secondary', name);
     button.type = 'button';
     button.addEventListener('click', () => show(name));
@@ -4717,81 +4737,101 @@ function openAliasTransferModal(selectedList) {
     const option = node('option', '', text); option.value = value; mode.append(option);
   });
   const file = node('input'); file.type = 'file'; file.accept = '.csv,text/csv'; file.required = true;
-  form.append(field('Format', format), field('Mode', mode), field('CSV file (up to 8 MiB / 10,000 aliases)', file));
+  const sourceSection = node('section', 'alias-transfer-section');
+  sourceSection.append(node('h3', '', '1. Choose a source file'),
+    field('CSV file (up to 8 MiB / 10,000 aliases)', file), field('File type', format));
   const help = node('details');
-  help.append(node('summary', '', 'CSV format and assignment rules'), node('p', '',
-    'VCE: use Export to obtain the exact header and all configuration fields. Names in scan_lists and ' +
-    'streaming_destinations are JSON arrays, for example ["Dispatch","Fire"]. Empty arrays clear assignments. ' +
-    'Other empty optional fields clear their values. Column names and order must match exactly.'), node('p', '',
+  help.append(node('summary', '', 'Accepted CSV formats'), node('p', '',
+    'VCE: use Export to obtain the exact, versioned format. Each row supplies its alias list name, matcher, ' +
+    'appearance, recording, scan-list memberships, and streaming settings. The source alias-list name is shown ' +
+    'during review; the selected destination above remains authoritative.'), node('p', '',
     'RadioReference header: Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category. ' +
     'Existing aliases update name, description, and group only. New fully encrypted talkgroups have recording, ' +
     'scan-list playback, and streaming disabled. Download talkgroups for a system compatible with this list.'));
-  form.append(help);
-  const defaults = node('fieldset', 'alias-stream-options');
-  defaults.append(node('legend', '', 'Assignments for new aliases'), node('p', 'muted',
-    'Used when the file has no assignment fields. Existing aliases retain their local settings.'));
+  sourceSection.append(help);
+  const behaviorSection = node('section', 'alias-transfer-section');
+  behaviorSection.append(node('h3', '', '2. Choose import behavior'), field('Import mode', mode), node('p', 'muted',
+    'Update/Add keeps aliases missing from the file. Replace deletes them after an explicit confirmation in review.'));
+  form.append(sourceSection, behaviorSection);
+
+  const vceAssignments = node('div', 'logging-notice alias-transfer-source-settings',
+    'New VCE aliases use the configuration in each imported row. There are no separate assignment choices.');
+  behaviorSection.append(vceAssignments);
+  const listDefaults = aliasTransferListDefaults(selectedList, options);
+  const radioDefaults = node('section', 'alias-transfer-radio-defaults');
+  radioDefaults.append(node('h4', '', 'New RadioReference aliases'), node('p', '',
+    'The RadioReference file has no local routing fields, so new aliases use this list’s current defaults:'),
+    node('p', 'alias-transfer-default-summary', aliasTransferListDefaultsSummary(listDefaults)));
+  const overrides = node('details', 'alias-transfer-overrides');
+  overrides.append(node('summary', '', 'Optional: override defaults for this import'));
   const record = node('select');
-  [['', 'Use Alias List Defaults'], ['true', 'Record calls'], ['false', 'Do not record']].forEach(([value, text]) => {
+  [['', `Use list default (${listDefaults.recordable ? 'Record calls' : 'Do not record'})`],
+    ['true', 'Record calls'], ['false', 'Do not record']].forEach(([value, text]) => {
     const option = node('option', '', text); option.value = value; record.append(option);
   });
-  defaults.append(field('Recording', record));
-  const namePicker = (title, choices, suffix) => {
-    const wrapper = node('fieldset', 'alias-stream-options');
-    wrapper.append(node('legend', '', title));
-    const override = node('input'); override.type = 'checkbox';
-    wrapper.append(aliasCheckOption('Choose assignments (an empty selection means none)', override));
-    const input = node('input'); input.type = 'text'; input.placeholder = 'Type an exact configured name';
-    const suggestions = node('datalist'); suggestions.id = `alias-transfer-${suffix}-${listId}`;
-    [...new Set(choices)].forEach((name) => { const option = node('option'); option.value = name; suggestions.append(option); });
-    input.setAttribute('list', suggestions.id);
-    const add = node('button', 'button secondary', 'Add'); add.type = 'button';
-    const selected = node('div', 'alias-transfer-names');
-    const values = new Set();
-    const draw = () => {
-      selected.replaceChildren();
-      values.forEach((name) => {
-        const remove = node('button', 'button secondary', `${name} ×`); remove.type = 'button';
-        remove.setAttribute('aria-label', `Remove ${name}`);
-        remove.addEventListener('click', () => { values.delete(name); draw(); invalidate(); });
-        selected.append(remove);
+  overrides.append(field('Recording', record));
+  let busy = false;
+  const assignmentOverride = (title, choices, defaultNames, id) => {
+    const wrapper = node('fieldset', 'alias-stream-options alias-transfer-assignment-override');
+    const enabled = node('input'); enabled.type = 'checkbox';
+    wrapper.append(node('legend', '', title), aliasCheckOption(`Override ${title.toLowerCase()}`, enabled));
+    const choicesHost = node('div', 'alias-transfer-assignment-choices');
+    const nameCounts = new Map();
+    (choices || []).forEach((choice) => nameCounts.set(choice.name, (nameCounts.get(choice.name) || 0) + 1));
+    (choices || []).forEach((choice) => {
+      const checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.value = choice.name;
+      checkbox.name = `aliasTransfer${id}`;
+      checkbox.checked = defaultNames.includes(choice.name);
+      const ambiguous = nameCounts.get(choice.name) > 1;
+      if (ambiguous) checkbox.disabled = true;
+      choicesHost.append(aliasCheckOption(ambiguous ? `${choice.name} (duplicate name; rename first)` : choice.name,
+        checkbox));
+    });
+    if (!choices?.length) choicesHost.append(node('div', 'empty', `No ${title.toLowerCase()} configured`));
+    wrapper.append(choicesHost);
+    const sync = () => {
+      choicesHost.hidden = !enabled.checked;
+      choicesHost.querySelectorAll('input').forEach((control) => {
+        control.disabled = busy || !enabled.checked || nameCounts.get(control.value) > 1;
       });
     };
-    add.addEventListener('click', () => {
-      if(input.value) { values.add(input.value); input.value = ''; override.checked = true; draw(); invalidate(); }
-    });
-    input.addEventListener('keydown', (event) => {
-      if(event.key === 'Enter') { event.preventDefault(); add.click(); }
-    });
-    wrapper.append(field('Configured name', input), suggestions, add, selected);
-    defaults.append(wrapper);
-    return () => {
-      if(input.value) throw new Error(`Click Add for the typed ${title.toLowerCase()} name first.`);
-      return override.checked ? [...values] : null;
+    enabled.addEventListener('change', sync);
+    sync();
+    overrides.append(wrapper);
+    return {
+      sync,
+      value: () => enabled.checked ? [...choicesHost.querySelectorAll('input:checked')].map((item) => item.value) : null
     };
   };
-  const scans = namePicker('Scan lists', (options.scan_lists || []).map((list) => list.name), 'scans');
-  const streams = namePicker('Streaming destinations', (options.streams || []).map((stream) => stream.name), 'streams');
-  form.append(defaults);
-  const previewButton = node('button', 'button', 'Preview import'); previewButton.type = 'submit';
+  const scans = assignmentOverride('Scan lists', options.scan_lists || [], listDefaults.scanLists, 'ScanList');
+  const streams = assignmentOverride('Streaming destinations', options.streams || [], listDefaults.streams,
+    'Stream');
+  radioDefaults.append(overrides);
+  behaviorSection.append(radioDefaults);
+  const previewButton = node('button', 'button', 'Build preview'); previewButton.type = 'submit';
   const errorHost = node('div', 'alias-form-message'); errorHost.setAttribute('role', 'status');
   form.append(previewButton);
-  const review = panels.get('Review');
+  const review = node('section', 'alias-transfer-review');
+  review.hidden = true;
+  review.append(node('h3', '', '3. Review changes'));
+  const destination = node('p', 'muted');
   const summary = node('p');
   const rowsHost = node('div');
   const pagerHost = node('div', 'toolbar');
   const confirm = node('input'); confirm.type = 'checkbox';
   const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
   const apply = node('button', 'button', 'Apply import'); apply.type = 'button'; apply.disabled = true;
-  review.append(summary, rowsHost, pagerHost, confirmLabel, apply);
+  review.append(destination, summary, rowsHost, pagerHost, confirmLabel, apply);
+  panels.get('Import').append(review);
   const exportLink = anchor('Export list configuration CSV', endpoint, 'button');
   exportLink.setAttribute('download', '');
   panels.get('Export').append(node('p', '', 'Exports every alias in this list, including matchers, appearance, ' +
-    'recording, scan lists, and named streaming destinations. Import this file using the VCE format. ' +
+    'recording, scan lists, named streaming destinations, and the source alias-list name. Import this file using ' +
+    'the VCE format. The selected destination list is still explicit when importing. ' +
     'Referenced scan lists, destinations, and icons must exist on the receiving installation.'), exportLink);
   body.append(errorHost);
   let request = null;
   let preview = null;
-  let busy = false;
   const modal = openReadOnlyModal(`Import / Export · ${selectedList.name}`, body, {
     id: `alias-transfer-${listId}`, className: 'alias-editor-modal alias-transfer-modal',
     returnFocusSelector: '.alias-transfer-button'
@@ -4799,9 +4839,12 @@ function openAliasTransferModal(selectedList) {
   if (!modal) return;
   const invalidate = () => {
     request = null; preview = null; apply.disabled = true; confirm.checked = false;
-    summary.textContent = 'Choose a file and preview the import.'; rowsHost.replaceChildren(); pagerHost.replaceChildren();
+    review.hidden = true; destination.textContent = ''; summary.textContent = '';
+    rowsHost.replaceChildren(); pagerHost.replaceChildren();
     confirmLabel.hidden = mode.value !== 'REPLACE';
-    defaults.disabled = format.value !== 'RADIOREFERENCE';
+    const radioReference = format.value === 'RADIOREFERENCE';
+    radioDefaults.hidden = !radioReference;
+    vceAssignments.hidden = radioReference;
     modal.setDirty(Boolean(file.files?.length));
   };
   const updateApply = () => { apply.disabled = busy || !preview || preview.counts.error > 0 ||
@@ -4809,7 +4852,9 @@ function openAliasTransferModal(selectedList) {
   const setBusy = (value) => {
     busy = value; modal.setBusy(value);
     form.querySelectorAll('input,select,button').forEach((control) => { control.disabled = value; });
-    defaults.disabled = value || format.value !== 'RADIOREFERENCE';
+    tabButtons.forEach((button) => { button.disabled = value; });
+    confirm.disabled = value;
+    scans.sync(); streams.sync();
     pagerHost.querySelectorAll('button').forEach((button) => { button.disabled = value; });
     updateApply();
   };
@@ -4818,6 +4863,10 @@ function openAliasTransferModal(selectedList) {
     try {
       const response = await requestJson(endpoint, { method: 'POST', body: { ...request, action: 'preview', offset } });
       preview = response; confirm.checked = false;
+      review.hidden = false;
+      destination.textContent = response.source_list ?
+        `Source alias list: ${response.source_list} → Destination alias list: ${response.destination_list}` :
+        `Destination alias list: ${response.destination_list}`;
       summary.textContent = Object.entries(response.counts).map(([key, count]) => `${number(count)} ${key}`).join(' · ');
       rowsHost.replaceChildren();
       response.rows.forEach((row) => {
@@ -4838,7 +4887,6 @@ function openAliasTransferModal(selectedList) {
           button.addEventListener('click', () => loadPreview(next)); pagerHost.append(button);
         }
       }
-      show('Review');
     } catch(error) { preview = null; errorHost.append(node('div', 'error', error.message)); }
     finally { setBusy(false); }
   };
@@ -4852,7 +4900,8 @@ function openAliasTransferModal(selectedList) {
       if(!selected || selected.size > 8 * 1024 * 1024) throw new Error('Select a CSV file no larger than 8 MiB.');
       setBusy(true);
       request = { format: format.value, mode: mode.value, csv: await selected.text(), defaults: format.value === 'RADIOREFERENCE' ? {
-        recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans(), streams: streams()
+        recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans.value(),
+        streams: streams.value()
       } : null };
       await loadPreview();
     } catch(error) { errorHost.append(node('div', 'error', error.message)); setBusy(false); }

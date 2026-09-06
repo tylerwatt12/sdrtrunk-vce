@@ -57,6 +57,8 @@ vm.runInContext(`
   ${functionSource('function aliasOptionLimit(options, name)')}
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
+  ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
+  ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
@@ -73,6 +75,8 @@ vm.runInContext(`
   globalThis.optionLimit = aliasOptionLimit;
   globalThis.cloneOptionValue = aliasCloneOptionValue;
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
+  globalThis.transferListDefaults = aliasTransferListDefaults;
+  globalThis.transferListDefaultsSummary = aliasTransferListDefaultsSummary;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
   globalThis.matcherSummary = aliasMatcherSummary;
@@ -140,6 +144,18 @@ assert.equal(context.streamOptionSelected(true, false, false, true), true,
   'A clone must preserve a valid stream omitted by bounded suggestions.');
 assert.equal(context.streamOptionSelected(true, false, false, false), false,
   'A clone should not preserve a stream confirmed absent from the complete options response.');
+
+const transferDefaults = context.transferListDefaults({ unmatched_talkgroup_policy: {
+  recordable: true, scan_list_ids: [2], broadcast_configuration_ids: ['stream-1']
+} }, {
+  scan_lists: [{ id: 1, name: 'Primary' }, { id: 2, name: 'Dispatch' }],
+  streams: [{ configuration_id: 'stream-1', name: 'Provider' }]
+});
+assert.deepEqual(JSON.parse(JSON.stringify(transferDefaults)), {
+  recordable: true, scanLists: ['Dispatch'], streams: ['Provider']
+}, 'RadioReference imports should present the selected alias list defaults by configured name.');
+assert.equal(context.transferListDefaultsSummary(transferDefaults),
+  'Recording: On · Scan lists: Dispatch · Streaming: Provider');
 
 const firstTone = { tone: 'A' };
 const secondTone = { tone: 'B' };

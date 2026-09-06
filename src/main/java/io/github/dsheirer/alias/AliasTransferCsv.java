@@ -33,8 +33,11 @@ public final class AliasTransferCsv
     public enum Format { VCE, RADIOREFERENCE }
     public static final int MAX_ROWS = 10_000;
     public static final int MAX_BYTES = 8 * 1024 * 1024;
-    public static final List<String> HEADERS = List.of("format_version", "name", "description", "group", "color",
-        "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
+    public static final List<String> HEADERS = List.of("format_version", "alias_list", "name", "description", "group",
+        "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
+        "record_enabled", "scan_lists", "streaming_destinations", "stream_as_talkgroup");
+    public static final List<String> VERSION_1_HEADERS = List.of("format_version", "name", "description", "group",
+        "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
         "record_enabled", "scan_lists", "streaming_destinations", "stream_as_talkgroup");
     public static final List<String> RR_HEADERS = List.of("Decimal", "Hex", "Alpha Tag", "Mode", "Description",
         "Tag", "Category");
@@ -51,7 +54,8 @@ public final class AliasTransferCsv
             .parse(new StringReader(csv)))
         {
             List<String> expected = format == Format.VCE ? HEADERS : RR_HEADERS;
-            if(!parser.getHeaderNames().equals(expected))
+            boolean version1 = format == Format.VCE && parser.getHeaderNames().equals(VERSION_1_HEADERS);
+            if(!parser.getHeaderNames().equals(expected) && !version1)
                 throw new IllegalArgumentException("Expected exact CSV header: " + String.join(",", expected));
             for(CSVRecord row: parser)
             {
@@ -75,18 +79,23 @@ public final class AliasTransferCsv
                         alias.setDescription(row.get("Description"));
                         alias.setGroup(row.get("Category"));
                         alias.setMatchIdentifier(new Talkgroup(protocol, Integer.parseInt(row.get("Decimal"))));
-                        rows.add(new AliasImportService.Input(alias, true, true, mode.endsWith("E"), null, null));
+                        rows.add(new AliasImportService.Input(alias, true, true, mode.endsWith("E"), null, null, null));
                     }
                     else
                     {
-                        if(!row.get("format_version").equals("1")) throw new IllegalArgumentException("Unsupported format_version");
+                        String requiredVersion = version1 ? "1" : "2";
+                        if(!row.get("format_version").equals(requiredVersion))
+                            throw new IllegalArgumentException("Unsupported format_version");
+                        String sourceAliasList = version1 ? null : optional(unescape(row.get("alias_list")));
+                        if(!version1 && (sourceAliasList == null || sourceAliasList.isBlank() || sourceAliasList.length() > 256))
+                            throw new IllegalArgumentException("alias_list is empty or exceeds 256 characters");
                         Alias alias = new Alias(unescape(row.get("name")));
                         alias.setDescription(optional(unescape(row.get("description"))));
                         alias.setGroup(optional(unescape(row.get("group"))));
                         alias.setIconName(optional(unescape(row.get("icon"))));
                         alias.setColor(Integer.parseInt(row.get("color")));
                         alias.setMatchIdentifier(matcher(row));
-                        Map<String,String> canonical = fields(alias, List.of(), List.of());
+                        Map<String,String> canonical = fields(alias, sourceAliasList, List.of(), List.of());
                         for(String column: List.of("matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones"))
                         {
                             String submitted = column.equals("text") ? unescape(row.get(column)) : row.get(column);
@@ -101,7 +110,7 @@ public final class AliasTransferCsv
                             alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(id));
                         }
                         rows.add(new AliasImportService.Input(alias, false, true, false,
-                            names(row.get("scan_lists")), names(row.get("streaming_destinations"))));
+                            names(row.get("scan_lists")), names(row.get("streaming_destinations")), sourceAliasList));
                     }
                 }
                 catch(Exception exception)
@@ -115,6 +124,10 @@ public final class AliasTransferCsv
             throw new IllegalArgumentException("Invalid CSV: check quoting and record structure", exception);
         }
         if(rows.isEmpty()) throw new IllegalArgumentException("Select a CSV containing at least one alias");
+        Set<String> sourceLists = rows.stream().map(AliasImportService.Input::sourceAliasList)
+            .filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        if(sourceLists.size() > 1)
+            throw new IllegalArgumentException("VCE CSV rows must identify one source alias_list");
         return List.copyOf(rows);
     }
 
@@ -149,11 +162,13 @@ public final class AliasTransferCsv
         };
     }
 
-    public static Map<String,String> fields(Alias alias, Collection<String> scans, Collection<String> streams)
+    public static Map<String,String> fields(Alias alias, String aliasList, Collection<String> scans,
+                                             Collection<String> streams)
     {
         Map<String,String> row = new LinkedHashMap<>();
         HEADERS.forEach(header -> row.put(header, ""));
-        row.put("format_version", "1");
+        row.put("format_version", "2");
+        row.put("alias_list", text(aliasList));
         row.put("name", text(alias.getName()));
         row.put("description", text(alias.getDescription()));
         row.put("group", text(alias.getGroup()));
@@ -185,7 +200,7 @@ public final class AliasTransferCsv
 
     static List<String> identity(Alias alias)
     {
-        Map<String,String> fields = fields(alias, List.of(), List.of());
+        Map<String,String> fields = fields(alias, "", List.of(), List.of());
         return List.of("matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones").stream()
             .map(fields::get).toList();
     }
@@ -201,7 +216,7 @@ public final class AliasTransferCsv
             {
                 for(Map<String,String> row: rows)
                     printer.printRecord(HEADERS.stream().map(header ->
-                        Set.of("name", "description", "group", "icon", "text").contains(header) ?
+                        Set.of("alias_list", "name", "description", "group", "icon", "text").contains(header) ?
                             escape(row.get(header)) : row.get(header)).toList());
             }
             if(writer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_BYTES)
@@ -239,7 +254,7 @@ public final class AliasTransferCsv
     }
     private static String text(String value) { return value == null ? "" : value; }
     private static String optional(String value) { return value.isEmpty() ? null : value; }
-    // Version 1 escapes apostrophes as well as spreadsheet formulas so decoding is unambiguous.
+    // VCE formats escape apostrophes as well as spreadsheet formulas so decoding is unambiguous.
     private static String escape(String value)
     {
         return value != null && !value.isEmpty() && "'=+-@\t\r\n".indexOf(value.charAt(0)) >= 0 ? "'" + value : text(value);

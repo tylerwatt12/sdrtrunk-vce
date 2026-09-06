@@ -13,11 +13,12 @@ public final class AliasImportService
     public enum Mode { UPDATE_ADD, REPLACE }
     /** Null name collections mean unspecified; empty collections explicitly remove all assignments. */
     public record Input(Alias alias, boolean radioReference, boolean groupProvided, boolean fullyEncrypted,
-                        List<String> scanLists, List<String> streams) {}
+                        List<String> scanLists, List<String> streams, String sourceAliasList) {}
     public record Defaults(Boolean recordable, List<String> scanLists, List<String> streams) {}
     public record Change(String field, String before, String after) {}
     public record Row(int row, String result, String name, List<Change> changes, String error) {}
-    public record Preview(long revision, String list, Mode mode, Map<String,Long> counts, List<Row> rows) {}
+    public record Preview(long revision, String list, String sourceList, Mode mode, Map<String,Long> counts,
+                          List<Row> rows) {}
     public static final class Plan
     {
         private final long listId;
@@ -43,6 +44,11 @@ public final class AliasImportService
             throw new IllegalArgumentException("Import must contain 1–10,000 aliases");
         TransferSnapshot snapshot = service.transferSnapshot(listId);
         Options options = snapshot.options();
+        Set<String> sourceLists = inputs.stream().filter(Objects::nonNull).map(Input::sourceAliasList)
+            .filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        if(sourceLists.size() > 1)
+            throw new IllegalArgumentException("Import rows must identify one source alias list");
+        String sourceList = sourceLists.stream().findFirst().orElse(null);
         Map<List<String>,List<AliasEntry>> existing = new HashMap<>();
         snapshot.aliases().forEach(entry -> existing.computeIfAbsent(AliasTransferCsv.identity(entry.alias()),
             ignored -> new ArrayList<>()).add(entry));
@@ -142,7 +148,7 @@ public final class AliasImportService
         Map<String,Long> counts = new LinkedHashMap<>();
         for(String result: List.of("added", "updated", "unchanged", "deleted", "error"))
             counts.put(result, rows.stream().filter(row -> row.result().equals(result)).count());
-        return new Plan(listId, new Preview(options.revision(), options.aliasList().getName(), mode,
+        return new Plan(listId, new Preview(options.revision(), options.aliasList().getName(), sourceList, mode,
             Collections.unmodifiableMap(counts), List.copyOf(rows)), saves, deletions);
     }
 
@@ -174,7 +180,7 @@ public final class AliasImportService
             .orElseThrow(() -> new IllegalArgumentException("Missing streaming destination")).name()).toList();
         resolve(scanNames, options.scanLists(), ScanList::getName, ScanList::getId);
         resolve(streamNames, options.streams(), BroadcastDestination::name, BroadcastDestination::configurationId);
-        return AliasTransferCsv.fields(alias, scanNames, streamNames);
+        return AliasTransferCsv.fields(alias, options.aliasList().getName(), scanNames, streamNames);
     }
 
     private static <T,R> List<R> resolve(List<String> names, List<T> choices, Function<T,String> name, Function<T,R> value)

@@ -349,9 +349,16 @@ public final class AliasAdminHttpController
                 int offset = request.offset() == null ? 0 : request.offset();
                 if(offset < 0 || offset > preview.rows().size()) throw invalid("Invalid preview offset");
                 int end = Math.min(offset + 100, preview.rows().size());
-                sendData(exchange, 200, Map.of("revision", preview.revision(), "digest", digest,
-                    "counts", preview.counts(), "rows", preview.rows().subList(offset, end),
-                    "total", preview.rows().size(), "offset", offset));
+                Map<String,Object> response = new LinkedHashMap<>();
+                response.put("revision", preview.revision());
+                response.put("digest", digest);
+                response.put("source_list", preview.sourceList());
+                response.put("destination_list", preview.list());
+                response.put("counts", preview.counts());
+                response.put("rows", preview.rows().subList(offset, end));
+                response.put("total", preview.rows().size());
+                response.put("offset", offset);
+                sendData(exchange, 200, response);
             }
             else throw invalid("action must be preview or apply");
         }

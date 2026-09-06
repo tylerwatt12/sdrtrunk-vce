@@ -93,6 +93,9 @@ class AliasAdminHttpControllerTest
             body.put("csv", exported.body());
             preview = json(send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))));
             assertEquals(1, preview.at("/counts/unchanged").intValue());
+            assertEquals("Transfer", preview.get("source_list").textValue());
+            assertEquals("Transfer", preview.get("destination_list").textValue());
+            assertTrue(exported.body().startsWith("\uFEFFformat_version,alias_list,name,"));
         }
         finally
         {

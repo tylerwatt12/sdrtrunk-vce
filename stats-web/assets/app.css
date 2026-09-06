@@ -5491,6 +5491,53 @@ th.numeric {
   min-width: 0;
 }
 
+.alias-transfer-section,
+.alias-transfer-review,
+.alias-transfer-radio-defaults {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.alias-transfer-section,
+.alias-transfer-review {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.alias-transfer-section > h3,
+.alias-transfer-review > h3,
+.alias-transfer-radio-defaults > h4 {
+  margin: 0;
+}
+
+.alias-transfer-source-settings,
+.alias-transfer-default-summary {
+  margin: 0;
+}
+
+.alias-transfer-overrides {
+  min-width: 0;
+}
+
+.alias-transfer-overrides[open] {
+  display: grid;
+  gap: 10px;
+}
+
+.alias-transfer-overrides > summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.alias-transfer-assignment-choices {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .alias-transfer .alias-form-field {
   display: grid;
   gap: 6px;
@@ -5500,12 +5547,6 @@ th.numeric {
 .alias-transfer input, .alias-transfer select {
   max-width: 100%;
   min-width: 0;
-}
-
-.alias-transfer-names {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .alias-transfer-row {

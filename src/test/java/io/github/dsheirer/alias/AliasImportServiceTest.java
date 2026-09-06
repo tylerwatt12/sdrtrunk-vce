@@ -56,10 +56,11 @@ class AliasImportServiceTest
             alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(321)); alias.setMatchIdentifier(matcher);
             List<String> scans = List.of("Dispatch; Fire", "Quotes \" and , comma");
             List<String> streams = List.of("Provider 1", "Provider 2");
-            var fields = AliasTransferCsv.fields(alias, scans, streams);
+            var fields = AliasTransferCsv.fields(alias, "Source List", scans, streams);
             String csv = AliasTransferCsv.write(List.of(fields));
             var read = AliasTransferCsv.read(csv, AliasTransferCsv.Format.VCE, new AliasListDefinition("Test", AliasListFamily.P25)).getFirst();
-            assertEquals(fields, AliasTransferCsv.fields(read.alias(), read.scanLists(), read.streams()));
+            assertEquals("Source List", read.sourceAliasList());
+            assertEquals(fields, AliasTransferCsv.fields(read.alias(), read.sourceAliasList(), read.scanLists(), read.streams()));
             assertEquals(AliasTransferCsv.identity(alias), AliasTransferCsv.identity(read.alias()));
         }
     }
@@ -78,10 +79,28 @@ class AliasImportServiceTest
         assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.names("[\"One\"] trailing"));
         Alias alias = new Alias("Dispatch");
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 123));
-        var fields = AliasTransferCsv.fields(alias, List.of(), List.of());
+        var fields = AliasTransferCsv.fields(alias, "County", List.of(), List.of());
         fields.put("text", "unexpected payload");
         assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
             AliasTransferCsv.write(List.of(fields)), AliasTransferCsv.Format.VCE, list));
+    }
+
+    @Test void acceptsVersionOneExportsAndRequiresOneSourceListInVersionTwo()
+    {
+        AliasListDefinition list = new AliasListDefinition("Destination", AliasListFamily.P25);
+        String legacy = String.join(",", AliasTransferCsv.VERSION_1_HEADERS) + "\r\n" +
+            "1,Dispatch,,,0,,TALKGROUP,APCO25,123,,,,,false,[],[],\r\n";
+        AliasImportService.Input imported = AliasTransferCsv.read(legacy, AliasTransferCsv.Format.VCE, list).getFirst();
+        assertNull(imported.sourceAliasList());
+        assertEquals("Dispatch", imported.alias().getName());
+
+        Alias first = alias(1, 100, "First");
+        Alias second = alias(1, 200, "Second");
+        String mixedSources = AliasTransferCsv.write(List.of(
+            AliasTransferCsv.fields(first, "County A", List.of(), List.of()),
+            AliasTransferCsv.fields(second, "County B", List.of(), List.of())));
+        assertThrows(IllegalArgumentException.class,
+            () -> AliasTransferCsv.read(mixedSources, AliasTransferCsv.Format.VCE, list));
     }
 
     @Test void previewsAndAppliesMixedReplacementAtomicallyWithStableIdsAndMemberships() throws Exception
@@ -100,8 +119,9 @@ class AliasImportServiceTest
             long otherId = service.createAlias(alias(otherList, 100, "Other list")).aliasIds().getFirst();
             Alias changed = alias(list, 100, "Updated"); changed.setColor(99);
             var importer = new AliasImportService(service);
-            var inputs = List.of(new AliasImportService.Input(changed, false, true, false, List.of(), List.of()),
-                new AliasImportService.Input(alias(list, 300, "New"), false, true, false, List.of(scanName), List.of(fixture.stream.getName())));
+            var inputs = List.of(new AliasImportService.Input(changed, false, true, false, List.of(), List.of(), "County"),
+                new AliasImportService.Input(alias(list, 300, "New"), false, true, false, List.of(scanName),
+                    List.of(fixture.stream.getName()), "County"));
             var plan = importer.preview(list, AliasImportService.Mode.REPLACE, inputs, null);
             assertEquals(Map.of("added", 1L, "updated", 1L, "unchanged", 0L, "deleted", 1L, "error", 0L), plan.preview().counts());
             assertEquals("Old name", service.getAlias(firstId).alias().getName());
@@ -140,9 +160,9 @@ class AliasImportServiceTest
             old.setBroadcastChannels(List.of(new BroadcastChannel(fixture.stream.getConfigurationId(), fixture.stream.getName())));
             long id = service.createAlias(old, Set.of(scan), service.currentRevision()).aliasIds().getFirst();
             Alias update = alias(fixture.list, 100, "RadioReference"); update.setDescription("Updated description");
-            var inputs = List.of(new AliasImportService.Input(update, true, false, true, null, null),
-                new AliasImportService.Input(alias(fixture.list, 200, "New"), true, false, false, null, null),
-                new AliasImportService.Input(alias(fixture.list, 300, "Encrypted"), true, false, true, null, null));
+            var inputs = List.of(new AliasImportService.Input(update, true, false, true, null, null, null),
+                new AliasImportService.Input(alias(fixture.list, 200, "New"), true, false, false, null, null, null),
+                new AliasImportService.Input(alias(fixture.list, 300, "Encrypted"), true, false, true, null, null, null));
             var importer = new AliasImportService(service);
             importer.apply(importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD, inputs,
                 new AliasImportService.Defaults(true, List.of(scanName), List.of(fixture.stream.getName()))));
@@ -159,6 +179,41 @@ class AliasImportServiceTest
         }
     }
 
+    @Test void radioReferenceFallsBackToListDefaultsWhileVceRowsRemainAuthoritative() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            var service = fixture.service;
+            long scan = service.catalog().scanLists().getFirst().getId();
+            String scanName = service.catalog().scanLists().getFirst().getName();
+            String streamName = fixture.stream.getName();
+            BroadcastChannel stream = new BroadcastChannel(fixture.stream.getConfigurationId(), streamName);
+            service.updateAliasListDefaults(fixture.list,
+                new AliasListDefaults(new UnmatchedTalkgroupPolicy(true, List.of(stream)), Set.of(scan)),
+                service.currentRevision());
+            var importer = new AliasImportService(service);
+            Alias rrAlias = alias(fixture.list, 400, "RadioReference defaults");
+            importer.apply(importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,
+                List.of(new AliasImportService.Input(rrAlias, true, false, false, null, null, null)),
+                new AliasImportService.Defaults(null, null, null)));
+            AliasAdministrationService.AliasEntry inherited = service.transferSnapshot(fixture.list).aliases().getFirst();
+            assertTrue(inherited.alias().isRecordable());
+            assertEquals(Set.of(scan), inherited.scanListIds());
+            assertEquals(Set.of(stream), inherited.alias().getBroadcastChannels());
+
+            Alias vceAlias = alias(fixture.list, 500, "VCE settings");
+            vceAlias.setRecordable(false);
+            importer.apply(importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,
+                List.of(new AliasImportService.Input(vceAlias, false, true, false, List.of(), List.of(),
+                    "Source List")), new AliasImportService.Defaults(true, List.of(scanName), List.of(streamName))));
+            AliasAdministrationService.AliasEntry explicit = service.transferSnapshot(fixture.list).aliases().stream()
+                .filter(entry -> entry.alias().getName().equals("VCE settings")).findFirst().orElseThrow();
+            assertFalse(explicit.alias().isRecordable());
+            assertTrue(explicit.scanListIds().isEmpty());
+            assertTrue(explicit.alias().getBroadcastChannels().isEmpty());
+        }
+    }
+
     @Test void blocksUnknownNamesDuplicatesStalePreviewAndRollsBackFailedSave() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
@@ -166,11 +221,13 @@ class AliasImportServiceTest
             var service = fixture.service;
             long id = service.createAlias(alias(fixture.list, 100, "Keep")).aliasIds().getFirst();
             var importer = new AliasImportService(service);
-            var input = new AliasImportService.Input(alias(fixture.list, 200, "New"), false, true, false, List.of("Missing"), List.of());
+            var input = new AliasImportService.Input(alias(fixture.list, 200, "New"), false, true, false,
+                List.of("Missing"), List.of(), "County");
             var invalid = importer.preview(fixture.list, AliasImportService.Mode.REPLACE, List.of(input), null);
             assertEquals(1L, invalid.preview().counts().get("error"));
             assertThrows(IllegalArgumentException.class, () -> importer.apply(invalid));
-            input = new AliasImportService.Input(alias(fixture.list, 200, "New"), false, true, false, List.of(), List.of());
+            input = new AliasImportService.Input(alias(fixture.list, 200, "New"), false, true, false,
+                List.of(), List.of(), "County");
             var duplicated = importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD, List.of(input, input), null);
             assertEquals(1L, duplicated.preview().counts().get("error"));
             var plan = importer.preview(fixture.list, AliasImportService.Mode.REPLACE, List.of(input), null);
