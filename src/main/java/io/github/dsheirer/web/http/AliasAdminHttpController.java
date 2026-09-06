@@ -323,7 +323,8 @@ public final class AliasAdminHttpController
                 return;
             }
             requireMethod(exchange, "POST");
-            TransferRequest request = readJson(exchange, TransferRequest.class, 16 * 1024 * 1024);
+            TransferRequest request = readJson(exchange, TransferRequest.class,
+                AliasTransferCsv.MAX_BYTES * 6 + 64 * 1024);
             AliasTransferCsv.Format format = AliasTransferCsv.Format.valueOf(required(request.format(), "format"));
             AliasImportService.Mode mode = AliasImportService.Mode.valueOf(required(request.mode(), "mode"));
             if(request.csv() == null || request.csv().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > AliasTransferCsv.MAX_BYTES)
@@ -561,7 +562,7 @@ public final class AliasAdminHttpController
         response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
             .map(descriptor -> matcherOption(descriptor, options.aliasList())).toList());
         putBoundedOptions(response, "iconNames", options.iconNames());
-        putBoundedOptions(response, "streams", options.streams());
+        putBoundedOptions(response, "streams", prioritizedDefaultStreams(options));
         putBoundedOptions(response, "groupNames", options.groupNames());
         response.put("scanLists", options.scanLists().stream().map(AliasAdminHttpController::scanListView).toList());
 
@@ -631,7 +632,7 @@ public final class AliasAdminHttpController
         if(payload.streamAsTalkgroup() != null)
         {
             alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(bounded(payload.streamAsTalkgroup(),
-                "stream_as_talkgroup", 1, 0xFFFF)));
+                "stream_as_talkgroup", StreamAsTalkgroup.MINIMUM_VALUE, StreamAsTalkgroup.MAXIMUM_VALUE)));
         }
         alias.setMatchIdentifier(toMatcher(required(payload.matcher(), "matcher")));
         return alias;
@@ -1413,6 +1414,21 @@ public final class AliasAdminHttpController
         response.put(field, List.copyOf(safeValues.subList(0, returned)));
         response.put(field + "Total", safeValues.size());
         response.put(field + "Truncated", returned < safeValues.size());
+    }
+
+    /** Keeps the selected list's effective streaming defaults named even when the general picker is truncated. */
+    private static List<AliasAdministrationService.BroadcastDestination> prioritizedDefaultStreams(
+        AliasAdministrationService.Options options)
+    {
+        Set<String> defaults = options.aliasList().getUnmatchedTalkgroupPolicy().getStreamDestinations().stream()
+            .map(BroadcastChannel::getConfigurationId).collect(java.util.stream.Collectors.toSet());
+        if(defaults.isEmpty())
+        {
+            return options.streams();
+        }
+        return java.util.stream.Stream.concat(
+            options.streams().stream().filter(stream -> defaults.contains(stream.configurationId())),
+            options.streams().stream().filter(stream -> !defaults.contains(stream.configurationId()))).toList();
     }
 
     private static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException

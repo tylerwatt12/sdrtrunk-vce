@@ -28,8 +28,8 @@ unchanged counts. Reimporting an unchanged file does not create duplicates.
 
 ## VCE configuration CSV, version 2
 
-Export the entire selected list using the Export tab. The importer requires this exact header, including order
-and capitalization:
+Export the selected list using the Export tab. Lists with duplicate exact matchers must be resolved before they can
+produce a transferable export. The importer requires this exact header, including order and capitalization:
 
 ```csv
 format_version,alias_list,name,description,group,color,icon,matcher_type,protocol,value,minimum,maximum,text,tones,record_enabled,scan_lists,streaming_destinations,stream_as_talkgroup
@@ -42,7 +42,7 @@ including membership replacements. Empty optional values clear those values. Unu
 | Columns | Values |
 | --- | --- |
 | `alias_list` | Name of the source alias list. Every row must contain the same non-empty name. It is review metadata; import always targets the list explicitly selected in the Alias Editor and never creates, renames, or switches lists. |
-| `name`, `description`, `group` | Name is required, up to 256 characters; description up to 4,096; group up to 256. |
+| `name`, `description`, `group` | Name is required. Existing database-valid text is preserved, subject to the file limits above. |
 | `color` | Signed decimal integer, as written by the exporter. |
 | `icon` | Exact configured icon name, or empty for none. |
 | `matcher_type` | `TALKGROUP`, `TALKGROUP_RANGE`, `RADIO_ID`, `RADIO_ID_RANGE`, `STATUS`, `UNIT_STATUS`, `DCS`, `ESN`, or `TONES`. |
@@ -54,7 +54,7 @@ including membership replacements. Empty optional values clear those values. Unu
 | `record_enabled` | Exactly `true` or `false`. |
 | `scan_lists` | JSON array of exact configured scan-list names. `[]` or an empty cell means none. |
 | `streaming_destinations` | JSON array of exact configured streaming-destination names. `[]` or an empty cell means none. |
-| `stream_as_talkgroup` | Decimal integer 1–65535, or empty for no override. |
+| `stream_as_talkgroup` | Decimal integer 1–16777215, or empty for no override. |
 
 For example, a scan-list cell can contain `["Dispatch","Fire"]`. A CSV library or spreadsheet handles the outer CSV
 quoting. Names containing commas, semicolons, or quotation marks are preserved by the JSON array. Names must match
@@ -70,6 +70,10 @@ For new aliases, the VCE row is authoritative: its appearance, recording choice,
 destinations, stream-as value, and matcher are used directly. The modal does not ask for redundant assignment
 choices. This makes an export/import round trip preserve all current per-alias configuration. Database IDs and
 derived `streamable`/overlap state are intentionally not exported.
+
+The transferable export requires each alias in the list to have a unique exact matcher. If a list contains duplicate
+matchers, resolve those overlaps before exporting it. The ordinary Alias table CSV remains available for reporting,
+but it is not an import file.
 
 ## RadioReference talkgroup CSV
 

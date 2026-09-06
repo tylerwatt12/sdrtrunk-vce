@@ -59,6 +59,7 @@ vm.runInContext(`
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
   ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
+  ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
@@ -77,6 +78,7 @@ vm.runInContext(`
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
   globalThis.transferListDefaults = aliasTransferListDefaults;
   globalThis.transferListDefaultsSummary = aliasTransferListDefaultsSummary;
+  globalThis.transferAssignmentNames = aliasTransferAssignmentNames;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
   globalThis.matcherSummary = aliasMatcherSummary;
@@ -156,6 +158,21 @@ assert.deepEqual(JSON.parse(JSON.stringify(transferDefaults)), {
 }, 'RadioReference imports should present the selected alias list defaults by configured name.');
 assert.equal(context.transferListDefaultsSummary(transferDefaults),
   'Recording: On · Scan lists: Dispatch · Streaming: Provider');
+assert.equal(context.transferAssignmentNames(false, ['Shown'], ['Exact']), null);
+assert.deepEqual(Array.from(context.transferAssignmentNames(true, [], [])), [],
+  'An enabled empty override must explicitly select no destinations.');
+assert.deepEqual(Array.from(context.transferAssignmentNames(true, ['Shown', 'Duplicate'],
+  ['Exact', 'Duplicate'])), ['Shown', 'Duplicate', 'Exact'],
+  'Displayed and exact-name destinations must be unioned without duplicates.');
+
+const transferModal = functionSource('function openAliasTransferModal(selectedList)');
+assert.match(transferModal, /options\.streams_truncated === true/);
+assert.match(transferModal, /Add an exact configured name not shown/);
+assert.match(transferModal, /Up to 500 destinations are listed/);
+assert.match(transferModal, /Transfer export requires one alias per exact matcher/);
+assert.match(transferModal, /fetch\(endpoint/);
+assert.match(transferModal, /createObjectURL/);
+assert.match(transferModal, /timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS/g);
 
 const firstTone = { tone: 'A' };
 const secondTone = { tone: 'B' };

@@ -2368,7 +2368,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: 7px;
 }
 
-.read-only-modal.tuner-spectrum-options-modal {
+.tuner-spectrum-options-modal {
   width: min(760px, 96vw);
 }
 
@@ -5536,6 +5536,26 @@ th.numeric {
   display: grid;
   gap: 6px;
   margin-top: 8px;
+}
+
+.alias-transfer-exact-name {
+  margin-top: 4px;
+}
+
+.alias-transfer-exact-name > summary {
+  cursor: pointer;
+}
+
+.alias-transfer-exact-controls,
+.alias-transfer-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.alias-transfer-exact-controls input {
+  flex: 1 1 240px;
 }
 
 .alias-transfer .alias-form-field {

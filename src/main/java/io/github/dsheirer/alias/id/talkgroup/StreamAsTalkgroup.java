@@ -28,6 +28,9 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public class StreamAsTalkgroup extends Talkgroup
 {
+    public static final int MINIMUM_VALUE = 1;
+    public static final int MAXIMUM_VALUE = 0xFFFFFF;
+
     public StreamAsTalkgroup(int talkgroup)
     {
         super(Protocol.UNKNOWN, talkgroup);

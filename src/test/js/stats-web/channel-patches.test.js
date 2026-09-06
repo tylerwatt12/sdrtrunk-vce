@@ -35,4 +35,8 @@ const patchRenderer = functionSource('renderTrunkedChannel', 'specialIdentifierL
 assert.match(patchRenderer, /groupIdentityLink\(row, row\.local_patch_group_id\)/);
 assert.match(patchRenderer, /groupIdentityLink\(member, member\.local_talkgroup_id\)/);
 assert.match(patchRenderer, /radioLink\(member, member\.local_radio_id\)/);
+assert.match(patchRenderer, /value !== null && value !== undefined && value !== ''/);
+assert.match(patchRenderer, /omittedMembers\(row, 'talkgroups'\)/);
+assert.match(patchRenderer, /pager\(patchPage, 'bottom', 'Patch groups'\)/);
+assert.match(patchRenderer, /data\.members_truncated/);
 assert.doesNotMatch(patchRenderer, /row\.patch_group|member\.talkgroup_id|member\.radio_id/);

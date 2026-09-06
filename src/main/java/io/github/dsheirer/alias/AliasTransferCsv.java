@@ -47,7 +47,8 @@ public final class AliasTransferCsv
 
     public static List<AliasImportService.Input> read(String csv, Format format, AliasListDefinition list)
     {
-        if(csv == null || csv.length() > MAX_BYTES) throw new IllegalArgumentException("CSV exceeds 8 MiB");
+        if(csv == null || csv.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_BYTES)
+            throw new IllegalArgumentException("CSV exceeds 8 MiB");
         if(csv.startsWith("\uFEFF")) csv = csv.substring(1);
         List<AliasImportService.Input> rows = new ArrayList<>();
         try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
@@ -106,7 +107,8 @@ public final class AliasTransferCsv
                         if(!row.get("stream_as_talkgroup").isEmpty())
                         {
                             int id = Integer.parseInt(row.get("stream_as_talkgroup"));
-                            if(id < 1 || id > 65535) throw new IllegalArgumentException("Invalid stream_as_talkgroup");
+                            if(id < StreamAsTalkgroup.MINIMUM_VALUE || id > StreamAsTalkgroup.MAXIMUM_VALUE)
+                                throw new IllegalArgumentException("Invalid stream_as_talkgroup");
                             alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(id));
                         }
                         rows.add(new AliasImportService.Input(alias, false, true, false,

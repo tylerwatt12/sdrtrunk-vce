@@ -3,6 +3,7 @@ package io.github.dsheirer.alias;
 
 import io.github.dsheirer.alias.AliasAdministrationService.*;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.scanlist.ScanList;
 import java.util.*;
 import java.util.function.Function;
@@ -79,13 +80,12 @@ public final class AliasImportService
                         source.getGroup(), input.groupProvided()) : AliasFactory.copyOf(source);
                 alias.setAliasListId(listId);
                 if(old != null && alias.getId() == 0) alias.setId(old.alias().getId());
-                requireText(alias.getName(), 256, true, "Name");
-                requireText(alias.getDescription(), 4096, false, "Description");
-                requireText(alias.getGroup(), 256, false, "Group");
+                requireText(alias.getName(), "Name");
                 if(alias.getMatchIdentifier() instanceof io.github.dsheirer.alias.id.esn.Esn esn)
-                    requireText(esn.getEsn(), 256, true, "ESN");
-                if(alias.getStreamTalkgroupAlias() != null && (alias.getStreamTalkgroupAlias().getValue() < 1 ||
-                    alias.getStreamTalkgroupAlias().getValue() > 65535))
+                    requireText(esn.getEsn(), "ESN");
+                if(alias.getStreamTalkgroupAlias() != null &&
+                    (alias.getStreamTalkgroupAlias().getValue() < StreamAsTalkgroup.MINIMUM_VALUE ||
+                    alias.getStreamTalkgroupAlias().getValue() > StreamAsTalkgroup.MAXIMUM_VALUE))
                     throw new IllegalArgumentException("Invalid stream-as talkgroup");
                 if(alias.getIconName() != null && !options.iconNames().contains(alias.getIconName()) &&
                     (old == null || !Objects.equals(old.alias().getIconName(), alias.getIconName())))
@@ -167,8 +167,16 @@ public final class AliasImportService
     public String export(long listId)
     {
         TransferSnapshot snapshot = service.transferSnapshot(listId);
-        return AliasTransferCsv.write(snapshot.aliases().stream()
-            .map(entry -> fields(entry.alias(), entry.scanListIds(), snapshot.options())).toList());
+        Set<List<String>> identities = new HashSet<>();
+        List<Map<String,String>> rows = new ArrayList<>();
+        for(AliasEntry entry: snapshot.aliases())
+        {
+            if(!identities.add(AliasTransferCsv.identity(entry.alias())))
+                throw new IllegalArgumentException(
+                    "Transfer export requires one alias per exact matcher; resolve duplicate matchers first");
+            rows.add(fields(entry.alias(), entry.scanListIds(), snapshot.options()));
+        }
+        return AliasTransferCsv.write(rows);
     }
 
     private static Map<String,String> fields(Alias alias, Set<Long> scans, Options options)
@@ -195,9 +203,9 @@ public final class AliasImportService
         }).toList();
     }
 
-    private static void requireText(String value, int limit, boolean required, String field)
+    private static void requireText(String value, String field)
     {
-        if(required && (value == null || value.isBlank()) || value != null && value.length() > limit)
-            throw new IllegalArgumentException(field + " is empty or exceeds " + limit + " characters");
+        if(value == null || value.isBlank())
+            throw new IllegalArgumentException(field + " is empty");
     }
 }

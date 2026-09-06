@@ -7,11 +7,13 @@ package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -514,23 +516,62 @@ class AliasAdminHttpControllerTest
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "alias", invalidTone))))).statusCode());
 
+            BroadcastifyCallConfiguration overflowStream = null;
             for(int index = 0; index <= 500; index++)
             {
                 BroadcastifyCallConfiguration configuration =
                     new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
                 configuration.setName("Stream " + String.format("%03d", index));
                 manager.getBroadcastModel().addBroadcastConfiguration(configuration);
+                if(index == 500) overflowStream = configuration;
             }
+            assertNotNull(overflowStream);
+            JsonNode overflowPolicy = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "recordable", false,
+                    "broadcast_configuration_ids", java.util.List.of(overflowStream.getConfigurationId()),
+                    "scan_list_ids", java.util.List.of(clevelandScanListId)))))));
+            revision = overflowPolicy.get("revision").longValue();
             JsonNode boundedOptions = json(send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + nbfmListId).GET()));
             assertEquals(500, boundedOptions.get("streams").size());
             assertEquals(502, boundedOptions.get("streams_total").intValue());
             assertTrue(boundedOptions.get("streams_truncated").booleanValue());
+            assertTrue(java.util.stream.StreamSupport.stream(boundedOptions.get("streams").spliterator(), false)
+                .anyMatch(stream -> "Stream 500".equals(stream.get("name").textValue())),
+                "a selected-list default beyond the normal option cap must remain named");
             assertTrue(boundedOptions.at("/streams/0").has("configuration_id"));
             assertTrue(boundedOptions.at("/streams/0").has("name"));
             assertEquals(boundedOptions.get("icon_names").size(),
                 boundedOptions.get("icon_names_total").intValue());
             assertFalse(boundedOptions.get("icon_names_truncated").booleanValue());
+
+            Map<String,Object> transferDefaults = new java.util.LinkedHashMap<>();
+            transferDefaults.put("recordable", null);
+            transferDefaults.put("scan_lists", null);
+            transferDefaults.put("streams", java.util.List.of("Stream 500"));
+            Map<String,Object> transfer = new java.util.LinkedHashMap<>();
+            transfer.put("format", "RADIOREFERENCE");
+            transfer.put("mode", "UPDATE_ADD");
+            transfer.put("action", "preview");
+            transfer.put("defaults", transferDefaults);
+            transfer.put("csv", "Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category\r\n" +
+                "54321,d431,Overflow,D,Overflow stream,Interop,Interop\r\n");
+            String transferPath = AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/transfer";
+            JsonNode transferPreview = json(send(client, jsonRequest(origin, transferPath)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(transfer)))));
+            assertEquals(0, transferPreview.at("/counts/error").intValue());
+            transfer.put("action", "apply");
+            transfer.put("revision", transferPreview.get("revision").longValue());
+            transfer.put("digest", transferPreview.get("digest").textValue());
+            assertEquals(200, send(client, jsonRequest(origin, transferPath)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(transfer)))).statusCode());
+            Alias overflowAlias = service.transferSnapshot(aliasListId).aliases().stream()
+                .map(AliasAdministrationService.AliasEntry::alias)
+                .filter(alias -> "Overflow".equals(alias.getName())).findFirst().orElseThrow();
+            assertEquals(overflowStream.getConfigurationId(),
+                overflowAlias.getBroadcastChannels().iterator().next().getConfigurationId());
         }
         finally
         {

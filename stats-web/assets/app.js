@@ -4085,7 +4085,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     };
     const streamAs = aliasTextInput('streamAsTalkgroup', source.stream_as_talkgroup ?? '', 'number');
     streamAs.min = '1';
-    streamAs.max = '65535';
+    streamAs.max = '16777215';
     streamAs.step = '1';
     audio.append(scanLists, audioGrid, streams);
     const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
@@ -4697,6 +4697,11 @@ function aliasTransferListDefaultsSummary(defaults) {
     `Streaming: ${list(defaults?.streams)}`;
 }
 
+function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = []) {
+  if (!enabled) return null;
+  return [...new Set([...selectedNames, ...exactNames].filter((name) => typeof name === 'string' && name))];
+}
+
 function openAliasTransferModal(selectedList) {
   const listId = aliasListId(selectedList);
   const endpoint = `/api/v1/admin/alias-lists/${listId}/transfer`;
@@ -4771,11 +4776,12 @@ function openAliasTransferModal(selectedList) {
   });
   overrides.append(field('Recording', record));
   let busy = false;
-  const assignmentOverride = (title, choices, defaultNames, id) => {
+  const assignmentOverride = (title, choices, defaultNames, id, allowExactNames = false) => {
     const wrapper = node('fieldset', 'alias-stream-options alias-transfer-assignment-override');
     const enabled = node('input'); enabled.type = 'checkbox';
     wrapper.append(node('legend', '', title), aliasCheckOption(`Override ${title.toLowerCase()}`, enabled));
     const choicesHost = node('div', 'alias-transfer-assignment-choices');
+    const exactNames = new Set();
     const nameCounts = new Map();
     (choices || []).forEach((choice) => nameCounts.set(choice.name, (nameCounts.get(choice.name) || 0) + 1));
     (choices || []).forEach((choice) => {
@@ -4788,24 +4794,65 @@ function openAliasTransferModal(selectedList) {
         checkbox));
     });
     if (!choices?.length) choicesHost.append(node('div', 'empty', `No ${title.toLowerCase()} configured`));
+    let exactInput = null;
+    let exactAdd = null;
+    if (allowExactNames) {
+      const exact = node('details', 'alias-transfer-exact-name');
+      exact.append(node('summary', '', 'Add an exact configured name not shown'));
+      exactInput = node('input'); exactInput.type = 'text'; exactInput.placeholder = 'Exact configured name';
+      exactInput.setAttribute('aria-label', `Exact ${title.toLowerCase()} name`);
+      exactAdd = node('button', 'button secondary', 'Add'); exactAdd.type = 'button';
+      const controls = node('div', 'alias-transfer-exact-controls');
+      const selected = node('div', 'alias-transfer-names');
+      const drawExactNames = () => {
+        selected.replaceChildren();
+        exactNames.forEach((name) => {
+          const remove = node('button', 'button secondary', `${name} ×`); remove.type = 'button';
+          remove.setAttribute('aria-label', `Remove ${name}`);
+          remove.addEventListener('click', () => { exactNames.delete(name); drawExactNames(); invalidate(); });
+          selected.append(remove);
+        });
+      };
+      exactAdd.addEventListener('click', () => {
+        if (!exactInput.value) return;
+        exactNames.add(exactInput.value);
+        exactInput.value = '';
+        drawExactNames();
+        invalidate();
+      });
+      exactInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); exactAdd.click(); }
+      });
+      controls.append(exactInput, exactAdd);
+      exact.append(node('p', 'muted',
+        'Up to 500 destinations are listed. Exact names are validated when the preview is built.'),
+      controls, selected);
+      choicesHost.append(exact);
+    }
     wrapper.append(choicesHost);
     const sync = () => {
       choicesHost.hidden = !enabled.checked;
-      choicesHost.querySelectorAll('input').forEach((control) => {
+      choicesHost.querySelectorAll('input[type="checkbox"]').forEach((control) => {
         control.disabled = busy || !enabled.checked || nameCounts.get(control.value) > 1;
       });
+      if (exactInput) exactInput.disabled = busy || !enabled.checked;
+      if (exactAdd) exactAdd.disabled = busy || !enabled.checked;
     };
     enabled.addEventListener('change', sync);
     sync();
     overrides.append(wrapper);
     return {
       sync,
-      value: () => enabled.checked ? [...choicesHost.querySelectorAll('input:checked')].map((item) => item.value) : null
+      value: () => {
+        if (exactInput?.value) throw new Error(`Click Add for the typed ${title.toLowerCase()} name first.`);
+        return aliasTransferAssignmentNames(enabled.checked,
+          [...choicesHost.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value), exactNames);
+      }
     };
   };
   const scans = assignmentOverride('Scan lists', options.scan_lists || [], listDefaults.scanLists, 'ScanList');
   const streams = assignmentOverride('Streaming destinations', options.streams || [], listDefaults.streams,
-    'Stream');
+    'Stream', options.streams_truncated === true);
   radioDefaults.append(overrides);
   behaviorSection.append(radioDefaults);
   const previewButton = node('button', 'button', 'Build preview'); previewButton.type = 'submit';
@@ -4823,12 +4870,14 @@ function openAliasTransferModal(selectedList) {
   const apply = node('button', 'button', 'Apply import'); apply.type = 'button'; apply.disabled = true;
   review.append(destination, summary, rowsHost, pagerHost, confirmLabel, apply);
   panels.get('Import').append(review);
-  const exportLink = anchor('Export list configuration CSV', endpoint, 'button');
-  exportLink.setAttribute('download', '');
-  panels.get('Export').append(node('p', '', 'Exports every alias in this list, including matchers, appearance, ' +
+  const exportButton = node('button', 'button', 'Export list configuration CSV');
+  exportButton.type = 'button';
+  panels.get('Export').append(node('p', '', 'Exports this list, including matchers, appearance, ' +
     'recording, scan lists, named streaming destinations, and the source alias-list name. Import this file using ' +
     'the VCE format. The selected destination list is still explicit when importing. ' +
-    'Referenced scan lists, destinations, and icons must exist on the receiving installation.'), exportLink);
+    'Referenced scan lists, destinations, and icons must exist on the receiving installation.'),
+  node('p', 'logging-notice', 'Transfer export requires one alias per exact matcher. Resolve duplicate exact ' +
+    'matchers first. The Alias table’s Export CSV is reporting-only and cannot be imported.'), exportButton);
   body.append(errorHost);
   let request = null;
   let preview = null;
@@ -4853,15 +4902,46 @@ function openAliasTransferModal(selectedList) {
     busy = value; modal.setBusy(value);
     form.querySelectorAll('input,select,button').forEach((control) => { control.disabled = value; });
     tabButtons.forEach((button) => { button.disabled = value; });
+    exportButton.disabled = value;
     confirm.disabled = value;
     scans.sync(); streams.sync();
     pagerHost.querySelectorAll('button').forEach((button) => { button.disabled = value; });
     updateApply();
   };
+  exportButton.addEventListener('click', async () => {
+    if (busy) return;
+    setBusy(true); errorHost.replaceChildren();
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Accept: 'text/csv' }, cache: 'no-store', credentials: 'same-origin'
+      });
+      if (!response.ok) {
+        const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+        const payload = contentType.includes('json') ? await response.json().catch(() => null) :
+          { message: await response.text().catch(() => '') };
+        const failure = payload?.error && typeof payload.error === 'object' ? payload.error : payload;
+        throw new Error(failure?.message || `Export failed (${response.status}).`);
+      }
+      const downloadUrl = window.URL.createObjectURL(await response.blob());
+      const download = node('a');
+      download.href = downloadUrl;
+      download.download = `vce-alias-list-${listId}.csv`;
+      download.hidden = true;
+      document.body.append(download);
+      download.click();
+      download.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 0);
+    } catch (error) {
+      errorHost.append(node('div', 'error', error.message));
+    } finally {
+      setBusy(false);
+    }
+  });
   const loadPreview = async (offset = 0) => {
     setBusy(true); errorHost.replaceChildren();
     try {
-      const response = await requestJson(endpoint, { method: 'POST', body: { ...request, action: 'preview', offset } });
+      const response = await requestJson(endpoint, { method: 'POST', timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS,
+        body: { ...request, action: 'preview', offset } });
       preview = response; confirm.checked = false;
       review.hidden = false;
       destination.textContent = response.source_list ?
@@ -4910,8 +4990,9 @@ function openAliasTransferModal(selectedList) {
     if(apply.disabled) return;
     setBusy(true); errorHost.replaceChildren();
     try {
-      const result = await requestJson(endpoint, { method: 'POST', body: { ...request, action: 'apply',
-        revision: preview.revision, digest: preview.digest, confirm_replace: confirm.checked } });
+      const result = await requestJson(endpoint, { method: 'POST', timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS,
+        body: { ...request, action: 'apply', revision: preview.revision, digest: preview.digest,
+          confirm_replace: confirm.checked } });
       modal.setBusy(false); modal.setDirty(false);
       const counts = preview.counts;
       await finishAliasMutation(modal, result);
@@ -11380,6 +11461,19 @@ function tunerSpectrumPanel(snapPresetDocument) {
       button.setAttribute('role', 'tab');
       button.setAttribute('aria-controls', `tuner-spectrum-options-panel-${id}`);
       button.addEventListener('click', () => showOptionsSection(id));
+      button.addEventListener('keydown', (event) => {
+        const buttons = [...optionsTabs.children];
+        const current = buttons.indexOf(button);
+        let next = null;
+        if (event.key === 'ArrowLeft') next = (current - 1 + buttons.length) % buttons.length;
+        else if (event.key === 'ArrowRight') next = (current + 1) % buttons.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = buttons.length - 1;
+        if (next === null) return;
+        event.preventDefault();
+        buttons[next].click();
+        buttons[next].focus();
+      });
       optionsTabs.append(button);
     });
   showOptionsSection('display');
@@ -14685,17 +14779,27 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }));
   } else if (tab === 'patches') {
-    const data = await api(channelApiPath(configurationId, 'patch-groups'));
+    const data = await api(channelApiPath(configurationId, 'patch-groups'), {
+      offset: route.get('offset'), limit: 100
+    });
     const talkgroups = patchMembersByLocalGroup(data.talkgroups);
     const radios = patchMembersByLocalGroup(data.radios);
-    const memberValues = (values, formatter) => {
+    const memberValues = (values, formatter, omitted = 0) => {
       const span = node('span');
-      (values || []).forEach((value, index) => {
+      const rendered = (values || []).map(formatter).filter((value) =>
+        value !== null && value !== undefined && value !== '');
+      rendered.forEach((value, index) => {
         if (index) span.append(document.createTextNode(', '));
-        span.append(valueNode(formatter(value)));
+        span.append(valueNode(value));
       });
+      if (omitted > 0) {
+        if (rendered.length) span.append(document.createTextNode(', '));
+        span.append(node('span', 'muted', `+${number(omitted)} more`));
+      }
       return span;
     };
+    const omittedMembers = (row, member) => Math.max(0,
+      Number(row?.[`${member.slice(0, -1)}_count`] || 0) - Number(row?.[`${member}_included`] || 0));
     const groups = data.groups || [];
     const columns = [
       { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup ID',
@@ -14706,25 +14810,34 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
         className: 'alias-cell', sortValue: (row) => row.patch_alias_name || '' },
       { id: 'member-talkgroup-ids', label: 'Local TGIDs', fullLabel: 'Local Member Talkgroup IDs', render: (row) =>
         memberValues(talkgroups.get(row.local_patch_group_id), (member) =>
-          groupIdentityLink(member, member.local_talkgroup_id)) },
+          groupIdentityLink(member, member.local_talkgroup_id), omittedMembers(row, 'talkgroups')) },
       { id: 'member-talkgroup-names', label: 'TG Aliases', fullLabel: 'Local Talkgroup Aliases',
         className: 'alias-cell', render: (row) =>
           memberValues(talkgroups.get(row.local_patch_group_id), (member) => member.alias_name ?
-            groupIdentityLink(member, member.local_talkgroup_id, member.alias_name) : '') },
+            groupIdentityLink(member, member.local_talkgroup_id, member.alias_name) : '',
+          omittedMembers(row, 'talkgroups')) },
       { id: 'member-radio-ids', label: 'Local Radios', fullLabel: 'Local Radio IDs', render: (row) =>
         memberValues(radios.get(row.local_patch_group_id), (member) =>
-          radioLink(member, member.local_radio_id)) },
+          radioLink(member, member.local_radio_id), omittedMembers(row, 'radios')) },
       { id: 'member-radio-names', label: 'Radio Aliases', fullLabel: 'Local Radio Aliases',
         className: 'alias-cell', render: (row) =>
           memberValues(radios.get(row.local_patch_group_id), (member) => member.alias_name ?
-            radioLink(member, member.local_radio_id, member.alias_name) : '') },
+            radioLink(member, member.local_radio_id, member.alias_name) : '', omittedMembers(row, 'radios')) },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
       { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     if (groups.some((row) => Number(row.version))) columns.splice(2, 0,
       { id: 'version', label: 'Version', key: 'version', className: 'numeric' });
-    content.append(tableSection('Patches', groups, columns, 'No patches recorded', { type: 'channel-patches' }));
+    const patchPage = { rows: groups, offset: Number(data.offset || 0), limit: Number(data.limit || 100),
+      has_more: Boolean(data.has_more), next_offset: data.next_offset };
+    const trailing = fragment();
+    if (data.members_truncated) trailing.append(node('p', 'logging-notice warning',
+      `Large patches are bounded to ${number(data.member_limit_per_group)} members per patch and ` +
+      `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
+    trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
+    content.append(tableSection('Patches', groups, columns, 'No patches recorded',
+      { type: 'channel-patches' }, trailing));
   } else if (tab === 'activity') {
     await renderActivity({ configuration_id: configurationId });
   } else {

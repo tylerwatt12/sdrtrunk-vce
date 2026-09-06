@@ -1604,9 +1604,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("openReadOnlyModal('Spectrum options'"));
         assertTrue(tuner.contains("'Display'], ['plots', 'FFT & Waterfall'], ['performance', 'Performance'"));
         assertTrue(tuner.contains("Changes save to your account immediately."));
-        assertTrue(css.contains(".read-only-modal.tuner-spectrum-options-modal"));
+        assertTrue(css.contains(".tuner-spectrum-options-modal"));
         assertTrue(css.contains(".tuner-spectrum-options-panel[hidden]"));
         assertTrue(css.contains(".tuner-spectrum-options-tabs button.active"));
+        assertTrue(tuner.contains("if (event.key === 'ArrowLeft')"));
+        assertTrue(tuner.contains("else if (event.key === 'ArrowRight')"));
+        assertTrue(tuner.contains("else if (event.key === 'Home')"));
+        assertTrue(tuner.contains("else if (event.key === 'End')"));
         assertFalse(css.contains(".tuner-spectrum-options:not([open])"));
         assertTrue(css.contains(".tuner-spectrum-toggle-control"));
         assertTrue(css.contains(".tuner-spectrum-option-toggles"));

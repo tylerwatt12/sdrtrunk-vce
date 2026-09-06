@@ -26,8 +26,11 @@ import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
+import java.io.StringReader;
 import java.nio.file.*;
 import java.util.*;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
@@ -53,7 +56,8 @@ class AliasImportServiceTest
             Alias alias = new Alias("'=formula,\"quoted\"\nUnicode é");
             alias.setDescription("=SUM(A1)\nSecond line"); alias.setGroup("'Group");
             alias.setColor(-123456); alias.setIconName("Icon"); alias.setRecordable(true);
-            alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(321)); alias.setMatchIdentifier(matcher);
+            alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(StreamAsTalkgroup.MAXIMUM_VALUE));
+            alias.setMatchIdentifier(matcher);
             List<String> scans = List.of("Dispatch; Fire", "Quotes \" and , comma");
             List<String> streams = List.of("Provider 1", "Provider 2");
             var fields = AliasTransferCsv.fields(alias, "Source List", scans, streams);
@@ -63,6 +67,44 @@ class AliasImportServiceTest
             assertEquals(fields, AliasTransferCsv.fields(read.alias(), read.sourceAliasList(), read.scanLists(), read.streams()));
             assertEquals(AliasTransferCsv.identity(alias), AliasTransferCsv.identity(read.alias()));
         }
+    }
+
+    @Test void protectsEverySpreadsheetFormulaPrefixAndDecodesVersionOne() throws Exception
+    {
+        for(String value: List.of("=Equals", "+Plus", "-Minus", "@At", "'Apostrophe", "\tTab",
+            "\rCarriage", "\nLine"))
+        {
+            Alias alias = new Alias(value);
+            alias.setDescription(value);
+            alias.setGroup(value);
+            alias.setIconName(value);
+            Esn esn = new Esn();
+            esn.setEsn(value);
+            alias.setMatchIdentifier(esn);
+            Map<String,String> fields = AliasTransferCsv.fields(alias, value, List.of(), List.of());
+            String csv = AliasTransferCsv.write(List.of(fields));
+            try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+                .parse(new StringReader(csv.substring(1))))
+            {
+                var row = parser.getRecords().getFirst();
+                for(String column: List.of("alias_list", "name", "description", "group", "icon", "text"))
+                    assertEquals("'" + value, row.get(column));
+            }
+            AliasImportService.Input imported = AliasTransferCsv.read(csv, AliasTransferCsv.Format.VCE,
+                new AliasListDefinition("Destination", AliasListFamily.P25)).getFirst();
+            assertEquals(fields, AliasTransferCsv.fields(imported.alias(), imported.sourceAliasList(),
+                imported.scanLists(), imported.streams()));
+        }
+
+        String legacy = String.join(",", AliasTransferCsv.VERSION_1_HEADERS) + "\r\n" +
+            "1,'=Legacy,'+Description,'-Group,0,'@Icon,ESN,,,,,'=ESN,,false,[],[],\r\n";
+        AliasImportService.Input imported = AliasTransferCsv.read(legacy, AliasTransferCsv.Format.VCE,
+            new AliasListDefinition("Destination", AliasListFamily.P25)).getFirst();
+        assertEquals("=Legacy", imported.alias().getName());
+        assertEquals("+Description", imported.alias().getDescription());
+        assertEquals("-Group", imported.alias().getGroup());
+        assertEquals("@Icon", imported.alias().getIconName());
+        assertEquals("=ESN", ((Esn)imported.alias().getMatchIdentifier()).getEsn());
     }
 
     @Test void strictHeadersAndMalformedInputsAreRejected()
@@ -83,6 +125,38 @@ class AliasImportServiceTest
         fields.put("text", "unexpected payload");
         assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
             AliasTransferCsv.write(List.of(fields)), AliasTransferCsv.Format.VCE, list));
+        fields.put("text", "");
+        fields.put("stream_as_talkgroup", Integer.toString(StreamAsTalkgroup.MAXIMUM_VALUE + 1));
+        assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
+            AliasTransferCsv.write(List.of(fields)), AliasTransferCsv.Format.VCE, list));
+        assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
+            "é".repeat(AliasTransferCsv.MAX_BYTES / 2 + 1), AliasTransferCsv.Format.VCE, list));
+    }
+
+    @Test void transfersDatabaseValidLongTextAndRejectsAmbiguousTransferExports() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            long destination = fixture.service.createAliasList("Destination", AliasListFamily.P25).aliasListId();
+            Alias longText = alias(fixture.list, 700, "N".repeat(300));
+            longText.setDescription("D".repeat(5_000));
+            longText.setGroup("G".repeat(300));
+            fixture.service.createAlias(longText);
+            String csv = new AliasImportService(fixture.service).export(fixture.list);
+            List<AliasImportService.Input> inputs = AliasTransferCsv.read(csv, AliasTransferCsv.Format.VCE,
+                fixture.service.options(destination).aliasList());
+            var importer = new AliasImportService(fixture.service);
+            importer.apply(importer.preview(destination, AliasImportService.Mode.UPDATE_ADD, inputs, null));
+            Alias transferred = fixture.service.transferSnapshot(destination).aliases().getFirst().alias();
+            assertEquals(longText.getName(), transferred.getName());
+            assertEquals(longText.getDescription(), transferred.getDescription());
+            assertEquals(longText.getGroup(), transferred.getGroup());
+
+            fixture.service.createAlias(alias(fixture.list, 700, "Duplicate"));
+            IllegalArgumentException duplicate = assertThrows(IllegalArgumentException.class,
+                () -> importer.export(fixture.list));
+            assertTrue(duplicate.getMessage().contains("resolve duplicate matchers"));
+        }
     }
 
     @Test void acceptsVersionOneExportsAndRequiresOneSourceListInVersionTwo()
