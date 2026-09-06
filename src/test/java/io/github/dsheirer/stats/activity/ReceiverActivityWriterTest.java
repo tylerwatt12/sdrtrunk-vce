@@ -80,6 +80,30 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void nonPositiveOptionalFrequenciesDoNotStopTheWriter() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("unknown-frequency.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 2,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.REGISTER, 1_700_000_000_200L, 0L));
+        writer.enqueue(activity(ReceiverActivityRecords.Action.REGISTER, 1_700_000_000_201L, -1L));
+
+        awaitWritten(writer, 2);
+        assertEquals(2, writer.getWrittenRecords());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            assertEquals(2, scalar(connection,
+                "SELECT COUNT(*) FROM receiver_activity_event WHERE frequency_hz IS NULL"));
+        }
+    }
+
+    @Test
     void configuredBatchCapFlushesBeforeTheLongCollectionDeadline() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("batch-cap.sqlite"));
@@ -383,13 +407,26 @@ class ReceiverActivityWriterTest
         return activity(CONFIGURATION_ID, action, timestamp);
     }
 
+    private static ReceiverActivityRecords.ActivityEvent activity(ReceiverActivityRecords.Action action,
+                                                                   long timestamp, Long frequencyHertz)
+    {
+        return activity(CONFIGURATION_ID, action, timestamp, frequencyHertz);
+    }
+
     private static ReceiverActivityRecords.ActivityEvent activity(String configurationId,
                                                                    ReceiverActivityRecords.Action action,
                                                                    long timestamp)
     {
+        return activity(configurationId, action, timestamp, 854_187_500L);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent activity(String configurationId,
+                                                                   ReceiverActivityRecords.Action action,
+                                                                   long timestamp, Long frequencyHertz)
+    {
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", action, "CALL_GROUP", "1811524",
-            "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1, false, null, null,
+            "56138", "TALKGROUP", List.of(), frequencyHertz, "00-0509", 1, false, null, null,
             0xBEE00, 0x3A9, 0x293, 2, 1, null, action == ReceiverActivityRecords.Action.CALL, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);

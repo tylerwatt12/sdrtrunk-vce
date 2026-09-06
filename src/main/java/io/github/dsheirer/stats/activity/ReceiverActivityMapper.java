@@ -1006,7 +1006,8 @@ class ReceiverActivityMapper
             return descriptor.getDownlinkFrequency();
         }
 
-        return facts.frequencyHertz();
+        Long identifierFrequency = facts.frequencyHertz();
+        return identifierFrequency != null && identifierFrequency > 0 ? identifierFrequency : null;
     }
 
     private static Integer talkgroup(Identifier identifier)

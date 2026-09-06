@@ -371,6 +371,9 @@ final class ReceiverActivityRecords
             {
                 throw new IllegalArgumentException("Receiver activity requires a saved channel configuration ID");
             }
+            //Some transient decoder observations carry zero as an unknown-frequency placeholder.  Preserve the
+            //observation without allowing that placeholder to violate the nullable-positive database contract.
+            frequencyHertz = frequencyHertz != null && frequencyHertz > 0 ? frequencyHertz : null;
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds,
                 positiveInteger(targetId));
             identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD;

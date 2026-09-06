@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
@@ -119,6 +120,15 @@ class ReceiverActivityMapperTest
     }
 
     @Test
+    void normalizesUnknownFrequencyIdentifiersBeforeCreatingActivityRecords()
+    {
+        assertNull(mapP25RegistrationFrequency(null).frequencyHertz());
+        assertNull(mapP25RegistrationFrequency(0L).frequencyHertz());
+        assertNull(mapP25RegistrationFrequency(-1L).frequencyHertz());
+        assertEquals(851_012_500L, mapP25RegistrationFrequency(851_012_500L).frequencyHertz());
+    }
+
+    @Test
     void rejectsExplicitP25SystemAndNacDisagreementEvenWhenTheSiteIsIncomplete()
     {
         Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
@@ -180,5 +190,18 @@ class ReceiverActivityMapperTest
         assertEquals(CONFIGURATION_ID, event.receiverContext().configurationId());
         assertEquals(851_012_500L, event.sourceFrequency());
         assertNull(new ReceiverActivityMapper().map(event));
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent mapP25RegistrationFrequency(Long frequency)
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        APCO25IncompleteRadioIdentifier radio = APCO25IncompleteRadioIdentifier.createTo(831_102);
+        P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
+            P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
+        event.setIdentifierCollection(new MutableIdentifierCollection(frequency != null ?
+            List.of(radio, FrequencyConfigurationIdentifier.create(frequency)) : List.of(radio)));
+        return new ReceiverActivityMapper().map(channel, event);
     }
 }
