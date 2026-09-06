@@ -48,7 +48,7 @@ class SpectrumSnapPresetHttpControllerTest
             assertEquals("US", initial.path("country_code").textValue());
             assertEquals("United States", initial.path("country_label").textValue());
             assertEquals(1, initial.path("countries").size());
-            assertEquals(40, initial.path("scopes").size());
+            assertEquals(47, initial.path("scopes").size());
             assertTrue(initial.path("scopes").findValuesAsText("id").contains("ism-900"));
 
             HttpResponse<String> publicPut = client.send(request(origin, SpectrumSnapPresetHttpController.PATH)
