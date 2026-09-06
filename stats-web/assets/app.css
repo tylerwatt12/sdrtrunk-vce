@@ -4124,6 +4124,125 @@ button.receiver-health-section-toggle:focus-visible {
   border-width: 1px 0 0;
 }
 
+.receiver-health-resource-bars {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface-2);
+}
+
+.receiver-health-resource-bar {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid #26845b;
+  border-radius: 3px;
+}
+
+.receiver-health-resource-bar.receiver-health-warning {
+  border-left-color: #c18113;
+}
+
+.receiver-health-resource-bar.receiver-health-critical {
+  border-left-color: #b4233b;
+}
+
+.receiver-health-resource-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+.receiver-health-resource-heading > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-resource-value {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  grid-column: 1 / -1;
+  font-variant-numeric: tabular-nums;
+}
+
+.receiver-health-resource-value strong {
+  font-size: 22px;
+}
+
+.receiver-health-resource-value span,
+.receiver-health-resource-detail {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.receiver-health-resource-progress {
+  width: 100%;
+  height: 13px;
+  grid-column: 1 / -1;
+  overflow: hidden;
+  appearance: none;
+  color: #26845b;
+  background: var(--line);
+  border: 0;
+  border-radius: 999px;
+}
+
+.receiver-health-resource-progress::-webkit-progress-bar {
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.receiver-health-resource-progress::-webkit-progress-value {
+  background: #26845b;
+  border-radius: 999px;
+}
+
+.receiver-health-resource-progress::-moz-progress-bar {
+  background: #26845b;
+  border-radius: 999px;
+}
+
+.receiver-health-resource-progress.receiver-health-warning {
+  color: #c18113;
+}
+
+.receiver-health-resource-progress.receiver-health-warning::-webkit-progress-value {
+  background: #c18113;
+}
+
+.receiver-health-resource-progress.receiver-health-warning::-moz-progress-bar {
+  background: #c18113;
+}
+
+.receiver-health-resource-progress.receiver-health-critical {
+  color: #b4233b;
+}
+
+.receiver-health-resource-progress.receiver-health-critical::-webkit-progress-value {
+  background: #b4233b;
+}
+
+.receiver-health-resource-progress.receiver-health-critical::-moz-progress-bar {
+  background: #b4233b;
+}
+
+.receiver-health-resource-detail {
+  min-width: 0;
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+
 .receiver-health-loading-message,
 .receiver-health-empty {
   padding: 16px 14px;

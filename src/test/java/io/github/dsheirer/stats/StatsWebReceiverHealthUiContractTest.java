@@ -77,6 +77,9 @@ class StatsWebReceiverHealthUiContractTest
         String resolvedList = block(source, "function receiverHealthIncidentList(incidents, resolved = false)");
         String resolvedSort = block(source, "function receiverHealthSortedResolvedIncidents(incidents, sort)");
         String resolvedSection = block(source, "function receiverHealthResolvedSection(incidents)");
+        String resourceScale = block(source, "function receiverHealthResourceScale(row)");
+        String resourceBar = block(source, "function receiverHealthResourceBar(row)");
+        String resourceOverview = block(source, "function receiverHealthHostResourceOverview(snapshot)");
         String measurement = block(source, "function receiverHealthMeasurementRow(row)");
 
         assertTrue(page.contains("'Active alerts and diagnostics'"));
@@ -86,6 +89,8 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(page.contains("receiverHealthResolvedSection(snapshot.resolved)"));
         assertTrue(page.contains("'Measurements'"));
         assertTrue(page.contains("Showing the last receiver health snapshot."));
+        assertTrue(page.indexOf("receiverHealthHostResourceOverview(snapshot)") <
+            page.lastIndexOf("receiverHealthSection('current', 'Current status'"));
         assertTrue(incident.contains("incident.occurrence_id"));
         assertTrue(incident.contains("incident.code"));
         assertTrue(incident.contains("incident.severity"));
@@ -114,6 +119,16 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(resolvedSection.contains("'Alert type (A–Z)'"));
         assertTrue(resolvedSection.contains("'Sort resolved alerts'"));
         assertFalse(page.toLowerCase().contains("dismiss"));
+        assertTrue(resourceScale.contains("RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS"));
+        assertTrue(resourceScale.contains("unit === '%' ? 100"));
+        assertTrue(resourceBar.contains("node('progress'"));
+        assertTrue(resourceBar.contains("progress.max = scale.maximum"));
+        assertTrue(resourceBar.contains("progress.value = scale.value"));
+        assertTrue(resourceBar.contains("progress.setAttribute('aria-label', label)"));
+        assertTrue(resourceBar.contains("progress.setAttribute('aria-valuetext'"));
+        assertTrue(resourceOverview.contains("measurement.id"));
+        assertTrue(resourceOverview.contains("group.rows.map(receiverHealthResourceBar)"));
+        assertTrue(resourceOverview.contains("receiverHealthSection('host-overview', 'Host resource overview'"));
         assertTrue(measurement.contains("row.scope"));
         assertTrue(measurement.contains("row.label"));
         assertTrue(measurement.contains("row.value"));
@@ -139,7 +154,8 @@ class StatsWebReceiverHealthUiContractTest
         String restoreFocus = block(source, "function receiverHealthRestoreFocus(host, key)");
 
         assertTrue(source.contains("const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;"));
-        assertTrue(controller.contains("this.openHealthSections = new Set(['current', 'active', 'resolved'])"));
+        assertTrue(controller.contains("this.openHealthSections = new Set(['host-overview', 'current', " +
+            "'active', 'resolved'])"));
         assertFalse(controller.contains("this.openHealthSections = new Set(['resolved'])"));
         assertTrue(controller.contains("if (this.pageHost !== host)"));
         assertTrue(controller.contains("this.resolvedPage = 0"));
@@ -200,6 +216,9 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(css.contains("button.receiver-health-section-toggle[aria-expanded=\"true\"]::before"));
         assertTrue(css.contains("button.receiver-health-section-toggle:focus-visible"));
         assertTrue(css.contains(".receiver-health-resolved-pager"));
+        assertTrue(css.contains(".receiver-health-resource-bars"));
+        assertTrue(css.contains(".receiver-health-resource-progress::-webkit-progress-value"));
+        assertTrue(css.contains(".receiver-health-resource-progress::-moz-progress-bar"));
     }
 
     private static String readText(Path path) throws Exception

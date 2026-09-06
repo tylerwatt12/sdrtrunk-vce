@@ -27,6 +27,7 @@ const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
 const RECEIVER_HEALTH_STALE_MILLISECONDS = 15_000;
 const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;
+const RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS = 1_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
@@ -7124,7 +7125,7 @@ class ReceiverHealthController {
     this.pageHost = null;
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
-    this.openHealthSections = new Set(['current', 'active', 'resolved']);
+    this.openHealthSections = new Set(['host-overview', 'current', 'active', 'resolved']);
     this.expandedResolvedIncidents = new Set();
   }
 
@@ -7149,7 +7150,7 @@ class ReceiverHealthController {
       this.stale = false;
       this.lastError = '';
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['current', 'active', 'resolved']);
+      this.openHealthSections = new Set(['host-overview', 'current', 'active', 'resolved']);
       this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
       this.abortRequest();
@@ -7186,7 +7187,7 @@ class ReceiverHealthController {
   bindPage(host) {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['current', 'active', 'resolved']);
+      this.openHealthSections = new Set(['host-overview', 'current', 'active', 'resolved']);
     }
     this.pageHost = host;
     this.updatePage();
@@ -16927,6 +16928,53 @@ function receiverHealthSection(key, title, child, action = null) {
   return wrapper;
 }
 
+function receiverHealthResourceScale(row) {
+  const numeric = Number(row?.value);
+  const available = Number.isFinite(numeric) && numeric >= 0;
+  const label = receiverHealthText(row?.label).toLowerCase();
+  const unit = receiverHealthText(row?.unit, '').toLowerCase();
+  const maximum = unit === '%' ? 100 :
+    label === 'garbage collection' && unit === 'ms in last sample' ?
+      RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS : available ? Math.max(1, numeric) : 100;
+  return {
+    available,
+    maximum,
+    value: available ? Math.min(maximum, numeric) : 0
+  };
+}
+
+function receiverHealthResourceBar(row) {
+  const severity = receiverHealthSeverity(row.severity);
+  const label = receiverHealthText(row.label, 'Host resource');
+  const value = receiverHealthText(row.value);
+  const unit = receiverHealthText(row.unit, '');
+  const formattedValue = unit ? `${value} ${unit}` : value;
+  const scale = receiverHealthResourceScale(row);
+  const item = node('article', `receiver-health-resource-bar receiver-health-${severity}`);
+  const heading = node('div', 'receiver-health-resource-heading');
+  heading.append(node('strong', '', label), receiverHealthSeverityBadge(row.severity));
+  const reading = node('div', 'receiver-health-resource-value');
+  reading.append(node('strong', '', value));
+  if (unit) reading.append(node('span', '', unit));
+  const progress = node('progress', `receiver-health-resource-progress receiver-health-${severity}`);
+  progress.max = scale.maximum;
+  progress.value = scale.value;
+  progress.setAttribute('aria-label', label);
+  progress.setAttribute('aria-valuetext', scale.available ? formattedValue : 'Unavailable');
+  item.append(heading, reading, progress,
+    node('div', 'receiver-health-resource-detail', receiverHealthText(row.detail)));
+  return item;
+}
+
+function receiverHealthHostResourceOverview(snapshot) {
+  const group = snapshot.measurements.find((measurement) =>
+    receiverHealthText(measurement.id).toLowerCase() === 'host');
+  const body = node('div', 'receiver-health-resource-bars');
+  if (group?.rows?.length) body.append(...group.rows.map(receiverHealthResourceBar));
+  else body.append(node('div', 'receiver-health-empty', 'No host resource measurements were reported.'));
+  return receiverHealthSection('host-overview', 'Host resource overview', body);
+}
+
 function receiverHealthMeasurementRow(row) {
   const severity = receiverHealthSeverity(row.severity);
   const item = node('div', `receiver-health-measurement-row receiver-health-${severity}`);
@@ -17035,7 +17083,8 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
     `Showing the last receiver health snapshot. ${lastError || 'The latest refresh failed.'}`));
 
-  host.append(receiverHealthSection('current', 'Current status', overview, receiverHealthRefreshButton()),
+  host.append(receiverHealthHostResourceOverview(snapshot),
+    receiverHealthSection('current', 'Current status', overview, receiverHealthRefreshButton()),
     receiverHealthAccountSettingNotice(snapshot),
     receiverHealthSection('active', 'Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
     receiverHealthResolvedSection(snapshot.resolved));

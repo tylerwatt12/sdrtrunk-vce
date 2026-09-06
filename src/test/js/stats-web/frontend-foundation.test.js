@@ -629,6 +629,24 @@ async function main() {
   assert.deepEqual(JSON.parse(JSON.stringify(correctedWarningHealth.summary)), {
     severity: 'warning', active_count: 1, warning_count: 1, critical_count: 0
   }, 'An active warning incident must never normalize to Healthy');
+  const receiverHealthText = vm.runInNewContext(
+    `(function(value, fallback = '—') ${functionBinding(appSource, 'receiverHealthText')})`);
+  const receiverHealthResourceScale = vm.runInNewContext(
+    `(function(row) ${functionBinding(appSource, 'receiverHealthResourceScale')})`, {
+      receiverHealthText, RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS: 1_000
+    });
+  assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
+    label: 'Process CPU', value: 42.5, unit: '%'
+  }))), { available: true, maximum: 100, value: 42.5 });
+  assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
+    label: 'Garbage collection', value: 250, unit: 'ms in last sample'
+  }))), { available: true, maximum: 1000, value: 250 });
+  assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
+    label: 'Garbage collection', value: 1400, unit: 'ms in last sample'
+  }))), { available: true, maximum: 1000, value: 1000 });
+  assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
+    label: 'Process CPU', value: 'n/a', unit: '%'
+  }))), { available: false, maximum: 100, value: 0 });
 
   const radioTableType = vm.runInNewContext(
     `(function(baseType, columns) ${functionBinding(appSource, 'radioTableType')})`, { tableLayouts });
