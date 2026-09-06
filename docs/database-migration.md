@@ -295,9 +295,10 @@ single execution pipeline is:
 2. Present the source, target, external-file scope, and declared resets or drops before mutation.
 3. Create a recoverable backup or snapshot and a separate staged database.
 4. Run the chain only against the staged copy in the migration child process.
-5. Validate the final global version, exact schema fingerprint, required row invariants, SQLite integrity, and foreign
+5. Compact the migrated staged copy so reset or pruned data does not remain as unused file space.
+6. Validate the final global version, exact schema fingerprint, required row invariants, SQLite integrity, and foreign
    keys.
-6. Promote the staged result atomically only after every validation succeeds.
+7. Promote the staged result atomically only after every validation succeeds.
 
 For an import, the selected source database and previous installation remain unchanged. For an in-place upgrade, the
 live database is replaced only after the staged result passes every check, and the pre-migration safety backup is

@@ -193,6 +193,11 @@ public final class ApplicationDatabaseMigrator
 
             output.println("Pre-migration checks passed. Updating the staged database.");
             MigrationSummary migration = migrateInTransaction(connection, source, relocation);
+            output.println("Compacting the migrated staged database.");
+            try(Statement statement = connection.createStatement())
+            {
+                statement.execute("VACUUM");
+            }
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");

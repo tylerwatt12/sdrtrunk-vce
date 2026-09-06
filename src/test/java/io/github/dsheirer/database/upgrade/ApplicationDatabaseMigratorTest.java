@@ -150,6 +150,41 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    void compactsFreedPagesAfterMigratingAStagedDatabase() throws Exception
+    {
+        Path database = Format1TestDatabase.create(newStagedDatabase());
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA journal_mode=DELETE");
+            statement.executeUpdate("""
+                WITH RECURSIVE sequence(value) AS (
+                    VALUES(1)
+                    UNION ALL SELECT value + 1 FROM sequence WHERE value < 5000
+                )
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                SELECT 'temporary-bloat-' || value,
+                       json_object('padding', printf('%01000d', 0)), value
+                FROM sequence
+                """);
+            statement.executeUpdate("DELETE FROM application_settings WHERE key LIKE 'temporary-bloat-%'");
+        }
+
+        long bloatedBytes = Files.size(database);
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("Compacting the migrated staged database."));
+        assertTrue(bloatedBytes - Files.size(database) > 4L * 1024L * 1024L,
+            "Expected migration compaction to reclaim the synthetic free pages");
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+            assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+        }
+    }
+
+    @Test
     void migratesPublishedAlphaPreferencesWithoutAnAdministratorAndAssignsThemDuringSetup() throws Exception
     {
         Path database = Format2TestDatabase.create(newStagedDatabase());
