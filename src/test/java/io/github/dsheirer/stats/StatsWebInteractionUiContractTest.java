@@ -285,7 +285,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"116\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"117\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -1168,7 +1168,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("liveChannelsSection(eventsPanel.select)"));
         assertTrue(systems.contains("node('div', 'section-title-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
-        assertTrue(systems.contains("iconGlyph('icon-live-presentation')"));
+        assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
         assertTrue(systems.contains("openLivePresentationSettings('#live-presentation-settings')"));
         assertTrue(systems.contains("section('Live Channels', host, titleActions)"));
         assertTrue(events.contains("layoutMenuHost: eventToolbar"));
@@ -1381,8 +1381,14 @@ class StatsWebInteractionUiContractTest
         assertFalse(parameters.contains("experiment_"));
         assertFalse(tuner.contains("resetExperimentMeasurement"));
         assertTrue(css.contains(".tuner-spectrum-profile,\n.tuner-spectrum-display-section {"));
-        assertTrue(tuner.contains("'Zoom in'"));
-        assertTrue(tuner.contains("'Zoom out'"));
+        assertTrue(tuner.contains("iconButton('icon-zoom-in', 'Zoom in')"));
+        assertTrue(tuner.contains("iconButton('icon-zoom-out', 'Zoom out')"));
+        assertTrue(tuner.contains("iconButton('icon-replay', 'Reset zoom')"));
+        assertTrue(tuner.contains("iconButton('icon-pause', 'Pause')"));
+        assertTrue(tuner.contains("iconButton('icon-live-presentation', 'Spectrum options'"));
+        assertTrue(tuner.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause',"));
+        assertTrue(html.contains("id=\"icon-zoom-in\""));
+        assertTrue(html.contains("id=\"icon-zoom-out\""));
         assertTrue(refinement.contains("stream.update(diagnosticParameters())"));
         assertTrue(refinement.contains("awaitingViewportState = true"));
         assertTrue(refinement.contains("window.setTimeout"));

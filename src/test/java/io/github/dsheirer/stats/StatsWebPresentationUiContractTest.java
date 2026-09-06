@@ -56,9 +56,10 @@ class StatsWebPresentationUiContractTest
         String liveMessages = function(source, "function liveMessagesPane()");
         String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
 
-        assertTrue(source.contains("trigger.append(iconGlyph('icon-columns'))"));
-        assertTrue(source.contains("trigger.setAttribute('aria-label', 'Choose table columns')"));
-        assertTrue(source.contains("trigger.title = 'Choose table columns'"));
+        assertTrue(source.contains("const trigger = iconButton('icon-columns', 'Choose table columns'"));
+        assertTrue(source.contains("function setIconButton(button, iconId, label)"));
+        assertTrue(source.contains("button.setAttribute('aria-label', label)"));
+        assertTrue(source.contains("button.title = label"));
         assertFalse(source.contains("inline ? '' : 'Columns'"));
         assertTrue(activity.contains("layoutMenuHost: titleActions"));
         assertTrue(activity.contains("section(title, activityTable, titleActions)"));

@@ -446,6 +446,19 @@ function iconGlyph(id) {
   return icon;
 }
 
+function setIconButton(button, iconId, label) {
+  button.replaceChildren(iconGlyph(iconId));
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  return button;
+}
+
+function iconButton(iconId, label, className = 'button secondary icon-button') {
+  const button = node('button', className);
+  button.type = 'button';
+  return setIconButton(button, iconId, label);
+}
+
 function installTimeChartHover(wrapper, svg, options) {
   const { width, height, margin, from, to, points, timestamp, markers, tooltipText } = options;
   if (!points.length) return;
@@ -2395,16 +2408,12 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     if (inline) chooser.classList.add('table-layout-menu-inline');
     chooser.dataset.tableType = tableType;
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
-    const trigger = node('button',
+    const trigger = iconButton('icon-columns', 'Choose table columns',
       'button secondary icon-button section-title-icon table-layout-trigger');
-    trigger.type = 'button';
-    trigger.append(iconGlyph('icon-columns'));
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
     trigger.setAttribute('aria-expanded', 'false');
-    trigger.setAttribute('aria-label', 'Choose table columns');
-    trigger.title = 'Choose table columns';
     const panel = node('div', 'table-layout-panel');
     panel.id = panelId;
     panel.setAttribute('popover', 'auto');
@@ -8722,13 +8731,9 @@ function renderScanner() {
   page.append(chassis, scanPanel);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
-  const scannerSettings = node('button',
+  const scannerSettings = iconButton('icon-live-presentation', 'Scanner settings',
     'button secondary icon-button section-title-icon scanner-settings');
-  scannerSettings.type = 'button';
   scannerSettings.id = 'scanner-settings';
-  scannerSettings.title = 'Scanner settings';
-  scannerSettings.setAttribute('aria-label', 'Scanner settings');
-  scannerSettings.append(iconGlyph('icon-live-presentation'));
   scannerSettings.addEventListener('click', () => openScannerSettings('#scanner-settings'));
   headingActions.append(modeBar, scannerSettings);
   heading.append(headingActions);
@@ -11304,25 +11309,21 @@ function tunerSpectrumPanel(snapPresetDocument) {
   targetLabel.append(targetSelect);
   const status = badge('Loading', 'state-stale');
   const toolbarActions = node('div', 'tuner-spectrum-toolbar-actions');
-  const zoomIn = node('button', 'button secondary', 'Zoom in');
-  zoomIn.type = 'button';
+  const zoomIn = iconButton('icon-zoom-in', 'Zoom in');
   zoomIn.disabled = true;
-  const zoomOut = node('button', 'button secondary', 'Zoom out');
-  zoomOut.type = 'button';
+  const zoomOut = iconButton('icon-zoom-out', 'Zoom out');
   zoomOut.disabled = true;
-  const resetZoom = node('button', 'button secondary', 'Reset zoom');
-  resetZoom.type = 'button';
+  const resetZoom = iconButton('icon-replay', 'Reset zoom');
   resetZoom.disabled = true;
-  const pause = node('button', 'button secondary', 'Pause');
-  pause.type = 'button';
+  const pause = iconButton('icon-pause', 'Pause');
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
   toolbarActions.append(zoomIn, zoomOut, resetZoom, pause);
   toolbar.append(targetLabel, status, toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
-  const optionsButton = node('button', 'button secondary tuner-spectrum-options-button', 'Options');
-  optionsButton.type = 'button';
+  const optionsButton = iconButton('icon-live-presentation', 'Spectrum options',
+    'button secondary icon-button tuner-spectrum-options-button');
   optionsButton.setAttribute('aria-haspopup', 'dialog');
   const optionsPanel = node('div', 'tuner-spectrum-options-panel');
   let initialFloor = tunerStoredNumber(TUNER_SPECTRUM_FLOOR_PREFERENCE,
@@ -12943,7 +12944,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   resetZoom.addEventListener('click', resetViewport);
   pause.addEventListener('click', () => {
     paused = !paused;
-    pause.textContent = paused ? 'Resume' : 'Pause';
+    setIconButton(pause, paused ? 'icon-play' : 'icon-pause', paused ? 'Resume' : 'Pause');
     pause.setAttribute('aria-pressed', String(paused));
     sync();
     setReadouts(true);
@@ -13714,13 +13715,9 @@ function liveChannelsSection(onSelectionChange) {
   const titleActions = node('div', 'section-title-actions live-channels-title-actions');
   titleActions.append(connection);
   if (userPreferenceController.snapshot().loaded) {
-    const presentationSettings = node('button',
+    const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
       'button secondary icon-button section-title-icon live-presentation-settings');
     presentationSettings.id = 'live-presentation-settings';
-    presentationSettings.type = 'button';
-    presentationSettings.setAttribute('aria-label', 'Live presentation settings');
-    presentationSettings.title = 'Live presentation settings';
-    presentationSettings.append(iconGlyph('icon-live-presentation'));
     presentationSettings.addEventListener('click', () =>
       openLivePresentationSettings('#live-presentation-settings'));
     titleActions.append(presentationSettings);

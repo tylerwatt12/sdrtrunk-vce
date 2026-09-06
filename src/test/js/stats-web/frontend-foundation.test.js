@@ -239,7 +239,8 @@ async function main() {
   assert.match(appSource, /openScannerSettings\('#scanner-settings'\)/);
   const liveChannelsSource = functionBinding(appSource, 'liveChannelsSection');
   assert.match(liveChannelsSource, /layoutMenuHost: titleActions/);
-  assert.match(liveChannelsSource, /iconGlyph\('icon-live-presentation'\)/);
+  assert.match(liveChannelsSource,
+    /iconButton\('icon-live-presentation', 'Live presentation settings'/);
   assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
@@ -258,7 +259,7 @@ async function main() {
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
-  assert.match(appSource, /trigger\.append\(iconGlyph\('icon-columns'\)\)/);
+  assert.match(appSource, /const trigger = iconButton\('icon-columns', 'Choose table columns'/);
   assert.match(appSource, /const displayLabel = byId\.get\(id\)\.fullLabel \|\| byId\.get\(id\)\.label \|\| id/);
   assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} column`\)/);
   assert.doesNotMatch(appSource, /inline \? '' : 'Columns'/);
