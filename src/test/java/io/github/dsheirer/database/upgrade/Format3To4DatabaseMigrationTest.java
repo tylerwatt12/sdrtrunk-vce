@@ -32,7 +32,7 @@ class Format3To4DatabaseMigrationTest
     Path mTemporaryFolder;
 
     @Test
-    void populatedPreflightDeclaresEveryPreservedTransformedAndResetCategory() throws Exception
+    void populatedPreflightDeclaresConfigurationPreservationAndCompleteActivityReset() throws Exception
     {
         Path database = Format3TestDatabase.create(mTemporaryFolder.resolve("preflight.sqlite"));
 
@@ -46,18 +46,9 @@ class Format3To4DatabaseMigrationTest
             assertEquals("format-3-to-4", step.id());
             assertEffect(step.effects(), DatabaseMigrationEffect.Kind.PRESERVE,
                 "administrator configuration", true);
-            assertEffect(step.effects(), DatabaseMigrationEffect.Kind.PRESERVE,
-                "compatible receiver history", true);
-            assertEffect(step.effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
-                "receiver-context Alias List identities", 3);
-            assertEffect(step.effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
-                "conventional call-identity buckets", 1);
-            assertEffect(step.effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
-                "trunked non-CALL signaling buckets", 1);
+            assertEquals(2, step.effects().size());
             assertEffect(step.effects(), DatabaseMigrationEffect.Kind.RESET,
-                "physical receiver-leg call projections", 4);
-            assertEffect(step.effects(), DatabaseMigrationEffect.Kind.RESET,
-                "trunked identity evidence", 3);
+                "receiver-derived activity and counters", true);
         }
     }
 
@@ -70,6 +61,44 @@ class Format3To4DatabaseMigrationTest
 
         migrateAndAssert(source);
         migrateAndAssert(retry);
+    }
+
+    @Test
+    void directStepLeavesEveryFormat4ActivityTableEmptyAtOneFreshBoundary() throws Exception
+    {
+        Path database = Format3TestDatabase.create(mTemporaryFolder.resolve("direct-reset.sqlite"));
+
+        try(Connection connection = open(database))
+        {
+            connection.setAutoCommit(false);
+            try
+            {
+                new Format3To4DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 4);
+                connection.commit();
+            }
+            catch(Exception exception)
+            {
+                connection.rollback();
+                throw exception;
+            }
+            finally
+            {
+                connection.setAutoCommit(true);
+            }
+
+            assertEquals(4, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(0, LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES));
+            String boundary = metadata(connection, "conventional_call_output_metrics_started_at_ms");
+            assertEquals(boundary, metadata(connection, "trunked_logical_call_metrics_started_at_ms"));
+            assertEquals(boundary, metadata(connection, "trunked_identity_metrics_started_at_ms"));
+            assertTrue(Long.parseLong(boundary) > 0);
+            assertEquals("{\"preserved\":true}", scalar(connection, """
+                SELECT settings_json FROM application_settings WHERE key='format-3-preserve-sentinel'
+                """));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+            assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+        }
     }
 
     private static void migrateAndAssert(Path database) throws Exception

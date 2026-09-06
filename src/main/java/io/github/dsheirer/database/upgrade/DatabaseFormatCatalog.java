@@ -78,8 +78,8 @@ public final class DatabaseFormatCatalog
         List.of("b131d0927", "6b3500f4c", "successful nightly publications 2026-08-19 through 2026-08-25"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format2TestDatabase.java",
         List.of(
-            "Preserve administrator-owned configuration and bounded activity data",
-            "Add recoverable P25 site projection fields",
+            "Preserve administrator-owned configuration and reset reproducible receiver activity",
+            "Add P25 site projection fields to the empty derived schema",
             "Create missing factory Alias Lists and Default routing",
             "Preserve same-family canonical list spelling and routing; move wrong-family custom-name collisions " +
                 "to unique names without changing their IDs or references"));
@@ -90,8 +90,7 @@ public final class DatabaseFormatCatalog
         "src/test/java/io/github/dsheirer/database/upgrade/Format3TestDatabase.java",
         List.of(
             "Preserve administrator-owned configuration",
-            "Preserve structurally compatible P25, DMR, NXDN, site, quality, event, and conventional history",
-            "Reset only physical receiver-leg call projections and trunked identity evidence whose semantics change",
+            "Reset P25, DMR, NXDN, site, quality, event, identity, and conventional activity",
             "Create logical-call and site-observation summaries with fresh boundaries"));
     private static final FormatDescriptor FORMAT_4 = descriptor(4, "logical-call-site-observation-v28",
         "Logical-call and P25 site-observation database format", FORMAT_4_FINGERPRINT,
@@ -115,9 +114,9 @@ public final class DatabaseFormatCatalog
         List.of("main format 6"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format6TestDatabase.java",
         List.of(
-            "Preserve configured conventional receiver contexts and every row linked to their stable IDs",
-            "Rewrite only exact legacy GUID context keys to canonical configuration-ID context keys",
-            "Refuse ambiguous, conflicting, or malformed configured conventional context identities"));
+            "Preserve administrator-owned channel configuration",
+            "Reset receiver activity instead of translating obsolete conventional context identities",
+            "Let live traffic rebuild activity with canonical configuration-ID context keys"));
     private static final FormatDescriptor FORMAT_7 = descriptor(7, "web-user-playback-preferences-v2",
         "Per-user conversation playback preference format",
         FORMAT_7_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),

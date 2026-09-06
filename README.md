@@ -61,9 +61,9 @@ omit these newer features until they are deliberately included in that release l
 - **P25 NAC, CRC, and error-correction handling is stricter**, while bounded weak-voice recovery preserves usable
   Phase 1 audio and late encryption details remain attached to the correct call.
 - **The exact Alpha 8/Alpha 9 database layout uses the built-in migrator.** Alpha 8 and Alpha 9 shipped the same
-  schema, so the database cannot identify which release created it. Most configuration and activity are preserved;
-  retired fully-qualified P25 Alias rows are removed, and P25 affiliation history plus qualifier-sensitive identity
-  summaries rebuild from new traffic.
+  schema, so the database cannot identify which release created it. Supported administrator configuration is
+  preserved; retired fully-qualified P25 Alias rows are removed, while activity, counters, affiliations, identities,
+  learned site observations, and quality history restart from zero and rebuild from new traffic.
 
 This section describes the rolling Nightly line, not Alpha 10. For shipped Alpha behavior, use the version-matched
 [Alpha release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases). The checked-in

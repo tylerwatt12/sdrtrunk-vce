@@ -81,15 +81,18 @@ Each step owns exactly one `N -> N+1` transformation. The runner repeatedly appl
 reaches the target. There is no release graph, alpha/nightly branch, path-cost planner, or second migration-history
 table. A target build retains every step back to the Alpha 8 baseline.
 
-The format 2-to-3 step creates missing canonical factory Alias Lists and their Default scan-list routing. An existing
+The format 2-to-3 step resets all receiver-derived activity, counters, identity caches, site observations, and quality
+history instead of projecting old observations into the updated schema. Live traffic rebuilds those reproducible rows
+from zero. It also creates missing canonical factory Alias Lists and their Default scan-list routing. An existing
 same-family match keeps its stored spelling and administrator-owned routing; blank compatible channels use that
 stored spelling. If a custom list from the source uses a factory name for a different family, the migrator moves that
 custom list to a unique name such as `Default P25 (DMR)`, preserves its ID, aliases, policy, routing, and historical
 references, and then creates the correct factory list. The exact rename and reference counts appear in preflight and
 the completion report.
 
-The format 3-to-4 step establishes separate logical-call and P25 site-observation summaries at an explicit collection
-boundary. It does not invent those new metrics from older physical receiver-leg activity.
+The format 3-to-4 step resets all remaining receiver-derived rows and establishes separate logical-call and P25
+site-observation summaries at a new collection boundary. It does not copy signaling buckets, conventional counters,
+receiver contexts, identity evidence, topology, quality, or physical receiver-leg activity into the new model.
 
 The format 4-to-5 step normalizes web accounts, password verifiers, per-user browser preferences, configurable access
 overrides, and the receiver-settings revision. It gives every active saved channel one exact configuration UUID and kind
@@ -105,11 +108,10 @@ presentation values without any web account because those builds did not support
 valid case the migration retains the bounded legacy values until setup creates the primary administrator, assigns the
 converted preferences to that account, and only then removes the superseded storage.
 
-The format 5-to-6 step changes configured conventional activity identity from the old external RadioResolve ID to the
-saved channel's configuration UUID. It rewrites the existing activity owner in place, preserving its row ID and all
-linked activity, summary, and identity rows. A missing activity owner needs no change. An already-canonical owner is
-accepted. A case mismatch, duplicate external-ID match, nonconventional owner, unexpected key, or occupied target is
-refused rather than merged or guessed.
+The format 5-to-6 step resets receiver-derived activity instead of translating the old external RadioResolve-based
+conventional owner into the saved channel's configuration UUID. This avoids rejecting an otherwise valid profile over
+ambiguous, conflicting, or malformed derived identities that current format 15 discards anyway. Administrator-owned
+channel configuration is unchanged, and live traffic rebuilds activity using canonical configuration UUID ownership.
 
 The format 6-to-7 step upgrades every complete per-user browser preference document from version 1 to version 2. It
 preserves existing personal settings, enables conversation grouping with a four-call burst limit, and increments each

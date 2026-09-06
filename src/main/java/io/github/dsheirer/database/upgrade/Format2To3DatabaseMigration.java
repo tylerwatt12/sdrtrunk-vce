@@ -48,7 +48,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     @Override
     public String description()
     {
-        return "Add complete P25 site projections and current default Alias List routing";
+        return "Add complete P25 site projections, reset receiver activity, and add default Alias List routing";
     }
 
     @Override
@@ -68,13 +68,11 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     {
         long unknown = DatabaseMigrationEffect.UNKNOWN_COUNT;
         return List.of(
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE, "P25 activity", unknown,
-                "Preserve site snapshots and channel summaries while adding nullable projections"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET, "receiver-derived activity and counters",
+                unknown, "Restart calls, signaling, identities, site observations, and quality history from zero"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "custom Alias Lists using factory names", unknown,
                 "Move wrong-family custom lists to unique names while preserving their IDs and references"),
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "P25 channel callsigns", unknown,
-                "Recover current callsigns into matching historical summaries"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "factory Alias Lists", unknown,
                 "Seed only missing canonical family lists and compatible unassigned channel routing"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
@@ -95,18 +93,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         List<FactoryAliasListCollisionRepair.Collision> collisions =
             FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
 
-        long snapshots = scalarLong(connection, "SELECT COUNT(*) FROM p25_site_snapshot");
-        long summaries = scalarLong(connection, "SELECT COUNT(*) FROM p25_site_channel_summary");
-        long callsigns = scalarLong(connection, """
-            SELECT COUNT(*)
-            FROM p25_site_channel_summary AS summary
-            WHERE EXISTS (
-                SELECT 1 FROM p25_site_channel AS current
-                WHERE current.guid = summary.guid
-                  AND current.channel_key = summary.channel_key
-                  AND current.callsign IS NOT NULL
-            )
-            """);
+        long activityRows = LegacyActivityReset.count(connection, LegacyActivityReset.PRE_LOGICAL_CALL_TABLES);
         long defaultLists = missingDefaultAliasListCount(connection);
         long defaultMemberships = missingDefaultAliasListMembershipCount(connection);
         long unassignedChannels = scalarLong(connection, """
@@ -119,14 +106,12 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
             """);
 
         return List.of(
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE, "P25 activity", snapshots + summaries,
-                "Preserve every existing site snapshot and channel summary while adding nullable projections"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET, "receiver-derived activity and counters",
+                activityRows, "Restart calls, signaling, identities, site observations, and quality history from zero"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "custom Alias Lists using factory names", collisions.size(),
                 "Move wrong-family custom lists to unique names and update " +
                     FactoryAliasListCollisionRepair.referenceCount(collisions) + " saved reference(s)"),
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "P25 channel callsigns", callsigns,
-                "Recover the current callsign into matching historical channel summaries"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "factory Alias Lists", defaultLists,
                 "Create only missing canonical family lists and route unmatched talkgroups to Default"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
@@ -142,6 +127,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
         requireSourceFormat(connection);
         List<FactoryAliasListCollisionRepair.Collision> collisions =
             FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
+        LegacyActivityReset.clear(connection, LegacyActivityReset.PRE_LOGICAL_CALL_TABLES);
 
         try(Statement statement = connection.createStatement())
         {
@@ -149,22 +135,6 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
                 "ALTER TABLE p25_site_snapshot ADD COLUMN active_rfss_network_connection INTEGER");
             statement.executeUpdate("ALTER TABLE p25_site_snapshot ADD COLUMN system_id INTEGER");
             statement.executeUpdate("ALTER TABLE p25_site_channel_summary ADD COLUMN callsign TEXT");
-            statement.executeUpdate("""
-                UPDATE p25_site_channel_summary AS summary
-                SET callsign = (
-                    SELECT current.callsign
-                    FROM p25_site_channel AS current
-                    WHERE current.guid = summary.guid
-                      AND current.channel_key = summary.channel_key
-                )
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM p25_site_channel AS current
-                    WHERE current.guid = summary.guid
-                      AND current.channel_key = summary.channel_key
-                      AND current.callsign IS NOT NULL
-                )
-                """);
             statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
             statement.executeUpdate(resolvedActivityViewSql());
         }

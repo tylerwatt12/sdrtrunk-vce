@@ -71,11 +71,11 @@ class ApplicationMigrationServiceTest
         assertTrue(format1Plan.steps().get(1).effects().stream()
             .anyMatch(effect -> "unassigned channel Alias Lists".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(2).effects().stream()
-            .anyMatch(effect -> "physical receiver-leg call projections".equals(effect.subject())));
+            .anyMatch(effect -> "receiver-derived activity and counters".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(3).effects().stream()
             .anyMatch(effect -> "web accounts".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(4).effects().stream()
-            .anyMatch(effect -> "configured conventional receiver-context identities".equals(effect.subject())));
+            .anyMatch(effect -> "receiver-derived activity and counters".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(5).effects().stream()
             .anyMatch(effect -> "per-user browser preference documents".equals(effect.subject())));
         assertTrue(format1Plan.steps().get(6).effects().stream()

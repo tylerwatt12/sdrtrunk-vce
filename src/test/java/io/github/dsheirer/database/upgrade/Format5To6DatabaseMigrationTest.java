@@ -12,49 +12,48 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class Format5To6DatabaseMigrationTest
 {
-    private static final long CONTEXT_ID = 900;
-    private static final String CONFIGURATION_ID = "66666666-7777-4888-8999-aaaaaaaaaaaa";
-    private static final String GUID = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
-    private static final String LEGACY_KEY = "GUID:" + GUID;
-    private static final String CANONICAL_KEY = "CONFIGURATION:" + CONFIGURATION_ID;
-
     @TempDir
     Path mTemporaryFolder;
 
     @Test
-    void migratesExactLegacyKeyAndPreservesReceiverContextIdAndHistory() throws Exception
+    void resetsAllReceiverActivityWithoutTranslatingAmbiguousLegacyOwners() throws Exception
     {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("legacy.sqlite"));
+        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("activity-reset.sqlite"));
 
-        try(Connection connection = open(database))
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            String contextBefore = scalar(connection, """
-                SELECT id || ':' || guid || ':' || kind_code || ':' || protocol_code || ':' ||
-                       first_seen_ms || ':' || last_seen_ms
-                FROM receiver_context WHERE id=900
+            statement.executeUpdate("""
+                INSERT INTO receiver_context(
+                    id, context_key, guid, kind_code, protocol_code, channel_name,
+                    first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES
+                    (901, 'GUID:BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF',
+                     'BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF', 10, 11, 'Ambiguous Conventional',
+                     100, 200, 155550000),
+                    (902, 'CONFIGURATION:66666666-7777-4888-8999-aaaaaaaaaaaa',
+                     NULL, 10, 11, 'Occupied Former Target', 100, 200, 155560000)
                 """);
-            String historyBefore = historyDigest(connection);
+
+            long activityRows = LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES);
+            assertTrue(activityRows > 0);
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 5, preflight.steps().size());
-            assertEquals("format-5-to-6", preflight.steps().getFirst().id());
-            assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
-                "configured conventional receiver-context identities", 1);
+            DatabaseMigrationEffect reset = preflight.steps().getFirst().effects().getFirst();
+            assertEquals(DatabaseMigrationEffect.Kind.RESET, reset.kind());
+            assertEquals("receiver-derived activity and counters", reset.subject());
+            assertEquals(activityRows, reset.affectedRows());
 
             connection.setAutoCommit(false);
             try
@@ -73,82 +72,37 @@ class Format5To6DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(6, DatabaseFormatCatalog.inspect(connection).version());
-            assertEquals(CANONICAL_KEY, scalar(connection,
-                "SELECT context_key FROM receiver_context WHERE id=900"));
-            assertEquals(contextBefore, scalar(connection, """
-                SELECT id || ':' || guid || ':' || kind_code || ':' || protocol_code || ':' ||
-                       first_seen_ms || ':' || last_seen_ms
-                FROM receiver_context WHERE id=900
-                """));
-            assertEquals(historyBefore, historyDigest(connection));
-            assertEquals("1", scalar(connection,
-                "SELECT COUNT(*) FROM conventional_call_identity_bucket WHERE context_id=900"));
+            assertEquals(0, LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES));
             assertEquals("29", metadata(connection, "p25_activity_schema_version"));
             assertEquals("6", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals(6, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals("1", scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE configuration_id='66666666-7777-4888-8999-aaaaaaaaaaaa'
+                """));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
         }
     }
 
     @Test
-    void acceptsAlreadyCanonicalContextWithoutChangingItsIdentityOrHistory() throws Exception
-    {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("canonical.sqlite"));
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("UPDATE receiver_context SET context_key='" + CANONICAL_KEY +
-                "' WHERE id=" + CONTEXT_ID);
-            String historyBefore = historyDigest(connection);
-            Format5To6DatabaseMigration migration = new Format5To6DatabaseMigration();
-            assertEffect(migration.validateSource(connection), DatabaseMigrationEffect.Kind.TRANSFORM,
-                "configured conventional receiver-context identities", 0);
-
-            connection.setAutoCommit(false);
-            try
-            {
-                new Format5To6DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection, 6);
-                connection.commit();
-            }
-            catch(Exception exception)
-            {
-                connection.rollback();
-                throw exception;
-            }
-            finally
-            {
-                connection.setAutoCommit(true);
-            }
-
-            assertEquals(CANONICAL_KEY, scalar(connection,
-                "SELECT context_key FROM receiver_context WHERE id=900"));
-            assertEquals(historyBefore, historyDigest(connection));
-            assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("6", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals(6, DatabaseFormatCatalog.inspect(connection).version());
-        }
-    }
-
-    @Test
-    void callerRollbackRestoresExactFormat5IdentityMetadataAndHistory() throws Exception
+    void callerRollbackRestoresExactFormat5ActivityAndMetadata() throws Exception
     {
         Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("rollback.sqlite"));
 
         try(Connection connection = open(database))
         {
-            String historyBefore = historyDigest(connection);
+            long activityRows = LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES);
+            String contextDigest = scalar(connection, """
+                SELECT group_concat(id || ':' || context_key || ':' || coalesce(guid, '') || ':' || kind_code, '|')
+                FROM (SELECT * FROM receiver_context ORDER BY id)
+                """);
             connection.setAutoCommit(false);
-
             try
             {
                 new Format5To6DatabaseMigration().migrate(connection);
                 DatabaseFormatCatalog.stamp(connection, 6);
-                assertEquals(CANONICAL_KEY, scalar(connection,
-                    "SELECT context_key FROM receiver_context WHERE id=900"));
-                assertEquals("29", metadata(connection, "p25_activity_schema_version"));
-                assertEquals("6", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals(0, LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES));
                 connection.rollback();
             }
             finally
@@ -156,127 +110,16 @@ class Format5To6DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(LEGACY_KEY, scalar(connection,
-                "SELECT context_key FROM receiver_context WHERE id=900"));
+            assertEquals(activityRows,
+                LegacyActivityReset.count(connection, LegacyActivityReset.LOGICAL_CALL_TABLES));
+            assertEquals(contextDigest, scalar(connection, """
+                SELECT group_concat(id || ':' || context_key || ':' || coalesce(guid, '') || ':' || kind_code, '|')
+                FROM (SELECT * FROM receiver_context ORDER BY id)
+                """));
             assertEquals("28", metadata(connection, "p25_activity_schema_version"));
             assertEquals("5", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals(historyBefore, historyDigest(connection));
             assertEquals(5, DatabaseFormatCatalog.inspect(connection).version());
         }
-    }
-
-    @Test
-    void refusesCaseInsensitiveGuidAmbiguityWithoutChangingSource() throws Exception
-    {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("ambiguous-guid.sqlite"));
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO receiver_context(
-                    id, context_key, guid, kind_code, protocol_code, channel_name,
-                    first_seen_ms, last_seen_ms, primary_frequency_hz
-                ) VALUES (
-                    901, 'GUID:BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF',
-                    'BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF', 10, 11, 'Ambiguous Conventional',
-                    100, 200, 155550000
-                )
-                """);
-            assertRefusedWithoutChange(connection,
-                "more than one receiver context matches the GUID case-insensitively");
-        }
-    }
-
-    @Test
-    void refusesOccupiedCanonicalTargetWithoutChangingSource() throws Exception
-    {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("occupied-target.sqlite"));
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO receiver_context(
-                    id, context_key, guid, kind_code, protocol_code, channel_name,
-                    first_seen_ms, last_seen_ms, primary_frequency_hz
-                ) VALUES (
-                    901, 'CONFIGURATION:66666666-7777-4888-8999-aaaaaaaaaaaa', NULL,
-                    10, 11, 'Conflicting Conventional', 100, 200, 155550000
-                )
-                """);
-            assertRefusedWithoutChange(connection,
-                "configured target key is already owned by another receiver context");
-        }
-    }
-
-    @Test
-    void refusesUnexpectedLegacyKeyWithoutChangingSource() throws Exception
-    {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("unexpected-key.sqlite"));
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                UPDATE receiver_context
-                SET context_key='CONVENTIONAL_ANALOG:NBFM:155550000'
-                WHERE id=900
-                """);
-            assertRefusedWithoutChange(connection,
-                "matching receiver context has an unexpected identity key");
-        }
-    }
-
-    @Test
-    void refusesNonconventionalContextWithoutChangingSource() throws Exception
-    {
-        Path database = Format5TestDatabase.create(mTemporaryFolder.resolve("wrong-kind.sqlite"));
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("UPDATE receiver_context SET kind_code=1 WHERE id=900");
-            assertRefusedWithoutChange(connection,
-                "matching receiver context is not a recognized conventional context");
-        }
-    }
-
-    private static void assertRefusedWithoutChange(Connection connection, String expectedMessage) throws Exception
-    {
-        String contextBefore = receiverContextDigest(connection);
-        String historyBefore = historyDigest(connection);
-        String metadataBefore = metadata(connection, "p25_activity_schema_version") + ':' +
-            metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-        SQLException exception = assertThrows(SQLException.class,
-            () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-        assertTrue(exception.getMessage().contains(expectedMessage), exception::getMessage);
-        assertEquals(contextBefore, receiverContextDigest(connection));
-        assertEquals(historyBefore, historyDigest(connection));
-        assertEquals(metadataBefore, metadata(connection, "p25_activity_schema_version") + ':' +
-            metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-    }
-
-    private static String receiverContextDigest(Connection connection) throws Exception
-    {
-        return scalar(connection, """
-            SELECT group_concat(id || ':' || context_key || ':' || coalesce(guid, '') || ':' || kind_code, '|')
-            FROM (SELECT * FROM receiver_context ORDER BY id)
-            """);
-    }
-
-    private static String historyDigest(Connection connection) throws Exception
-    {
-        return scalar(connection, """
-            SELECT
-                (SELECT COUNT(*) || ':' || coalesce(SUM(observed_at_ms), 0)
-                 FROM p25_activity_event WHERE context_id=900) || '|' ||
-                (SELECT COUNT(*) || ':' || coalesce(SUM(call_count), 0) || ':' ||
-                        coalesce(SUM(recorded_count), 0) || ':' || coalesce(SUM(streamed_count), 0)
-                 FROM conventional_activity_summary WHERE context_id=900) || '|' ||
-                (SELECT COUNT(*) || ':' || coalesce(SUM(call_count), 0) || ':' ||
-                        coalesce(SUM(recorded_count), 0) || ':' || coalesce(SUM(streamed_count), 0)
-                 FROM conventional_activity_bucket WHERE context_id=900) || '|' ||
-                (SELECT COUNT(*) || ':' || coalesce(SUM(call_count), 0) || ':' ||
-                        coalesce(SUM(recorded_count), 0) || ':' || coalesce(SUM(streamed_count), 0)
-                 FROM conventional_call_identity_bucket WHERE context_id=900)
-            """);
     }
 
     private static Connection open(Path database) throws Exception
@@ -308,14 +151,5 @@ class Format5To6DatabaseMigrationTest
         {
             return resultSet.next() ? resultSet.getString(1) : null;
         }
-    }
-
-    private static void assertEffect(List<DatabaseMigrationEffect> effects,
-                                     DatabaseMigrationEffect.Kind kind, String subject, long expectedRows)
-    {
-        DatabaseMigrationEffect effect = effects.stream()
-            .filter(candidate -> candidate.kind() == kind && candidate.subject().equals(subject))
-            .findFirst().orElseThrow();
-        assertEquals(expectedRows, effect.affectedRows());
     }
 }

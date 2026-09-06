@@ -97,10 +97,11 @@ format history. A channel name never selects a different schema or migration rou
 This source tree contains the Alpha 8+ format catalog, linear migration chain, and deterministic format fixtures.
 Older binaries retain the source formats and migration behavior documented by their version-matched release notes.
 
-Global database format 4/P25 activity schema v28 stores one system-level logical call separately from each distinct
-learned P25 site observation. Its adjacent migration step records an explicit collection boundary and does not
-backfill either metric from older physical call activity; every other preservation or reset remains declared by its
-registered migration step.
+Global database format 3 resets receiver-derived activity before adding its P25 site projection fields. Global format
+4/P25 activity schema v28 resets receiver-derived activity again for direct format-3 sources, then stores one
+system-level logical call separately from each distinct learned P25 site observation. Its adjacent migration step
+records a fresh collection boundary and does not backfill counters, identities, topology, quality, or physical call
+activity.
 
 Global database format 5 introduced normalized web users, exact password verifiers and roles,
 per-user browser preferences, configurable access overrides, a receiver-settings revision, and canonical saved-channel
@@ -115,10 +116,10 @@ An Alpha profile with no account may still contain the older shared presentation
 through migration and assigned to the primary administrator when setup creates it; their legacy storage is removed
 only after that account safely owns the converted preferences.
 
-Global database format 6 rekeys existing configured conventional activity owners from the former external
-RadioResolve ID to the saved channel configuration UUID. The same owner row ID is retained, so linked activity
-history remains attached. Databases with conflicting, duplicated, malformed, or otherwise ambiguous identities are
-refused instead of merged or repaired.
+Global database format 6 resets receiver-derived activity instead of rekeying old configured-conventional owners from
+the former external RadioResolve ID. Administrator-owned channels remain intact, and live traffic rebuilds activity
+under the saved channel configuration UUID. Conflicting or malformed derived owner identities therefore cannot block
+an otherwise valid upgrade.
 
 Global database format 7 adds Conversation Mode. Its format 6-to-7 step upgrades each exact per-user browser
 preference document to add Conversation Mode and the bounded calls-before-switching value. It preserves every other
