@@ -10,6 +10,8 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.LogicalCallId;
@@ -135,6 +137,59 @@ class LogicalCallStatisticsSchemaTest
                 call(CHANNEL_B, 4, null, null, List.of())));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
+        }
+    }
+
+    @Test
+    void p25TrunkedOwnershipAcceptsEitherTrafficPhaseWithoutCrossingProtocolFamilies() throws Exception
+    {
+        try(Connection connection = open("p25-traffic-phase-ownership.sqlite"))
+        {
+            insertChannel(connection, CHANNEL_A, "P25_PHASE1");
+            ReceiverActivityRecords.ResolvedLogicalCall phaseTwo = call(CHANNEL_A, 1, Protocol.APCO25_PHASE2,
+                0xBEE00, 0x3A9, List.of());
+
+            assertEquals(Protocol.APCO25_PHASE2.name(), phaseTwo.protocol(),
+                "the completed call retains its observed traffic phase");
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, phaseTwo),
+                "a Phase 1 control-channel configuration owns its Phase 2 traffic calls");
+            ReceiverActivityRecords.ActivityEvent phaseTwoActivity =
+                p25Activity(CHANNEL_A, Protocol.APCO25_PHASE2, CALL_START + 2);
+            assertEquals(Protocol.APCO25_PHASE2.name(), phaseTwoActivity.protocol());
+            assertNotNull(ReceiverActivitySchema.recordActivity(connection, phaseTwoActivity, true),
+                "Phase 2 activity is owned by the Phase 1 control-channel configuration");
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+
+            insertChannel(connection, CHANNEL_B, "P25_PHASE2");
+            assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                call(CHANNEL_B, 3, Protocol.APCO25, 0xBEE00, 0x3A9, List.of())),
+                "a retained legacy Phase 2 configuration still has P25-family ownership");
+            assertEquals(2, scalar(connection,
+                "SELECT SUM(logical_call_count) FROM trunked_logical_call_bucket"));
+
+            execute(connection, "UPDATE configuration_channel SET decoder_type='DMR', " +
+                "config_json='{\"decodeConfiguration\":{\"channelMode\":\"TRUNKED\"}}' " +
+                "WHERE configuration_id='" + CHANNEL_B + "'");
+            assertFalse(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                call(CHANNEL_B, 4, Protocol.APCO25, 0xBEE00, 0x3A9, List.of())),
+                "another trunked protocol family cannot adopt a P25 call");
+            execute(connection, "UPDATE configuration_channel SET decoder_type='NXDN', address_domain_code=1, " +
+                "config_json='{\"decodeConfiguration\":{\"channelMode\":\"TRUNKED\"}}' " +
+                "WHERE configuration_id='" + CHANNEL_B + "'");
+            assertFalse(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
+                call(CHANNEL_B, 5, Protocol.APCO25_PHASE2, 0xBEE00, 0x3A9, List.of())));
+
+            String conventional = "33333333-3333-4333-8333-333333333333";
+            insertConventionalP25Channel(connection, conventional);
+            assertNull(ReceiverActivitySchema.recordActivity(connection,
+                new ReceiverActivityRecords.ActivityEvent(CALL_START + 6, conventional,
+                    ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25, Protocol.APCO25_PHASE2.name(),
+                    ReceiverActivityRecords.Action.CALL, "CALL_GROUP", "700001", "1201",
+                    Form.TALKGROUP.name(), List.of(), 851_012_500L, null, null, false, null, null,
+                    null, null, null, null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
+                    ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
+                    List.of(), null), true),
+                "phase-family ownership does not broaden conventional channel validation");
         }
     }
 
@@ -273,21 +328,34 @@ class LogicalCallStatisticsSchemaTest
 
     private static void insertChannel(Connection connection, String configurationId) throws Exception
     {
+        insertChannel(connection, configurationId, "P25_PHASE1");
+    }
+
+    private static void insertChannel(Connection connection, String configurationId, String decoderType)
+        throws Exception
+    {
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
                 radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
             VALUES ('%s', 'TRUNKED', 0, 'P25', 'Site', 'Control',
-                '%s', 0, 'P25_PHASE1', 851012500, '{}')
-            """.formatted(configurationId, configurationId));
+                '%s', 0, '%s', 851012500, '{}')
+            """.formatted(configurationId, configurationId, decoderType));
     }
 
     private static ReceiverActivityRecords.ResolvedLogicalCall call(String configurationId, long sequence,
                                                                      Integer wacn, Integer systemId,
                                                                      List<P25SiteIdentity> sites)
     {
+        return call(configurationId, sequence, Protocol.APCO25, wacn, systemId, sites);
+    }
+
+    private static ReceiverActivityRecords.ResolvedLogicalCall call(String configurationId, long sequence,
+                                                                     Protocol protocol, Integer wacn,
+                                                                     Integer systemId, List<P25SiteIdentity> sites)
+    {
         return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(9, sequence),
-            CALL_START + sequence, configurationId, Protocol.APCO25.name(),
+            CALL_START + sequence, configurationId, protocol.name(),
             TrunkedIdentityDomain.STANDARD, wacn, systemId, 1201, Form.TALKGROUP.name(),
             List.of(), 700001, true, 0x84, 1, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), sites.stream()
@@ -295,6 +363,29 @@ class LogicalCallStatisticsSchemaTest
                     700001, 1201, Form.TALKGROUP.name(), ReceiverActivityRecords.P25Identity.ORDINARY,
                     ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), List.of()))
                 .toList(), null);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent p25Activity(String configurationId, Protocol protocol,
+                                                                      long timestamp)
+    {
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, protocol.name(),
+            ReceiverActivityRecords.Action.GRANT, "CALL_GROUP", "700001", "1201",
+            Form.TALKGROUP.name(), List.of(), 851_012_500L, "0-1", 1, false, null, null,
+            0xBEE00, 0x3A9, null, null, null, null, false, null, null, TrunkedIdentityDomain.STANDARD,
+            ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
+            List.of(), null);
+    }
+
+    private static void insertConventionalP25Channel(Connection connection, String configurationId) throws Exception
+    {
+        execute(connection, """
+            INSERT INTO configuration_channel(
+                configuration_id, channel_kind, sort_order, system_name, site_name, name,
+                auto_start, decoder_type, primary_frequency_hz, config_json)
+            VALUES ('%s', 'CONVENTIONAL', 0, 'P25', '', 'Conventional',
+                0, 'P25_CONVENTIONAL', 851012500, '{}')
+            """.formatted(configurationId));
     }
 
     private static P25SiteIdentity site(int rfss, int site)

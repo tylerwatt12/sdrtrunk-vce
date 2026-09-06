@@ -727,7 +727,9 @@ class StatsAliasResolver
     /**
      * Loads only channel-owned local-address evidence for the bounded canonical P25 identities in this response.
      * The canonical home identity is never used as an Alias lookup value when a receiver observed a different local
-     * address on a site.
+     * address on a site. Compact call/member/presence/affiliation facts are authoritative when present; retained
+     * detailed events are an index-backed fallback for signaling-only or legacy identities. This keeps a common
+     * groups page from revisiting every retained event for identities already represented by compact facts.
      */
     private Map<Long,List<LocalEvidence>> loadP25LocalEvidence(Connection connection,
                                                                List<Map<String,Object>> rows,
@@ -758,68 +760,7 @@ class StatsAliasResolver
         for(int offset = 0; offset < ids.size(); offset += QUERY_VALUE_CHUNK)
         {
             List<Long> chunk = ids.subList(offset, Math.min(ids.size(), offset + QUERY_VALUE_CHUNK));
-            String sql = """
-                WITH requested(identity_summary_id) AS (VALUES %s), local_evidence AS (
-                    SELECT bucket.identity_summary_id, bucket.channel_id, bucket.observed_local_id
-                    FROM requested
-                    JOIN p25_site_call_identity_bucket bucket
-                      ON bucket.identity_summary_id = requested.identity_summary_id
-                    WHERE bucket.observed_local_id IS NOT NULL
-                    UNION
-                    SELECT event.source_identity_summary_id, event.channel_id,
-                        event.source_observed_local_id
-                    FROM requested
-                    JOIN receiver_activity_event event
-                      ON event.source_identity_summary_id = requested.identity_summary_id
-                    WHERE event.source_observed_local_id IS NOT NULL
-                    UNION
-                    SELECT event.target_identity_summary_id, event.channel_id,
-                        event.target_observed_local_id
-                    FROM requested
-                    JOIN receiver_activity_event event
-                      ON event.target_identity_summary_id = requested.identity_summary_id
-                    WHERE event.target_observed_local_id IS NOT NULL
-                    UNION
-                    SELECT member.identity_summary_id, event.channel_id, member.observed_local_id
-                    FROM requested
-                    JOIN activity_event_identity_member member
-                      ON member.identity_summary_id = requested.identity_summary_id
-                    JOIN receiver_activity_event event ON event.id = member.event_id
-                    WHERE member.observed_local_id IS NOT NULL
-                    UNION
-                    SELECT presence.radio_identity_id, presence.channel_id, presence.observed_local_id
-                    FROM requested
-                    JOIN trunked_radio_channel_presence presence
-                      ON presence.radio_identity_id = requested.identity_summary_id
-                    WHERE presence.observed_local_id IS NOT NULL
-                    UNION
-                    SELECT affiliation.radio_identity_id, affiliation.channel_id,
-                        affiliation.radio_observed_local_id
-                    FROM requested
-                    JOIN trunked_radio_affiliation affiliation
-                      ON affiliation.radio_identity_id = requested.identity_summary_id
-                    WHERE affiliation.radio_observed_local_id IS NOT NULL
-                    UNION
-                    SELECT affiliation.talkgroup_identity_id, affiliation.channel_id,
-                        affiliation.talkgroup_observed_local_id
-                    FROM requested
-                    JOIN trunked_radio_affiliation affiliation
-                      ON affiliation.talkgroup_identity_id = requested.identity_summary_id
-                    WHERE affiliation.talkgroup_observed_local_id IS NOT NULL
-                )
-                SELECT DISTINCT local_evidence.identity_summary_id, config.alias_list_id,
-                    local_evidence.observed_local_id
-                FROM local_evidence
-                JOIN receiver_channel channel ON channel.id = local_evidence.channel_id
-                JOIN radio_system system ON system.id = channel.radio_system_id
-                JOIN configuration_channel config
-                  ON config.configuration_id = channel.configuration_id
-                WHERE system.protocol_code = 1 AND config.alias_list_id IS NOT NULL
-                  AND local_evidence.observed_local_id > 0
-                ORDER BY local_evidence.identity_summary_id, config.alias_list_id,
-                    local_evidence.observed_local_id
-                LIMIT ?
-                """.formatted(valuesPlaceholders(chunk.size()));
+            String sql = p25LocalEvidenceSql(chunk.size());
 
             try(PreparedStatement statement = connection.prepareStatement(sql))
             {
@@ -845,6 +786,91 @@ class StatsAliasResolver
         Map<Long,List<LocalEvidence>> result = new LinkedHashMap<>();
         evidence.forEach((key, value) -> result.put(key, List.copyOf(value)));
         return Map.copyOf(result);
+    }
+
+    /** Exact bounded query used by the groups/radios page and query-plan regression coverage. */
+    static String p25LocalEvidenceSql(int requestedCount)
+    {
+        if(requestedCount < 1 || requestedCount > QUERY_VALUE_CHUNK)
+        {
+            throw new IllegalArgumentException("P25 local evidence query size is out of bounds");
+        }
+
+        return """
+                WITH requested(identity_summary_id) AS (VALUES %s), compact_evidence AS (
+                    SELECT bucket.identity_summary_id, bucket.channel_id, bucket.observed_local_id
+                    FROM requested
+                    CROSS JOIN p25_site_call_identity_bucket bucket
+                        INDEXED BY idx_p25_site_call_identity_identity
+                      ON bucket.identity_summary_id = requested.identity_summary_id
+                    WHERE bucket.observed_local_id > 0
+                    UNION
+                    SELECT member.identity_summary_id, event.channel_id, member.observed_local_id
+                    FROM requested
+                    JOIN activity_event_identity_member member
+                      ON member.identity_summary_id = requested.identity_summary_id
+                    JOIN receiver_activity_event event ON event.id = member.event_id
+                    WHERE member.observed_local_id > 0
+                    UNION
+                    SELECT presence.radio_identity_id, presence.channel_id, presence.observed_local_id
+                    FROM requested
+                    JOIN trunked_radio_channel_presence presence
+                      ON presence.radio_identity_id = requested.identity_summary_id
+                    WHERE presence.observed_local_id > 0
+                    UNION
+                    SELECT affiliation.radio_identity_id, affiliation.channel_id,
+                        affiliation.radio_observed_local_id
+                    FROM requested
+                    JOIN trunked_radio_affiliation affiliation
+                      ON affiliation.radio_identity_id = requested.identity_summary_id
+                    WHERE affiliation.radio_observed_local_id > 0
+                    UNION
+                    SELECT affiliation.talkgroup_identity_id, affiliation.channel_id,
+                        affiliation.talkgroup_observed_local_id
+                    FROM requested
+                    JOIN trunked_radio_affiliation affiliation
+                      ON affiliation.talkgroup_identity_id = requested.identity_summary_id
+                    WHERE affiliation.talkgroup_observed_local_id > 0
+                ), detail_fallback(identity_summary_id) AS (
+                    SELECT requested.identity_summary_id
+                    FROM requested
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM compact_evidence
+                        WHERE compact_evidence.identity_summary_id = requested.identity_summary_id
+                    )
+                ), local_evidence AS (
+                    SELECT identity_summary_id, channel_id, observed_local_id
+                    FROM compact_evidence
+                    UNION
+                    SELECT event.source_identity_summary_id, event.channel_id,
+                        event.source_observed_local_id
+                    FROM detail_fallback
+                    CROSS JOIN receiver_activity_event event
+                        INDEXED BY idx_receiver_activity_event_source_time
+                      ON event.source_identity_summary_id = detail_fallback.identity_summary_id
+                    WHERE event.source_observed_local_id > 0
+                    UNION
+                    SELECT event.target_identity_summary_id, event.channel_id,
+                        event.target_observed_local_id
+                    FROM detail_fallback
+                    CROSS JOIN receiver_activity_event event
+                        INDEXED BY idx_receiver_activity_event_target_time
+                      ON event.target_identity_summary_id = detail_fallback.identity_summary_id
+                    WHERE event.target_observed_local_id > 0
+                )
+                SELECT DISTINCT local_evidence.identity_summary_id, config.alias_list_id,
+                    local_evidence.observed_local_id
+                FROM local_evidence
+                JOIN receiver_channel channel ON channel.id = local_evidence.channel_id
+                JOIN radio_system system ON system.id = channel.radio_system_id
+                JOIN configuration_channel config
+                  ON config.configuration_id = channel.configuration_id
+                WHERE system.protocol_code = 1 AND config.alias_list_id IS NOT NULL
+                  AND local_evidence.observed_local_id > 0
+                ORDER BY local_evidence.identity_summary_id, config.alias_list_id,
+                    local_evidence.observed_local_id
+                LIMIT ?
+                """.formatted(valuesPlaceholders(requestedCount));
     }
 
     private Map<String,Set<Long>> loadAliasLists(Connection connection, Set<String> systemKeys)

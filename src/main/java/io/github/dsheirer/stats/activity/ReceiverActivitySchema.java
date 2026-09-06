@@ -3073,8 +3073,9 @@ public class ReceiverActivitySchema
 
     /**
      * Rejects queued observations from a deleted or semantically replaced saved channel before any derived row is
-     * created. The persisted configuration projection is the authority for topology, air interface and NXDN
-     * address domain; decoded identifiers may never reclassify it.
+     * created. The persisted configuration projection is the authority for topology, air-interface family and NXDN
+     * address domain; decoded identifiers may never reclassify it. A P25 trunked channel's saved decoder describes
+     * its control-channel receiver, not the phase of every traffic channel belonging to that system.
      */
     private static boolean configurationAccepts(Connection connection, String configurationId, int expectedKind,
                                                 int expectedProtocolCode, TrunkedIdentityDomain expectedDomain)
@@ -3112,10 +3113,29 @@ public class ReceiverActivitySchema
                     case NXDN_TYPE_D -> 2;
                 };
 
-                return configuredKind == expectedKind && configuredProtocol == expectedProtocolCode &&
-                    configuredDomain == expectedDomainCode;
+                return configuredKind == expectedKind &&
+                    configurationProtocolOwnsObservation(configuredKind, expectedKind, configuredProtocol,
+                        expectedProtocolCode) && configuredDomain == expectedDomainCode;
             }
         }
+    }
+
+    /**
+     * P25 Phase 1 control channels routinely grant both Phase 1 and Phase 2 traffic. Treat those decoder values as
+     * one ownership family only for a trunked site; the observation itself retains its decoded protocol/phase.
+     * Conventional P25 and every other protocol remain exact matches.
+     */
+    private static boolean configurationProtocolOwnsObservation(int configuredKind, int expectedKind,
+                                                                 int configuredProtocol, int expectedProtocol)
+    {
+        if(configuredProtocol == expectedProtocol)
+        {
+            return true;
+        }
+
+        return configuredKind == RECEIVER_TRUNKED_SITE && expectedKind == RECEIVER_TRUNKED_SITE &&
+            TrunkedIdentityPolicy.protocolFamilyCode(configuredProtocol) == TrunkedIdentityPolicy.PROTOCOL_P25 &&
+            TrunkedIdentityPolicy.protocolFamilyCode(expectedProtocol) == TrunkedIdentityPolicy.PROTOCOL_P25;
     }
 
     private static void synchronizeReceiverChannelWithConfiguration(Connection connection, String configurationId)

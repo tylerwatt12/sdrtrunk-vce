@@ -54,6 +54,14 @@ class StatsWebPageLifecycleUiContractTest
         assertOrdered(system, "const response = await api(radioSystemApiPath(radioSystem.radio_system_key));",
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(system, "if (!renderIsCurrent(renderContext)) return;", "window.history.replaceState");
+        assertTrue(system.contains("createAsyncSection('Groups'"));
+        assertTrue(system.contains("createAsyncSection(title"));
+        assertTrue(system.contains("createAsyncSection('Talker Alias Summary'"));
+        assertOrdered(system, "content.append(searchBar('Search group ID'), directory.element);",
+            "await directory.load(");
+        assertTrue(system.contains("loadingMessage: 'Loading groups…'"));
+        assertTrue(system.contains("loadingMessage: 'Loading radios…'"));
+        assertTrue(system.contains("loadingMessage: 'Loading talker aliases…'"));
 
         String receiverSettings = function(source, "async function renderReceiverSettings()");
         assertOrdered(receiverSettings, "await renderAdminReceiverBehaviorSettings();",

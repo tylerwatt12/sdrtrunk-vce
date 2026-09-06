@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
@@ -18,13 +19,16 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.sqlite.ProgressHandler;
 
 class StatsAliasResolverTest
 {
@@ -597,6 +601,102 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void p25GroupsPreferCompactAliasEvidenceAtRepresentativeEventVolume() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-compact-alias-evidence-volume.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'County', 'P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'Dispatch', 'TALKGROUP', 'APCO25', 300),
+                       (2, 1, 'Tactical', 'TALKGROUP', 'APCO25', 301)
+                """);
+            insertP25Channel(statement, 77, P25_CONFIGURATION_ID, P25_RADIORESOLVE_ID, 1);
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site(
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (701, 77, 1, 1, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id,
+                    identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (7001, 77, 1, 0xBEE00, 0x348, 300, 1, 2),
+                         (7002, 77, 1, 0xABCDE, 0x123, 9000, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
+                    identity_kind_code, identity_summary_id, observed_local_id, last_observed_at_ms,
+                    observed_call_count
+                ) VALUES (77, 701, 77, 0, 1, 1, 7001, 300, 1, 1)
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE first(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM first WHERE value < 250
+                ), second(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM second WHERE value < 400
+                )
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    target_observed_local_id, target_kind_code, target_identity_summary_id
+                )
+                SELECT 77, 77, 1000 + (first.value * 400) + second.value, 12, 300, 1, 7001
+                FROM first CROSS JOIN second
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(
+                    channel_id, radio_system_id, observed_at_ms, action_code,
+                    target_observed_local_id, target_kind_code, target_identity_summary_id
+                ) VALUES (77, 77, 200000, 12, 301, 1, 7002)
+                """);
+            statement.execute("ANALYZE");
+
+            String plan = queryPlan(connection, StatsAliasResolver.p25LocalEvidenceSql(2),
+                7001L, 7002L, StatsAliasResolver.MAX_RULE_LOOKUP_PAIRS + 1);
+            assertTrue(plan.contains("idx_p25_site_call_identity_identity"), plan);
+            assertTrue(plan.contains("idx_receiver_activity_event_source_time"), plan);
+            assertTrue(plan.contains("idx_receiver_activity_event_target_time"), plan);
+            assertFalse(plan.contains("SCAN event"), plan);
+
+            AtomicInteger progressCalls = new AtomicInteger();
+            ProgressHandler.setHandler(connection, 1_000, new ProgressHandler()
+            {
+                @Override
+                protected int progress()
+                {
+                    progressCalls.incrementAndGet();
+                    return 0;
+                }
+            });
+
+            Map<String,Object> group = canonicalEvidenceRow(7001, 1, 300);
+            Map<String,Object> signalingOnlyGroup = canonicalEvidenceRow(7002, 1, 9000);
+            try
+            {
+                new StatsAliasResolver().enrichCanonicalSystemTalkgroups(connection,
+                    rows(group, signalingOnlyGroup),
+                    "identity_summary_id", "identity_id", "alias_");
+            }
+            finally
+            {
+                ProgressHandler.clearHandler(connection);
+            }
+
+            assertEquals("Dispatch", group.get("alias_name"));
+            assertEquals("Tactical", signalingOnlyGroup.get("alias_name"),
+                "a signaling-only identity retains the indexed detailed-event fallback");
+            assertTrue(progressCalls.get() < 500,
+                "compact lookup unexpectedly revisited retained detail; progress callbacks=" + progressCalls);
+        }
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void aliasCatalogUsesCurrentChannelAndRadioSystemKeys() throws Exception
     {
@@ -930,6 +1030,31 @@ class StatsAliasResolverTest
                 channel_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
             ) VALUES (%d, 3600000, 2, 2, %d, %d)
             """.formatted(channelId, identityId, calls));
+    }
+
+    private static String queryPlan(Connection connection, String sql, Object... parameters) throws Exception
+    {
+        StringBuilder plan = new StringBuilder();
+        try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
+        {
+            for(int index = 0; index < parameters.length; index++)
+            {
+                statement.setObject(index + 1, parameters[index]);
+            }
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    if(!plan.isEmpty())
+                    {
+                        plan.append('\n');
+                    }
+                    plan.append(resultSet.getString("detail"));
+                }
+            }
+        }
+        return plan.toString();
     }
 
     @SuppressWarnings("unchecked")

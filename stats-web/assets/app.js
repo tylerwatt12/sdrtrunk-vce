@@ -14009,21 +14009,40 @@ async function renderRadioSystem() {
     radioSystemTabs(system, tab))) return;
 
   if (tab === 'groups') {
-    const page = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'group-identities'), pageParameters());
-    content.append(pagedSection('Groups', page, groupIdentityColumns, 'Search group ID', 'group-identities',
-      exportCsvLink('radio-system-group-identities', radioSystem), { topPager: true }));
+    const directory = createAsyncSection('Groups', {
+      action: exportCsvLink('radio-system-group-identities', radioSystem),
+      loadingMessage: 'Loading groups…',
+      errorMessage: 'The radio system groups could not be loaded.'
+    });
+    content.append(searchBar('Search group ID'), directory.element);
+    await directory.load(
+      () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'group-identities'), pageParameters()),
+      (page) => pagedTableContent(page, groupIdentityColumns, 'group-identities', {
+        topPager: true,
+        tableOptions: { layoutMenuHost: directory.titleActions, controller: directory.tableController }
+      }),
+      renderContext);
   } else if (tab === 'radios') {
     const filters = affiliationRouteFilters();
-    const page = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'radios'), pageParameters(filters));
     const title = filters.configuration_id ?
       (filters.affiliated ? 'Affiliated Radios on Channel' : 'Radios on Channel') :
       (filters.affiliated ? 'Affiliated Radios' : 'Radios');
     const exportAction = exportCsvLink('radio-system-radios', { ...radioSystem, ...filters });
     const columns = radioSystemRadioColumns(system);
-    content.append(pagedSection(title, page, columns, 'Search radio ID', radioTableType('radios', columns),
-      affiliationFilterActions(exportAction), { topPager: true }));
+    const directory = createAsyncSection(title, {
+      action: affiliationFilterActions(exportAction),
+      loadingMessage: 'Loading radios…',
+      errorMessage: 'The radio system radios could not be loaded.'
+    });
+    content.append(searchBar('Search radio ID'), directory.element);
+    await directory.load(
+      () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'radios'), pageParameters(filters)),
+      (page) => pagedTableContent(page, columns, radioTableType('radios', columns), {
+        topPager: true,
+        tableOptions: { layoutMenuHost: directory.titleActions, controller: directory.tableController }
+      }),
+      renderContext);
   } else if (tab === 'talker-aliases') {
-    const page = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'talker-aliases'), pageParameters());
     const columns = [
     { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.native_id) },
       { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
@@ -14032,10 +14051,19 @@ async function renderRadioSystem() {
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
     ];
-    const block = pagedSection('Talker Alias Summary', page, columns,
-      'Search radio ID or talker alias', 'talker-aliases', null, { topPager: true });
-    if (!page.rows.length) block.querySelector('.empty').textContent = 'No talker aliases recorded for this system';
-    content.append(block);
+    const directory = createAsyncSection('Talker Alias Summary', {
+      loadingMessage: 'Loading talker aliases…',
+      errorMessage: 'The talker alias summary could not be loaded.'
+    });
+    content.append(searchBar('Search radio ID or talker alias'), directory.element);
+    await directory.load(
+      () => apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'talker-aliases'), pageParameters()),
+      (page) => pagedTableContent(page, columns, 'talker-aliases', {
+        topPager: true,
+        emptyText: 'No talker aliases recorded for this system',
+        tableOptions: { layoutMenuHost: directory.titleActions, controller: directory.tableController }
+      }),
+      renderContext);
   } else if (tab === 'activity') {
     await renderActivity(radioSystem,
       isSavedChannelRadioSystem(system) ? 'Saved Channel Activity' : 'System Activity');
